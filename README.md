@@ -40,6 +40,8 @@ Open your browser at **`http://localhost:8000`**.
 Double-click **`run_cloudflare.bat`**.
 Share the generated `https://xxxx.trycloudflare.com` public room link with your friends!
 
+> 🍎 **macOS Users**: See the dedicated [macOS Setup & Quick Start Guide](README_MAC.md) (or run `./run_mac.sh`).
+
 ---
 
 ## 📁 Scene Packs
