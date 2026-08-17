@@ -1,0 +1,18 @@
+# Im Repository einheitlich LF, damit Textdateien nicht bei jedem
+# Wechsel zwischen Systemen als komplett geaendert erscheinen.
+* text=auto eol=lf
+
+# Ausnahme: cmd.exe verarbeitet Batch-Dateien mit reinen LF-Enden
+# unzuverlaessig, vor allem bei Sprungmarken. Die brauchen CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaerdateien nicht anfassen
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp4 binary
+*.ogv binary
+*.wav binary

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DubMate Studio Pro — Collaborative Scene Dubbing DAW</title>
+  <meta name="description" content="Collaborative anime and scene dubbing multiplayer Digital Audio Workstation with warm analog tone, guitar amp voice DSP dials, waveform track syncing, and group premiere theater.">
+  
+  <!-- Preconnected Google Fonts for High Performance & Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/css/style.css?v=2.0">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+</head>
+<body>
+
+  <!-- Top Studio Command Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo" id="btn-home" title="Return to Scenes / Home" role="button" tabindex="0" aria-label="DubMate Studio Home">
+        <div class="logo-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        </div>
+        <div class="logo-title">DUBMATE</div>
+        <span class="logo-badge">STUDIO PRO</span>
+      </div>
+
+      <!-- Studio Stage Breadcrumbs (Visible inside active room) -->
+      <nav id="studio-breadcrumbs" class="studio-breadcrumbs" style="display: none;" aria-label="Studio Stage Navigation">
+        <button id="nav-step-lobby" class="crumb-btn active" title="Casting Board & Room Lobby" aria-label="Go to Casting Board Lobby">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span class="crumb-text">Lobby</span>
+        </button>
+        <span class="crumb-arrow" aria-hidden="true">›</span>
+        <button id="nav-step-booth" class="crumb-btn" title="Solo Recording Booth" aria-label="Go to Recording Booth">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+          <span class="crumb-text">Booth</span>
+        </button>
+        <span class="crumb-arrow" aria-hidden="true">›</span>
+        <button id="nav-step-screening" class="crumb-btn" title="Finale Screening Room" aria-label="Go to Premiere Screening">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="3" rx="2"/><polyline points="12 18 12 22"/><path d="M8 22h8"/></svg>
+          <span class="crumb-text">Premiere</span>
+          <span id="crumb-premiere-live" class="badge-live-dot" style="display: none;" title="Premiere is Live!" aria-hidden="true"></span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="header-status">
+      <div id="header-room-badge" class="room-badge" style="display: none;" title="Click to copy invite link" role="button" tabindex="0" aria-label="Copy Room Invite Link">
+        <span class="room-label">ROOM</span>
+        <span id="header-room-code" class="room-code">------</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+      </div>
+      <div id="header-user-pill" class="user-pill" style="display: none;">
+        <div id="header-user-avatar" class="user-avatar" aria-hidden="true">A</div>
+        <span id="header-user-name" class="user-name">Actor</span>
+      </div>
+      <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;" title="Leave Room and Return to Scenes" aria-label="Leave Studio Session">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+        <span>Exit</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Live Cast Activity HUD Ribbon -->
+  <div id="cast-activity-bar" class="cast-activity-bar" style="display: none;" role="region" aria-label="Live Cast Activity" aria-live="polite">
+    <div class="cast-activity-header">
+      <span class="cast-hud-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        CAST HUD
+      </span>
+      <span id="premiere-status-summary" class="premiere-status-summary">0/0 Ready</span>
+    </div>
+    <div id="cast-activity-list" class="cast-activity-list">
+      <!-- Live actor status cards populated dynamically -->
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <main class="app-container">
+
+    <!-- 1. LANDING & SCENE EXPLORER VIEW -->
+    <section id="view-landing" class="view-section active" aria-label="Studio Setup & Scene Selection">
+      <div class="hero-banner">
+        <h1 class="hero-title">Dub Anime & Scenes <span class="hero-title-accent">Together with Friends</span></h1>
+        <p class="hero-subtitle">Cast iconic characters, record voice lines with tactile analog amp controls and visual waveform sync, shape tracks with studio DSP, and screen your full master dub live.</p>
+      </div>
+
+      <div class="landing-grid">
+        <!-- Left: User Profile & Session Setup -->
+        <div class="glass-card panel-actor-setup">
+          <div class="panel-header">
+            <span class="panel-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </span>
+            <h3 class="panel-title">Actor Profile & Session</h3>
+          </div>
+
+          <div class="form-group" style="margin-top: 16px;">
+            <label class="form-label" for="input-user-name">Your Actor Name</label>
+            <input type="text" id="input-user-name" class="form-input" placeholder="e.g. Levi Ackerman" maxlength="24" autocomplete="nickname">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Avatar Color Theme</label>
+            <div class="color-palette" id="color-palette" role="radiogroup" aria-label="Avatar Color Selection">
+              <div class="color-option selected" data-color="#d97706" style="background: #d97706;" title="Vintage Amber" role="radio" aria-checked="true" tabindex="0"></div>
+              <div class="color-option" data-color="#cca458" style="background: #cca458;" title="Walnut Gold" role="radio" aria-checked="false" tabindex="0"></div>
+              <div class="color-option" data-color="#dc2626" style="background: #dc2626;" title="Pilot Red" role="radio" aria-checked="false" tabindex="0"></div>
+              <div class="color-option" data-color="#16a34a" style="background: #16a34a;" title="Studio Olive" role="radio" aria-checked="false" tabindex="0"></div>
+              <div class="color-option" data-color="#b45309" style="background: #b45309;" title="Terracotta Bronze" role="radio" aria-checked="false" tabindex="0"></div>
+            </div>
+          </div>
+
+          <hr class="card-divider">
+
+          <!-- Tab Selection: Host vs Join -->
+          <div class="tab-pill-group" role="tablist">
+            <button id="tab-btn-create" class="tab-pill active" role="tab" aria-selected="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+              Create Room
+            </button>
+            <button id="tab-btn-join" class="tab-pill" role="tab" aria-selected="false">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
+              Join Code
+            </button>
+          </div>
+
+          <div id="panel-create-room">
+            <button id="btn-create-room" class="btn btn-primary btn-lg" style="width: 100%;">
+              <span>Launch Studio Room ›</span>
+            </button>
+          </div>
+
+          <div id="panel-join-room" style="display: none;">
+            <div class="form-group">
+              <label class="form-label" for="input-room-code">6-Character Room Code</label>
+              <input type="text" id="input-room-code" class="form-input code-input" placeholder="e.g. DUB789" maxlength="6" autocomplete="off" spellcheck="false">
+            </div>
+            <button id="btn-join-room" class="btn btn-secondary btn-lg" style="width: 100%;">
+              <span>Join Session Room ›</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Right: Pack Selector -->
+        <div class="glass-card panel-pack-selector">
+          <div class="panel-header" style="justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="panel-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+              </span>
+              <h3 class="panel-title">Choose Scene Dub Pack</h3>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button id="btn-rescan-packs" class="btn btn-secondary btn-sm" title="Rescan Packs directory for newly added or updated scenes" aria-label="Rescan Scene Packs Directory">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+                <span>Rescan Packs</span>
+              </button>
+              <span id="pack-count-badge" class="badge-accent">0 Packs</span>
+            </div>
+          </div>
+          <div id="pack-grid" class="pack-grid" role="region" aria-label="Available Scene Dub Packs">
+            <!-- Pack cards inserted here dynamically -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 2. ROOM CASTING LOBBY VIEW -->
+    <section id="view-lobby" class="view-section" aria-label="Casting Lobby">
+      <div class="lobby-header-card glass-card">
+        <div class="lobby-title-group">
+          <div class="lobby-badge-row">
+            <span class="badge-studio">DUBMATE SESSION</span>
+            <span id="lobby-line-count" class="char-tag">0 Lines</span>
+          </div>
+          <h2 id="lobby-pack-title" class="lobby-pack-title">Scene Title</h2>
+          <p class="lobby-desc">Assign characters to players below. Multiple characters can be voiced by the same actor.</p>
+        </div>
+        <div class="lobby-action-group">
+          <button id="btn-leave-room-lobby" class="btn btn-ghost" aria-label="Leave Studio Session and Return to Scenes">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+            <span>← Leave Room</span>
+          </button>
+          <button id="btn-copy-invite" class="btn btn-secondary" aria-label="Copy Invite Link to Clipboard">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            <span>Copy Link</span>
+          </button>
+          <button id="btn-start-session" class="btn btn-primary btn-lg">
+            <span>Enter Recording Booth ›</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="lobby-layout">
+        <!-- Character Casting Table -->
+        <div class="glass-card panel-casting">
+          <div class="panel-header">
+            <span class="panel-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </span>
+            <h3 class="panel-title">Character Casting Board</h3>
+          </div>
+          <table class="casting-table">
+            <thead>
+              <tr>
+                <th scope="col">Character</th>
+                <th scope="col">Scene Lines</th>
+                <th scope="col">Assigned Actor</th>
+              </tr>
+            </thead>
+            <tbody id="casting-tbody">
+              <!-- Cast rows populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Right: Session Mode & Connected Cast -->
+        <div class="lobby-sidebar">
+          <div class="glass-card">
+            <div class="panel-header">
+              <span class="panel-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </span>
+              <h3 class="panel-title">Recording Workflow</h3>
+            </div>
+            
+            <div style="padding: 16px;">
+              <div class="mode-card selected" id="mode-card-booth" data-mode="booth" role="button" tabindex="0" aria-label="Select Solo Recording Booth Mode">
+                <div class="mode-icon" aria-hidden="true">🎙️</div>
+                <div class="mode-details">
+                  <div class="mode-name">Solo Recording Booth</div>
+                  <div class="mode-desc">Record all your character's lines self-paced without waiting for others. (Recommended)</div>
+                </div>
+              </div>
+
+              <div class="mode-card" id="mode-card-studio" data-mode="studio" role="button" tabindex="0" aria-label="Select Synced Studio Prompter Mode">
+                <div class="mode-icon" aria-hidden="true">👥</div>
+                <div class="mode-details">
+                  <div class="mode-name">Synced Studio Prompter</div>
+                  <div class="mode-desc">Step through the scene timeline together as a group.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card">
+            <div class="panel-header" style="justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="panel-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </span>
+                <h3 class="panel-title">Connected Cast</h3>
+              </div>
+              <span id="cast-online-count" class="badge-online">1 Online</span>
+            </div>
+            <div id="lobby-cast-list" class="lobby-cast-list">
+              <!-- Cast pills rendered here -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 3. RECORDING BOOTH & STUDIO VIEW -->
+    <section id="view-booth" class="view-section" aria-label="Solo Recording Booth">
+      <!-- Stage Navigation Bar -->
+      <div class="stage-top-bar glass-card">
+        <div class="stage-info-group">
+          <button id="btn-back-lobby" class="btn btn-ghost btn-sm" aria-label="Return to Lobby">‹ Lobby</button>
+          <div class="line-progress-badge">
+            <span id="booth-line-indicator" class="booth-line-text">Line 1 / 20</span>
+          </div>
+          <span id="booth-character-badge" class="char-tag char-tag-active">Character</span>
+          <span id="booth-time-badge" class="time-badge">00:00.00 - 00:00.00</span>
+          <button id="btn-toggle-filter-lines" class="btn btn-secondary btn-sm" title="Toggle between all lines and your assigned lines" aria-label="Toggle My Lines Only">
+            <span id="label-filter-lines">🎭 My Lines Only</span>
+          </button>
+        </div>
+
+        <div class="stage-action-group">
+          <button id="btn-toggle-ready" class="btn btn-secondary btn-sm" aria-label="Toggle Ready for Premiere Status">
+            <span id="label-ready-state">⬜ Mark Ready</span>
+          </button>
+          <button id="btn-jump-screening" class="btn btn-primary btn-sm" title="Enter the Finale Screening Theater" aria-label="Enter Screening Theater">
+            <span>🍿 Screening Theater ›</span>
+          </button>
+          <button id="btn-launch-premiere" class="btn btn-primary btn-sm" style="display: none;" aria-label="Launch Premiere for Entire Cast">
+            <span>🎬 Launch Premiere ›</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="booth-layout">
+        <!-- Left: Video Player, Subtitle Prompter & Dual Waveform Visualizer -->
+        <div class="stage-main-col">
+          <div class="video-container">
+            <video id="stage-video" muted defaultMuted playsinline preload="auto" aria-label="Scene Reference Video"></video>
+            <div id="video-overlay" class="video-overlay hidden" aria-live="polite">
+              <div class="countdown-circle">
+                <div id="overlay-countdown" class="countdown-num">3</div>
+              </div>
+              <div id="overlay-status-text" class="overlay-status-text">GET READY...</div>
+            </div>
+          </div>
+
+          <!-- Subtitle / Caption Prompter -->
+          <div class="caption-card glass-card" aria-live="polite">
+            <div id="stage-caption-char" class="caption-char">CHARACTER</div>
+            <div id="stage-caption-text" class="caption-text">“Dialogue subtitle line text appears here”</div>
+          </div>
+
+          <!-- Dual Waveform Visualizer & Track Sync Canvas -->
+          <div class="waveform-panel glass-card">
+            <div class="waveform-legend">
+              <div class="legend-group">
+                <span class="legend-dot dot-orig" aria-hidden="true"></span>
+                <span class="legend-text">Original Voice</span>
+              </div>
+              <div class="legend-group">
+                <span class="legend-dot dot-take" aria-hidden="true"></span>
+                <span class="legend-text" id="waveform-take-legend">Your Take</span>
+              </div>
+              <span class="legend-offset-pill" id="waveform-offset-legend">Offset: 0 ms</span>
+            </div>
+            <div class="waveform-canvas-box">
+              <canvas id="waveform-canvas" aria-label="Dual Waveform Track Sync Visualizer (Click and drag to adjust timing offset)"></canvas>
+            </div>
+
+            <!-- Fine-Tuning Preset Nudge Bar -->
+            <div class="nudge-preset-bar">
+              <div class="nudge-label">
+                <span>⏱️ Sync Nudge:</span>
+                <span class="shortcut-hint">(or [ ] keys)</span>
+              </div>
+              <div class="nudge-buttons">
+                <button class="btn-nudge" data-nudge="-100" title="Shift 100ms earlier" aria-label="Nudge 100 milliseconds earlier">-100ms</button>
+                <button class="btn-nudge" data-nudge="-25" title="Shift 25ms earlier" aria-label="Nudge 25 milliseconds earlier">-25ms</button>
+                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" title="Reset offset to zero" aria-label="Reset offset to 0ms">0 ms</button>
+                <button class="btn-nudge" data-nudge="25" title="Shift 25ms later" aria-label="Nudge 25 milliseconds later">+25ms</button>
+                <button class="btn-nudge" data-nudge="100" title="Shift 100ms later" aria-label="Nudge 100 milliseconds later">+100ms</button>
+              </div>
+              <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0" aria-label="Fine-tuning timing offset slider" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0" aria-valuetext="0 milliseconds">
+              <span id="nudge-display" class="nudge-value-readout">0 ms</span>
+            </div>
+            <div class="slider-scale-row" aria-hidden="true">
+              <span>-800ms</span>
+              <span>-400ms</span>
+              <span style="color: var(--primary);">0 ms</span>
+              <span>+400ms</span>
+              <span>+800ms</span>
+            </div>
+          </div>
+
+          <!-- Timeline Strip Chips -->
+          <div class="timeline-chips-box glass-card" id="timeline-chips" role="region" aria-label="Dialogue Line Timeline">
+            <!-- Timeline items rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Right: Studio Recording & Vintage Hardware Rack Deck -->
+        <div class="booth-controls">
+          
+          <!-- Monitoring & A/B Comparison Deck -->
+          <div class="glass-card control-card rack-wood-frame">
+            <div class="panel-header-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>
+              <span>STUDIO MONITORING</span>
+            </div>
+            <div class="monitoring-row">
+              <!-- Backing Volume -->
+              <div class="vol-slider-group">
+                <span class="fx-label-sm" id="label-backing-vol">Backing:</span>
+                <input type="range" id="slider-backing-vol" class="fx-slider" min="0" max="100" step="5" value="60" aria-labelledby="label-backing-vol" aria-valuemin="0" aria-valuemax="100" aria-valuenow="60" aria-valuetext="60 percent">
+                <span id="val-backing-vol" class="fx-val">60%</span>
+              </div>
+
+              <!-- Metronome Toggle -->
+              <label class="toggle-pill" title="Play audible count-in click before recording">
+                <input type="checkbox" id="check-metronome" checked aria-label="Enable Metronome count-in click">
+                <span>Click</span>
+              </label>
+
+              <!-- Guide Voice Toggle -->
+              <label class="toggle-pill" title="Hear original character dialogue in headphones while recording">
+                <input type="checkbox" id="check-guide-voice" aria-label="Enable Reference Guide Voice in headphones">
+                <span>Guide</span>
+              </label>
+            </div>
+
+            <!-- A/B Comparison Switch -->
+            <div class="ab-switch-box">
+              <button id="btn-toggle-ab" class="btn-ab" title="Toggle between your dub and original voice" aria-label="Toggle A/B Audio Comparison">
+                <span id="label-ab-state"><strong style="color: var(--primary);">[ A: Your Dub ]</strong> ⇄ B: Orig</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Big Vintage Hardware Record Trigger & State -->
+          <div class="record-btn-container glass-card rack-wood-frame">
+            <button id="btn-record-main" class="btn-big-record" title="Press Space or Click to Record" aria-label="Punch-In Record (Spacebar)">
+              <span id="record-icon" aria-hidden="true">●</span>
+            </button>
+            <div id="record-status-label" class="record-status-label">PRESS SPACE TO RECORD</div>
+            
+            <div class="listen-btn-group">
+              <button id="btn-play-orig" class="btn btn-secondary btn-sm" title="Listen to original clip (Reference)" aria-label="Play Original Voice Reference">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>Original</span>
+              </button>
+              <button id="btn-preview-take" class="btn btn-primary btn-sm" title="Preview your take with backing track" aria-label="Preview Take with Backing Track">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>Preview</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Voice Effects Rack (Vintage Guitar Amp Dials) -->
+          <div class="fx-panel glass-card rack-wood-frame">
+            <div class="panel-header-sm" style="justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
+                <span>VOICE DSP AMPLIFIER</span>
+              </div>
+              <button id="btn-toggle-advanced-rack" class="btn-link-sm" aria-expanded="false" aria-controls="advanced-vocal-rack">Advanced ▾</button>
+            </div>
+            
+            <!-- 3-Channel Rotary Amp Dials -->
+            <div class="dsp-rack-grid">
+              <!-- Channel 1: Pitch Shift -->
+              <div class="dsp-dial-channel">
+                <span class="dsp-channel-title">PITCH</span>
+                <input type="range" id="slider-pitch" min="-12" max="12" step="1" value="0" aria-label="Voice Pitch Shift (Semitones)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0" aria-valuetext="0 semitones">
+                <span id="val-pitch" class="dsp-channel-readout">0 st</span>
+              </div>
+
+              <!-- Channel 2: Acoustic Reverb -->
+              <div class="dsp-dial-channel">
+                <span class="dsp-channel-title">REVERB</span>
+                <input type="range" id="slider-reverb" min="0" max="100" step="5" value="0" aria-label="Acoustic Reverb Wet Mix (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0 percent">
+                <span id="val-reverb" class="dsp-channel-readout">0%</span>
+              </div>
+
+              <!-- Channel 3: Vocal Boost -->
+              <div class="dsp-dial-channel">
+                <span class="dsp-channel-title">BOOST</span>
+                <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0" aria-label="Vocal Boost Gain (Decibels)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0" aria-valuetext="0 decibels">
+                <span id="val-gain" class="dsp-channel-readout">0 dB</span>
+              </div>
+            </div>
+
+            <!-- Expandable Advanced Studio Rack -->
+            <div id="advanced-vocal-rack" class="advanced-rack-box">
+              <div class="advanced-rack-inner">
+                <div class="toggle-row">
+                  <label class="form-label" style="margin-bottom: 0;" for="check-lowcut">80Hz Low-Cut (De-Hum)</label>
+                  <input type="checkbox" id="check-lowcut" checked class="switch-checkbox">
+                </div>
+
+                <div class="toggle-row">
+                  <label class="form-label" style="margin-bottom: 0;" for="check-compressor">Vocal Dynamics Compressor</label>
+                  <input type="checkbox" id="check-compressor" checked class="switch-checkbox">
+                </div>
+
+                <div class="advanced-dials-row" style="margin-top: 6px;">
+                  <div class="dsp-dial-channel">
+                    <span class="dsp-channel-title">DECAY</span>
+                    <input type="range" id="slider-decay" min="0.2" max="4.0" step="0.2" value="1.5" aria-label="Reverb Decay Time (Seconds)" aria-valuemin="0.2" aria-valuemax="4.0" aria-valuenow="1.5" aria-valuetext="1.5 seconds">
+                    <span id="val-decay" class="dsp-channel-readout">1.5s</span>
+                  </div>
+
+                  <div class="dsp-dial-channel">
+                    <span class="dsp-channel-title">PRE-DELAY</span>
+                    <input type="range" id="slider-predelay" min="0" max="60" step="5" value="20" aria-label="Reverb Pre-Delay Time (Milliseconds)" aria-valuemin="0" aria-valuemax="60" aria-valuenow="20" aria-valuetext="20 milliseconds">
+                    <span id="val-predelay" class="dsp-channel-readout">20ms</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Line Step Navigation -->
+          <div class="booth-nav-group">
+            <button id="btn-prev-line" class="btn btn-secondary btn-sm" style="flex: 1;" aria-label="Go to Previous Line">‹ Prev</button>
+            <button id="btn-clear-take" class="btn btn-ghost btn-sm" title="Clear current take" aria-label="Clear Current Voice Take">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+            <button id="btn-next-line" class="btn btn-primary btn-sm" style="flex: 2;" aria-label="Go to Next Line">Next Line ›</button>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 4. FINALE SCREENING & EXPORT VIEW -->
+    <section id="view-screening" class="view-section" aria-label="Finale Screening Theater">
+      <div class="screening-header-card glass-card">
+        <div class="screening-title-row">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span class="theater-icon" aria-hidden="true">🍿</span>
+            <h2 class="screening-title">Finale Screening Theater</h2>
+            <span id="screening-host-badge" class="badge-host">👑 Host Controller</span>
+            <span id="screening-master-badge" class="badge-master" style="display: none;">✨ Master Rendered MP4</span>
+          </div>
+          <button id="btn-back-booth" class="btn btn-secondary btn-sm" aria-label="Return to Recording Booth">
+            <span>‹ Return to Recording Booth</span>
+          </button>
+        </div>
+        <p id="screening-status-desc" class="screening-desc">Host controls synchronized playback for all connected friends.</p>
+      </div>
+
+      <div class="screening-theater-box">
+        <div class="video-container theater-player">
+          <video id="screening-video" playsinline preload="auto" aria-label="Dubbed Scene Finale Video"></video>
+        </div>
+      </div>
+
+      <!-- Synchronized Master Playback Controls -->
+      <div class="screening-controls-bar glass-card" role="toolbar" aria-label="Screening Transport Controls">
+        <button id="btn-screening-play-pause" class="btn btn-primary btn-lg" style="min-width: 160px;" aria-label="Play or Pause Dubbed Scene">
+          <span id="screening-play-icon">▶ Play Dub</span>
+        </button>
+        <button id="btn-screening-replay" class="btn btn-secondary btn-lg" aria-label="Replay Dubbed Scene">↺ Replay</button>
+        
+        <!-- Aspect Ratio Selector Pill -->
+        <div class="aspect-ratio-toggle-group" role="radiogroup" aria-label="Export Video Aspect Ratio">
+          <button id="btn-aspect-16-9" class="btn btn-aspect active" role="radio" aria-checked="true" title="16:9 Cinema Landscape">🖥️ 16:9</button>
+          <button id="btn-aspect-9-16" class="btn btn-aspect" role="radio" aria-checked="false" title="9:16 Vertical (Shorts / Reels / TikTok with Letterboxing)">📱 9:16 Shorts</button>
+        </div>
+
+        <button id="btn-export-video" class="btn btn-success btn-lg" aria-label="Export Master MP4 Video">
+          <span id="label-export-btn">🎬 Export Master MP4</span>
+        </button>
+      </div>
+
+      <!-- Master Audio Stem Balance Mixer Deck -->
+      <div class="screening-stem-mixer glass-card rack-wood-frame" role="region" aria-label="Screening Audio Stem Balance">
+        <div class="stem-mixer-header">
+          <div class="stem-title-group">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><circle cx="4" cy="14" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="20" cy="16" r="2"/></svg>
+            <span>MASTER STEM BALANCE</span>
+          </div>
+          <span id="val-screening-balance" class="stem-val-badge">Balanced (50/50)</span>
+        </div>
+        <div class="stem-slider-row">
+          <span class="stem-tag stem-tag-music">🎵 Backing Stem</span>
+          <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1" value="50" aria-label="Master Audio Stem Balance (Backing Track vs Vocal Dub Takes)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 percent balanced">
+          <span class="stem-tag stem-tag-vocals">🎙️ Vocal Takes</span>
+        </div>
+        <div class="stem-scale-row" aria-hidden="true">
+          <span>Backing Heavy (0%)</span>
+          <span style="color: var(--primary);">● 50/50 Balanced</span>
+          <span>Vocals Heavy (100%)</span>
+        </div>
+      </div>
+
+      <div id="export-progress-box" class="export-progress-box glass-card" style="display: none;" aria-live="polite">
+        <div class="export-progress-header">
+          <div id="export-status-text" class="export-status-text">Rendering final dubbed scene with studio DSP...</div>
+        </div>
+        <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="export-progress-fill" class="progress-fill"></div>
+        </div>
+        <div id="export-progress-steps" class="export-steps-list" aria-hidden="true">
+          <span class="step-item active" id="step-dsp">🎛️ DSP Mastering</span>
+          <span class="step-item" id="step-mux">🎬 Video Muxing</span>
+          <span class="step-item" id="step-ready">✨ Ready</span>
+        </div>
+        <div id="export-download-container" style="display: none; margin-top: 16px; text-align: center; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download aria-label="Download 16:9 Cinema MP4">⬇️ Download 16:9 Cinema MP4</a>
+          <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download aria-label="Download 9:16 Vertical Shorts MP4">📱 Download 9:16 Shorts MP4</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Scripts -->
+  <script type="module" src="/js/app.js?v=2.3"></script>
+</body>
+</html>

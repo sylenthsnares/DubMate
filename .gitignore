@@ -1,0 +1,38 @@
+# Python & Runtime
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# DubMate Cache & Temporary Media
+.cache/
+*.mp4.tmp
+temp_*.wav
+
+# Cloudflare & External Binaries
+cloudflared.exe
+cloudflared
+
+# Node & Package Managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editor Clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large Zip Archives (Scene packs should be distributed as extracted directories or releases)
+*.zip
+*.tar.gz
