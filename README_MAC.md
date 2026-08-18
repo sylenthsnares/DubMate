@@ -1,4 +1,4 @@
-﻿# 🍎 DubMate — macOS Setup & Quick Start Guide
+# 🍎 DubMate — macOS Setup & Quick Start Guide
 
 This guide will walk you through running **DubMate** locally or over the internet on macOS (Apple Silicon M1/M2/M3/M4 or Intel).
 
@@ -84,6 +84,16 @@ If the browser does not capture microphone audio:
 2. Go to **Privacy & Security** → **Microphone**.
 3. Ensure the toggle is **ON** for your web browser (e.g., Google Chrome, Safari, Brave).
 4. Restart your browser and reload `http://localhost:8000`.
+
+---
+
+## 🔄 Updating DubMate on macOS
+
+To update DubMate to the latest version from GitHub:
+```bash
+chmod +x update_mac.sh
+./update_mac.sh
+```
 
 ---
 

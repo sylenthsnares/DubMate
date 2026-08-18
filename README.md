@@ -100,7 +100,9 @@ DubMate Studio Pro
 └── Launchers & Tooling
     ├── run_web_studio.bat     # Windows 1-click local launcher
     ├── run_cloudflare.bat     # Windows 1-click internet multiplayer launcher
+    ├── update_dubmate.bat     # Windows 1-click repository & dependencies updater
     ├── run_mac.sh             # macOS launcher script
+    ├── update_mac.sh          # macOS 1-click repository & dependencies updater
     └── README_MAC.md          # Dedicated macOS setup guide
 ```
 
@@ -144,13 +146,23 @@ Double-click **`run_cloudflare.bat`**.
 
 ---
 
+### 🔄 Updating DubMate to the Latest Version
+
+Whenever a new version of DubMate is released on GitHub, update your system in one click:
+- **Windows**: Double-click **`update_dubmate.bat`**.
+- **macOS / Linux**: Run `./update_mac.sh`.
+
+*The updater automatically pulls the latest code, stashes any local conflicts, updates Python dependencies, downloads Cloudflare binaries if needed, and prompts you to launch the studio immediately.*
+
+---
+
 ### Launching the Studio (macOS)
 
 See the dedicated [macOS Setup & Quick Start Guide (README_MAC.md)](README_MAC.md) for full instructions:
 
 ```bash
-# Make script executable and launch
-chmod +x run_mac.sh
+# Make scripts executable and launch
+chmod +x run_mac.sh update_mac.sh
 ./run_mac.sh
 ```
 
