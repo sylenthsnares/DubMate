@@ -36,3 +36,8 @@ desktop.ini
 # Large Zip Archives (Scene packs should be distributed as extracted directories or releases)
 *.zip
 *.tar.gz
+
+# Scene Packs (keep README.md guide, ignore all pack media/folders)
+Packs/*
+!Packs/README.md
+
