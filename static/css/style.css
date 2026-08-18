@@ -791,6 +791,103 @@ body {
   color: var(--accent-brass);
 }
 
+/* Pack Instant Search & Filter Bar */
+.pack-search-container {
+  margin-top: 14px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  color: var(--foreground-dim);
+  pointer-events: none;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.search-input-wrapper:focus-within .search-icon {
+  color: var(--primary);
+}
+
+.search-input {
+  padding-left: 36px;
+  padding-right: 64px;
+  height: 38px;
+  background: var(--input);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--foreground);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.search-input::placeholder {
+  color: var(--foreground-dim);
+}
+
+.search-input:focus {
+  border-color: var(--primary);
+  background: var(--card);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.btn-clear-search {
+  position: absolute;
+  right: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: var(--secondary-hover);
+  color: var(--foreground-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.btn-clear-search:hover {
+  color: var(--foreground);
+  background: var(--border-wood);
+}
+
+.search-kbd {
+  position: absolute;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 18px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-dim);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.search-highlight {
+  background: rgba(217, 119, 6, 0.25);
+  color: #fef08a;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
 .pack-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

@@ -15,6 +15,7 @@ class DubMateApp {
     this.user = this.loadUser();
     this.packs = [];
     this.selectedPackId = null;
+    this.packSearchQuery = '';
     this.roomState = null;
     this.currentLineIndex = 0;
     this.currentTakeBlob = null;
@@ -111,6 +112,8 @@ class DubMateApp {
     this.colorPalette = document.getElementById('color-palette');
     this.packGrid = document.getElementById('pack-grid');
     this.packCountBadge = document.getElementById('pack-count-badge');
+    this.inputPackSearch = document.getElementById('input-pack-search');
+    this.btnClearSearch = document.getElementById('btn-clear-search');
     this.btnRescanPacks = document.getElementById('btn-rescan-packs');
     this.btnCreateRoom = document.getElementById('btn-create-room');
     this.btnJoinRoom = document.getElementById('btn-join-room');
@@ -337,6 +340,34 @@ class DubMateApp {
     if (this.btnRescanPacks) {
       this.btnRescanPacks.addEventListener('click', () => this.rescanPacksDirectory());
     }
+
+    if (this.inputPackSearch) {
+      this.inputPackSearch.addEventListener('input', (e) => {
+        this.handlePackSearch(e.target.value);
+      });
+      this.inputPackSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          this.clearPackSearch();
+        }
+      });
+    }
+
+    if (this.btnClearSearch) {
+      this.btnClearSearch.addEventListener('click', () => {
+        this.clearPackSearch();
+      });
+    }
+
+    // Global shortcut '/' to quickly focus the scene pack search bar
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+        if (this.inputPackSearch && this.views.landing?.classList.contains('active')) {
+          e.preventDefault();
+          this.inputPackSearch.focus();
+          this.inputPackSearch.select();
+        }
+      }
+    });
 
     this.btnCopyInvite.addEventListener('click', () => this.copyRoomLink());
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
@@ -871,15 +902,48 @@ class DubMateApp {
     }
   }
 
+  handlePackSearch(query) {
+    this.packSearchQuery = (query || '').trim().toLowerCase();
+    if (this.btnClearSearch) {
+      this.btnClearSearch.style.display = this.packSearchQuery ? 'inline-flex' : 'none';
+    }
+    this.renderPacks();
+  }
+
+  clearPackSearch() {
+    this.packSearchQuery = '';
+    if (this.inputPackSearch) {
+      this.inputPackSearch.value = '';
+    }
+    if (this.btnClearSearch) {
+      this.btnClearSearch.style.display = 'none';
+    }
+    this.renderPacks();
+    if (this.inputPackSearch) {
+      this.inputPackSearch.focus();
+    }
+  }
+
+  highlightMatch(text, query) {
+    if (!text || !query) return text || '';
+    const safeText = String(text);
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escapedQuery})`, 'gi');
+    return safeText.replace(regex, '<span class="search-highlight">$1</span>');
+  }
+
   renderPacks() {
     if (!this.packGrid) return;
     this.packGrid.innerHTML = '';
-    if (this.packCountBadge) {
-      this.packCountBadge.innerText = `${(this.packs || []).length} Packs`;
-    }
 
-    if (!this.packs || !this.packs.length) {
+    const allPacks = this.packs || [];
+    const query = this.packSearchQuery;
+
+    if (!allPacks.length) {
       this.selectedPackId = null;
+      if (this.packCountBadge) {
+        this.packCountBadge.innerText = '0 Packs';
+      }
       this.packGrid.innerHTML = `
         <div class="empty-packs-guide glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
           <div style="font-size: 36px; margin-bottom: 12px;">📦</div>
@@ -893,27 +957,79 @@ class DubMateApp {
       return;
     }
 
-    this.packs.forEach((pack, idx) => {
-      const card = document.createElement('div');
-      const isSelected = (!this.selectedPackId && idx === 0) || (this.selectedPackId === pack.id);
-      card.className = `pack-card ${isSelected ? 'selected' : ''}`;
-      if (isSelected) this.selectedPackId = pack.id;
+    const filteredPacks = !query ? allPacks : allPacks.filter(pack => {
+      const title = (pack.title || pack.name || pack.id || '').toLowerCase();
+      const id = (pack.id || '').toLowerCase();
+      const chars = (pack.characters || []).join(' ').toLowerCase();
+      const linesText = (pack.lines || []).map(l => (l.text || '') + ' ' + (l.character || '')).join(' ').toLowerCase();
+      return title.includes(query) || id.includes(query) || chars.includes(query) || linesText.includes(query);
+    });
 
-      const title = pack.title || pack.name || pack.id;
+    if (this.packCountBadge) {
+      if (query) {
+        this.packCountBadge.innerText = `${filteredPacks.length} of ${allPacks.length} Packs`;
+      } else {
+        this.packCountBadge.innerText = `${allPacks.length} Packs`;
+      }
+    }
+
+    if (!filteredPacks.length) {
+      this.selectedPackId = null;
+      const safeQuery = query.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      this.packGrid.innerHTML = `
+        <div class="empty-search-state glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
+          <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
+          <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 6px; color: var(--foreground);">No Scenes Matching "${safeQuery}"</h3>
+          <p style="font-size: 13px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px; line-height: 1.5;">
+            Try searching for another character name, scene title, or spoken dialogue keyword.
+          </p>
+          <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.clearPackSearch()">✕ Clear Search</button>
+        </div>
+      `;
+      return;
+    }
+
+    const hasCurrentSelection = filteredPacks.some(p => p.id === this.selectedPackId);
+    if (!hasCurrentSelection && filteredPacks.length > 0) {
+      this.selectedPackId = filteredPacks[0].id;
+    }
+
+    filteredPacks.forEach((pack) => {
+      const card = document.createElement('div');
+      const isSelected = (this.selectedPackId === pack.id);
+      card.className = `pack-card ${isSelected ? 'selected' : ''}`;
+
+      const rawTitle = pack.title || pack.name || pack.id;
+      const displayTitle = query ? this.highlightMatch(rawTitle, query) : rawTitle;
       const duration = Math.round(pack.duration || (pack.lines && pack.lines.length ? pack.lines[pack.lines.length - 1].end : 0));
       const lineCount = pack.line_count || (pack.lines ? pack.lines.length : 0);
       const characters = pack.characters || [];
 
+      // Check if a dialogue line matched query
+      let matchedLineSnippet = '';
+      if (query && pack.lines) {
+        const foundLine = pack.lines.find(l => (l.text || '').toLowerCase().includes(query));
+        if (foundLine) {
+          const charPrefix = foundLine.character ? `<strong>${foundLine.character}:</strong> ` : '';
+          matchedLineSnippet = `
+            <div style="font-size: 11px; color: var(--accent-brass); margin-top: 6px; font-style: italic; background: var(--input); padding: 4px 8px; border-radius: var(--radius-sm); border-left: 2px solid var(--primary);">
+              💬 "${this.highlightMatch(foundLine.text, query)}"
+            </div>
+          `;
+        }
+      }
+
       card.innerHTML = `
         <div class="pack-card-header">
-          <div class="pack-card-title">${title}</div>
+          <div class="pack-card-title">${displayTitle}</div>
           <span class="pack-card-duration">⏱️ ${duration}s</span>
         </div>
         <div class="pack-card-desc">
           <span>📜 ${lineCount} dialogue lines</span>
+          ${matchedLineSnippet}
         </div>
         <div class="pack-card-characters">
-          ${characters.map(c => `<span class="char-tag">${c}</span>`).join('')}
+          ${characters.map(c => `<span class="char-tag">${query ? this.highlightMatch(c, query) : c}</span>`).join('')}
         </div>
       `;
 

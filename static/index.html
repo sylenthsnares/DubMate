@@ -162,6 +162,19 @@
               <span id="pack-count-badge" class="badge-accent">0 Packs</span>
             </div>
           </div>
+
+          <!-- Pack Instant Search & Filter Bar -->
+          <div class="pack-search-container">
+            <div class="search-input-wrapper">
+              <span class="search-icon" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              </span>
+              <input type="text" id="input-pack-search" class="form-input search-input" placeholder="Search scenes, characters, or dialogue keywords..." autocomplete="off" spellcheck="false" aria-label="Search scene packs">
+              <button id="btn-clear-search" class="btn-clear-search" style="display: none;" title="Clear search" aria-label="Clear search input">✕</button>
+              <kbd class="search-kbd" title="Press '/' to focus search">/</kbd>
+            </div>
+          </div>
+
           <div id="pack-grid" class="pack-grid" role="region" aria-label="Available Scene Dub Packs">
             <!-- Pack cards inserted here dynamically -->
           </div>

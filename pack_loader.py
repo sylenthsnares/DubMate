@@ -162,6 +162,41 @@ def extract_character_from_caption_or_name(caption: str, filename: str) -> str:
     return clean if clean else "Narrator"
 
 
+_DETECTED_ENCODER = None
+
+
+def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
+    """
+    Returns optimal FFmpeg video encoder arguments.
+    Prefers AMD AMF GPU hardware acceleration (Radeon), falling back to multi-threaded CPU libx264 (Ryzen 6 threads).
+    """
+    global _DETECTED_ENCODER
+    if _DETECTED_ENCODER is None:
+        try:
+            ff = get_ffmpeg_path()
+            test_cmd = [
+                ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
+                "-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed",
+                "-pix_fmt", "yuv420p", "-f", "null", "-"
+            ]
+            res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0:
+                _DETECTED_ENCODER = "h264_amf"
+            else:
+                _DETECTED_ENCODER = "libx264"
+        except Exception:
+            _DETECTED_ENCODER = "libx264"
+
+    if _DETECTED_ENCODER == "h264_amf":
+        if usage == "web_preview":
+            return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed", "-rc", "cbr", "-b:v", "2500k"]
+        return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "quality", "-rc", "cbr", "-b:v", "5000k"]
+
+    # Ryzen 9600X CPU multi-threading fallback (capped at 6 threads)
+    preset = "faster" if usage == "web_preview" else "veryfast"
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", "6"]
+
+
 def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
     """Returns web-optimized video path. Converts/caches a muted 720p 30fps fastdecode mp4."""
     pack_name = os.path.basename(pack_folder)
@@ -178,12 +213,13 @@ def transcode_to_mp4(orig_video_path: str, target_mp4_path: str) -> bool:
     ffmpeg = get_ffmpeg_path()
     try:
         tmp_target = target_mp4_path + ".tmp.mp4"
+        encoder_args = get_h264_encoder_args(crf=25, usage="web_preview")
         cmd = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
             "-i", orig_video_path,
             "-vf", "scale='min(1280,iw)':-2",
             "-r", "30",
-            "-c:v", "libx264", "-crf", "25", "-preset", "faster", "-tune", "fastdecode",
+            *encoder_args,
             "-pix_fmt", "yuv420p",
             "-an",  # Strip audio track completely so reference video cannot bleed
             "-movflags", "+faststart",

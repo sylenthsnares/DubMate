@@ -14,7 +14,7 @@ import subprocess
 import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 
-from pack_loader import get_ffmpeg_path, CACHE_DIR, PackInfo
+from pack_loader import get_ffmpeg_path, get_h264_encoder_args, CACHE_DIR, PackInfo
 
 SR = 44100  # Standard audio sample rate
 
@@ -363,6 +363,7 @@ def export_dub_video(
 
     ffmpeg = get_ffmpeg_path()
     os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)
+    encoder_args = get_h264_encoder_args(crf=20, usage="export")
     try:
         cmd = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
@@ -375,10 +376,11 @@ def export_dub_video(
             cmd.extend(["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"])
 
         cmd.extend([
-            "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+            *encoder_args,
             "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
+            "-movflags", "+faststart",
             output_mp4
         ])
         subprocess.run(cmd, check=True)

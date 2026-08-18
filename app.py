@@ -10,6 +10,7 @@ import json
 import time
 import uuid
 import random
+import shutil
 import asyncio
 from typing import Dict, List, Optional, Set, Any
 from contextlib import asynccontextmanager
@@ -137,7 +138,65 @@ class Room:
 ROOMS: Dict[str, Room] = {}
 
 
+def prune_sessions(keep_room_id: Optional[str] = None):
+    """
+    Strict Single-Session Retention Policy:
+    Ensures only the latest / active session is kept on disk and in memory.
+    Purges all older room folders, old takes, and outdated export videos to keep the server ultra-light.
+    """
+    rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
+    if not os.path.isdir(rooms_dir):
+        return
+
+    room_folders = []
+    for r_id in os.listdir(rooms_dir):
+        full_path = os.path.join(rooms_dir, r_id)
+        if os.path.isdir(full_path):
+            try:
+                mtime = os.path.getmtime(full_path)
+            except Exception:
+                mtime = 0
+            room_folders.append((r_id, full_path, mtime))
+
+    # Sort newest first
+    room_folders.sort(key=lambda x: x[2], reverse=True)
+
+    retained_id = None
+    if keep_room_id:
+        retained_id = keep_room_id.upper()
+    elif room_folders:
+        retained_id = room_folders[0][0].upper()
+
+    # Delete all other room directories
+    for r_id, full_path, _ in room_folders:
+        if retained_id and r_id.upper() == retained_id:
+            continue
+        try:
+            shutil.rmtree(full_path, ignore_errors=True)
+            print(f"[DubMate Cache Pruner] Purged older session: {r_id}")
+        except Exception as ex:
+            print(f"[DubMate Cache Pruner] Could not delete {r_id}: {ex}")
+
+    # Prune in-memory ROOMS
+    to_delete = [r for r in list(ROOMS.keys()) if not retained_id or r.upper() != retained_id]
+    for r in to_delete:
+        ROOMS.pop(r, None)
+
+    # Prune old exports in EXPORTS_DIR
+    if os.path.isdir(EXPORTS_DIR):
+        for fname in os.listdir(EXPORTS_DIR):
+            if fname.endswith(".mp4"):
+                if retained_id and retained_id in fname.upper():
+                    continue
+                try:
+                    os.remove(os.path.join(EXPORTS_DIR, fname))
+                    print(f"[DubMate Cache Pruner] Removed old export: {fname}")
+                except Exception:
+                    pass
+
+
 def load_persisted_rooms():
+    prune_sessions()
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
         return
@@ -169,7 +228,7 @@ def load_persisted_rooms():
                     room.status = data.get("status", "lobby")
                     room.exported_video_path = data.get("exported_video_path")
                     ROOMS[r_id] = room
-                    print(f"[DubMate] Restored room {r_id} with {len(room.takes)} takes from disk.")
+                    print(f"[DubMate] Preserved last active session {r_id} with {len(room.takes)} takes from disk.")
             except Exception as ex:
                 print(f"[DubMate] Error restoring room {r_id}: {ex}")
         else:
@@ -202,7 +261,7 @@ def load_persisted_rooms():
                             }
                     room.save_to_disk()
                     ROOMS[r_id] = room
-                    print(f"[DubMate] Auto-reconstructed room {r_id} with {len(room.takes)} takes from existing files.")
+                    print(f"[DubMate] Auto-reconstructed last session {r_id} with {len(room.takes)} takes from existing files.")
             except Exception as ex:
                 print(f"[DubMate] Error reconstructing room {r_id}: {ex}")
 
@@ -225,6 +284,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_performance_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path.lower()
+    # Cache static web assets (JS, CSS, fonts, icons) for maximum browser throughput
+    if path.endswith((".js", ".css", ".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico")):
+        if "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+    return response
 
 
 def get_packs_registry() -> Dict[str, pack_loader.PackInfo]:
@@ -271,7 +341,11 @@ async def get_pack_video(pack_id: str, request: Request):
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack or not pack.web_video_path or not os.path.exists(pack.web_video_path):
         raise HTTPException(status_code=404, detail="Video not found")
-    return FileResponse(pack.web_video_path, media_type="video/mp4")
+    return FileResponse(
+        pack.web_video_path,
+        media_type="video/mp4",
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+    )
 
 
 @app.get("/api/packs/{pack_id}/backing")
@@ -279,7 +353,11 @@ async def get_pack_backing(pack_id: str):
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack or not pack.backing_track_path or not os.path.exists(pack.backing_track_path):
         raise HTTPException(status_code=404, detail="Backing track not found")
-    return FileResponse(pack.backing_track_path, media_type="audio/wav")
+    return FileResponse(
+        pack.backing_track_path,
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+    )
 
 
 @app.get("/api/packs/{pack_id}/audio/{filename}")
@@ -290,7 +368,11 @@ async def get_pack_audio_line(pack_id: str, filename: str):
     file_path = os.path.join(pack.folder, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(file_path, media_type="audio/wav")
+    return FileResponse(
+        file_path,
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+    )
 
 
 @app.post("/api/rooms")
@@ -304,6 +386,9 @@ async def create_room(payload: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Selected pack not found")
 
     room_id = generate_room_code()
+    # Prune any previous session recordings from disk and RAM so only the new session is kept
+    prune_sessions(keep_room_id=room_id)
+
     host_id = str(uuid.uuid4())[:8]
     room = Room(room_id, pack, host_id, host_name, host_color)
     ROOMS[room_id] = room
@@ -312,6 +397,20 @@ async def create_room(payload: Dict[str, Any]):
         "room_id": room_id,
         "user_id": host_id,
         "state": room.to_state_dict(),
+    }
+
+
+@app.post("/api/admin/clean")
+@app.get("/api/admin/clean")
+async def clean_server_cache(keep_last: bool = True):
+    """Prunes old room caches and exports to keep the server ultra-light."""
+    last_room = list(ROOMS.keys())[-1] if (keep_last and ROOMS) else None
+    prune_sessions(keep_room_id=last_room)
+    return {
+        "status": "ok",
+        "retained_room": last_room,
+        "active_rooms": list(ROOMS.keys()),
+        "message": "Server cache pruned to only keep the last recorded session."
     }
 
 
@@ -666,4 +765,5 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    # High-performance production mode: eliminates file polling over pack assets
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False, access_log=False)

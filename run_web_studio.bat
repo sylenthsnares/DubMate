@@ -17,5 +17,5 @@ echo   Share your local IP / room link with friends!
 echo ===================================================
 
 start "" "http://localhost:8000"
-python app.py
+start /high /wait cmd /c "python app.py"
 pause
