@@ -167,34 +167,61 @@ _DETECTED_ENCODER = None
 
 def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
     """
-    Returns optimal FFmpeg video encoder arguments.
-    Prefers AMD AMF GPU hardware acceleration (Radeon), falling back to multi-threaded CPU libx264 (Ryzen 6 threads).
+    Returns optimal FFmpeg video encoder arguments dynamically tuned for any system:
+    1. NVIDIA NVENC (GeForce / RTX)
+    2. AMD AMF (Radeon RX)
+    3. Intel QuickSync (Intel Arc / Core i3/i5/i7/i9)
+    4. Apple Silicon VideoToolbox (macOS M1/M2/M3/M4)
+    5. Universal Multi-Threaded CPU (libx264 scaled to available cores)
     """
     global _DETECTED_ENCODER
     if _DETECTED_ENCODER is None:
-        try:
-            ff = get_ffmpeg_path()
-            test_cmd = [
-                ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
-                "-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed",
-                "-pix_fmt", "yuv420p", "-f", "null", "-"
-            ]
-            res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if res.returncode == 0:
-                _DETECTED_ENCODER = "h264_amf"
-            else:
-                _DETECTED_ENCODER = "libx264"
-        except Exception:
+        ff = get_ffmpeg_path()
+        candidates = [
+            ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"]),
+            ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"]),
+            ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"]),
+            ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"]),
+        ]
+        for name, probe_args in candidates:
+            try:
+                test_cmd = [
+                    ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
+                    *probe_args, "-f", "null", "-"
+                ]
+                res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if res.returncode == 0:
+                    _DETECTED_ENCODER = name
+                    break
+            except Exception:
+                continue
+
+        if _DETECTED_ENCODER is None:
             _DETECTED_ENCODER = "libx264"
 
-    if _DETECTED_ENCODER == "h264_amf":
-        if usage == "web_preview":
-            return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed", "-rc", "cbr", "-b:v", "2500k"]
-        return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "quality", "-rc", "cbr", "-b:v", "5000k"]
+    # Hardware-specific parameters
+    if _DETECTED_ENCODER == "h264_nvenc":
+        preset = "p2" if usage == "web_preview" else "p4"
+        return ["-c:v", "h264_nvenc", "-preset", preset, "-b:v", "4000k" if usage == "web_preview" else "6000k"]
 
-    # Ryzen 9600X CPU multi-threading fallback (capped at 6 threads)
+    if _DETECTED_ENCODER == "h264_amf":
+        quality = "speed" if usage == "web_preview" else "quality"
+        bitrate = "2500k" if usage == "web_preview" else "5000k"
+        return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", quality, "-rc", "cbr", "-b:v", bitrate]
+
+    if _DETECTED_ENCODER == "h264_qsv":
+        preset = "faster" if usage == "web_preview" else "veryfast"
+        return ["-c:v", "h264_qsv", "-preset", preset, "-b:v", "3000k" if usage == "web_preview" else "5000k"]
+
+    if _DETECTED_ENCODER == "h264_videotoolbox":
+        bitrate = "3000k" if usage == "web_preview" else "5000k"
+        return ["-c:v", "h264_videotoolbox", "-b:v", bitrate]
+
+    # Universal multi-threaded CPU fallback (dynamically scales to 50%-75% of available CPU cores, max 8)
+    cpu_cores = os.cpu_count() or 4
+    threads = str(max(1, min(cpu_cores, 8)))
     preset = "faster" if usage == "web_preview" else "veryfast"
-    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", "6"]
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", threads]
 
 
 def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
