@@ -366,26 +366,47 @@ def export_dub_video(
     ffmpeg = get_ffmpeg_path()
     os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)
     encoder_args = get_h264_encoder_args(crf=20, usage="export")
-    try:
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", pack.web_video_path,
-            "-i", tmp_wav,
-            "-map", "0:v:0", "-map", "1:a:0",
-        ]
-        if aspect_ratio == "9:16":
-            # Letterbox 9:16 with black bars top and bottom without cropping
-            cmd.extend(["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"])
+    
+    vf_filters = []
+    if aspect_ratio == "9:16":
+        # Letterbox 9:16 with black bars top and bottom without cropping
+        vf_filters.extend(["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"])
 
-        cmd.extend([
-            *encoder_args,
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest",
-            "-movflags", "+faststart",
-            output_mp4
-        ])
-        subprocess.run(cmd, check=True)
+    try:
+        try:
+            cmd = [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", pack.web_video_path,
+                "-i", tmp_wav,
+                "-map", "0:v:0", "-map", "1:a:0",
+                *vf_filters,
+                *encoder_args,
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                "-movflags", "+faststart",
+                output_mp4
+            ]
+            subprocess.run(cmd, check=True)
+        except Exception as ex:
+            print(f"[export_dub_video] Primary encoder failed ({ex}), falling back to CPU libx264...")
+            cpu_cores = os.cpu_count() or 4
+            threads = str(max(1, min(cpu_cores, 8)))
+            fallback_args = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-threads", threads]
+            cmd = [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", pack.web_video_path,
+                "-i", tmp_wav,
+                "-map", "0:v:0", "-map", "1:a:0",
+                *vf_filters,
+                *fallback_args,
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                "-movflags", "+faststart",
+                output_mp4
+            ]
+            subprocess.run(cmd, check=True)
     finally:
         if os.path.exists(tmp_wav):
             try:

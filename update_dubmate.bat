@@ -19,10 +19,6 @@ if %errorlevel% neq 0 (
     echo Please install Git for Windows to enable one-click updates:
     echo https://git-scm.com/download/win
     echo.
-    echo If you downloaded DubMate as a ZIP archive, you can download the
-    echo latest version directly from:
-    echo https://github.com/sylenthsnares/DubMate
-    echo.
     pause
     exit /b 1
 )
@@ -49,19 +45,35 @@ if %errorlevel% neq 0 (
     git pull origin main
 )
 
+:: 4. Update isolated Python dependencies (.venv)
 echo.
-echo [2/3] Checking and updating Python dependencies...
-python -m pip install --upgrade -r requirements.txt
-if %errorlevel% neq 0 (
-    echo [NOTICE] Pip install returned a non-zero code. Trying fallback pip command...
-    pip install -r requirements.txt
+echo [2/3] Checking and updating Python dependencies in .venv\...
+if not exist "%~dp0.venv\Scripts\python.exe" (
+    echo [SETUP] .venv not found. Running initial setup...
+    call "%~dp0setup_dubmate_win.bat"
+) else (
+    "%~dp0.venv\Scripts\python.exe" -m pip install --upgrade -r "%~dp0requirements.txt"
+    if %errorlevel% neq 0 (
+        echo [NOTICE] Pip install returned a non-zero code. Retrying with explicit flags...
+        "%~dp0.venv\Scripts\python.exe" -m pip install -r "%~dp0requirements.txt"
+    )
 )
 
+:: 5. Verify Local Tools (FFmpeg & Cloudflared)
 echo.
-echo [3/3] Checking Cloudflare Tunnel binary...
-if not exist "%~dp0cloudflared.exe" (
-    echo Downloading cloudflared.exe for multiplayer rooms...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile '%~dp0cloudflared.exe'"
+echo [3/3] Checking project-local tools (tools\)...
+if not exist "%~dp0tools" mkdir "%~dp0tools"
+if not exist "%~dp0tools\ffmpeg.exe" (
+    echo [NOTICE] FFmpeg binary missing in tools\. Running setup installer...
+    call "%~dp0setup_dubmate_win.bat"
+)
+if not exist "%~dp0tools\cloudflared.exe" (
+    if exist "%~dp0cloudflared.exe" (
+        copy /y "%~dp0cloudflared.exe" "%~dp0tools\cloudflared.exe" >nul 2>&1
+    ) else (
+        echo Downloading cloudflared.exe into tools\...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile '%~dp0tools\cloudflared.exe' -UseBasicParsing"
+    )
 )
 
 echo.

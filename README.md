@@ -94,30 +94,29 @@ DubMate Studio Pro
 │   ├── static/js/knob.js      # Tactile 270° rotary guitar amp dial components
 │   ├── static/js/waveform.js  # Dual-waveform visual alignment & canvas renderer
 │   └── static/js/room_socket.js # Real-time WebSocket synchronization client
-├── Scene Packs & Cache
+├── Scene Packs & Storage
 │   ├── Packs/                 # Scene pack library directory
+│   ├── tools/                 # Project-local portable binaries (FFmpeg, FFprobe, Cloudflared)
+│   ├── .venv/                 # Project-local isolated Python virtual environment
 │   └── .cache/                # Automated lightweight transcode & single-session storage
 └── Launchers & Tooling
-    ├── run_web_studio.bat     # Windows 1-click local launcher
-    ├── run_cloudflare.bat     # Windows 1-click internet multiplayer launcher
+    ├── setup_dubmate_win.bat  # Windows 1-click isolated dependency installer
+    ├── setup_dubmate_mac.sh   # macOS/Linux 1-click isolated dependency installer
+    ├── run_web_studio.bat     # Windows self-healing local launcher
+    ├── run_cloudflare.bat     # Windows self-healing internet multiplayer launcher
     ├── update_dubmate.bat     # Windows 1-click repository & dependencies updater
-    ├── run_mac.sh             # macOS launcher script
+    ├── run_mac.sh             # macOS self-healing launcher script
     ├── update_mac.sh          # macOS 1-click repository & dependencies updater
     └── README_MAC.md          # Dedicated macOS setup guide
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Zero Global Pollution)
 
-### Prerequisites
-- **Python 3.10 or higher**: [Download Python](https://www.python.org/downloads/)
-- **FFmpeg**: Must be installed and accessible in your system `PATH`.
-  - *Windows*: Download from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) or install via `winget install Gyan.FFmpeg`.
-  - *macOS*: `brew install ffmpeg`
-  - *Linux*: `sudo apt install ffmpeg`
+DubMate Studio Pro installs all Python packages and portable media tools **strictly inside the project folder** (`.venv/` and `tools/`). **No packages or binaries are installed globally on your system, and your system PATH is never modified.**
 
-### Installation
+### 1-Click Installation & Setup
 
 1. **Clone or download this repository**:
    ```bash
@@ -125,19 +124,21 @@ DubMate Studio Pro
    cd DubMate
    ```
 
-2. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. **Run the 1-Click Dependency Installer**:
+   - **Windows**: Double-click **`setup_dubmate_win.bat`**
+   - **macOS / Linux**: Run `./setup_dubmate_mac.sh`
+
+   *The installer automatically provisions a local virtual environment (`.venv`), installs required DSP and web packages, and downloads portable static builds of **FFmpeg**, **FFprobe**, and **Cloudflared** directly into `tools/`.*
 
 ---
 
 ### Launching the Studio (Windows)
 
 #### Option A: Local Network (LAN / Same Wi-Fi)
-Double-click **`run_web_studio.bat`** (or execute `python app.py`).
+Double-click **`run_web_studio.bat`**.
 - The studio will automatically open in your default browser at **`http://localhost:8000`**.
 - Other computers/tablets on the same network can join via your local IP address (e.g., `http://192.168.1.50:8000`).
+- *Self-Healing*: If you haven't run setup yet, `run_web_studio.bat` will automatically set up local dependencies first!
 
 #### Option B: Internet Multiplayer (Cloudflare Tunnel)
 Double-click **`run_cloudflare.bat`**.
@@ -152,17 +153,21 @@ Whenever a new version of DubMate is released on GitHub, update your system in o
 - **Windows**: Double-click **`update_dubmate.bat`**.
 - **macOS / Linux**: Run `./update_mac.sh`.
 
-*The updater automatically pulls the latest code, stashes any local conflicts, updates Python dependencies, downloads Cloudflare binaries if needed, and prompts you to launch the studio immediately.*
+*The updater automatically pulls the latest code, stashes any local conflicts, updates Python dependencies inside `.venv/`, verifies local `tools/` binaries, and prompts you to launch the studio immediately.*
 
 ---
 
-### Launching the Studio (macOS)
+### Launching the Studio (macOS / Linux)
 
 See the dedicated [macOS Setup & Quick Start Guide (README_MAC.md)](README_MAC.md) for full instructions:
 
 ```bash
-# Make scripts executable and launch
-chmod +x run_mac.sh update_mac.sh
+# 1. 1-Click Setup
+chmod +x setup_dubmate_mac.sh run_mac.sh update_mac.sh
+./setup_dubmate_mac.sh
+
+# 2. Launch
+./run_mac.sh
 ./run_mac.sh
 ```
 

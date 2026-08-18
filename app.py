@@ -228,8 +228,8 @@ def load_persisted_rooms():
                     room.mode = data.get("mode", "booth")
                     room.status = data.get("status", "lobby")
                     room.exported_video_path = data.get("exported_video_path")
-                    ROOMS[r_id] = room
-                    print(f"[DubMate] Preserved last active session {r_id} with {len(room.takes)} takes from disk.")
+                    ROOMS[r_id.upper()] = room
+                    print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
             except Exception as ex:
                 print(f"[DubMate] Error restoring room {r_id}: {ex}")
         else:
@@ -238,7 +238,7 @@ def load_persisted_rooms():
                 take_files = [f for f in os.listdir(room_folder) if f.startswith("take_line_") and f.endswith(".wav")]
                 if take_files and PACKS_CACHE:
                     default_pack = list(PACKS_CACHE.values())[0]
-                    room = Room(r_id, default_pack, "host", "Host", "#8a6eff")
+                    room = Room(r_id.upper(), default_pack, "host", "Host", "#8a6eff")
                     for tf in take_files:
                         m = re.search(r"take_line_(\d+)\.wav", tf)
                         if m:
@@ -253,7 +253,7 @@ def load_persisted_rooms():
                                 "wav_path": wav_p,
                                 "duration": round(dur, 3),
                                 "peaks": peaks,
-                                "url": f"/api/rooms/{r_id}/takes/{l_idx}/audio",
+                                "url": f"/api/rooms/{r_id.upper()}/takes/{l_idx}/audio",
                                 "offset_ms": 0,
                                 "pitch_semitones": 0.0,
                                 "reverb_wet": 0.0,
@@ -261,8 +261,8 @@ def load_persisted_rooms():
                                 "recorded_at": time.time(),
                             }
                     room.save_to_disk()
-                    ROOMS[r_id] = room
-                    print(f"[DubMate] Auto-reconstructed last session {r_id} with {len(room.takes)} takes from existing files.")
+                    ROOMS[r_id.upper()] = room
+                    print(f"[DubMate] Auto-reconstructed last session {r_id.upper()} with {len(room.takes)} takes from existing files.")
             except Exception as ex:
                 print(f"[DubMate] Error reconstructing room {r_id}: {ex}")
 

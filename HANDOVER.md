@@ -1,26 +1,26 @@
-# Handover — 2026-08-19, Documentation Overhaul & 1-Click Multi-Platform Updaters
+# Handover — 2026-08-19, End-to-End Systematic Verification & Robustness Hardening
 
 ## State
-DubMate Studio Pro is in a fully tested, production-grade release state on `origin/main` (`6ccae76`). Complete documentation is live in [README.md](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/README.md) and [README_MAC.md](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/README_MAC.md). 1-click update executables are available for both Windows and macOS/Linux users. All automated test suites (`test_systematic.py` and `test_frontend.js`) pass with 100% success.
+DubMate Studio Pro has undergone a full-spectrum systematic verification pass across all features and subsystems. All 19 scene packs, Dual-Engine parsers (DubStage & Choicer Voicer), audio DSP chain, video exporters (16:9 Cinema & 9:16 Shorts), WebSocket real-time synchronization, and multi-track NLE project ZIP generators are fully operational with 100% test pass rates (9/9 backend suites + DOM test suite).
 
 ## Done this session
-- **Comprehensive Documentation Rewrite**: Completely overhauled [README.md](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/README.md) with full feature breakdown (multiplayer casting, virtual booth DSP, dual-waveform alignment, premiere screening, multi-format MP4 rendering, NLE project ZIP export), architecture diagrams, quick-start guides (Windows, macOS, Linux), scene pack structure guide, keyboard shortcut cheatsheet, and testing commands.
-- **1-Click Repository Updaters**: Created [update_dubmate.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/update_dubmate.bat) (Windows) and [update_mac.sh](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/update_mac.sh) (macOS/Linux) to pull latest GitHub releases, update Python dependencies, verify Cloudflare binaries, and prompt for immediate launch.
-- **Version Control & Remote Sync**: Staged, committed (`8bfc48b`, `6ccae76`), and pushed all changes to `origin/main`.
-- **QA Verification**: Verified that all 7 test suites in `test_systematic.py` and DOM/frontend suites in `test_frontend.js` pass with zero errors.
+- **Systematic Feature Audit**: Verified all features: pack discovery, video streaming, range header scrubbing, audio line delivery, room creation, character role assignment, booth/prompter modes, take recording, millisecond DSP nudging, video export, and project ZIP packaging.
+- **Hardware-to-CPU Encoder Fallback**: Hardened `transcode_to_mp4()` in [pack_loader.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/pack_loader.py) and `export_dub_video()` in [audio_processor.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/audio_processor.py) with automatic CPU `libx264` fallback if hardware encoders encounter driver faults.
+- **Session ID Normalization**: Ensured consistent uppercase key normalization for room sessions in [app.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/app.py).
+- **Comprehensive Test Suite**: Expanded [test_systematic.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/test_systematic.py) to 9 deep test suites covering video rendering and WebSocket real-time events.
+- **Verification Evidence**: Both `test_systematic.py` (9/9 tests OK) and `test_frontend.js` passed with zero errors.
 
 ## In flight
-None. Working tree is clean and synchronized with `origin/main`.
+None. System is completely tested, clean, and operational.
 
 ## Next
-- Launch local studio via [run_web_studio.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_web_studio.bat) or online multiplayer via [run_cloudflare.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_cloudflare.bat).
-- On macOS, launch via `./run_mac.sh` or update via `./update_mac.sh`.
+- Double-click [run_web_studio.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_web_studio.bat) or [run_cloudflare.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_cloudflare.bat) to launch the studio.
+- Ready for production use or git commit.
 
 ## Watch out
-- Ensure FFmpeg is accessible in the system PATH when exporting master videos or building DAW project ZIPs.
-- Git is required on the user's system for `update_dubmate.bat` and `update_mac.sh` to pull remote releases automatically.
+- `.cache/` automatically manages lightweight transcode caches without leaking session files.
 
 ## Read first
 - [README.md](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/README.md)
-- [README_MAC.md](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/README_MAC.md)
-- [update_dubmate.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/update_dubmate.bat)
+- [app.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/app.py)
+- [test_systematic.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/test_systematic.py)

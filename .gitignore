@@ -17,6 +17,7 @@ temp_*.wav
 *.wav.tmp
 
 # Cloudflare & External Binaries
+tools/
 cloudflared.exe
 cloudflared
 

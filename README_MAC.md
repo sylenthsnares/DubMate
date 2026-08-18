@@ -4,42 +4,18 @@ This guide will walk you through running **DubMate** locally or over the interne
 
 ---
 
-## 📋 Prerequisites
+## 🚀 1-Click Directory-Isolated Setup
 
-Open **Terminal** on your Mac (`Cmd + Space`, type `Terminal`, and press `Enter`).
+DubMate installs all Python packages and portable tools **strictly inside the project folder** (`.venv/` and `tools/`). Nothing is installed globally.
 
-### 1. Install Homebrew (if not already installed)
-Homebrew is the standard package manager for macOS:
+### 1. Run the 1-Click Setup Script
+Open Terminal in the DubMate folder:
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+chmod +x setup_dubmate_mac.sh run_mac.sh update_mac.sh
+./setup_dubmate_mac.sh
 ```
 
-### 2. Install Python 3 & FFmpeg
-DubMate uses Python for the backend server and FFmpeg for video rendering and audio mastering:
-```bash
-brew install python ffmpeg
-```
-
----
-
-## 🚀 Installation & Setup
-
-### 1. Clone or Open the Repository
-Navigate to the directory where DubMate is located:
-```bash
-cd path/to/DubMate
-```
-
-### 2. Set Up a Virtual Environment (Recommended)
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
+*This automatically provisions a local Python `.venv/`, installs all required audio DSP dependencies, and configures portable FFmpeg & Cloudflare binaries in `tools/`.*
 
 ---
 

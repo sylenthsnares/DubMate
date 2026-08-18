@@ -29,23 +29,38 @@ _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
 
 
 def get_ffmpeg_path() -> str:
-    """Finds ffmpeg binary in system PATH or local tools folder."""
+    """Finds ffmpeg binary in project-local tools folder, dubstage tools, or system PATH."""
+    # 1. Project-local tools directory (Windows .exe or Unix binary)
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        local_tool = os.path.join(BASE_DIR, "tools", name)
+        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
+            return local_tool
+    # 2. DubStage tools fallback
+    dubstage_tool = os.path.join(BASE_DIR, "dubstage-1.1.0", "tools", "ffmpeg.exe")
+    if os.path.isfile(dubstage_tool):
+        return dubstage_tool
+    # 3. System PATH fallback
     tool = shutil.which("ffmpeg")
     if tool:
         return tool
-    local_tool = os.path.join(BASE_DIR, "dubstage-1.1.0", "tools", "ffmpeg.exe")
-    if os.path.exists(local_tool):
-        return local_tool
     return "ffmpeg"
 
 
 def get_ffprobe_path() -> str:
+    """Finds ffprobe binary in project-local tools folder, dubstage tools, or system PATH."""
+    # 1. Project-local tools directory (Windows .exe or Unix binary)
+    for name in ("ffprobe.exe", "ffprobe"):
+        local_tool = os.path.join(BASE_DIR, "tools", name)
+        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
+            return local_tool
+    # 2. DubStage tools fallback
+    dubstage_tool = os.path.join(BASE_DIR, "dubstage-1.1.0", "tools", "ffprobe.exe")
+    if os.path.isfile(dubstage_tool):
+        return dubstage_tool
+    # 3. System PATH fallback
     tool = shutil.which("ffprobe")
     if tool:
         return tool
-    local_tool = os.path.join(BASE_DIR, "dubstage-1.1.0", "tools", "ffprobe.exe")
-    if os.path.exists(local_tool):
-        return local_tool
     return "ffprobe"
 
 
@@ -358,9 +373,11 @@ def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
 def transcode_to_mp4(orig_video_path: str, target_mp4_path: str) -> bool:
     """Transcodes a video to lightweight 720p 30fps H.264 MP4 without audio for fast web streaming."""
     ffmpeg = get_ffmpeg_path()
+    tmp_target = target_mp4_path + ".tmp.mp4"
+    encoder_args = get_h264_encoder_args(crf=25, usage="web_preview")
+    
+    # 1. Attempt with primary detected encoder
     try:
-        tmp_target = target_mp4_path + ".tmp.mp4"
-        encoder_args = get_h264_encoder_args(crf=25, usage="web_preview")
         cmd = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
             "-i", orig_video_path,
@@ -373,11 +390,40 @@ def transcode_to_mp4(orig_video_path: str, target_mp4_path: str) -> bool:
             tmp_target
         ]
         subprocess.run(cmd, check=True)
-        if os.path.isfile(tmp_target):
+        if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
             os.replace(tmp_target, target_mp4_path)
             return True
     except Exception as ex:
-        print(f"Error transcoding {orig_video_path}: {ex}")
+        print(f"[transcode_to_mp4] Primary encoder failed on {orig_video_path}: {ex}. Trying CPU libx264...")
+
+    # 2. Fallback to CPU libx264
+    try:
+        cpu_cores = os.cpu_count() or 4
+        threads = str(max(1, min(cpu_cores, 8)))
+        fallback_args = ["-c:v", "libx264", "-crf", "25", "-preset", "faster", "-threads", threads]
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", orig_video_path,
+            "-vf", "scale='min(1280,iw)':-2",
+            "-r", "30",
+            *fallback_args,
+            "-pix_fmt", "yuv420p",
+            "-an",
+            "-movflags", "+faststart",
+            tmp_target
+        ]
+        subprocess.run(cmd, check=True)
+        if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
+            os.replace(tmp_target, target_mp4_path)
+            return True
+    except Exception as ex:
+        print(f"[transcode_to_mp4] Fallback CPU transcode failed on {orig_video_path}: {ex}")
+    finally:
+        if os.path.exists(tmp_target):
+            try:
+                os.remove(tmp_target)
+            except Exception:
+                pass
     return False
 
 

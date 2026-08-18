@@ -31,15 +31,28 @@ git pull origin main || {
     git pull origin main
 }
 
-# 4. Activate virtual environment if present
-if [ -d "venv" ]; then
-    source venv/bin/activate
+# 4. Update Isolated Python Dependencies
+echo ""
+echo "[2/3] Updating Python dependencies in .venv/..."
+if [ -f ".venv/bin/python3" ]; then
+    ./.venv/bin/python3 -m pip install --upgrade -r requirements.txt
+elif [ -f "venv/bin/python3" ]; then
+    ./venv/bin/python3 -m pip install --upgrade -r requirements.txt
+else
+    echo "[SETUP] .venv not found. Running setup script..."
+    chmod +x setup_dubmate_mac.sh
+    ./setup_dubmate_mac.sh
 fi
 
-# 5. Update Python dependencies
+# 5. Check Local Tools
 echo ""
-echo "[2/3] Updating Python dependencies..."
-pip3 install -r requirements.txt || pip install -r requirements.txt
+echo "[3/3] Checking project-local tools (tools/)..."
+mkdir -p tools
+if [ ! -x "tools/ffmpeg" ] || [ ! -x "tools/ffprobe" ]; then
+    echo "[NOTICE] Local FFmpeg binaries missing. Running setup script..."
+    chmod +x setup_dubmate_mac.sh
+    ./setup_dubmate_mac.sh
+fi
 
 echo ""
 echo "====================================================================="
