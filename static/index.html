@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="/css/style.css?v=2.5">
+  <link rel="stylesheet" href="/css/style.css?v=2.8">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
 </head>
 <body>
@@ -336,8 +336,11 @@
             </div>
           </div>
 
-          <!-- Subtitle / Caption Prompter -->
-          <div class="caption-card glass-card" aria-live="polite">
+          <!-- Subtitle / Caption Prompter with Smooth Splitter Resizer -->
+          <div id="stage-caption-card" class="caption-card glass-card resizable-prompter" aria-live="polite">
+            <div id="prompter-resize-handle" class="prompter-resize-handle" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag up/down to resize video (Double-click to reset)" aria-label="Resize Video Viewport">
+              <span class="resize-grip-pill"></span>
+            </div>
             <div id="stage-caption-char" class="caption-char">CHARACTER</div>
             <div id="stage-caption-text" class="caption-text">“Dialogue subtitle line text appears here”</div>
           </div>
@@ -619,6 +622,6 @@
   <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Scripts -->
-  <script type="module" src="/js/app.js?v=2.5"></script>
+  <script type="module" src="/js/app.js?v=2.7"></script>
 </body>
 </html>

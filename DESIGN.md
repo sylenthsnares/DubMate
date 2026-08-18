@@ -63,6 +63,14 @@ typography:
     fontFamily: "JetBrains Mono, monospace"
     fontSize: "10px"
     fontWeight: 700
+  mono-xs:
+    fontFamily: "JetBrains Mono, monospace"
+    fontSize: "9px"
+    fontWeight: 700
+  mono-micro:
+    fontFamily: "JetBrains Mono, monospace"
+    fontSize: "8px"
+    fontWeight: 700
 rounded:
   micro: "1px"
   sm: "6px"

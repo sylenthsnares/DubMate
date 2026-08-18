@@ -77,6 +77,7 @@ export class AnalogKnob {
     const minAngle = this.options.minAngle;
     const maxAngle = this.options.maxAngle;
     const angleRange = maxAngle - minAngle;
+    const originY = size / 2;
     let html = '';
 
     for (let i = 0; i < numTicks; i++) {
@@ -86,7 +87,7 @@ export class AnalogKnob {
       const isExtreme = i === 0 || i === numTicks - 1;
       const tickClass = isExtreme ? 'dial-tick-major' : (isCenter ? 'dial-tick-center' : 'dial-tick-minor');
       
-      html += `<span class="dial-tick ${tickClass}" style="transform: rotate(${angle}deg);" data-index="${i}"></span>`;
+      html += `<span class="dial-tick ${tickClass}" style="transform: rotate(${angle}deg); transform-origin: 50% ${originY}px;" data-index="${i}"></span>`;
     }
     return html;
   }
@@ -249,11 +250,11 @@ export function initAllKnobs() {
   const dials = [];
   
   const dialConfigs = [
-    { id: 'slider-pitch', size: 54, ticks: 9, unit: 'st' },
-    { id: 'slider-reverb', size: 54, ticks: 7, unit: '%' },
-    { id: 'slider-gain', size: 54, ticks: 11, unit: 'dB' },
-    { id: 'slider-decay', size: 48, ticks: 7, unit: 's' },
-    { id: 'slider-predelay', size: 48, ticks: 7, unit: 'ms' },
+    { id: 'slider-pitch', size: 40, ticks: 9, unit: 'st' },
+    { id: 'slider-reverb', size: 40, ticks: 7, unit: '%' },
+    { id: 'slider-gain', size: 40, ticks: 11, unit: 'dB' },
+    { id: 'slider-decay', size: 36, ticks: 7, unit: 's' },
+    { id: 'slider-predelay', size: 36, ticks: 7, unit: 'ms' },
   ];
 
   dialConfigs.forEach(cfg => {

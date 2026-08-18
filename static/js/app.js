@@ -144,6 +144,8 @@ class DubMateApp {
     this.boothLineIndicator = document.getElementById('booth-line-indicator');
     this.boothCharacterBadge = document.getElementById('booth-character-badge');
     this.boothTimeBadge = document.getElementById('booth-time-badge');
+    this.stageCaptionCard = document.getElementById('stage-caption-card');
+    this.prompterResizeHandle = document.getElementById('prompter-resize-handle');
     this.stageCaptionChar = document.getElementById('stage-caption-char');
     this.stageCaptionText = document.getElementById('stage-caption-text');
     this.timelineChips = document.getElementById('timeline-chips');
@@ -253,6 +255,8 @@ class DubMateApp {
   }
 
   initEvents() {
+    this.initVideoPrompterSplitter();
+
     // Back to Home / Leave Room
     const btnHome = document.getElementById('btn-home');
     if (btnHome) {
@@ -683,8 +687,12 @@ class DubMateApp {
     this.socket.on('*', (data) => {
       if (data.state) {
         this.roomState = data.state;
-        this.renderLobbyState();
-        this.renderTimelineChips();
+        if (this.currentView === 'lobby') {
+          this.renderLobbyState();
+        }
+        if (this.currentView === 'booth') {
+          this.renderTimelineChips();
+        }
         this.renderCastActivityHUD();
         this.updateScreeningControls();
       }
@@ -729,6 +737,18 @@ class DubMateApp {
       }
       this.renderTimelineChips();
       this.renderCastActivityHUD();
+    });
+
+    this.socket.on('status_changed', (data) => {
+      const newStatus = data.payload?.status || data.status;
+      if (newStatus === 'recording' && this.currentView === 'lobby') {
+        this.showView('booth');
+        this.loadBoothLine(this.findFirstAssignedLine());
+        this.showToast("🎙️ Session started! Entering recording booth.");
+      } else if (newStatus === 'screening' && this.currentView !== 'screening') {
+        this.showView('screening');
+        this.setupScreeningView();
+      }
     });
 
     this.socket.on('warp_to_screening', () => {
@@ -779,6 +799,127 @@ class DubMateApp {
     });
   }
 
+  initVideoPrompterSplitter() {
+    const handle = this.prompterResizeHandle || document.getElementById('prompter-resize-handle');
+    const videoContainer = this.stageVideo ? this.stageVideo.closest('.video-container') : document.querySelector('.video-container');
+    if (!handle || !videoContainer) return;
+
+    // Apply saved height preference or default fallback
+    const savedHeight = localStorage.getItem('dubmate_video_height');
+    if (savedHeight) {
+      const parsed = parseInt(savedHeight, 10);
+      if (!isNaN(parsed) && parsed >= 160 && parsed <= 500) {
+        videoContainer.style.setProperty('--video-h', `${parsed}px`);
+      }
+    }
+
+    let isDragging = false;
+    let startY = 0;
+    let startHeight = 0;
+    let rafId = null;
+
+    const endDrag = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      document.body.classList.remove('resizing');
+      if (rafId) cancelAnimationFrame(rafId);
+
+      if (e && e.pointerId) {
+        try {
+          handle.releasePointerCapture(e.pointerId);
+        } catch (err) {}
+      }
+
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      window.removeEventListener('mouseup', endDrag);
+      window.removeEventListener('blur', endDrag);
+
+      const measured = videoContainer.getBoundingClientRect().height;
+      const finalHeight = Math.round(measured || 0);
+      if (finalHeight >= 160 && finalHeight <= 500) {
+        localStorage.setItem('dubmate_video_height', finalHeight.toString());
+      }
+    };
+
+    const onPointerDown = (e) => {
+      e.preventDefault();
+      isDragging = true;
+      startY = e.clientY;
+      const measured = videoContainer.getBoundingClientRect().height;
+      startHeight = (measured && measured > 100) ? measured : 270;
+      document.body.classList.add('resizing');
+
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch (err) {}
+
+      window.addEventListener('pointermove', onPointerMove, { passive: false });
+      window.addEventListener('pointerup', endDrag);
+      window.addEventListener('pointercancel', endDrag);
+      window.addEventListener('mouseup', endDrag);
+      window.addEventListener('blur', endDrag);
+    };
+
+    const onPointerMove = (e) => {
+      if (!isDragging) return;
+      if (e.cancelable) e.preventDefault();
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const deltaY = e.clientY - startY;
+        const newHeight = startHeight + deltaY;
+        const maxH = Math.min(Math.round(window.innerHeight * 0.52), 460);
+        const clamped = Math.max(160, Math.min(maxH, Math.round(newHeight)));
+
+        videoContainer.style.setProperty('--video-h', `${clamped}px`);
+      });
+    };
+
+    // Double-click to snap reset to default (270px)
+    handle.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      videoContainer.style.removeProperty('--video-h');
+      localStorage.removeItem('dubmate_video_height');
+      this.showToast('Video size reset to default');
+    });
+
+    // Keyboard navigation (Arrow keys on handle)
+    handle.addEventListener('keydown', (e) => {
+      let handled = false;
+      const measured = videoContainer.getBoundingClientRect().height;
+      const currentH = (measured && measured > 100) ? measured : 270;
+      const maxH = Math.min(Math.round(window.innerHeight * 0.52), 460);
+      const step = 15;
+
+      if (e.key === 'ArrowDown') {
+        const nextH = Math.max(160, Math.min(maxH, currentH + step));
+        videoContainer.style.setProperty('--video-h', `${Math.round(nextH)}px`);
+        localStorage.setItem('dubmate_video_height', Math.round(nextH).toString());
+        handled = true;
+      } else if (e.key === 'ArrowUp') {
+        const nextH = Math.max(160, Math.min(maxH, currentH - step));
+        videoContainer.style.setProperty('--video-h', `${Math.round(nextH)}px`);
+        localStorage.setItem('dubmate_video_height', Math.round(nextH).toString());
+        handled = true;
+      } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Home') {
+        videoContainer.style.removeProperty('--video-h');
+        localStorage.removeItem('dubmate_video_height');
+        this.showToast('Video size reset to default');
+        handled = true;
+      }
+
+      if (handled) {
+        e.preventDefault();
+      }
+    });
+
+    handle.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) endDrag();
+    });
+  }
 
   async initRouter() {
     await this.fetchPacks();
@@ -793,6 +934,8 @@ class DubMateApp {
   }
 
   showView(viewName) {
+    document.body.classList.remove('resizing');
+    this.currentView = viewName;
     this.cancelCurrentCountdown();
     this.stopScreeningSyncMonitor();
     Object.keys(this.views).forEach((k) => {
@@ -804,6 +947,12 @@ class DubMateApp {
     }
     if (this.screeningVideo) {
       this.screeningVideo.pause();
+    }
+
+    if (viewName === 'lobby') {
+      this.renderLobbyState();
+    } else if (viewName === 'booth') {
+      this.renderTimelineChips();
     }
 
     // Toggle HUD & Breadcrumbs visibility
@@ -843,6 +992,7 @@ class DubMateApp {
   }
 
   leaveRoom() {
+    document.body.classList.remove('resizing');
     this.cancelCurrentCountdown();
     this.stopScreeningSyncMonitor();
     this.audio.stopAllPlayback();
@@ -1257,16 +1407,21 @@ class DubMateApp {
       this.headerUserPill.style.display = 'inline-flex';
       if (this.btnLeaveRoom) this.btnLeaveRoom.style.display = 'inline-flex';
 
-      if (this.roomState.pack.backing_url) {
-        this.audio.loadAudioBuffer(this.roomState.pack.backing_url).then((buf) => {
-          this.backingBuffer = buf;
-        });
+      // Lazy load backing buffer when entering booth instead of blocking joinRoom
+      if (this.roomState.status === 'screening') {
+        this.showView('screening');
+        this.setupScreeningView();
+        this.broadcastMyStatus('screening');
+      } else if (this.roomState.status === 'recording') {
+        this.showView('booth');
+        this.loadBoothLine(this.findFirstAssignedLine());
+        this.broadcastMyStatus('booth');
+      } else {
+        this.showView('lobby');
+        this.renderLobbyState();
+        this.renderCastActivityHUD();
+        this.broadcastMyStatus('lobby');
       }
-
-      this.showView('lobby');
-      this.renderLobbyState();
-      this.renderCastActivityHUD();
-      this.broadcastMyStatus('lobby');
     } catch (err) {
       const url = new URL(window.location.href);
       url.searchParams.delete('room');
@@ -1347,16 +1502,26 @@ class DubMateApp {
       const chip = document.createElement('div');
       chip.className = `actor-hud-chip ${u.is_ready ? 'ready' : ''}`;
 
-      const charText = assignedChars.length ? assignedChars.join(', ') : 'Unassigned';
-      const loc = u.location === 'screening' ? '🍿 In Screening' : (u.location === 'lobby' ? '🏠 In Lobby' : `🎙️ Line ${(u.current_line || 0) + 1}`);
+      let charDisplayText = 'Unassigned';
+      let charFullTooltip = 'Unassigned';
+      if (assignedChars.length > 0) {
+        charFullTooltip = assignedChars.join(', ');
+        if (assignedChars.length <= 2) {
+          charDisplayText = assignedChars.join(', ');
+        } else {
+          charDisplayText = `${assignedChars[0]}, ${assignedChars[1]} +${assignedChars.length - 2}`;
+        }
+      }
+
+      const loc = u.location === 'screening' ? '🍿 Screening' : (u.location === 'lobby' ? '🏠 Lobby' : `🎙️ Line ${(u.current_line || 0) + 1}`);
 
       chip.innerHTML = `
         <div class="actor-hud-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-        <span style="font-weight: 700;">${u.name} ${u.id === this.user.id ? '(You)' : ''}</span>
-        <span class="actor-hud-char">${charText}</span>
+        <span class="actor-hud-name" title="${u.name}">${u.name}${u.id === this.user.id ? ' (You)' : ''}</span>
+        <span class="actor-hud-char" title="${charFullTooltip}">🎭 ${charDisplayText}</span>
         <span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>
         <span class="actor-hud-status-badge ${u.is_ready ? 'badge-ready' : (u.location === 'screening' ? 'badge-screening' : 'badge-recording')}">
-          ${u.is_ready ? '✓ READY' : loc}
+          ${u.is_ready ? '✓ Ready' : loc}
         </span>
       `;
 
@@ -1383,30 +1548,90 @@ class DubMateApp {
   renderLobbyState() {
     if (!this.roomState) return;
 
-    this.lobbyPackTitle.innerText = this.roomState.pack.name;
-    this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} Lines`;
+    if (this.lobbyPackTitle) this.lobbyPackTitle.innerText = this.roomState.pack.name;
+    if (this.lobbyLineCount) this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} Lines`;
 
     const users = Object.values(this.roomState.users || {});
-    this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} Online`;
-    this.lobbyCastList.innerHTML = users.map(u => `
-      <div class="user-pill lobby-user-item" style="justify-content: space-between;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <div class="user-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-          <span class="lobby-user-name">${u.name} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''}</span>
-        </div>
-        <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
-          <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
-          <span>${u.is_online ? 'Online' : 'Offline'}</span>
-        </span>
-      </div>
-    `).join('');
+    if (this.castOnlineCount) this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} Online`;
 
-    this.castingTbody.innerHTML = '';
+    // Only update lobby cast list if user list changed
+    const userSummary = users.map(u => `${u.id}:${u.name}:${u.is_online}:${u.color}`).join('|');
+    if (this._lastUserSummary !== userSummary) {
+      this._lastUserSummary = userSummary;
+      if (this.lobbyCastList) {
+        this.lobbyCastList.innerHTML = users.map(u => `
+          <div class="user-pill lobby-user-item" style="justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div class="user-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
+              <span class="lobby-user-name">${u.name} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''}</span>
+            </div>
+            <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
+              <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
+              <span>${u.is_online ? 'Online' : 'Offline'}</span>
+            </span>
+          </div>
+        `).join('');
+      }
+    }
+
+    if (!this.castingTbody) return;
+
     const charCounts = {};
     this.roomState.pack.lines.forEach(l => {
       charCounts[l.character] = (charCounts[l.character] || 0) + 1;
     });
 
+    const userOptionsHtml = `<option value="">-- Unassigned (Original Voice) --</option>` +
+      users.map(u => `<option value="${u.id}">${u.name} ${u.id === this.user.id ? '(You)' : ''}</option>`).join('');
+
+    const usersChanged = (this._lastUserOptionsSummary !== userSummary);
+    this._lastUserOptionsSummary = userSummary;
+
+    // Check if table rows already exist for all characters
+    const existingRows = this.castingTbody.querySelectorAll('tr[data-character]');
+    if (existingRows.length === this.roomState.pack.characters.length && !usersChanged) {
+      // IN-PLACE UPDATE: Do not recreate DOM elements to avoid closing active <select> dropdowns
+      this.roomState.pack.characters.forEach((char) => {
+        const safeCharId = char.replace(/\s+/g, '-').toLowerCase();
+        const tr = this.castingTbody.querySelector(`tr[data-character="${char}"]`);
+        if (!tr) return;
+
+        const assignedIds = this.roomState.role_assignments[char] || [];
+        const assignedUser = users.find(u => assignedIds.includes(u.id));
+        const isAssignedToMe = assignedIds.includes(this.user.id);
+        const targetVal = assignedUser ? assignedUser.id : '';
+
+        tr.classList.toggle('assigned-to-me', isAssignedToMe);
+        const roleBadge = tr.querySelector('.your-role-badge');
+        if (isAssignedToMe && !roleBadge) {
+          const badgeCell = tr.querySelector('.char-badge-cell');
+          if (badgeCell) {
+            const span = document.createElement('span');
+            span.className = 'your-role-badge';
+            span.innerText = 'YOUR ROLE';
+            badgeCell.appendChild(span);
+          }
+        } else if (!isAssignedToMe && roleBadge) {
+          roleBadge.remove();
+        }
+
+        const dot = tr.querySelector('.actor-color-dot');
+        if (dot) {
+          dot.className = `actor-color-dot ${assignedUser ? 'active' : 'unassigned'}`;
+          dot.style.backgroundColor = assignedUser ? assignedUser.color : 'transparent';
+          dot.title = assignedUser ? assignedUser.name : 'Unassigned';
+        }
+
+        const select = tr.querySelector('.cast-select');
+        if (select && select.value !== targetVal && document.activeElement !== select) {
+          select.value = targetVal;
+        }
+      });
+      return;
+    }
+
+    // FULL REBUILD (Initial render or when user list changes)
+    this.castingTbody.innerHTML = '';
     this.roomState.pack.characters.forEach((char) => {
       const assignedIds = this.roomState.role_assignments[char] || [];
       const assignedUser = users.find(u => assignedIds.includes(u.id));
@@ -1414,6 +1639,7 @@ class DubMateApp {
       const safeCharId = char.replace(/\s+/g, '-').toLowerCase();
 
       const tr = document.createElement('tr');
+      tr.setAttribute('data-character', char);
       if (isAssignedToMe) {
         tr.classList.add('assigned-to-me');
       }
@@ -1495,18 +1721,40 @@ class DubMateApp {
     this.updateRecordButtonUI();
   }
 
+  async ensureBackingBuffer() {
+    if (this.backingBuffer) return this.backingBuffer;
+    if (!this.roomState?.pack?.backing_url) return null;
+    try {
+      this.backingBuffer = await this.audio.loadAudioBuffer(this.roomState.pack.backing_url);
+    } catch (e) {}
+    return this.backingBuffer;
+  }
+
   async loadBoothLine(index) {
     if (!this.roomState || !this.roomState.pack.lines[index]) return;
     this.cancelCurrentCountdown();
     this.currentLineIndex = index;
     const line = this.roomState.pack.lines[index];
+    this.loadLineSeq = (this.loadLineSeq || 0) + 1;
+    const currentSeq = this.loadLineSeq;
 
     this.broadcastMyStatus('booth');
 
-    if (this.stageVideo.src !== window.location.origin + this.roomState.pack.video_url) {
-      this.stageVideo.src = this.roomState.pack.video_url;
+    if (this.stageVideo) {
+      const targetSrc = this.roomState.pack.video_url;
+      if (!this.stageVideo.src.endsWith(targetSrc)) {
+        this.stageVideo.src = targetSrc;
+      }
+      try {
+        if (this.stageVideo.readyState >= 1) {
+          this.stageVideo.currentTime = Math.max(0, line.start);
+        } else {
+          this.stageVideo.addEventListener('loadedmetadata', () => {
+            try { this.stageVideo.currentTime = Math.max(0, line.start); } catch (e) {}
+          }, { once: true });
+        }
+      } catch (e) {}
     }
-    this.stageVideo.currentTime = Math.max(0, line.start);
 
     // Calculate your line numbering (e.g. Line 3 of 6)
     const myAssignedChars = this.getMyAssignedCharacters();
@@ -1552,27 +1800,61 @@ class DubMateApp {
     this.updateRecordButtonUI(take);
     this.setABMode('A');
 
-    // Load original reference buffer
-    this.origBuffer = await this.audio.loadAudioBuffer(line.audio_url);
-    const origPeaks = WaveformRenderer.extractPeaksFromBuffer(this.origBuffer, 100);
-
-    let takePeaks = [];
-    if (take && take.url) {
-      // Force fresh buffer bypass for current take
-      this.currentTakeBuffer = await this.audio.loadAudioBuffer(take.url, true);
-      takePeaks = take.peaks || WaveformRenderer.extractPeaksFromBuffer(this.currentTakeBuffer, 100);
-    } else {
-      this.currentTakeBuffer = null;
-    }
+    // 1. INSTANT WAVEFORM RENDERING (0ms latency via precomputed peaks)
+    let origPeaks = line.peaks || [];
+    let takePeaks = take ? (take.peaks || []) : [];
 
     this.waveform.setData({
       origPeaks,
       takePeaks,
-      offsetMs: take ? take.offset_ms : 0,
-      totalDuration: line.duration + 0.8,
+      offsetMs: take ? (take.offset_ms || 0) : 0,
+      totalDuration: (line.duration || 3.0) + 0.8,
     });
 
     this.renderTimelineChips();
+
+    // 2. Asynchronous Audio Buffer Loading (with race condition guarding & fault tolerance)
+    (async () => {
+      try {
+        const origBuf = await this.audio.loadAudioBuffer(line.audio_url);
+        if (currentSeq !== this.loadLineSeq) return;
+        this.origBuffer = origBuf;
+        if ((!origPeaks || origPeaks.length === 0) && origBuf) {
+          origPeaks = WaveformRenderer.extractPeaksFromBuffer(origBuf, 100);
+          this.waveform.setData({
+            origPeaks,
+            takePeaks,
+            offsetMs: take ? (take.offset_ms || 0) : 0,
+            totalDuration: (line.duration || 3.0) + 0.8,
+          });
+        }
+      } catch (e) {
+        console.warn("[App] Error loading reference audio:", e);
+      }
+
+      if (take && take.url) {
+        try {
+          const takeBuf = await this.audio.loadAudioBuffer(take.url, true);
+          if (currentSeq !== this.loadLineSeq) return;
+          this.currentTakeBuffer = takeBuf;
+          if ((!takePeaks || takePeaks.length === 0) && takeBuf) {
+            takePeaks = WaveformRenderer.extractPeaksFromBuffer(takeBuf, 100);
+            this.waveform.setData({
+              origPeaks,
+              takePeaks,
+              offsetMs: take.offset_ms || 0,
+              totalDuration: (line.duration || 3.0) + 0.8,
+            });
+          }
+        } catch (e) {
+          console.warn("[App] Error loading take audio:", e);
+        }
+      } else {
+        if (currentSeq === this.loadLineSeq) {
+          this.currentTakeBuffer = null;
+        }
+      }
+    })();
 
     // Update Prev / Next navigation button states (including "I'm Finished" state)
     let isFirst = false;
@@ -1675,21 +1957,76 @@ class DubMateApp {
     });
   }
 
+  async syncVideoSeek(targetTime) {
+    if (!this.stageVideo) return;
+    this.stageVideo.pause();
+    const clamped = Math.max(0, targetTime);
+    if (Math.abs(this.stageVideo.currentTime - clamped) < 0.03) {
+      return;
+    }
+    return new Promise((resolve) => {
+      let resolved = false;
+      const onSeeked = () => {
+        if (!resolved) {
+          resolved = true;
+          this.stageVideo.removeEventListener('seeked', onSeeked);
+          resolve();
+        }
+      };
+      this.stageVideo.addEventListener('seeked', onSeeked, { once: true });
+      try {
+        this.stageVideo.currentTime = clamped;
+      } catch (e) {
+        resolved = true;
+        resolve();
+      }
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this.stageVideo.removeEventListener('seeked', onSeeked);
+          resolve();
+        }
+      }, 100);
+    });
+  }
+
+  stopBoothPlayback() {
+    this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
+    this.isPlayingReference = false;
+    this.isPlayingTake = false;
+    this.audio.stopAllPlayback();
+    if (this.stageVideo) {
+      this.stageVideo.pause();
+    }
+    this.waveform.setPlayhead(-1);
+  }
+
   // Play Original Reference Clip with Animated Playhead
   async playOriginalReference() {
     this.cancelCurrentCountdown();
+    if (this.isPlayingReference) {
+      this.stopBoothPlayback();
+      return;
+    }
+    this.stopBoothPlayback();
+
     const line = this.roomState.pack.lines[this.currentLineIndex];
-    this.audio.stopAllPlayback();
+    this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
+    const token = this.activePlaybackToken;
+    this.isPlayingReference = true;
 
-    this.stageVideo.currentTime = Math.max(0, line.start);
-    this.stageVideo.play();
+    await this.syncVideoSeek(line.start);
+    if (token !== this.activePlaybackToken) return;
 
-    let isPlaying = true;
+    try {
+      await this.stageVideo.play();
+    } catch (e) {}
+
     const startAudioTime = performance.now();
     const durationSec = Math.max(line.duration || 3.0, (this.origBuffer?.duration || 3.0)) + 0.2;
 
     const animPlayhead = () => {
-      if (!isPlaying) return;
+      if (token !== this.activePlaybackToken) return;
       const elapsed = (performance.now() - startAudioTime) / 1000.0;
       const progress = Math.min(1.0, elapsed / durationSec);
       this.waveform.setPlayhead(progress);
@@ -1706,9 +2043,11 @@ class DubMateApp {
       lineStartSec: line.start,
       origBuffer: this.origBuffer,
       onEnded: () => {
-        isPlaying = false;
-        this.waveform.setPlayhead(-1);
-        this.stageVideo.pause();
+        if (token === this.activePlaybackToken) {
+          this.isPlayingReference = false;
+          this.waveform.setPlayhead(-1);
+          this.stageVideo.pause();
+        }
       },
     });
   }
@@ -1716,6 +2055,12 @@ class DubMateApp {
   // Preview Take (Bi-directional Sync & Live Waveform Animation)
   async previewCurrentTake() {
     this.cancelCurrentCountdown();
+    if (this.isPlayingTake) {
+      this.stopBoothPlayback();
+      return;
+    }
+    this.stopBoothPlayback();
+
     const line = this.roomState.pack.lines[this.currentLineIndex];
     const take = this.roomState?.takes?.[this.currentLineIndex];
 
@@ -1724,15 +2069,34 @@ class DubMateApp {
       return;
     }
 
-    // Always fetch fresh buffer to prevent stale audio playback
-    this.currentTakeBuffer = await this.audio.loadAudioBuffer(take.url, true);
+    // Ensure take audio buffer is ready
+    if (!this.currentTakeBuffer) {
+      try {
+        this.currentTakeBuffer = await this.audio.loadAudioBuffer(take.url, true);
+      } catch (e) {
+        console.warn("[App] Error loading take audio:", e);
+      }
+    }
 
-    this.audio.stopAllPlayback();
+    if (!this.currentTakeBuffer) {
+      this.showToast("⏳ Loading take audio... Please retry in a moment.");
+      return;
+    }
+
+    this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
+    const token = this.activePlaybackToken;
+    this.isPlayingTake = true;
+
     const offsetMs = parseInt(this.sliderNudge.value, 10);
     const offsetSec = offsetMs / 1000.0;
     const previewStartSec = Math.max(0, line.start + Math.min(0, offsetSec));
-    this.stageVideo.currentTime = previewStartSec;
-    this.stageVideo.play();
+
+    await this.syncVideoSeek(previewStartSec);
+    if (token !== this.activePlaybackToken) return;
+
+    try {
+      await this.stageVideo.play();
+    } catch (e) {}
 
     const pitch = parseFloat(this.sliderPitch.value);
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
@@ -1740,12 +2104,11 @@ class DubMateApp {
     const lowcut = this.checkLowcut.checked;
     const comp = this.checkCompressor.checked;
 
-    let isPlaying = true;
     const startAudioTime = performance.now();
     const previewDurationSec = Math.max(line.duration || 3.0, (this.currentTakeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
 
     const animPlayhead = () => {
-      if (!isPlaying) return;
+      if (token !== this.activePlaybackToken) return;
       const elapsed = (performance.now() - startAudioTime) / 1000.0;
       const progress = Math.min(1.0, elapsed / previewDurationSec);
       this.waveform.setPlayhead(progress);
@@ -1769,9 +2132,11 @@ class DubMateApp {
       enableLowCut: lowcut,
       enableCompressor: comp,
       onEnded: () => {
-        isPlaying = false;
-        this.waveform.setPlayhead(-1);
-        this.stageVideo.pause();
+        if (token === this.activePlaybackToken) {
+          this.isPlayingTake = false;
+          this.waveform.setPlayhead(-1);
+          this.stageVideo.pause();
+        }
       },
     });
   }
@@ -1860,6 +2225,7 @@ class DubMateApp {
     const line = this.roomState.pack.lines[this.currentLineIndex];
     const sessionId = ++this.countdownSessionId;
 
+    this.ensureBackingBuffer(); // Preload backing in background during 3s countdown
     this.recordState = 'countdown';
     this.audio.stopAllPlayback();
     this.updateRecordButtonUI();
@@ -1910,7 +2276,12 @@ class DubMateApp {
 
     await this.audio.startRecording();
     this.stageVideo.currentTime = Math.max(0, line.start);
-    this.stageVideo.play();
+    try {
+      const p = this.stageVideo.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    } catch (e) {}
 
     // Backing track
     if (this.backingBuffer) {
@@ -1984,10 +2355,10 @@ class DubMateApp {
     }
 
     this.currentTakeBlob = res.blob;
-    await this.uploadTake(this.currentLineIndex, this.currentTakeBlob);
+    await this.uploadTake(this.currentLineIndex, this.currentTakeBlob, res.audioBuffer);
   }
 
-  async uploadTake(lineIndex, blob) {
+  async uploadTake(lineIndex, blob, recordedBuffer = null) {
     const offsetMs = parseInt(this.sliderNudge.value, 10);
     const pitch = parseFloat(this.sliderPitch.value);
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
@@ -2011,7 +2382,17 @@ class DubMateApp {
         throw new Error(`Server returned status ${res.status}`);
       }
       const data = await res.json();
+      if (data.take) {
+        if (!this.roomState.takes) this.roomState.takes = {};
+        this.roomState.takes[lineIndex] = data.take;
+      }
       this.audio.evictTakeCache(lineIndex);
+      if (recordedBuffer) {
+        this.currentTakeBuffer = recordedBuffer;
+        if (data.take && data.take.url) {
+          this.screeningBuffers.set(data.take.url, recordedBuffer);
+        }
+      }
       this.showToast("Take recorded & saved! 🎙️");
       await this.loadBoothLine(lineIndex);
     } catch (err) {
@@ -2094,24 +2475,32 @@ class DubMateApp {
       this.applyLiveMixToTheater();
     }
 
-    this.screeningVideo.currentTime = 0;
     this.updateScreeningControls();
 
-    // Preload all audio buffers in background for live mix mode
+    // Preload screening audio in parallel non-blocking queue
     this.preloadScreeningAudio();
   }
 
-  applyExportedVideoToTheater() {
-    if (!this.roomState) return;
+  applyExportedVideoToTheater(directUrl = null) {
+    if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = true;
     this.audio.stopAllPlayback();
     this.stopScreeningSyncMonitor();
 
-    const videoUrl = this.roomState.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-    if (this.screeningVideo.src !== window.location.origin + videoUrl && this.screeningVideo.getAttribute('src') !== videoUrl) {
+    const videoUrl = directUrl || this.roomState.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
+    if (!this.screeningVideo.src.endsWith(videoUrl) && this.screeningVideo.getAttribute('src') !== videoUrl) {
       this.screeningVideo.src = videoUrl;
-      this.screeningVideo.currentTime = 0;
     }
+    try {
+      if (this.screeningVideo.readyState >= 1) {
+        this.screeningVideo.currentTime = 0;
+      } else {
+        this.screeningVideo.addEventListener('loadedmetadata', () => {
+          try { this.screeningVideo.currentTime = 0; } catch (e) {}
+        }, { once: true });
+      }
+    } catch (e) {}
+
     this.screeningVideo.muted = false;
     this.screeningVideo.volume = 1.0;
 
@@ -2124,16 +2513,25 @@ class DubMateApp {
   }
 
   applyLiveMixToTheater() {
-    if (!this.roomState) return;
+    if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = false;
     this.audio.stopAllPlayback();
     this.stopScreeningSyncMonitor();
 
     const packVideoUrl = this.roomState.pack.video_url;
-    if (this.screeningVideo.src !== window.location.origin + packVideoUrl && this.screeningVideo.getAttribute('src') !== packVideoUrl) {
+    if (!this.screeningVideo.src.endsWith(packVideoUrl) && this.screeningVideo.getAttribute('src') !== packVideoUrl) {
       this.screeningVideo.src = packVideoUrl;
-      this.screeningVideo.currentTime = 0;
     }
+    try {
+      if (this.screeningVideo.readyState >= 1) {
+        this.screeningVideo.currentTime = 0;
+      } else {
+        this.screeningVideo.addEventListener('loadedmetadata', () => {
+          try { this.screeningVideo.currentTime = 0; } catch (e) {}
+        }, { once: true });
+      }
+    } catch (e) {}
+
     this.screeningVideo.muted = true;
     this.screeningVideo.volume = 0;
 
@@ -2152,9 +2550,8 @@ class DubMateApp {
     }
     for (const line of this.roomState.pack.lines) {
       const take = this.roomState.takes[line.index];
-      if (take && take.url && !this.screeningBuffers.has(take.url)) {
-        return false;
-      } else if (!take && line.audio_url && !this.screeningBuffers.has(line.audio_url)) {
+      const targetUrl = (take && take.url) ? take.url : line.audio_url;
+      if (targetUrl && !this.screeningBuffers.has(targetUrl)) {
         return false;
       }
     }
@@ -2166,23 +2563,50 @@ class DubMateApp {
     this.isPreloadingScreening = true;
 
     try {
+      const loadTasks = [];
+
+      // 1. Backing track in parallel
       if (this.roomState.pack.backing_url && !this.screeningBuffers.has(this.roomState.pack.backing_url)) {
-        const b = await this.audio.loadAudioBuffer(this.roomState.pack.backing_url);
-        this.screeningBuffers.set(this.roomState.pack.backing_url, b);
+        loadTasks.push(
+          this.audio.loadAudioBuffer(this.roomState.pack.backing_url)
+            .then(b => {
+              if (b) this.screeningBuffers.set(this.roomState.pack.backing_url, b);
+            })
+            .catch(() => {})
+        );
       }
 
+      // 2. Dialogue lines & takes in parallel
       for (const line of this.roomState.pack.lines) {
         const take = this.roomState.takes[line.index];
         if (take && take.url) {
-          const b = await this.audio.loadAudioBuffer(take.url, true);
-          this.screeningBuffers.set(take.url, b);
-        } else if (line.audio_url) {
-          if (!this.screeningBuffers.has(line.audio_url)) {
-            const b = await this.audio.loadAudioBuffer(line.audio_url);
-            this.screeningBuffers.set(line.audio_url, b);
+          if (!this.screeningBuffers.has(take.url)) {
+            loadTasks.push(
+              this.audio.loadAudioBuffer(take.url)
+                .then(b => {
+                  if (b) {
+                    this.screeningBuffers.set(take.url, b);
+                    // Pre-cache pitch-shifted buffer in background for 0ms instant playback
+                    if (Math.abs(take.pitch_semitones || 0) > 0.05) {
+                      try { this.audio.pitchShiftBuffer(b, take.pitch_semitones); } catch (e) {}
+                    }
+                  }
+                })
+                .catch(() => {})
+            );
           }
+        } else if (line.audio_url && !this.screeningBuffers.has(line.audio_url)) {
+          loadTasks.push(
+            this.audio.loadAudioBuffer(line.audio_url)
+              .then(b => {
+                if (b) this.screeningBuffers.set(line.audio_url, b);
+              })
+              .catch(() => {})
+          );
         }
       }
+
+      await Promise.allSettled(loadTasks);
     } catch (e) {
       console.warn("Screening preloading warning:", e);
     } finally {
@@ -2368,17 +2792,27 @@ class DubMateApp {
       }
 
       const now = performance.now();
-      if (now - lastCheckTime >= 150) {
+      if (now - lastCheckTime >= 250) {
         lastCheckTime = now;
         const elapsedAudio = this.audio.ctx.currentTime - audioCtxStart;
         if (elapsedAudio > 0) {
           const expectedVideoTime = startTime + elapsedAudio;
           const currentVideoTime = this.screeningVideo.currentTime;
-          const drift = currentVideoTime - expectedVideoTime;
+          const drift = currentVideoTime - expectedVideoTime; // positive = video is ahead, negative = video is behind
 
-          // If drift exceeds 40ms, softly align video to audio clock
-          if (Math.abs(drift) > 0.040 && !this.screeningVideo.seeking) {
-            this.screeningVideo.currentTime = expectedVideoTime;
+          // Micro-adjust video playbackRate instead of seeking to eliminate video decoder stalls
+          if (Math.abs(drift) > 0.05 && Math.abs(drift) < 0.35) {
+            if (drift > 0) {
+              this.screeningVideo.playbackRate = 0.96; // Gently slow down video
+            } else {
+              this.screeningVideo.playbackRate = 1.04; // Gently speed up video
+            }
+          } else if (Math.abs(drift) >= 0.35 && !this.screeningVideo.seeking) {
+            // Large drift: perform smooth hard seek
+            try { this.screeningVideo.currentTime = expectedVideoTime; } catch (e) {}
+            this.screeningVideo.playbackRate = 1.0;
+          } else {
+            this.screeningVideo.playbackRate = 1.0;
           }
         }
       }
@@ -2393,6 +2827,9 @@ class DubMateApp {
     if (this.screeningSyncRafId) {
       cancelAnimationFrame(this.screeningSyncRafId);
       this.screeningSyncRafId = null;
+    }
+    if (this.screeningVideo) {
+      this.screeningVideo.playbackRate = 1.0;
     }
   }
 
@@ -2496,38 +2933,10 @@ class DubMateApp {
     if (this.stepReady) { this.stepReady.className = 'step-item'; }
     this.exportStatusText.innerText = "Applying vocal EQ, studio compression & acoustic room reverb...";
     if (this.exportProgressFill) {
-      this.exportProgressFill.style.transform = 'scaleX(0.25)';
+      this.exportProgressFill.style.transform = 'scaleX(0.3)';
     }
 
-    // Step 2 and Step 3 UI progress cadence
-    const progressTimer1 = setTimeout(() => {
-      if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
-      if (this.stepMux) { this.stepMux.className = 'step-item active'; }
-      this.exportStatusText.innerText = "Multiplexing master audio with 1080p cinema video...";
-      if (this.exportProgressFill) {
-        this.exportProgressFill.style.transform = 'scaleX(0.65)';
-      }
-    }, 700);
-
-    const progressTimer2 = setTimeout(() => {
-      this.exportStatusText.innerText = "Encoding high-fidelity MP4 container...";
-      if (this.exportProgressFill) {
-        this.exportProgressFill.style.transform = 'scaleX(0.88)';
-      }
-    }, 1500);
-
-    try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${this.selectedAspectRatio}`, {
-        method: 'POST',
-      });
-      clearTimeout(progressTimer1);
-      clearTimeout(progressTimer2);
-
-      if (!res.ok) {
-        throw new Error(`Server returned HTTP ${res.status}`);
-      }
-      const data = await res.json();
-
+    const setExportSuccessUI = (data) => {
       if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
       if (this.stepMux) { this.stepMux.className = 'step-item completed'; }
       if (this.stepReady) { this.stepReady.className = 'step-item active'; }
@@ -2540,14 +2949,13 @@ class DubMateApp {
       if (this.btnDownloadLink916) {
         this.btnDownloadLink916.href = data.download_url_9_16 || `/api/rooms/${this.roomState.room_id}/export/download?aspect_ratio=9:16`;
       }
-      this.exportDownloadContainer.style.display = 'flex';
+      this.exportDownloadContainer.style.display = 'block';
 
       const sizeText = data.file_size_mb ? `${data.file_size_mb} MB` : '';
       const durationText = data.duration ? `${data.duration}s` : (this.roomState?.pack?.duration ? `${Math.round(this.roomState.pack.duration)}s` : '');
       const metaBadge = (sizeText || durationText) ? ` (${[sizeText, durationText].filter(Boolean).join(' • ')})` : '';
 
       this.btnDownloadLink.innerHTML = `<span>⬇️ Download Master Video${metaBadge}</span>`;
-      this.exportDownloadContainer.style.display = 'block';
 
       // Instantly load the rendered master video into theater preview player
       if (this.roomState) {
@@ -2556,11 +2964,63 @@ class DubMateApp {
         this.roomState.download_url = data.download_url;
       }
       this.applyExportedVideoToTheater();
-
       this.showToast("🎬 Master Dubbed Video is ready in Theater & for download!");
+    };
+
+    try {
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${this.selectedAspectRatio}`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+      const data = await res.json();
+
+      if (data.status === 'ok' || data.status === 'ready') {
+        setExportSuccessUI(data);
+        return;
+      }
+
+      // If background rendering in progress, poll until ready
+      if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
+      if (this.stepMux) { this.stepMux.className = 'step-item active'; }
+      this.exportStatusText.innerText = "Encoding master audio and video stems in background...";
+      if (this.exportProgressFill) {
+        this.exportProgressFill.style.transform = 'scaleX(0.7)';
+      }
+
+      const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${this.selectedAspectRatio}`;
+      let attempts = 0;
+      const maxAttempts = 90; // up to 3 minutes
+
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        try {
+          const pollRes = await fetch(pollUrl);
+          if (pollRes.ok) {
+            const pollData = await pollRes.json();
+            if (pollData.status === 'ready' || pollData.status === 'ok') {
+              clearInterval(pollInterval);
+              setExportSuccessUI(pollData);
+              return;
+            }
+            if (String(pollData.status).startsWith('failed')) {
+              clearInterval(pollInterval);
+              throw new Error(pollData.status);
+            }
+          }
+        } catch (e) {
+          console.warn("[ExportPoll] Polling update:", e);
+        }
+
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          this.exportStatusText.innerText = "⚠️ Rendering is taking longer than expected. Please check back shortly.";
+        }
+      }, 2000);
+
     } catch (err) {
-      clearTimeout(progressTimer1);
-      clearTimeout(progressTimer2);
       if (this.exportProgressFill) {
         this.exportProgressFill.style.transform = 'scaleX(0)';
       }

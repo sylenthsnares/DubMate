@@ -3,12 +3,13 @@
 export class WaveformRenderer {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    this.ctx = canvas ? canvas.getContext('2d') : null;
     this.origPeaks = [];
     this.takePeaks = [];
     this.offsetMs = 0;
     this.playheadSec = null;
     this.totalDuration = 3.0;
+    this._rafId = null;
 
     // Callbacks
     this.onOffsetChange = options.onOffsetChange || null;
@@ -20,10 +21,30 @@ export class WaveformRenderer {
     this.dragStartOffset = 0;
     this.isHovering = false;
 
-    this.initInteractions();
+    if (this.canvas) {
+      this.initInteractions();
 
-    this.resizeObserver = new ResizeObserver(() => this.render());
-    this.resizeObserver.observe(this.canvas);
+      const targetObserved = this.canvas.parentElement || this.canvas;
+      try {
+        this.resizeObserver = new ResizeObserver(() => {
+          this.requestRender();
+        });
+        this.resizeObserver.observe(targetObserved);
+      } catch (e) {
+        window.addEventListener('resize', () => this.requestRender());
+      }
+    }
+  }
+
+  requestRender() {
+    if (this._rafId) return;
+    const raf = (typeof window !== 'undefined' && window.requestAnimationFrame) 
+      ? window.requestAnimationFrame.bind(window)
+      : (typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame : ((cb) => setTimeout(cb, 16)));
+    this._rafId = raf(() => {
+      this._rafId = null;
+      this.render();
+    });
   }
 
   initInteractions() {
@@ -41,7 +62,7 @@ export class WaveformRenderer {
       this.dragStartX = getCanvasX(e);
       this.dragStartOffset = this.offsetMs;
       canvas.style.cursor = 'grabbing';
-      this.render();
+      this.requestRender();
     };
 
     const onDrag = (e) => {
@@ -61,7 +82,7 @@ export class WaveformRenderer {
         if (this.onOffsetChange) {
           this.onOffsetChange(this.offsetMs);
         }
-        this.render();
+        this.requestRender();
       }
     };
 
@@ -72,7 +93,7 @@ export class WaveformRenderer {
         if (this.onOffsetCommit) {
           this.onOffsetCommit(this.offsetMs);
         }
-        this.render();
+        this.requestRender();
       }
     };
 
@@ -104,8 +125,10 @@ export class WaveformRenderer {
     this.takePeaks = takePeaks || [];
     this.offsetMs = offsetMs || 0;
     this.totalDuration = Math.max(0.5, totalDuration);
-    this.canvas.style.cursor = this.takePeaks && this.takePeaks.length > 0 ? 'grab' : 'default';
-    this.render();
+    if (this.canvas) {
+      this.canvas.style.cursor = this.takePeaks && this.takePeaks.length > 0 ? 'grab' : 'default';
+    }
+    this.requestRender();
   }
 
   setPlayhead(progress) {
@@ -114,28 +137,34 @@ export class WaveformRenderer {
     } else {
       this.playheadProgress = Math.max(0, Math.min(1.0, progress));
     }
-    this.render();
+    this.requestRender();
   }
 
   static extractPeaksFromBuffer(buffer, columns = 100) {
-    if (!buffer) return [];
-    const channelData = buffer.getChannelData(0);
-    const step = channelData.length / columns;
-    const peaks = [];
+    if (!buffer || typeof buffer.getChannelData !== 'function') return [];
+    try {
+      const channelData = buffer.getChannelData(0);
+      if (!channelData || channelData.length === 0) return [];
+      const step = channelData.length / columns;
+      const peaks = [];
 
-    for (let i = 0; i < columns; i++) {
-      const start = Math.floor(i * step);
-      const end = Math.floor((i + 1) * step);
-      let min = 0;
-      let max = 0;
-      for (let j = start; j < end; j++) {
-        const val = channelData[j];
-        if (val < min) min = val;
-        if (val > max) max = val;
+      for (let i = 0; i < columns; i++) {
+        const start = Math.floor(i * step);
+        const end = Math.max(start + 1, Math.floor((i + 1) * step));
+        let min = 0;
+        let max = 0;
+        for (let j = start; j < Math.min(channelData.length, end); j++) {
+          const val = channelData[j];
+          if (val < min) min = val;
+          if (val > max) max = val;
+        }
+        peaks.push([min, max]);
       }
-      peaks.push([min, max]);
+      return peaks;
+    } catch (e) {
+      console.warn("[WaveformRenderer] Error extracting peaks from buffer:", e);
+      return [];
     }
-    return peaks;
   }
 
   render() {

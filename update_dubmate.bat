@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 title DubMate Studio Pro - Updater
 color 0a
 cd /d "%~dp0"

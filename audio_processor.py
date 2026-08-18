@@ -224,9 +224,9 @@ def apply_audio_effects(
         tempo_str = ",".join(tempo_filters)
         filters.append(f"asetrate={target_rate},{tempo_str},aresample={sr}")
 
-    # 3. Vocal Compressor
+    # 3. Vocal Compressor (Matching Web Audio 3:1 ratio, -24dB threshold, 12dB soft knee)
     if enable_compressor:
-        filters.append("compand=attacks=0.015:decays=0.15:points=-80/-80|-24/-24|0/-6")
+        filters.append("compand=attacks=0.015:decays=0.15:points=-80/-80|-30/-30|-18/-22|0/-16")
 
     ffmpeg = get_ffmpeg_path()
     if filters:
@@ -261,11 +261,14 @@ def apply_audio_effects(
         audio = audio * np.float32(gain_mult)
 
     # 5. Studio Acoustic Room Convolution Reverb
-    # Direct vocal stays at 100% punch; room reflections are blended seamlessly on top
+    # Direct vocal stays at 100% punch; lush room reflections and natural reverb decay ring out seamlessly
     if reverb_wet > 0.02 and len(audio) > 0:
         impulse = get_reverb_impulse(decay_sec=1.5, sr=sr)
-        wet = scipy.signal.fftconvolve(audio, impulse)[:len(audio)]
-        audio = audio + wet * np.float32(reverb_wet * 0.70)
+        wet = scipy.signal.fftconvolve(audio, impulse)
+        out_audio = np.zeros(len(wet), dtype=np.float32)
+        out_audio[:len(audio)] = audio
+        out_audio += wet * np.float32(reverb_wet * 0.70)
+        audio = out_audio
 
     return audio
 

@@ -8,9 +8,10 @@ export class AudioEngine {
     this.isRecording = false;
     this.stream = null;
 
-    // Buffer Caches
+    // Buffer Caches & In-Flight Request Deduplication
     this.bufferCache = new Map();
     this.pitchShiftCache = new Map();
+    this.inFlightRequests = new Map();
 
     // Active Audio Nodes
     this.currentPlayingNodes = [];
@@ -21,7 +22,7 @@ export class AudioEngine {
     // Metronome & Monitoring Settings
     this.metronomeEnabled = true;
     this.metronomeVolume = 0.20; // Gentle -14dB
-    this.backingVolume = 0.60;   // 60% default
+    this.backingVolume = 0.65;   // 65% calibrated DAW standard
 
     // Shared Reverb Impulse Buffer
     this.reverbBuffer = null;
@@ -29,22 +30,32 @@ export class AudioEngine {
   }
 
   initContext() {
-    if (!this.ctx) {
+    if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      this.ctx = new AudioCtx({ sampleRate: 44100 });
-      this.updateReverbImpulse(1.5, 0.5, 20); // Default studio room
+      if (AudioCtx) {
+        try {
+          this.ctx = new AudioCtx();
+        } catch (e) {
+          try {
+            this.ctx = new AudioCtx({ sampleRate: 44100 });
+          } catch (e2) {}
+        }
+        if (this.ctx) {
+          this._generateReverbImpulse(1.5, 0.5, 20); // Default studio room
+        }
+      }
     }
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
     }
     return this.ctx;
   }
 
   // --- 1. Algorithmic Acoustic Room Impulse Generator ---
-  updateReverbImpulse(decaySec = 1.5, roomSize = 0.5, preDelayMs = 20) {
-    this.initContext();
+  _generateReverbImpulse(decaySec = 1.5, roomSize = 0.5, preDelayMs = 20) {
+    if (!this.ctx) return null;
     const rate = this.ctx.sampleRate;
-    const totalDuration = Math.min(2.5, Math.max(0.2, decaySec)); // Cap at 2.5s for zero CPU drag
+    const totalDuration = Math.min(2.0, Math.max(0.2, decaySec)); // Cap at 2.0s for zero CPU drag
     const length = Math.floor(rate * totalDuration);
     const preDelaySamples = Math.floor(rate * (preDelayMs / 1000.0));
 
@@ -54,6 +65,9 @@ export class AudioEngine {
 
     const decayConstant = 3.2 / Math.max(0.1, decaySec);
     const diffusion = 0.5 + roomSize * 0.45;
+
+    let sumSqL = 0;
+    let sumSqR = 0;
 
     for (let i = 0; i < length; i++) {
       if (i < preDelaySamples) {
@@ -69,12 +83,29 @@ export class AudioEngine {
       const noiseL = (Math.random() * 2 - 1) * envelope;
       const noiseR = (Math.random() * 2 - 1) * envelope;
 
-      left[i] = noiseL * (1.0 - diffusion * 0.2) + noiseR * (diffusion * 0.2);
-      right[i] = noiseR * (1.0 - diffusion * 0.2) + noiseL * (diffusion * 0.2);
+      const sL = noiseL * (1.0 - diffusion * 0.2) + noiseR * (diffusion * 0.2);
+      const sR = noiseR * (1.0 - diffusion * 0.2) + noiseL * (diffusion * 0.2);
+      left[i] = sL;
+      right[i] = sR;
+      sumSqL += sL * sL;
+      sumSqR += sR * sR;
+    }
+
+    // Normalize impulse response to unit L2 energy for exact mathematical parity with DSP render
+    const normL = Math.sqrt(sumSqL) || 1.0;
+    const normR = Math.sqrt(sumSqR) || 1.0;
+    for (let i = 0; i < length; i++) {
+      left[i] /= normL;
+      right[i] /= normR;
     }
 
     this.reverbBuffer = impulse;
     return this.reverbBuffer;
+  }
+
+  updateReverbImpulse(decaySec = 1.5, roomSize = 0.5, preDelayMs = 20) {
+    if (!this.ctx) this.initContext();
+    return this._generateReverbImpulse(decaySec, roomSize, preDelayMs);
   }
 
   // --- 2. High-Speed Time-Invariant Pitch Shifter ---
@@ -95,10 +126,13 @@ export class AudioEngine {
     const inLength = inputBuffer.length;
     const outBuffer = this.ctx.createBuffer(numChannels, inLength, sampleRate);
 
-    const pitchRatio = Math.pow(2.0, pitchSemitones / 12.0);
+    const pitchRatio = Math.max(0.25, Math.min(4.0, Math.pow(2.0, pitchSemitones / 12.0)));
     const grainSize = 1024; // Fast, lightweight grain size
     const hopSize = 256;    // 75% overlap
     const grainStep = hopSize / pitchRatio;
+    if (grainStep <= 0.01 || hopSize <= 0) {
+      return inputBuffer;
+    }
 
     // Pre-calculate Hann window
     const window = new Float32Array(grainSize);
@@ -200,16 +234,29 @@ export class AudioEngine {
     this.isRecording = true;
   }
 
+  releaseMicrophone() {
+    if (this.stream) {
+      try {
+        this.stream.getTracks().forEach((track) => {
+          try { track.stop(); } catch (e) {}
+        });
+      } catch (e) {}
+      this.stream = null;
+    }
+  }
+
   stopRecording() {
     return new Promise((resolve) => {
       if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
         this.isRecording = false;
+        this.releaseMicrophone();
         resolve(null);
         return;
       }
 
       this.mediaRecorder.onstop = async () => {
         this.isRecording = false;
+        this.releaseMicrophone();
         const mime = this.mediaRecorder.mimeType || 'audio/webm';
         const blob = new Blob(this.audioChunks, { type: mime });
         let audioBuffer = null;
@@ -223,7 +270,13 @@ export class AudioEngine {
       if (this.mediaRecorder.state === 'recording') {
         try { this.mediaRecorder.requestData(); } catch (e) {}
       }
-      this.mediaRecorder.stop();
+      try {
+        this.mediaRecorder.stop();
+      } catch (e) {
+        this.isRecording = false;
+        this.releaseMicrophone();
+        resolve(null);
+      }
     });
   }
 
@@ -239,18 +292,71 @@ export class AudioEngine {
   }
 
   async loadAudioBuffer(url, bypassCache = false) {
+    if (!url) return null;
     if (!bypassCache && this.bufferCache.has(url)) {
       return this.bufferCache.get(url);
     }
-    this.initContext();
-    const res = await fetch(url, { cache: 'no-store' });
-    const arrayBuffer = await res.arrayBuffer();
-    const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-    this.bufferCache.set(url, audioBuffer);
-    return audioBuffer;
+    if (!bypassCache && this.inFlightRequests.has(url)) {
+      return this.inFlightRequests.get(url);
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) {
+          console.warn(`[AudioEngine] HTTP ${res.status} fetching ${url}`);
+          return null;
+        }
+        const arrayBuffer = await res.arrayBuffer();
+        if (!arrayBuffer || arrayBuffer.byteLength < 32) {
+          return null;
+        }
+        this.initContext();
+        if (!this.ctx) return null;
+
+        const copy = arrayBuffer.slice(0);
+        let audioBuffer = null;
+        try {
+          audioBuffer = await new Promise((resolve, reject) => {
+            let handled = false;
+            try {
+              const res = this.ctx.decodeAudioData(
+                copy,
+                (buf) => { if (!handled) { handled = true; resolve(buf); } },
+                (err) => { if (!handled) { handled = true; reject(err); } }
+              );
+              if (res && typeof res.then === 'function') {
+                res.then((buf) => { if (!handled) { handled = true; resolve(buf); } }).catch((err) => { if (!handled) { handled = true; reject(err); } });
+              }
+            } catch (e) {
+              if (!handled) { handled = true; reject(e); }
+            }
+          });
+        } catch (decodeErr) {
+          console.warn(`[AudioEngine] decodeAudioData failed (${url}):`, decodeErr);
+          return null;
+        }
+
+        if (audioBuffer) {
+          this.bufferCache.set(url, audioBuffer);
+        }
+        return audioBuffer;
+      } catch (err) {
+        console.warn(`[AudioEngine] Failed loading audio buffer (${url}):`, err);
+        return null;
+      } finally {
+        this.inFlightRequests.delete(url);
+      }
+    })();
+
+    if (!bypassCache) {
+      this.inFlightRequests.set(url, fetchPromise);
+    }
+    return fetchPromise;
   }
 
   stopAllPlayback() {
+    this.releaseMicrophone();
     for (const node of this.currentPlayingNodes) {
       try {
         node.stop();

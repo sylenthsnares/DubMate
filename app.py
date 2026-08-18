@@ -12,6 +12,7 @@ import uuid
 import random
 import shutil
 import asyncio
+import threading
 from typing import Dict, List, Optional, Set, Any
 from contextlib import asynccontextmanager
 
@@ -291,9 +292,11 @@ app.add_middleware(
 async def add_performance_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.lower()
-    if path.endswith((".html", "/")):
-        response.headers["Cache-Control"] = "no-cache, must-revalidate"
-    elif path.endswith((".js", ".css", ".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico")):
+    if path.endswith((".html", ".js", ".css")) or path == "/" or path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    elif path.endswith((".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico")):
         if "cache-control" not in response.headers:
             response.headers["Cache-Control"] = "public, max-age=3600, must-revalidate"
     return response
@@ -377,35 +380,109 @@ async def get_pack_icon(pack_id: str):
     )
 
 
+def range_stream_file(
+    file_path: str,
+    request: Request,
+    media_type: str,
+    cache_control: str = "public, max-age=86400, stale-while-revalidate=604800"
+) -> Any:
+    """
+    Streams a media file supporting HTTP 206 Partial Content for byte-range seeking.
+    Ensures seamless frame seeking on Cloudflare tunnels, Safari, and Chrome HTML5 video.
+    """
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_size = os.path.getsize(file_path)
+    range_header = request.headers.get("range", "").strip()
+
+    base_headers = {
+        "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Cache-Control": cache_control,
+    }
+
+    if not range_header or not range_header.startswith("bytes="):
+        def full_generator():
+            with open(file_path, "rb") as f:
+                while chunk := f.read(256 * 1024):
+                    yield chunk
+
+        headers = {
+            **base_headers,
+            "Content-Length": str(file_size),
+        }
+        return StreamingResponse(full_generator(), status_code=200, media_type=media_type, headers=headers)
+
+    range_spec = range_header.replace("bytes=", "").split("-")
+    try:
+        start = int(range_spec[0]) if range_spec[0] else 0
+        end = int(range_spec[1]) if len(range_spec) > 1 and range_spec[1] else file_size - 1
+    except ValueError:
+        start = 0
+        end = file_size - 1
+
+    start = max(0, min(start, file_size - 1))
+    end = max(start, min(end, file_size - 1))
+    content_length = end - start + 1
+
+    def range_generator(start_pos: int, bytes_to_read: int):
+        with open(file_path, "rb") as f:
+            f.seek(start_pos)
+            remaining = bytes_to_read
+            while remaining > 0:
+                chunk_size = min(256 * 1024, remaining)
+                data = f.read(chunk_size)
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        **base_headers,
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Content-Length": str(content_length),
+    }
+    return StreamingResponse(
+        range_generator(start, content_length),
+        status_code=206,
+        media_type=media_type,
+        headers=headers
+    )
+
+
 @app.get("/api/packs/{pack_id}/video")
 async def get_pack_video(pack_id: str, request: Request):
-    """Streams pack video with HTTP Range support for frame seeking."""
+    """Streams pack video with full HTTP 206 Range support for frame seeking."""
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack or not pack.web_video_path or not os.path.exists(pack.web_video_path):
         raise HTTPException(status_code=404, detail="Video not found")
-    return FileResponse(
+    return range_stream_file(
         pack.web_video_path,
+        request,
         media_type="video/mp4",
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+        cache_control="public, max-age=86400, stale-while-revalidate=604800"
     )
 
 
 @app.get("/api/packs/{pack_id}/backing")
-async def get_pack_backing(pack_id: str):
+async def get_pack_backing(pack_id: str, request: Request):
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack or not pack.backing_track_path or not os.path.exists(pack.backing_track_path):
         raise HTTPException(status_code=404, detail="Backing track not found")
     ext = os.path.splitext(pack.backing_track_path)[1].lower()
     media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
-    return FileResponse(
+    return range_stream_file(
         pack.backing_track_path,
+        request,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+        cache_control="public, max-age=86400, stale-while-revalidate=604800"
     )
 
 
 @app.get("/api/packs/{pack_id}/audio/{filename}")
-async def get_pack_audio_line(pack_id: str, filename: str):
+async def get_pack_audio_line(pack_id: str, filename: str, request: Request):
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Pack not found")
@@ -414,10 +491,11 @@ async def get_pack_audio_line(pack_id: str, filename: str):
         raise HTTPException(status_code=404, detail="Audio file not found")
     ext = os.path.splitext(filename)[1].lower()
     media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
-    return FileResponse(
+    return range_stream_file(
         file_path,
+        request,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+        cache_control="public, max-age=86400, stale-while-revalidate=604800"
     )
 
 
@@ -531,23 +609,24 @@ async def upload_take(
 
 
 @app.get("/api/rooms/{room_id}/takes/{line_index}/audio")
-async def get_take_audio(room_id: str, line_index: int):
+async def get_take_audio(room_id: str, line_index: int, request: Request):
     room = ROOMS.get(room_id.upper())
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
     take = room.takes.get(line_index)
     if not take or not os.path.exists(take.get("wav_path", "")):
         raise HTTPException(status_code=404, detail="Take not found")
-    return FileResponse(
+    return range_stream_file(
         take["wav_path"],
+        request,
         media_type="audio/wav",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        cache_control="no-cache, no-store, must-revalidate"
     )
 
 
 @app.post("/api/rooms/{room_id}/export")
 async def export_room_dub(room_id: str, aspect_ratio: str = "16:9"):
-    """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts)."""
+    """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously."""
     room = ROOMS.get(room_id.upper())
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -557,28 +636,14 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}{suffix}.mp4"
     out_path = os.path.join(EXPORTS_DIR, out_filename)
 
-    try:
-        audio_processor.export_dub_video(room.pack, room.takes, out_path, aspect_ratio="9:16" if is_9_16 else "16:9")
-        if is_9_16:
-            room.exported_video_9_16_path = out_path
-        else:
-            room.exported_video_path = out_path
-
-        file_size_mb = round(os.path.getsize(out_path) / (1024 * 1024), 2) if os.path.exists(out_path) else 0.0
+    # Check if existing rendered file is already ready
+    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
+    if target_path and os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
+        file_size_mb = round(os.path.getsize(target_path) / (1024 * 1024), 2)
         duration = round(room.pack.duration, 1)
         timestamp_ms = int(time.time() * 1000)
         export_video_url = f"/api/rooms/{room.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}"
         download_url = f"/api/rooms/{room.room_id}/export/download?aspect_ratio={aspect_ratio}"
-
-        await room.broadcast("export_ready", {
-            "download_url": download_url,
-            "export_video_url": export_video_url,
-            "download_url_16_9": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=16:9",
-            "download_url_9_16": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=9:16",
-            "file_size_mb": file_size_mb,
-            "duration": duration,
-            "aspect_ratio": aspect_ratio,
-        })
         return {
             "status": "ok",
             "download_url": download_url,
@@ -589,28 +654,124 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9"):
             "duration": duration,
             "aspect_ratio": aspect_ratio,
         }
-    except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(ex)}")
+
+    if not hasattr(room, "export_status"):
+        room.export_status = {}
+
+    current_status = room.export_status.get(aspect_ratio)
+    if current_status == "processing":
+        return {
+            "status": "processing",
+            "message": "Rendering in progress...",
+            "aspect_ratio": aspect_ratio,
+            "poll_url": f"/api/rooms/{room.room_id}/export/status?aspect_ratio={aspect_ratio}"
+        }
+
+    room.export_status[aspect_ratio] = "processing"
+
+    def render_worker():
+        try:
+            audio_processor.export_dub_video(
+                room.pack,
+                dict(room.takes),
+                out_path,
+                aspect_ratio="9:16" if is_9_16 else "16:9"
+            )
+            if is_9_16:
+                room.exported_video_9_16_path = out_path
+            else:
+                room.exported_video_path = out_path
+
+            room.export_status[aspect_ratio] = "ready"
+            file_size_mb = round(os.path.getsize(out_path) / (1024 * 1024), 2) if os.path.exists(out_path) else 0.0
+            duration = round(room.pack.duration, 1)
+            timestamp_ms = int(time.time() * 1000)
+            export_video_url = f"/api/rooms/{room.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}"
+            download_url = f"/api/rooms/{room.room_id}/export/download?aspect_ratio={aspect_ratio}"
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        room.broadcast("export_ready", {
+                            "download_url": download_url,
+                            "export_video_url": export_video_url,
+                            "download_url_16_9": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=16:9",
+                            "download_url_9_16": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=9:16",
+                            "file_size_mb": file_size_mb,
+                            "duration": duration,
+                            "aspect_ratio": aspect_ratio,
+                        }),
+                        loop
+                    )
+            except Exception:
+                pass
+        except Exception as ex:
+            room.export_status[aspect_ratio] = f"failed: {str(ex)}"
+            print(f"[ExportWorkerError] Error rendering {room.room_id} ({aspect_ratio}): {ex}")
+
+    threading.Thread(target=render_worker, daemon=True).start()
+
+    return {
+        "status": "processing",
+        "message": "Rendering started in background",
+        "aspect_ratio": aspect_ratio,
+        "poll_url": f"/api/rooms/{room.room_id}/export/status?aspect_ratio={aspect_ratio}"
+    }
 
 
-@app.get("/api/rooms/{room_id}/export/video")
-async def get_room_exported_video(room_id: str, aspect_ratio: str = "16:9"):
-    """Streams the rendered master MP4 video for in-browser theater preview."""
+@app.get("/api/rooms/{room_id}/export/status")
+async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
+    """Pollable endpoint for export status to prevent Cloudflare 524 timeouts."""
     room = ROOMS.get(room_id.upper())
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    target_path = getattr(room, "exported_video_9_16_path", None) if aspect_ratio == "9:16" else room.exported_video_path
+    is_9_16 = (aspect_ratio == "9:16")
+    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
+    if target_path and os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
+        file_size_mb = round(os.path.getsize(target_path) / (1024 * 1024), 2)
+        duration = round(room.pack.duration, 1)
+        timestamp_ms = int(time.time() * 1000)
+        export_video_url = f"/api/rooms/{room.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}"
+        download_url = f"/api/rooms/{room.room_id}/export/download?aspect_ratio={aspect_ratio}"
+        return {
+            "status": "ready",
+            "download_url": download_url,
+            "export_video_url": export_video_url,
+            "download_url_16_9": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=16:9",
+            "download_url_9_16": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=9:16",
+            "file_size_mb": file_size_mb,
+            "duration": duration,
+            "aspect_ratio": aspect_ratio,
+        }
+
+    status = getattr(room, "export_status", {}).get(aspect_ratio, "idle")
+    return {
+        "status": status,
+        "aspect_ratio": aspect_ratio,
+    }
+
+
+@app.get("/api/rooms/{room_id}/export/video")
+async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: str = "16:9"):
+    """Streams the rendered master MP4 video with Range support for theater playback."""
+    room = ROOMS.get(room_id.upper())
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    target_path = getattr(room, "exported_video_9_16_path", None) if aspect_ratio == "9:16" else getattr(room, "exported_video_path", None)
     if not target_path or not os.path.exists(target_path):
         target_path = room.exported_video_path
 
     if not target_path or not os.path.exists(target_path):
         raise HTTPException(status_code=404, detail="Exported video not found")
 
-    return FileResponse(
+    return range_stream_file(
         target_path,
+        request,
         media_type="video/mp4",
-        headers={"Cache-Control": "no-cache, must-revalidate"}
+        cache_control="no-cache, must-revalidate"
     )
 
 
@@ -625,8 +786,7 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}{suffix}.mp4"
     out_path = os.path.join(EXPORTS_DIR, out_filename)
 
-    # If requested format not yet rendered, render it on demand
-    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else room.exported_video_path
+    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
     if not target_path or not os.path.exists(target_path):
         audio_processor.export_dub_video(room.pack, room.takes, out_path, aspect_ratio="9:16" if is_9_16 else "16:9")
         if is_9_16:
@@ -637,20 +797,21 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
 
     aspect_label = "Shorts_9x16" if is_9_16 else "Cinema_16x9"
     filename = f"Dub_{room.pack.name.replace(' ', '_')}_{room.room_id}_{aspect_label}.mp4"
-    return FileResponse(target_path, media_type="video/mp4", filename=filename)
+    return FileResponse(
+        target_path,
+        media_type="video/mp4",
+        filename=filename,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
 
 
 @app.get("/api/rooms/{room_id}/export/project_zip")
 async def download_room_project_zip(room_id: str):
     """
-    Assembles and streams a complete multi-track NLE project ZIP containing:
-    - Clean Pack Scene Video (MP4)
-    - Backing Music & SFX (MP3)
-    - Master Vocal Mix (MP3)
-    - Isolated Character Timeline Stems (MP3)
-    - Individual Raw Dialogue Takes (MP3)
-    - Human-readable Dialogue Cuesheet (TXT)
-    - Machine-readable Timeline Markers Manifest (JSON)
+    Assembles and streams a complete multi-track NLE project ZIP containing stems, video, markers.
     """
     room = ROOMS.get(room_id.upper())
     if not room:
@@ -658,7 +819,6 @@ async def download_room_project_zip(room_id: str):
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
     zip_path = os.path.join(EXPORTS_DIR, zip_filename)
-    print(f"[ProjectZip] Assembling multi-track project ZIP for room {room.room_id} ('{room.pack.name}')...")
 
     try:
         audio_processor.build_project_zip(
@@ -683,7 +843,11 @@ async def download_room_project_zip(room_id: str):
         zip_path,
         media_type="application/zip",
         filename=download_filename,
-        headers={"Cache-Control": "no-cache, must-revalidate"}
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+        }
     )
 
 
@@ -843,13 +1007,19 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
             elif msg_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError, asyncio.CancelledError):
         room.sockets.discard(websocket)
         if user_id in room.users:
             room.users[user_id]["is_online"] = False
         await room.broadcast("user_disconnected", {"user_id": user_id})
     except Exception as ex:
         room.sockets.discard(websocket)
+        if user_id in room.users:
+            room.users[user_id]["is_online"] = False
+        try:
+            await room.broadcast("user_disconnected", {"user_id": user_id})
+        except Exception:
+            pass
 
 
 # Mount static assets

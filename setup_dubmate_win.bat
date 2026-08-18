@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal enabledelayedexpansion
 title DubMate Studio Pro — 1-Click Dependency Installer
 color 0b
@@ -52,7 +53,7 @@ echo       Python detected successfully.
 :: -------------------------------------------------------------------
 echo.
 if not exist "%~dp0.venv\Scripts\python.exe" (
-    echo [2/3] Creating project-local virtual environment (.venv)...
+    echo [2/3] Creating project-local virtual environment ^(.venv^)...
     %PY% -m venv "%~dp0.venv"
     if not exist "%~dp0.venv\Scripts\python.exe" (
         color 0c
@@ -62,7 +63,7 @@ if not exist "%~dp0.venv\Scripts\python.exe" (
     )
     echo       Virtual environment created at .venv\
 ) else (
-    echo [2/3] Virtual environment already exists (.venv\).
+    echo [2/3] Virtual environment already exists ^(.venv\^).
 )
 
 echo       Installing/updating requirements into local .venv...

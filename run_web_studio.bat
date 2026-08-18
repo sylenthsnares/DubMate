@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 title DubMate Multiplayer Studio
 cd /d "%~dp0"
 
@@ -8,7 +9,7 @@ echo ===================================================
 
 :: 1. Self-Healing: Verify local .venv and tools exist
 if not exist "%~dp0.venv\Scripts\python.exe" (
-    echo [SETUP] Project-local environment (.venv) not found.
+    echo [SETUP] Project-local environment ^(.venv^) not found.
     echo Running 1-click dependency installer...
     echo.
     call "%~dp0setup_dubmate_win.bat"

@@ -89,6 +89,110 @@ def probe_duration(file_path: str) -> float:
         return 0.0
 
 
+PEAKS_CACHE_DIR = os.path.join(CACHE_DIR, "peaks")
+os.makedirs(PEAKS_CACHE_DIR, exist_ok=True)
+
+
+def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List[List[float]]:
+    """Calculates min/max peak pairs for a dialogue line audio file."""
+    if not os.path.exists(file_path) or columns <= 0:
+        return [[0.0, 0.0] for _ in range(columns)]
+    
+    # 1. Try fast wave read if uncompressed WAV
+    if file_path.lower().endswith(".wav"):
+        try:
+            with wave.open(file_path, "rb") as w:
+                n_frames = w.getnframes()
+                n_channels = w.getnchannels()
+                sampwidth = w.getsampwidth()
+                if n_frames > 0 and sampwidth in (1, 2, 4):
+                    raw = w.readframes(n_frames)
+                    if sampwidth == 2:
+                        dtype = "<i2"
+                        scale = 32768.0
+                    elif sampwidth == 1:
+                        dtype = "u1"
+                        scale = 128.0
+                    else:
+                        dtype = "<i4"
+                        scale = 2147483648.0
+                    
+                    import numpy as np
+                    samples = np.frombuffer(raw, dtype=dtype).astype(np.float32) / scale
+                    if n_channels > 1:
+                        samples = samples[::n_channels]
+                    
+                    n = len(samples)
+                    step = n / float(columns)
+                    peaks = []
+                    for c in range(columns):
+                        a = int(c * step)
+                        b = max(a + 1, int((c + 1) * step))
+                        chunk = samples[a:b]
+                        if len(chunk) > 0:
+                            peaks.append([round(float(chunk.min()), 3), round(float(chunk.max()), 3)])
+                        else:
+                            peaks.append([0.0, 0.0])
+                    return peaks
+        except Exception:
+            pass
+
+    # 2. Fallback via ffmpeg PCM pipe
+    try:
+        ffmpeg = get_ffmpeg_path()
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", file_path, "-ac", "1", "-ar", "22050",
+            "-f", "s16le", "-"
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        raw, _ = proc.communicate()
+        if proc.returncode == 0 and len(raw) > 0:
+            import numpy as np
+            samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+            n = len(samples)
+            step = n / float(columns)
+            peaks = []
+            for c in range(columns):
+                a = int(c * step)
+                b = max(a + 1, int((c + 1) * step))
+                chunk = samples[a:b]
+                if len(chunk) > 0:
+                    peaks.append([round(float(chunk.min()), 3), round(float(chunk.max()), 3)])
+                else:
+                    peaks.append([0.0, 0.0])
+            return peaks
+    except Exception:
+        pass
+
+    return [[0.0, 0.0] for _ in range(columns)]
+
+
+def get_cached_line_peaks(pack_id: str, filename: str, file_path: str, columns: int = 100) -> List[List[float]]:
+    """Retrieves cached peaks or calculates and caches peaks for a dialogue line."""
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', f"{pack_id}_{filename}") + ".json"
+    cache_path = os.path.join(PEAKS_CACHE_DIR, safe_name)
+    try:
+        if os.path.isfile(cache_path):
+            file_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else 0
+            cache_mtime = os.path.getmtime(cache_path)
+            if cache_mtime >= file_mtime:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                if isinstance(cached_data, list) and len(cached_data) == columns:
+                    return cached_data
+    except Exception:
+        pass
+
+    peaks = extract_waveform_peaks_from_file(file_path, columns)
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(peaks, f)
+    except Exception:
+        pass
+    return peaks
+
+
 def timestamp_from_filename(filename: str) -> Optional[float]:
     """Extracts timestamp from filename e.g. '07_MyClip_44-048.wav' -> 44.048."""
     stem = os.path.splitext(os.path.basename(filename))[0]
@@ -671,6 +775,7 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
 
         audio_full_path = os.path.join(pack_folder, filename)
         line_duration = probe_duration(audio_full_path)
+        peaks = get_cached_line_peaks(pack_id, filename, audio_full_path, 100)
 
         quoted_pack_id = urllib.parse.quote(pack_id)
         quoted_filename = urllib.parse.quote(filename)
@@ -685,6 +790,7 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
             "caption": caption_text,
             "raw_caption": f"[{char_name}] {caption_text}" if caption_text else f"[{char_name}]",
             "audio_url": f"/api/packs/{quoted_pack_id}/audio/{quoted_filename}",
+            "peaks": peaks,
             "image": entry.get("image"),
         })
 

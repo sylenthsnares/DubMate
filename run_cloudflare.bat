@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 title DubMate Multiplayer Studio Launcher
 color 0b
 cd /d "%~dp0"
@@ -10,7 +11,7 @@ echo.
 
 :: 1. Self-Healing: Verify local .venv exists
 if not exist "%~dp0.venv\Scripts\python.exe" (
-    echo [SETUP] Project-local environment (.venv) not found.
+    echo [SETUP] Project-local environment ^(.venv^) not found.
     echo Running 1-click dependency installer...
     echo.
     call "%~dp0setup_dubmate_win.bat"
@@ -25,8 +26,8 @@ set "PY_RUNNER=%~dp0.venv\Scripts\python.exe"
 if not exist "%PY_RUNNER%" set "PY_RUNNER=python"
 
 :: 2. Free port 8000 from any lingering zombie processes
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000 "') do (
-    taskkill /f /pid %%a >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000.*LISTENING"') do (
+    taskkill /f /t /pid %%a >nul 2>&1
 )
 
 :: 3. Verify / Auto-Download Cloudflared in tools\
@@ -43,9 +44,7 @@ if not defined CF_BIN (
 if not defined CF_BIN (
     echo [SETUP] cloudflared.exe not found in tools\
     echo Downloading official cloudflared binary from Cloudflare into tools\...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
-        "Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile '%~dp0tools\cloudflared.exe' -UseBasicParsing"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile '%~dp0tools\cloudflared.exe' -UseBasicParsing"
     if not exist "%~dp0tools\cloudflared.exe" (
         echo [ERROR] Failed to auto-download cloudflared.exe. Please run setup_dubmate_win.bat.
         pause
@@ -75,7 +74,7 @@ echo.
 
 echo.
 echo Tunnel closed. Stopping server...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000 "') do (
-    taskkill /f /pid %%a >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000.*LISTENING"') do (
+    taskkill /f /t /pid %%a >nul 2>&1
 )
 pause

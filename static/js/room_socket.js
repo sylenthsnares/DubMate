@@ -9,6 +9,7 @@ export class RoomSocket {
     this.userName = null;
     this.userColor = null;
     this.pingInterval = null;
+    this.reconnectTimeout = null;
   }
 
   connect(roomId, userId, userName, userColor) {
@@ -17,8 +18,18 @@ export class RoomSocket {
     this.userName = userName;
     this.userColor = userColor;
 
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
     if (this.ws) {
-      try { this.ws.close(); } catch (e) {}
+      try {
+        this.ws.onclose = null; // Detach before closing to prevent duplicate reconnect cascades
+        this.ws.onerror = null;
+        this.ws.close();
+      } catch (e) {}
+      this.ws = null;
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -43,9 +54,13 @@ export class RoomSocket {
 
     this.ws.onclose = () => {
       this.stopPing();
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+      }
       if (this.roomId && this.userId) {
         console.warn("[Socket] Connection closed unexpectedly. Reconnecting in 2s...");
-        setTimeout(() => {
+        this.reconnectTimeout = setTimeout(() => {
           if (this.roomId && this.userId) {
             this.connect(this.roomId, this.userId, this.userName, this.userColor);
           }
@@ -64,9 +79,14 @@ export class RoomSocket {
     this.roomId = null;
     this.userId = null;
     this.stopPing();
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
     if (this.ws) {
       try {
         this.ws.onclose = null; // Prevent reconnect on explicit exit
+        this.ws.onerror = null;
         this.ws.close();
       } catch (e) {}
       this.ws = null;
