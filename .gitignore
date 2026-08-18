@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .env
+.env.*
 .venv/
 env/
 venv/
@@ -13,6 +14,7 @@ ENV/
 .cache/
 *.mp4.tmp
 temp_*.wav
+*.wav.tmp
 
 # Cloudflare & External Binaries
 cloudflared.exe
@@ -41,3 +43,25 @@ desktop.ini
 Packs/*
 !Packs/README.md
 
+# CVConvert Workspaces (keep .gitkeep only)
+CVConvert/input/*
+!CVConvert/input/.gitkeep
+CVConvert/output/*
+!CVConvert/output/.gitkeep
+
+# DubStage Runtime Settings & Generated Dubs
+dubstage-1.1.0/dubforge_settings.json
+dubstage-1.1.0/dubstage_settings.json
+dubstage-1.1.0/packs/
+dubstage-1.1.0/dubs/
+dubstage-1.1.0/tools/
+
+# Development, AI Agent Tooling & Local Testing
+.agents/
+.impeccable/
+AGENTS.md
+install-antigravity-skills.ps1
+test_*.js
+test_*.py
+docs/
+*.log
