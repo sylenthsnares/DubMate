@@ -120,6 +120,7 @@ class Room:
             "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9" if has_export else None,
             "download_url_16_9": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9",
             "download_url_9_16": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=9:16",
+            "project_zip_url": f"/api/rooms/{self.room_id}/export/project_zip",
         }
 
     async def broadcast(self, message_type: str, payload: Any = None):
@@ -185,12 +186,12 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     # Prune old exports in EXPORTS_DIR
     if os.path.isdir(EXPORTS_DIR):
         for fname in os.listdir(EXPORTS_DIR):
-            if fname.endswith(".mp4"):
+            if fname.endswith((".mp4", ".zip")):
                 if retained_id and retained_id in fname.upper():
                     continue
                 try:
                     os.remove(os.path.join(EXPORTS_DIR, fname))
-                    print(f"[DubMate Cache Pruner] Removed old export: {fname}")
+                    print(f"[DubMate Cache Pruner] Removed old export/zip: {fname}")
                 except Exception:
                     pass
 
@@ -290,10 +291,11 @@ app.add_middleware(
 async def add_performance_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.lower()
-    # Cache static web assets (JS, CSS, fonts, icons) for maximum browser throughput
-    if path.endswith((".js", ".css", ".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico")):
+    if path.endswith((".html", "/")):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    elif path.endswith((".js", ".css", ".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico")):
         if "cache-control" not in response.headers:
-            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+            response.headers["Cache-Control"] = "public, max-age=3600, must-revalidate"
     return response
 
 
@@ -335,6 +337,46 @@ async def get_pack(pack_id: str):
     return pack.to_dict()
 
 
+@app.post("/api/packs/import")
+async def import_pack_file(file: UploadFile = File(...)):
+    """Accepts a Choicer Voicer or DubStage .zip archive, extracts and indexes it."""
+    if not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only .zip pack archives are supported.")
+    try:
+        content = await file.read()
+        pack = pack_loader.import_pack_archive(content, file.filename)
+        if not pack:
+            raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
+        
+        get_packs_registry()  # Refresh registry
+        return {
+            "status": "ok",
+            "message": f"Successfully imported pack '{pack.name}'",
+            "pack": pack.to_dict()
+        }
+    except HTTPException:
+        raise
+    except Exception as ex:
+        print(f"[app] Error importing pack: {ex}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(ex)}")
+
+
+@app.get("/api/packs/{pack_id}/icon")
+async def get_pack_icon(pack_id: str):
+    """Serves pack cover art / icon."""
+    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+    if not pack or not pack.icon_path or not os.path.exists(pack.icon_path):
+        raise HTTPException(status_code=404, detail="Icon not found")
+    
+    ext = os.path.splitext(pack.icon_path)[1].lower()
+    media_type = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "image/webp"
+    return FileResponse(
+        pack.icon_path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+    )
+
+
 @app.get("/api/packs/{pack_id}/video")
 async def get_pack_video(pack_id: str, request: Request):
     """Streams pack video with HTTP Range support for frame seeking."""
@@ -353,9 +395,11 @@ async def get_pack_backing(pack_id: str):
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack or not pack.backing_track_path or not os.path.exists(pack.backing_track_path):
         raise HTTPException(status_code=404, detail="Backing track not found")
+    ext = os.path.splitext(pack.backing_track_path)[1].lower()
+    media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
     return FileResponse(
         pack.backing_track_path,
-        media_type="audio/wav",
+        media_type=media_type,
         headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
     )
 
@@ -368,9 +412,11 @@ async def get_pack_audio_line(pack_id: str, filename: str):
     file_path = os.path.join(pack.folder, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
+    ext = os.path.splitext(filename)[1].lower()
+    media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
     return FileResponse(
         file_path,
-        media_type="audio/wav",
+        media_type=media_type,
         headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
     )
 
@@ -592,6 +638,53 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     aspect_label = "Shorts_9x16" if is_9_16 else "Cinema_16x9"
     filename = f"Dub_{room.pack.name.replace(' ', '_')}_{room.room_id}_{aspect_label}.mp4"
     return FileResponse(target_path, media_type="video/mp4", filename=filename)
+
+
+@app.get("/api/rooms/{room_id}/export/project_zip")
+async def download_room_project_zip(room_id: str):
+    """
+    Assembles and streams a complete multi-track NLE project ZIP containing:
+    - Clean Pack Scene Video (MP4)
+    - Backing Music & SFX (MP3)
+    - Master Vocal Mix (MP3)
+    - Isolated Character Timeline Stems (MP3)
+    - Individual Raw Dialogue Takes (MP3)
+    - Human-readable Dialogue Cuesheet (TXT)
+    - Machine-readable Timeline Markers Manifest (JSON)
+    """
+    room = ROOMS.get(room_id.upper())
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
+    zip_path = os.path.join(EXPORTS_DIR, zip_filename)
+    print(f"[ProjectZip] Assembling multi-track project ZIP for room {room.room_id} ('{room.pack.name}')...")
+
+    try:
+        audio_processor.build_project_zip(
+            pack=room.pack,
+            takes_dict=room.takes,
+            role_assignments=room.role_assignments,
+            users=room.users,
+            output_zip_path=zip_path,
+            room_id=room.room_id,
+            bitrate="192k"
+        )
+    except Exception as ex:
+        print(f"[ProjectZipError] Error generating project ZIP for {room_id}: {ex}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate project ZIP: {str(ex)}")
+
+    clean_name = audio_processor.sanitize_filename(room.pack.name)
+    download_filename = f"DubMate_Project_{clean_name}_{room.room_id}.zip"
+    file_size_mb = round(os.path.getsize(zip_path) / (1024 * 1024), 2) if os.path.exists(zip_path) else 0.0
+    print(f"[ProjectZip] Packaged {zip_filename} ({file_size_mb} MB). Sending as '{download_filename}' to client.")
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=download_filename,
+        headers={"Cache-Control": "no-cache, must-revalidate"}
+    )
 
 
 # --- WebSocket Handler ---

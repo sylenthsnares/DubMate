@@ -115,6 +115,9 @@ class DubMateApp {
     this.inputPackSearch = document.getElementById('input-pack-search');
     this.btnClearSearch = document.getElementById('btn-clear-search');
     this.btnRescanPacks = document.getElementById('btn-rescan-packs');
+    this.btnImportPack = document.getElementById('btn-import-pack');
+    this.inputPackZip = document.getElementById('input-pack-zip');
+    this.packDropzone = document.getElementById('pack-dropzone');
     this.btnCreateRoom = document.getElementById('btn-create-room');
     this.btnJoinRoom = document.getElementById('btn-join-room');
     this.inputRoomCode = document.getElementById('input-room-code');
@@ -211,6 +214,8 @@ class DubMateApp {
     this.exportDownloadContainer = document.getElementById('export-download-container');
     this.btnDownloadLink = document.getElementById('btn-download-link');
     this.btnDownloadLink916 = document.getElementById('btn-download-link-9-16');
+    this.btnDownloadProjectZip = document.getElementById('btn-download-project-zip');
+    this.btnToolbarProjectZip = document.getElementById('btn-toolbar-project-zip');
     this.btnAspect169 = document.getElementById('btn-aspect-16-9');
     this.btnAspect916 = document.getElementById('btn-aspect-9-16');
     this.selectedAspectRatio = '16:9';
@@ -339,6 +344,53 @@ class DubMateApp {
     this.btnJoinRoom.addEventListener('click', () => this.joinRoomFromInput());
     if (this.btnRescanPacks) {
       this.btnRescanPacks.addEventListener('click', () => this.rescanPacksDirectory());
+    }
+
+    if (this.btnImportPack && this.inputPackZip) {
+      this.btnImportPack.addEventListener('click', () => {
+        this.inputPackZip.click();
+      });
+      this.inputPackZip.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          this.uploadPackZip(file);
+        }
+      });
+    }
+
+    const packPanel = document.querySelector('.panel-pack-selector');
+    if (packPanel && this.packDropzone) {
+      let dragCounter = 0;
+
+      packPanel.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        this.packDropzone.style.display = 'flex';
+      });
+
+      packPanel.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      });
+
+      packPanel.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          this.packDropzone.style.display = 'none';
+        }
+      });
+
+      packPanel.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        this.packDropzone.style.display = 'none';
+        const file = e.dataTransfer?.files?.[0];
+        if (file) {
+          this.uploadPackZip(file);
+        }
+      });
     }
 
     if (this.inputPackSearch) {
@@ -580,6 +632,13 @@ class DubMateApp {
     this.btnScreeningPlayPause.addEventListener('click', () => this.handleScreeningPlayPause());
     this.btnScreeningReplay.addEventListener('click', () => this.handleScreeningReplay());
     this.btnExportVideo.addEventListener('click', () => this.exportFinalVideo());
+
+    if (this.btnDownloadProjectZip) {
+      this.btnDownloadProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
+    }
+    if (this.btnToolbarProjectZip) {
+      this.btnToolbarProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
+    }
 
     // Screening Video State Listeners
     if (this.btnAspect169 && this.btnAspect916) {
@@ -902,6 +961,65 @@ class DubMateApp {
     }
   }
 
+  async uploadPackZip(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      this.showToast("⚠️ Please select a valid .zip pack archive.");
+      return;
+    }
+
+    const btn = this.btnImportPack;
+    const origHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinning" style="display:inline-block;">⚙️</span> <span>Importing...</span>`;
+    }
+
+    this.showToast(`📦 Importing pack "${file.name}"...`);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/packs/import', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const importedPack = data.pack;
+
+      await this.fetchPacks();
+
+      if (importedPack && importedPack.id) {
+        this.selectedPackId = importedPack.id;
+        this.renderPacks();
+        const card = document.querySelector(`.pack-card[data-pack-id="${importedPack.id}"]`);
+        if (card) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      this.showToast(`✨ Pack "${importedPack?.name || file.name}" imported successfully!`);
+    } catch (err) {
+      console.error("Pack import error:", err);
+      this.showToast(`⚠️ Import failed: ${err.message}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+      }
+      if (this.inputPackZip) {
+        this.inputPackZip.value = '';
+      }
+    }
+  }
+
   handlePackSearch(query) {
     this.packSearchQuery = (query || '').trim().toLowerCase();
     if (this.btnClearSearch) {
@@ -949,9 +1067,12 @@ class DubMateApp {
           <div style="font-size: 36px; margin-bottom: 12px;">📦</div>
           <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--foreground);">No Scene Packs Loaded</h3>
           <p style="font-size: 13px; color: var(--foreground-muted); max-width: 480px; margin: 0 auto 16px; line-height: 1.6;">
-            Download dub packs from <a href="https://gamebanana.com/mods/cats/44064" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline; font-weight: 600;">GameBanana Choicer Voicer</a>, convert them with <code>CVConvert</code>, and place the extracted folders into <code>Packs/</code>.
+            Download dub packs from <a href="https://gamebanana.com/mods/cats/44064" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline; font-weight: 600;">GameBanana Choicer Voicer</a> or drop any .zip pack directly here.
           </p>
-          <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Rescan Packs Directory</button>
+          <div style="display: flex; justify-content: center; gap: 10px;">
+            <button class="btn btn-primary btn-sm" onclick="document.getElementById('input-pack-zip').click()">📁 Import .ZIP Pack</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Rescan Directory</button>
+          </div>
         </div>
       `;
       return;
@@ -959,10 +1080,12 @@ class DubMateApp {
 
     const filteredPacks = !query ? allPacks : allPacks.filter(pack => {
       const title = (pack.title || pack.name || pack.id || '').toLowerCase();
+      const subtitle = (pack.subtitle || '').toLowerCase();
+      const authors = (pack.authors || []).join(' ').toLowerCase();
       const id = (pack.id || '').toLowerCase();
       const chars = (pack.characters || []).join(' ').toLowerCase();
-      const linesText = (pack.lines || []).map(l => (l.text || '') + ' ' + (l.character || '')).join(' ').toLowerCase();
-      return title.includes(query) || id.includes(query) || chars.includes(query) || linesText.includes(query);
+      const linesText = (pack.lines || []).map(l => (l.caption || l.raw_caption || l.text || '') + ' ' + (l.character || '')).join(' ').toLowerCase();
+      return title.includes(query) || subtitle.includes(query) || authors.includes(query) || id.includes(query) || chars.includes(query) || linesText.includes(query);
     });
 
     if (this.packCountBadge) {
@@ -981,7 +1104,7 @@ class DubMateApp {
           <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
           <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 6px; color: var(--foreground);">No Scenes Matching "${safeQuery}"</h3>
           <p style="font-size: 13px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px; line-height: 1.5;">
-            Try searching for another character name, scene title, or spoken dialogue keyword.
+            Try searching for another character name, author, scene title, or spoken dialogue keyword.
           </p>
           <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.clearPackSearch()">✕ Clear Search</button>
         </div>
@@ -998,36 +1121,67 @@ class DubMateApp {
       const card = document.createElement('div');
       const isSelected = (this.selectedPackId === pack.id);
       card.className = `pack-card ${isSelected ? 'selected' : ''}`;
+      card.dataset.packId = pack.id;
 
       const rawTitle = pack.title || pack.name || pack.id;
       const displayTitle = query ? this.highlightMatch(rawTitle, query) : rawTitle;
       const duration = Math.round(pack.duration || (pack.lines && pack.lines.length ? pack.lines[pack.lines.length - 1].end : 0));
       const lineCount = pack.line_count || (pack.lines ? pack.lines.length : 0);
       const characters = pack.characters || [];
+      
+      const subtitleHtml = pack.subtitle ? `
+        <div class="pack-card-subtitle" title="${pack.subtitle}">
+          ${query ? this.highlightMatch(pack.subtitle, query) : pack.subtitle}
+        </div>
+      ` : '';
+
+      const authorsHtml = (pack.authors && pack.authors.length) ? `
+        <span class="badge-author" title="Author: ${pack.authors.join(', ')}">
+          👤 ${pack.authors.map(a => query ? this.highlightMatch(a, query) : a).join(', ')}
+        </span>
+      ` : '';
+
+      const isCV = (pack.pack_type === 'choicer_voicer');
+      const formatBadge = isCV
+        ? `<span class="badge-format cv" title="Choicer Voicer Native Format">CV Pack</span>`
+        : `<span class="badge-format dubstage" title="DubStage Native Format">DubStage</span>`;
+
+      const thumbImg = (pack.has_icon && pack.icon_url)
+        ? `<div class="pack-card-thumb"><img src="${pack.icon_url}" alt="${rawTitle} cover" loading="lazy"></div>`
+        : `<div class="pack-card-thumb placeholder"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/></svg></div>`;
 
       // Check if a dialogue line matched query
       let matchedLineSnippet = '';
       if (query && pack.lines) {
-        const foundLine = pack.lines.find(l => (l.text || '').toLowerCase().includes(query));
+        const foundLine = pack.lines.find(l => ((l.caption || '') + ' ' + (l.raw_caption || '') + ' ' + (l.text || '')).toLowerCase().includes(query));
         if (foundLine) {
           const charPrefix = foundLine.character ? `<strong>${foundLine.character}:</strong> ` : '';
+          const cap = foundLine.caption || foundLine.raw_caption || foundLine.text || '';
           matchedLineSnippet = `
             <div style="font-size: 11px; color: var(--accent-brass); margin-top: 6px; font-style: italic; background: var(--input); padding: 4px 8px; border-radius: var(--radius-sm); border-left: 2px solid var(--primary);">
-              💬 "${this.highlightMatch(foundLine.text, query)}"
+              💬 ${charPrefix}"${this.highlightMatch(cap, query)}"
             </div>
           `;
         }
       }
 
       card.innerHTML = `
-        <div class="pack-card-header">
-          <div class="pack-card-title">${displayTitle}</div>
-          <span class="pack-card-duration">⏱️ ${duration}s</span>
+        <div class="pack-card-top-row">
+          ${thumbImg}
+          <div class="pack-card-meta-col">
+            <div class="pack-card-header">
+              <div class="pack-card-title">${displayTitle}</div>
+              <span class="pack-card-duration">⏱️ ${duration}s</span>
+            </div>
+            ${subtitleHtml}
+            <div class="pack-card-badges-row">
+              ${formatBadge}
+              ${authorsHtml}
+              <span class="pack-line-badge">📜 ${lineCount} lines</span>
+            </div>
+          </div>
         </div>
-        <div class="pack-card-desc">
-          <span>📜 ${lineCount} dialogue lines</span>
-          ${matchedLineSnippet}
-        </div>
+        ${matchedLineSnippet}
         <div class="pack-card-characters">
           ${characters.map(c => `<span class="char-tag">${query ? this.highlightMatch(c, query) : c}</span>`).join('')}
         </div>
@@ -1368,7 +1522,8 @@ class DubMateApp {
     const lineDur = (line.duration !== undefined ? line.duration : Math.max(0.5, (line.end || 0) - (line.start || 0)));
     this.boothTimeBadge.innerText = `${(line.start || 0).toFixed(2)}s - ${(line.end || 0).toFixed(2)}s (${lineDur.toFixed(2)}s)`;
     this.stageCaptionChar.innerText = isMyLine ? line.character.toUpperCase() : `${line.character.toUpperCase()} (LOCKED)`;
-    this.stageCaptionText.innerText = line.caption ? `“${line.caption}”` : `(${line.character} vocal line)`;
+    const lineCap = (line.caption || line.text || '').trim();
+    this.stageCaptionText.innerText = lineCap ? `“${lineCap}”` : `(${line.character} vocal line)`;
 
     const take = this.roomState.takes[index];
     if (take) {
@@ -2411,6 +2566,51 @@ class DubMateApp {
       }
       this.exportStatusText.innerText = "❌ Export failed: " + err.message;
       this.showToast("Export failed: " + err.message);
+    }
+  }
+
+  async downloadFullProjectZip() {
+    if (!this.roomState?.room_id) {
+      this.showToast("No active session to export.");
+      return;
+    }
+    const roomId = this.roomState.room_id;
+    const packName = (this.roomState.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const zipUrl = `/api/rooms/${roomId}/export/project_zip?v=${Date.now()}`;
+
+    this.showToast("📦 Packaging Full Project ZIP (MP3 Stems, Takes & Video)... Download starting!");
+
+    const labelToolbar = document.getElementById('label-toolbar-project-zip');
+    const labelContainer = document.getElementById('label-download-project-zip');
+    if (labelToolbar) labelToolbar.innerText = "⏳ Generating ZIP...";
+    if (labelContainer) labelContainer.innerText = "⏳ Generating ZIP...";
+
+    try {
+      // Primary trigger: direct window navigation (browser preserves current tab and downloads attachment)
+      window.location.assign(zipUrl);
+    } catch (err) {
+      console.error("Project ZIP download error:", err);
+      // Fallback trigger via temporary link
+      try {
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = zipUrl;
+        a.setAttribute('download', `DubMate_Project_${packName}_${roomId}.zip`);
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          if (a.parentNode) {
+            a.parentNode.removeChild(a);
+          }
+        }, 1500);
+      } catch (fallbackErr) {
+        this.showToast("❌ Download failed: " + fallbackErr.message);
+      }
+    } finally {
+      setTimeout(() => {
+        if (labelToolbar) labelToolbar.innerText = "📦 Download Full Project (.zip)";
+        if (labelContainer) labelContainer.innerText = "📦 Download Full Project (.zip)";
+      }, 3000);
     }
   }
 }

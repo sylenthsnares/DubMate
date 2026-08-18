@@ -4,16 +4,12 @@ Place your scene packs into this folder.
 
 ## How to Get Scene Packs
 
-1. **Download Choicer Voicer Dub Packs**:
-   Visit [GameBanana Choicer Voicer Mods](https://gamebanana.com/mods/cats/44064) and download any pack (`.zip`).
+1. **Download Scene Packs**:
+   Visit [GameBanana Choicer Voicer Mods](https://gamebanana.com/mods/cats/44064) or any DubStage pack source and download the pack.
 
-2. **Convert to DubStage Format**:
-   - Drag the downloaded `.zip` file onto `CVConvert/Convert.bat` (or place it in `CVConvert/input/` and run `Convert.bat`).
-   - The converted pack folder will appear in `CVConvert/output/`.
-
-3. **Install Pack**:
-   - Move or copy the converted folder from `CVConvert/output/` into this `Packs/` folder.
-   - Click **Rescan Packs** in the DubMate web interface.
+2. **Install Pack**:
+   - Extract/place the pack folder directly into this `Packs/` folder.
+   - Click **Rescan Packs** in the DubMate web interface (or restart the server). DubMate natively supports both DubStage and Choicer Voicer pack structures.
 
 ## Pack Folder Structure
 Each pack folder inside `Packs/` should contain:

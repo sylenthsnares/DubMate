@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="/css/style.css?v=2.0">
+  <link rel="stylesheet" href="/css/style.css?v=2.5">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
 </head>
 <body>
@@ -155,9 +155,14 @@
               <h3 class="panel-title">Choose Scene Dub Pack</h3>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
+              <button id="btn-import-pack" class="btn btn-secondary btn-sm" title="Import Choicer Voicer or DubStage pack (.zip from GameBanana)" aria-label="Import Scene Pack ZIP">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                <span>Import .ZIP</span>
+              </button>
+              <input type="file" id="input-pack-zip" accept=".zip" style="display: none;">
               <button id="btn-rescan-packs" class="btn btn-secondary btn-sm" title="Rescan Packs directory for newly added or updated scenes" aria-label="Rescan Scene Packs Directory">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
-                <span>Rescan Packs</span>
+                <span>Rescan</span>
               </button>
               <span id="pack-count-badge" class="badge-accent">0 Packs</span>
             </div>
@@ -172,6 +177,15 @@
               <input type="text" id="input-pack-search" class="form-input search-input" placeholder="Search scenes, characters, or dialogue keywords..." autocomplete="off" spellcheck="false" aria-label="Search scene packs">
               <button id="btn-clear-search" class="btn-clear-search" style="display: none;" title="Clear search" aria-label="Clear search input">✕</button>
               <kbd class="search-kbd" title="Press '/' to focus search">/</kbd>
+            </div>
+          </div>
+
+          <!-- Drag and Drop Overlay Indicator -->
+          <div id="pack-dropzone" class="pack-dropzone" style="display: none;">
+            <div class="dropzone-inner">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              <div class="dropzone-title">Drop Choicer Voicer / GameBanana .ZIP Here</div>
+              <div class="dropzone-sub">DubMate will automatically unpack, index, and load it into your studio</div>
             </div>
           </div>
 
@@ -550,6 +564,10 @@
         <button id="btn-export-video" class="btn btn-success btn-lg" aria-label="Export Master MP4 Video">
           <span id="label-export-btn">🎬 Export Master MP4</span>
         </button>
+
+        <button id="btn-toolbar-project-zip" type="button" class="btn btn-project-zip btn-lg" aria-label="Download Full Project ZIP with Stems, Video and Cuesheet" title="Download NLE-ready multi-track bundle (MP3 stems, clean video, takes, timeline cues)">
+          <span id="label-toolbar-project-zip">📦 Download Full Project (.zip)</span>
+        </button>
       </div>
 
       <!-- Master Audio Stem Balance Mixer Deck -->
@@ -588,6 +606,9 @@
         <div id="export-download-container" style="display: none; margin-top: 16px; text-align: center; gap: 12px; justify-content: center; flex-wrap: wrap;">
           <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download aria-label="Download 16:9 Cinema MP4">⬇️ Download 16:9 Cinema MP4</a>
           <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download aria-label="Download 9:16 Vertical Shorts MP4">📱 Download 9:16 Shorts MP4</a>
+          <button id="btn-download-project-zip" type="button" class="btn btn-project-zip btn-lg" aria-label="Download Full Project ZIP with Stems, Video and Cuesheet">
+            <span id="label-download-project-zip">📦 Download Full Project (.zip)</span>
+          </button>
         </div>
       </div>
     </section>
@@ -598,6 +619,6 @@
   <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Scripts -->
-  <script type="module" src="/js/app.js?v=2.3"></script>
+  <script type="module" src="/js/app.js?v=2.5"></script>
 </body>
 </html>

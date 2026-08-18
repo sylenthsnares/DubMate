@@ -97,7 +97,7 @@ def timestamps_from_txt(folder):
                 line = raw.strip()
                 if not line or line.startswith("#"):
                     continue
-                m = re.match(r"(\S+\.wav)\s+(-?[\d.]+)", line)
+                m = re.match(r"(\S+\.(?:wav|mp3|ogg|flac|m4a))\s+(-?[\d.]+)", line, re.IGNORECASE)
                 if m:
                     out[m.group(1)] = float(m.group(2))
     except Exception:

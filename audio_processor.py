@@ -8,10 +8,14 @@ Matching filter chain for time-invariant pitch shifting, room acoustics, dynamic
 import os
 import re
 import wave
+import json
+import time
 import shutil
+import zipfile
 import tempfile
 import subprocess
 import numpy as np
+import scipy.signal
 from typing import Dict, List, Optional, Any, Tuple
 
 from pack_loader import get_ffmpeg_path, get_h264_encoder_args, CACHE_DIR, PackInfo
@@ -133,8 +137,6 @@ def save_uploaded_take(
         "url": f"/api/rooms/{room_id}/takes/{line_index}/audio",
     }
 
-
-import scipy.signal
 
 _REVERB_CACHE: Dict[Tuple[float, int], np.ndarray] = {}
 
@@ -392,3 +394,336 @@ def export_dub_video(
                 pass
 
     return output_mp4
+
+
+def sanitize_filename(name: str) -> str:
+    """Sanitizes strings for safe cross-platform file and directory names."""
+    cleaned = re.sub(r'[\\/*?:"<>|]', "", name)
+    cleaned = re.sub(r"\s+", "_", cleaned.strip())
+    return cleaned or "Unnamed"
+
+
+def format_time_tag(seconds: float) -> str:
+    """Formats seconds into MM.SS for cross-platform safe filenames (e.g. 00.03)."""
+    s = max(0.0, float(seconds))
+    m = int(s // 60)
+    sec = int(s % 60)
+    return f"{m:02d}.{sec:02d}"
+
+
+def write_mp3_mono(path: str, data: np.ndarray, sr: int = SR, bitrate: str = "192k") -> str:
+    """Encodes float32 numpy audio array directly to an MP3 file via ffmpeg."""
+    if len(data) == 0:
+        data = np.zeros(sr, dtype=np.float32)
+    data = np.clip(np.asarray(data, dtype=np.float32), -1.0, 1.0)
+    pcm = (data * 32767.0).astype("<i2").tobytes()
+    ffmpeg = get_ffmpeg_path()
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+    cmd = [
+        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
+        "-c:a", "libmp3lame", "-b:a", bitrate, "-ar", str(sr),
+        path
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    _, stderr = proc.communicate(input=pcm)
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg MP3 encoding failed: {stderr.decode(errors='ignore')}")
+    return path
+
+
+def convert_file_to_mp3(src_path: str, dst_path: str, sr: int = SR, bitrate: str = "192k") -> str:
+    """Converts any input audio/video file to a standalone MP3 file."""
+    ffmpeg = get_ffmpeg_path()
+    os.makedirs(os.path.dirname(os.path.abspath(dst_path)), exist_ok=True)
+    cmd = [
+        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        "-i", src_path,
+        "-c:a", "libmp3lame", "-b:a", bitrate, "-ar", str(sr),
+        "-vn", dst_path
+    ]
+    subprocess.run(cmd, check=True)
+    return dst_path
+
+
+def build_project_zip(
+    pack: PackInfo,
+    takes_dict: Dict[int, Dict[str, Any]],
+    role_assignments: Optional[Dict[str, List[str]]] = None,
+    users: Optional[Dict[str, Any]] = None,
+    output_zip_path: Optional[str] = None,
+    room_id: str = "SESSION",
+    sr: int = SR,
+    bitrate: str = "192k",
+) -> str:
+    """
+    Assembles a complete NLE-ready multi-track project ZIP archive containing:
+    1. Video/ -> Clean pack scene video
+    2. Audio_Stems/ ->
+       - Backing_Music_SFX.mp3
+       - Master_Vocal_Mix.mp3
+       - Character_Stems/[Character]_[Actor].mp3 (Continuous timeline-padded audio from t=0)
+    3. Raw_Takes/ ->
+       - Line_01_[Character]_[Actor].mp3
+    4. Timeline_Cues.txt -> Human-readable cuesheet
+    5. project_manifest.json -> Machine-readable timeline and track metadata
+    """
+    role_assignments = role_assignments or {}
+    users = users or {}
+
+    total_sec = max(pack.duration, 1.0)
+    for line in pack.lines:
+        total_sec = max(total_sec, line["end"] + 2.0)
+    total_samples = int(total_sec * sr) + sr
+
+    # Create temporary working directory for staging
+    temp_stage_dir = tempfile.mkdtemp(prefix=f"dubmate_proj_{room_id}_")
+    try:
+        pack_sanitized = sanitize_filename(pack.name)
+        root_folder_name = f"DubMate_Project_{pack_sanitized}_{room_id}"
+        proj_root = os.path.join(temp_stage_dir, root_folder_name)
+        video_dir = os.path.join(proj_root, "Video")
+        stems_dir = os.path.join(proj_root, "Audio_Stems")
+        char_stems_dir = os.path.join(stems_dir, "Character_Stems")
+        raw_takes_dir = os.path.join(proj_root, "Raw_Takes")
+
+        os.makedirs(video_dir, exist_ok=True)
+        os.makedirs(stems_dir, exist_ok=True)
+        os.makedirs(char_stems_dir, exist_ok=True)
+        os.makedirs(raw_takes_dir, exist_ok=True)
+
+        # 1. Clean Scene Video
+        pack.ensure_web_ready()
+        src_video = pack.web_video_path or pack.video_path
+        if src_video and os.path.isfile(src_video):
+            dst_video = os.path.join(video_dir, f"{pack_sanitized}_Clean_Video.mp4")
+            try:
+                shutil.copy2(src_video, dst_video)
+            except Exception as ex:
+                print(f"[ProjectZip] Error copying video: {ex}")
+
+        # 2. Backing Music & SFX Track
+        if pack.backing_track_path and os.path.isfile(pack.backing_track_path):
+            dst_backing = os.path.join(stems_dir, "Backing_Music_SFX.mp3")
+            try:
+                convert_file_to_mp3(pack.backing_track_path, dst_backing, sr=sr, bitrate=bitrate)
+            except Exception as ex:
+                print(f"[ProjectZip] Error converting backing track: {ex}")
+
+        # 3. Master Vocal Mix Stem & Character Stems
+        master_vocal_buffer = np.zeros(total_samples, dtype=np.float32)
+
+        # Determine all characters present
+        characters = list(pack.characters) if pack.characters else []
+        for line in pack.lines:
+            c = line.get("character", "Actor")
+            if c and c not in characters:
+                characters.append(c)
+
+        char_buffers: Dict[str, np.ndarray] = {
+            char: np.zeros(total_samples, dtype=np.float32) for char in characters
+        }
+
+        manifest_lines = []
+        cues_text_lines = [
+            "DubMate Studio Pro - Project Timeline & Dialogue Cues",
+            f"Project: {pack.name} (Pack ID: {pack.pack_id})",
+            f"Room ID: {room_id}",
+            f"Duration: {pack.duration:.2f}s | Audio Sample Rate: {sr}Hz | Format: MP3 ({bitrate})",
+            f"Total Lines: {len(pack.lines)}",
+            "=" * 80,
+            "",
+        ]
+
+        for line in pack.lines:
+            idx = line["index"]
+            start_sec = float(line["start"])
+            end_sec = float(line["end"])
+            char = line.get("character", "Actor")
+            dialogue_text = line.get("caption") or line.get("raw_caption") or line.get("text") or ""
+            take_info = takes_dict.get(idx)
+
+            line_entry = {
+                "index": idx,
+                "line_number": idx + 1,
+                "character": char,
+                "start": start_sec,
+                "end": end_sec,
+                "duration": round(end_sec - start_sec, 3),
+                "text": dialogue_text,
+                "is_recorded": False,
+                "assigned_actors": [],
+                "take_file": None,
+                "offset_ms": 0,
+                "pitch_semitones": 0.0,
+                "reverb_wet": 0.0,
+                "gain_db": 0.0,
+            }
+
+            assigned_uids = role_assignments.get(char, [])
+            assigned_names = [users.get(uid, {}).get("name", "Actor") for uid in assigned_uids if uid in users]
+            line_entry["assigned_actors"] = assigned_names
+
+            if take_info and os.path.isfile(take_info.get("wav_path", "")):
+                actor_name = take_info.get("user_name", "Actor")
+                offset_ms = int(take_info.get("offset_ms", 0))
+                pitch = float(take_info.get("pitch_semitones", 0.0))
+                reverb = float(take_info.get("reverb_wet", 0.0))
+                gain = float(take_info.get("gain_db", 0.0))
+
+                processed_audio = apply_audio_effects(
+                    take_info["wav_path"],
+                    pitch_semitones=pitch,
+                    reverb_wet=reverb,
+                    gain_db=gain,
+                    sr=sr
+                )
+
+                offset_sec = float(offset_ms) / 1000.0
+                pos_sec = start_sec + offset_sec
+
+                if pos_sec < 0:
+                    skip_samples = int(-pos_sec * sr)
+                    if skip_samples < len(processed_audio):
+                        audio_slice = processed_audio[skip_samples:]
+                        end_s = min(total_samples, len(audio_slice))
+                        if end_s > 0:
+                            master_vocal_buffer[:end_s] += audio_slice[:end_s]
+                            if char in char_buffers:
+                                char_buffers[char][:end_s] += audio_slice[:end_s]
+                else:
+                    start_s = int(pos_sec * sr)
+                    end_s = min(total_samples, start_s + len(processed_audio))
+                    s_to_add = end_s - start_s
+                    if s_to_add > 0:
+                        master_vocal_buffer[start_s:end_s] += processed_audio[:s_to_add]
+                        if char in char_buffers:
+                            char_buffers[char][start_s:end_s] += processed_audio[:s_to_add]
+
+                # Save take to Raw_Takes/
+                char_clean = sanitize_filename(char)
+                actor_clean = sanitize_filename(actor_name)
+                time_tag = f"[{format_time_tag(start_sec)}-{format_time_tag(end_sec)}]"
+                take_filename = f"Line_{idx + 1:02d}_{char_clean}_{actor_clean} {time_tag}.mp3"
+                take_path = os.path.join(raw_takes_dir, take_filename)
+                try:
+                    write_mp3_mono(take_path, processed_audio, sr=sr, bitrate=bitrate)
+                except Exception as ex:
+                    print(f"[ProjectZip] Error writing take {take_filename}: {ex}")
+
+                line_entry["is_recorded"] = True
+                line_entry["take_file"] = f"Raw_Takes/{take_filename}"
+                line_entry["actor_name"] = actor_name
+                line_entry["offset_ms"] = offset_ms
+                line_entry["pitch_semitones"] = pitch
+                line_entry["reverb_wet"] = reverb
+                line_entry["gain_db"] = gain
+
+                cues_text_lines.extend([
+                    f"[Line {idx + 1:02d}] {start_sec:06.3f}s -> {end_sec:06.3f}s (Dur: {end_sec - start_sec:.2f}s)",
+                    f"  Character : {char}",
+                    f"  Actor     : {actor_name}",
+                    f"  Dialogue  : \"{dialogue_text}\"",
+                    f"  DSP Tuning: Offset: {offset_ms:+d}ms | Pitch: {pitch:+.1f}st | Reverb: {int(reverb * 100)}% | Gain: {gain:+.1f}dB",
+                    f"  File      : Raw_Takes/{take_filename}",
+                    "-" * 80,
+                ])
+            else:
+                orig_path = os.path.join(pack.folder, line.get("filename", ""))
+                if os.path.isfile(orig_path):
+                    try:
+                        orig_audio = read_wav_mono(orig_path, sr)
+                        start_s = int(start_sec * sr)
+                        end_s = min(total_samples, start_s + len(orig_audio))
+                        s_to_add = end_s - start_s
+                        if s_to_add > 0:
+                            master_vocal_buffer[start_s:end_s] += orig_audio[:s_to_add] * 0.90
+                    except Exception:
+                        pass
+
+                cues_text_lines.extend([
+                    f"[Line {idx + 1:02d}] {start_sec:06.3f}s -> {end_sec:06.3f}s (Dur: {end_sec - start_sec:.2f}s)",
+                    f"  Character : {char}",
+                    f"  Actor     : [Not Recorded]",
+                    f"  Dialogue  : \"{dialogue_text}\"",
+                    f"  Status    : Reference / Unrecorded",
+                    "-" * 80,
+                ])
+
+            manifest_lines.append(line_entry)
+
+        # Write Master_Vocal_Mix.mp3
+        master_vocal_limited = master_soft_limiter(master_vocal_buffer, ceiling_db=-0.3)
+        master_vocal_path = os.path.join(stems_dir, "Master_Vocal_Mix.mp3")
+        try:
+            write_mp3_mono(master_vocal_path, master_vocal_limited, sr=sr, bitrate=bitrate)
+        except Exception as ex:
+            print(f"[ProjectZip] Error writing Master_Vocal_Mix.mp3: {ex}")
+
+        # Write Character Stems (Continuous timeline padded)
+        for char, buf in char_buffers.items():
+            assigned_uids = role_assignments.get(char, [])
+            actor_names = [users.get(uid, {}).get("name", "Actor") for uid in assigned_uids if uid in users]
+            actor_suffix = f"_{sanitize_filename(actor_names[0])}" if actor_names else ""
+            char_filename = f"{sanitize_filename(char)}{actor_suffix}.mp3"
+            char_stem_path = os.path.join(char_stems_dir, char_filename)
+            char_limited = master_soft_limiter(buf, ceiling_db=-0.3)
+            try:
+                write_mp3_mono(char_stem_path, char_limited, sr=sr, bitrate=bitrate)
+            except Exception as ex:
+                print(f"[ProjectZip] Error writing character stem {char_filename}: {ex}")
+
+        # Write Timeline_Cues.txt
+        cues_txt_path = os.path.join(proj_root, "Timeline_Cues.txt")
+        with open(cues_txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(cues_text_lines))
+
+        # Write project_manifest.json
+        manifest_data = {
+            "application": "DubMate Studio Pro",
+            "version": "2.3",
+            "room_id": room_id,
+            "pack_id": pack.pack_id,
+            "pack_name": pack.name,
+            "duration": round(pack.duration, 3),
+            "sample_rate": sr,
+            "bitrate": bitrate,
+            "created_at": time.time(),
+            "characters": characters,
+            "role_assignments": role_assignments,
+            "users": users,
+            "lines": manifest_lines,
+            "files": {
+                "clean_video": f"Video/{pack_sanitized}_Clean_Video.mp4",
+                "backing_track": "Audio_Stems/Backing_Music_SFX.mp3" if pack.backing_track_path else None,
+                "master_vocal_mix": "Audio_Stems/Master_Vocal_Mix.mp3",
+                "character_stems_dir": "Audio_Stems/Character_Stems/",
+                "raw_takes_dir": "Raw_Takes/",
+                "cues_text": "Timeline_Cues.txt",
+            }
+        }
+        manifest_json_path = os.path.join(proj_root, "project_manifest.json")
+        with open(manifest_json_path, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=2)
+
+        # 4. Create ZIP Archive
+        if not output_zip_path:
+            output_zip_path = os.path.join(CACHE_DIR, "exports", f"DubMate_Project_{pack.pack_id}_{room_id}.zip")
+        os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
+
+        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(proj_root):
+                for f in files:
+                    file_path = os.path.join(root, f)
+                    arcname = os.path.relpath(file_path, temp_stage_dir)
+                    zf.write(file_path, arcname)
+
+        return output_zip_path
+
+    finally:
+        if os.path.exists(temp_stage_dir):
+            try:
+                shutil.rmtree(temp_stage_dir, ignore_errors=True)
+            except Exception:
+                pass

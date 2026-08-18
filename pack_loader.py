@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 pack_loader.py
-Scans, parses, and normalizes DubMate / DubStage packs.
-Extracts character roles, timestamps, captions, backing tracks, and handles video transcoding.
+Scans, parses, and normalizes DubMate / DubStage packs and Choicer Voicer packs.
+Extracts character roles, timestamps, captions, backing tracks, cover art, and handles video transcoding.
 """
 
 import os
@@ -23,7 +23,7 @@ PACKS_DIRS = [
 CACHE_DIR = os.path.join(BASE_DIR, ".cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac")
+AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
 VIDEO_EXTS = (".mp4", ".ogv", ".mkv", ".webm", ".mov", ".avi")
 _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
 
@@ -96,7 +96,7 @@ def read_timestamps_txt(folder: str) -> Dict[str, float]:
                 line = raw.strip()
                 if not line or line.startswith("#"):
                     continue
-                m = re.match(r"(\S+\.(?:wav|mp3|ogg|flac))\s+(-?[\d.]+)", line, re.IGNORECASE)
+                m = re.match(r"(\S+\.(?:wav|mp3|ogg|flac|m4a))\s+(-?[\d.]+)", line, re.IGNORECASE)
                 if m:
                     out[m.group(1)] = float(m.group(2))
     except Exception:
@@ -141,25 +141,145 @@ def read_captions(folder: str) -> Dict[str, str]:
     return out
 
 
-def extract_character_from_caption_or_name(caption: str, filename: str) -> str:
+def parse_ini_metadata(path: str) -> Dict[str, Any]:
     """
-    Extracts character name:
-    1. From caption prefix e.g. '[Levi] “You are...”' -> 'Levi' or '[Hollow Ichigo] ...' -> 'Hollow Ichigo'
-    2. Fallback from filename e.g. '01_Zeke_2-420.wav' -> 'Zeke', '01_Nendou_01_0-275.wav' -> 'Nendou'
+    Parses Choicer Voicer per-clip .ini / .txt files:
+    [data]
+    caption="“Fear? NO This is not fear...”"
+    image="nodt.png"
+    dub_timestamps=[0] or [8.9]
+    dub_characters=["Nodt"]
     """
-    if caption:
-        m = re.match(r"^\[(.*?)\]", caption.strip())
-        if m:
-            char_name = m.group(1).strip()
-            if char_name:
-                return char_name
+    data = {}
+    if not os.path.isfile(path):
+        return data
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        for key in ("caption", "dub_timestamps", "dub_characters", "image"):
+            m = re.search(rf'{key}\s*=\s*(.+)', content)
+            if not m:
+                continue
+            val = m.group(1).strip()
+            if key == "caption":
+                data[key] = val.strip('"').strip('“').strip('”').strip()
+            elif key == "dub_timestamps":
+                nums = re.findall(r'[\d.]+', val)
+                if nums:
+                    data[key] = float(nums[0])
+            elif key == "dub_characters":
+                names = re.findall(r'["\']([^"\']+)["\']', val)
+                if names:
+                    data[key] = names[0].strip()
+                else:
+                    clean = re.sub(r'[\[\]"\']', '', val).strip()
+                    if clean:
+                        data[key] = clean
+            elif key == "image":
+                data[key] = val.strip('"').strip("'").strip()
+    except Exception as ex:
+        print(f"[pack_loader] Error reading ini {path}: {ex}")
+    return data
 
-    stem = os.path.splitext(filename)[0]
-    clean = re.sub(r"^\d+[_\-]", "", stem)
-    clean = re.sub(r"_\d+-\d{1,3}$", "", clean)
-    clean = re.sub(r"_\d+$", "", clean)
-    clean = clean.replace("_", " ").strip()
-    return clean if clean else "Narrator"
+
+def parse_pack_info(folder: str) -> Dict[str, Any]:
+    """
+    Parses Choicer Voicer _pack_info.ini:
+    [data]
+    title="Nodt crashout"
+    subtitle="top 5 toughest quincys"
+    icon="nodt.png"
+    authors=["ChickenGobln"]
+    """
+    info = {"title": None, "subtitle": None, "icon": None, "authors": []}
+    for cand in ("_pack_info.ini", "pack_info.ini"):
+        path = os.path.join(folder, cand)
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                m_title = re.search(r'title\s*=\s*["\']([^"\']+)["\']', content)
+                if m_title:
+                    info["title"] = m_title.group(1).strip()
+                m_sub = re.search(r'subtitle\s*=\s*["\']([^"\']+)["\']', content)
+                if m_sub:
+                    info["subtitle"] = m_sub.group(1).strip()
+                m_icon = re.search(r'icon\s*=\s*["\']([^"\']+)["\']', content)
+                if m_icon:
+                    info["icon"] = m_icon.group(1).strip()
+                m_auth = re.search(r'authors\s*=\s*(.+)', content)
+                if m_auth:
+                    authors = re.findall(r'["\']([^"\']+)["\']', m_auth.group(1))
+                    if authors:
+                        info["authors"] = [a.strip() for a in authors if a.strip()]
+                    else:
+                        clean = re.sub(r'[\[\]"\']', '', m_auth.group(1)).strip()
+                        if clean:
+                            info["authors"] = [clean]
+            except Exception:
+                pass
+            break
+    return info
+
+
+def extract_character_and_caption(caption_text: str, filename: str) -> tuple[str, str]:
+    """
+    Extracts character name and display caption text from a raw caption string and filename.
+    Handles:
+    - Standard brackets: '[Levi] "You are..."' -> ('Levi', 'You are...')
+    - Nested brackets: '[Kennys main helper [female]] Captain?' -> ('Kennys main helper [female]', 'Captain?')
+    - Only speaker tag: '[Zeke] ' -> ('Zeke', '')
+    - Colon prefix: 'Levi: Look out!' -> ('Levi', 'Look out!')
+    - No caption: '' -> ('Zeke' from filename, '')
+    """
+    raw = (caption_text or "").strip()
+    char_name = None
+    display_cap = ""
+
+    if raw.startswith("["):
+        depth = 0
+        end_idx = -1
+        for i, ch in enumerate(raw):
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i
+                    break
+        if end_idx != -1:
+            candidate = raw[1:end_idx].strip()
+            if candidate:
+                char_name = candidate
+            display_cap = raw[end_idx + 1:].strip('“"” :-\t ')
+        else:
+            m = re.match(r"^\[([^\]]+)\](.*)$", raw)
+            if m:
+                char_name = m.group(1).strip()
+                display_cap = m.group(2).strip('“"” :-\t ')
+    elif ":" in raw and not raw.startswith("http"):
+        parts = raw.split(":", 1)
+        if len(parts[0].split()) <= 4 and not any(p in parts[0] for p in ('/', '\\', '.')):
+            char_name = parts[0].strip('“"” ')
+            display_cap = parts[1].strip('“"” ')
+    else:
+        display_cap = raw.strip('“"” ')
+
+    if not char_name:
+        stem = os.path.splitext(filename)[0]
+        clean = re.sub(r"^\d+[_\-]", "", stem)
+        clean = re.sub(r"_\d+-\d{1,3}$", "", clean)
+        clean = re.sub(r"_\d+$", "", clean)
+        clean = clean.replace("_", " ").strip()
+        char_name = clean if clean else "Narrator"
+
+    return char_name, display_cap
+
+
+def extract_character_from_caption_or_name(caption: str, filename: str) -> str:
+    """Extracts character name safely supporting nested brackets and fallbacks."""
+    char_name, _ = extract_character_and_caption(caption, filename)
+    return char_name
 
 
 _DETECTED_ENCODER = None
@@ -266,12 +386,20 @@ class PackInfo:
         self.pack_id = pack_id
         self.folder = folder
         self.name = name
+        self.subtitle: Optional[str] = None
+        self.authors: List[str] = []
+        self.pack_type: str = "dubstage"  # "dubstage" | "choicer_voicer"
+        self.icon_path: Optional[str] = None
         self.video_path: Optional[str] = None
         self.web_video_path: Optional[str] = None
         self.backing_track_path: Optional[str] = None
         self.duration: float = 0.0
         self.lines: List[Dict[str, Any]] = []
         self.characters: List[str] = []
+
+    @property
+    def has_icon(self) -> bool:
+        return bool(self.icon_path and os.path.isfile(self.icon_path))
 
     def ensure_web_ready(self):
         """Ensures the web video is converted to web-ready MP4."""
@@ -282,10 +410,16 @@ class PackInfo:
 
     def to_dict(self) -> Dict[str, Any]:
         quoted_id = urllib.parse.quote(self.pack_id)
+        has_icon = bool(self.icon_path and os.path.isfile(self.icon_path))
         return {
             "id": self.pack_id,
             "name": self.name,
             "title": self.name,
+            "subtitle": self.subtitle,
+            "authors": self.authors,
+            "pack_type": self.pack_type,
+            "has_icon": has_icon,
+            "icon_url": f"/api/packs/{quoted_id}/icon" if has_icon else None,
             "duration": round(self.duration, 2),
             "line_count": len(self.lines),
             "characters": self.characters,
@@ -296,11 +430,71 @@ class PackInfo:
         }
 
 
+def find_pack_icon(folder: str, icon_hint: Optional[str] = None) -> Optional[str]:
+    """Finds pack cover art / icon file."""
+    if icon_hint:
+        cand = os.path.join(folder, icon_hint)
+        if os.path.isfile(cand):
+            return cand
+        # Sometimes icon hint has mismatched extension like .png vs .png.png
+        for f in os.listdir(folder):
+            if f.lower().startswith(os.path.splitext(icon_hint)[0].lower()) and f.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                return os.path.join(folder, f)
+
+    # Search common cover names
+    common = ("icon.png", "cover.png", "cover.jpg", "thumb.png", "thumb.jpg", "banner.png", "banner.jpg")
+    for c in common:
+        cand = os.path.join(folder, c)
+        if os.path.isfile(cand):
+            return cand
+
+    # Search any png or jpg that isn't a take
+    for f in sorted(os.listdir(folder)):
+        low = f.lower()
+        if low.endswith((".png", ".jpg", ".jpeg", ".webp")) and not low.startswith("take_"):
+            return os.path.join(folder, f)
+
+    return None
+
+
+def ensure_dubstage_compatibility(pack_folder: str, pack: PackInfo):
+    """
+    Auto-generates standard _captions.json and _TIMESTAMPS.txt for Choicer Voicer packs
+    so they are 100% compatible with both DubMate and vanilla DubStage.
+    """
+    try:
+        captions_path = os.path.join(pack_folder, "_captions.json")
+        if not os.path.isfile(captions_path) and pack.lines:
+            captions_map = {}
+            for l in pack.lines:
+                cap = (l.get("caption") or "").strip()
+                captions_map[l["filename"]] = f"[{l['character']}] {cap}" if cap else f"[{l['character']}]"
+            with open(captions_path, "w", encoding="utf-8") as f:
+                json.dump(captions_map, f, ensure_ascii=False, indent=2)
+
+        ts_path = os.path.join(pack_folder, "_TIMESTAMPS.txt")
+        if not os.path.isfile(ts_path) and pack.lines:
+            lines_out = [
+                f"# {pack.name}",
+                "# Auto-generated DubStage timestamps and subtitle map",
+                "# File | start time (s) | subtitle\n"
+            ]
+            for l in pack.lines:
+                cap = (l.get("caption") or "").strip()
+                sub = f"[{l['character']}] {cap}" if cap else f"[{l['character']}]"
+                lines_out.append(f"{l['filename']:<40} {l['start']:>10.3f}s   | {sub}")
+            with open(ts_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines_out) + "\n")
+    except Exception as ex:
+        print(f"[pack_loader] Could not write DubStage compatibility files for {pack_folder}: {ex}")
+
+
 def load_pack(pack_folder: str) -> Optional[PackInfo]:
-    """Loads and indexes a single pack folder."""
+    """Loads and indexes a single pack folder, supporting both DubStage and Choicer Voicer formats."""
     if not os.path.isdir(pack_folder):
         return None
 
+    # 1. Video detection
     video_path = None
     for ext in VIDEO_EXTS:
         cand = os.path.join(pack_folder, "dub_video" + ext)
@@ -318,64 +512,134 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         return None
 
     pack_id = os.path.basename(os.path.normpath(pack_folder))
-    pack_name = pack_id.replace("_", " ").title()
+    info_meta = parse_pack_info(pack_folder)
+    pack_name = info_meta.get("title") or pack_id.replace("_", " ").title()
+
     pack = PackInfo(pack_id=pack_id, folder=pack_folder, name=pack_name)
+    pack.subtitle = info_meta.get("subtitle")
+    pack.authors = info_meta.get("authors") or []
+    pack.icon_path = find_pack_icon(pack_folder, info_meta.get("icon"))
     pack.video_path = video_path
     pack.web_video_path = get_web_video_path(pack_folder, video_path)
     pack.duration = probe_duration(pack.web_video_path)
 
+    # 2. Backing track detection
     for f in os.listdir(pack_folder):
         low = f.lower()
         if low.startswith("_backing_track") and any(low.endswith(ext) for ext in AUDIO_EXTS):
             pack.backing_track_path = os.path.join(pack_folder, f)
             break
 
-    ts_from_txt = read_timestamps_txt(pack_folder)
-    captions = read_captions(pack_folder)
+    # 3. Detect Format & Dialogue Lines
+    # Check for Choicer Voicer .ini / .txt metadata files first
+    candidate_meta_files = sorted([
+        f for f in os.listdir(pack_folder)
+        if (f.lower().endswith(".ini") or f.lower().endswith(".txt"))
+        and not f.startswith("_")
+        and not f.lower().startswith("readme")
+    ])
 
     entries = []
-    for f in sorted(os.listdir(pack_folder)):
-        low = f.lower()
-        if not any(low.endswith(ext) for ext in AUDIO_EXTS):
+    for meta_name in candidate_meta_files:
+        meta_full = os.path.join(pack_folder, meta_name)
+        meta = parse_ini_metadata(meta_full)
+        if meta.get("dub_timestamps") is None:
             continue
-        if low.startswith("_"):
-            continue
-        ts = timestamp_from_filename(f)
-        if ts is None:
-            ts = ts_from_txt.get(f)
-        if ts is not None:
-            entries.append((f, ts))
+
+        stem = os.path.splitext(meta_name)[0]
+        # Find matching audio stem
+        audio_file = None
+        for ext in AUDIO_EXTS:
+            cand = stem + ext
+            if os.path.isfile(os.path.join(pack_folder, cand)):
+                audio_file = cand
+                break
+
+        if not audio_file:
+            # Fallback: check if audio stem matches by substring or extension
+            for f in os.listdir(pack_folder):
+                if f.lower().startswith(stem.lower()) and any(f.lower().endswith(ext) for ext in AUDIO_EXTS):
+                    audio_file = f
+                    break
+
+        if audio_file:
+            ts = meta["dub_timestamps"]
+            char = meta.get("dub_characters") or "Actor"
+            cap = meta.get("caption") or ""
+            img = meta.get("image")
+            entries.append({
+                "filename": audio_file,
+                "start": ts,
+                "character": char,
+                "caption": cap,
+                "image": img,
+            })
+
+    if entries:
+        pack.pack_type = "choicer_voicer"
+
+    if not entries:
+        # DubStage standard format
+        pack.pack_type = "dubstage"
+        ts_from_txt = read_timestamps_txt(pack_folder)
+        captions = read_captions(pack_folder)
+
+        raw_files = []
+        for f in sorted(os.listdir(pack_folder)):
+            low = f.lower()
+            if not any(low.endswith(ext) for ext in AUDIO_EXTS):
+                continue
+            if low.startswith("_"):
+                continue
+            ts = timestamp_from_filename(f)
+            if ts is None:
+                ts = ts_from_txt.get(f)
+            if ts is not None:
+                raw_files.append((f, ts))
+
+        for f, ts in raw_files:
+            caption_text = captions.get(f, "")
+            char_name, display_caption = extract_character_and_caption(caption_text, f)
+            entries.append({
+                "filename": f,
+                "start": ts,
+                "character": char_name,
+                "caption": display_caption,
+                "image": None,
+            })
 
     if not entries:
         return None
 
-    entries.sort(key=lambda x: x[1])
+    # Sort all dialogue lines chronologically by start timestamp
+    entries.sort(key=lambda x: x["start"])
 
     character_set = set()
     lines = []
-    for i, (filename, start_ts) in enumerate(entries):
+    for i, entry in enumerate(entries):
+        filename = entry["filename"]
+        start_ts = entry["start"]
+        char_name = entry["character"]
+        caption_text = entry["caption"]
+        character_set.add(char_name)
+
         audio_full_path = os.path.join(pack_folder, filename)
         line_duration = probe_duration(audio_full_path)
-        caption_text = captions.get(filename, "")
-        character = extract_character_from_caption_or_name(caption_text, filename)
-        character_set.add(character)
-
-        display_caption = re.sub(r"^\[.*?\]\s*", "", caption_text).strip('“"” ')
-        if not display_caption:
-            display_caption = caption_text
 
         quoted_pack_id = urllib.parse.quote(pack_id)
         quoted_filename = urllib.parse.quote(filename)
+
         lines.append({
             "index": i,
             "filename": filename,
-            "character": character,
+            "character": char_name,
             "start": round(start_ts, 3),
             "duration": round(line_duration, 3),
             "end": round(start_ts + line_duration, 3),
-            "caption": display_caption,
-            "raw_caption": caption_text,
+            "caption": caption_text,
+            "raw_caption": f"[{char_name}] {caption_text}" if caption_text else f"[{char_name}]",
             "audio_url": f"/api/packs/{quoted_pack_id}/audio/{quoted_filename}",
+            "image": entry.get("image"),
         })
 
     pack.lines = lines
@@ -385,7 +649,70 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         char_counts[c] = char_counts.get(c, 0) + 1
     pack.characters = sorted(list(character_set), key=lambda c: -char_counts.get(c, 0))
 
+    # Auto-generate DubStage compatibility files if missing
+    ensure_dubstage_compatibility(pack_folder, pack)
+
     return pack
+
+
+def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pack.zip") -> Optional[PackInfo]:
+    """
+    Extracts a Choicer Voicer or DubStage zip archive, identifies pack root,
+    installs into Packs directory, and returns initialized PackInfo.
+    """
+    import zipfile
+    tmp_extract_dir = tempfile.mkdtemp(prefix="dubmate_import_")
+    try:
+        if isinstance(archive_path_or_bytes, (bytes, bytearray)):
+            tmp_zip = os.path.join(tmp_extract_dir, "upload.zip")
+            with open(tmp_zip, "wb") as f:
+                f.write(archive_path_or_bytes)
+            with zipfile.ZipFile(tmp_zip, "r") as z:
+                z.extractall(tmp_extract_dir)
+            if os.path.exists(tmp_zip):
+                os.remove(tmp_zip)
+        else:
+            with zipfile.ZipFile(archive_path_or_bytes, "r") as z:
+                z.extractall(tmp_extract_dir)
+
+        # Locate the pack root folder inside the extracted contents
+        pack_root = None
+        for dirpath, _dirnames, filenames in os.walk(tmp_extract_dir):
+            has_video = any(f.lower().startswith("dub_video.") for f in filenames)
+            has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
+            if has_video and has_clips:
+                pack_root = dirpath
+                break
+
+        if not pack_root:
+            print(f"[pack_loader] No valid pack found in archive {archive_filename}")
+            return None
+
+        # Determine target folder name
+        meta = parse_pack_info(pack_root)
+        base_title = meta.get("title") or os.path.splitext(os.path.basename(archive_filename))[0]
+        safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
+
+        target_base = PACKS_DIRS[0]
+        os.makedirs(target_base, exist_ok=True)
+        dest_folder = os.path.join(target_base, safe_folder_name)
+
+        if os.path.exists(dest_folder):
+            shutil.rmtree(dest_folder)
+
+        shutil.copytree(pack_root, dest_folder)
+        loaded = load_pack(dest_folder)
+        if loaded:
+            print(f"[pack_loader] Successfully imported pack '{loaded.name}' into {dest_folder}")
+            return loaded
+
+    except Exception as ex:
+        print(f"[pack_loader] Error importing pack archive {archive_filename}: {ex}")
+    finally:
+        if os.path.exists(tmp_extract_dir):
+            shutil.rmtree(tmp_extract_dir, ignore_errors=True)
+
+    return None
 
 
 def get_all_packs() -> Dict[str, PackInfo]:
@@ -398,6 +725,6 @@ def get_all_packs() -> Dict[str, PackInfo]:
             full_path = os.path.join(base, item)
             if os.path.isdir(full_path) and not item.startswith("."):
                 pack = load_pack(full_path)
-                if pack:
+                if pack and pack.pack_id not in packs:
                     packs[pack.pack_id] = pack
     return packs

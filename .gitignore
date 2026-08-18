@@ -43,12 +43,6 @@ desktop.ini
 Packs/*
 !Packs/README.md
 
-# CVConvert Workspaces (keep .gitkeep only)
-CVConvert/input/*
-!CVConvert/input/.gitkeep
-CVConvert/output/*
-!CVConvert/output/.gitkeep
-
 # DubStage Runtime Settings & Generated Dubs
 dubstage-1.1.0/dubforge_settings.json
 dubstage-1.1.0/dubstage_settings.json
