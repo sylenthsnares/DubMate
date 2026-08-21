@@ -11,10 +11,29 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="/css/style.css?v=2.8">
+  <link rel="stylesheet" href="/css/style.css?v=3.5">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
 </head>
 <body>
+
+  <!-- Hidden SVG Filters: Film Grain, Wood Grain, Amp Metal Grain -->
+  <svg style="display:none" aria-hidden="true" focusable="false">
+    <defs>
+      <!-- Global subtle film grain (3.8% body::after) -->
+      <filter id="sf-grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="linearRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="3" stitchTiles="stitch" result="noise"/>
+        <feColorMatrix type="saturate" values="0" in="noise" result="grey"/>
+        <feComposite operator="in" in="grey" in2="SourceGraphic" result="masked"/>
+        <feBlend in="SourceGraphic" in2="masked" mode="soft-light"/>
+      </filter>
+      <!-- Amp panel heavy grain (17% overlay on dsp-rack-grid) -->
+      <filter id="sf-amp-grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="linearRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch" result="noise"/>
+        <feColorMatrix type="saturate" values="0" in="noise" result="grey"/>
+      </filter>
+    </defs>
+  </svg>
+
 
   <!-- Top Studio Command Header -->
   <header class="app-header">
@@ -164,7 +183,7 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
                 <span>Rescan</span>
               </button>
-              <span id="pack-count-badge" class="badge-accent">0 Packs</span>
+              <span id="pack-count-badge" class="badge-accent"><span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning...</span>
             </div>
           </div>
 
@@ -185,12 +204,45 @@
             <div class="dropzone-inner">
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
               <div class="dropzone-title">Drop Choicer Voicer / GameBanana .ZIP Here</div>
-              <div class="dropzone-sub">DubMate will automatically unpack, index, and load it into your studio</div>
+              <div class="dropzone-sub">DubMate will automatically verify security, unpack, index, and load it into your studio</div>
             </div>
           </div>
 
           <div id="pack-grid" class="pack-grid" role="region" aria-label="Available Scene Dub Packs">
-            <!-- Pack cards inserted here dynamically -->
+            <!-- Initial Skeleton Shimmer Cards -->
+            <div class="pack-card pack-card-skeleton">
+              <div class="pack-card-thumb skeleton-thumb"></div>
+              <div class="pack-card-body">
+                <div class="skeleton-line skeleton-title"></div>
+                <div class="skeleton-line skeleton-sub"></div>
+                <div class="skeleton-badges">
+                  <div class="skeleton-badge"></div>
+                  <div class="skeleton-badge"></div>
+                </div>
+              </div>
+            </div>
+            <div class="pack-card pack-card-skeleton">
+              <div class="pack-card-thumb skeleton-thumb"></div>
+              <div class="pack-card-body">
+                <div class="skeleton-line skeleton-title"></div>
+                <div class="skeleton-line skeleton-sub"></div>
+                <div class="skeleton-badges">
+                  <div class="skeleton-badge"></div>
+                  <div class="skeleton-badge"></div>
+                </div>
+              </div>
+            </div>
+            <div class="pack-card pack-card-skeleton">
+              <div class="pack-card-thumb skeleton-thumb"></div>
+              <div class="pack-card-body">
+                <div class="skeleton-line skeleton-title"></div>
+                <div class="skeleton-line skeleton-sub"></div>
+                <div class="skeleton-badges">
+                  <div class="skeleton-badge"></div>
+                  <div class="skeleton-badge"></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -272,6 +324,20 @@
                   <div class="mode-desc">Step through the scene timeline together as a group.</div>
                 </div>
               </div>
+
+              <!-- Lobby Noise Reduction Switch -->
+              <div class="lobby-noise-box">
+                <div class="lobby-noise-header">
+                  <div class="lobby-noise-title-group">
+                    <span class="lobby-noise-icon" aria-hidden="true">🎙️</span>
+                    <span class="lobby-noise-title">Studio Noise Reduction</span>
+                  </div>
+                  <input type="checkbox" id="check-lobby-noise-reduction" checked class="switch-checkbox" aria-label="Toggle Studio Noise Reduction">
+                </div>
+                <p class="lobby-noise-desc">
+                  Adaptive FFT spectral filter removes background mic hiss, fan hum, and room noise. Raw takes are always preserved so you can switch anytime.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -295,7 +361,18 @@
 
 
     <!-- 3. RECORDING BOOTH & STUDIO VIEW -->
-    <section id="view-booth" class="view-section" aria-label="Solo Recording Booth">
+    <section id="view-booth" class="view-section" aria-label="Solo Recording Booth" style="position: relative;">
+      <!-- Booth Voice Take Processing & Lockout Overlay -->
+      <div id="booth-processing-overlay" class="booth-processing-overlay" style="display: none;" aria-live="polite">
+        <div class="booth-processing-card">
+          <div class="processing-spinner-ring"></div>
+          <div class="processing-content">
+            <div id="booth-processing-title" class="processing-title">🎙️ Processing Voice Take</div>
+            <div id="booth-processing-sub" class="processing-sub">Normalizing audio, computing waveform peaks & saving to session...</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Stage Navigation Bar -->
       <div class="stage-top-bar glass-card">
         <div class="stage-info-group">
@@ -324,8 +401,10 @@
       </div>
 
       <div class="booth-layout">
-        <!-- Left: Video Player, Subtitle Prompter & Dual Waveform Visualizer -->
+        <!-- Left / Center: Cinema Video Monitor, Subtitle Prompter, Dual Waveform Sync & Scene Timeline -->
         <div class="stage-main-col">
+          
+          <!-- Cinema Video Monitor (Full Width in Main Stage) -->
           <div class="video-container">
             <video id="stage-video" muted defaultMuted playsinline preload="auto" aria-label="Scene Reference Video"></video>
             <div id="video-overlay" class="video-overlay hidden" aria-live="polite">
@@ -334,6 +413,9 @@
               </div>
               <div id="overlay-status-text" class="overlay-status-text">GET READY...</div>
             </div>
+            <button id="btn-expand-video" class="btn-video-expand" title="Expand / Collapse Video Monitor" aria-label="Expand Video Monitor" aria-pressed="false">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            </button>
           </div>
 
           <!-- Subtitle / Caption Prompter with Smooth Splitter Resizer -->
@@ -345,62 +427,61 @@
             <div id="stage-caption-text" class="caption-text">“Dialogue subtitle line text appears here”</div>
           </div>
 
-          <!-- Dual Waveform Visualizer & Track Sync Canvas -->
+          <!-- Dual Waveform Visualizer & Track Sync Canvas (ADR Dual Stacked Alignment Engine) -->
           <div class="waveform-panel glass-card">
             <div class="waveform-legend">
               <div class="legend-group">
                 <span class="legend-dot dot-orig" aria-hidden="true"></span>
-                <span class="legend-text">Original Voice</span>
+                <span class="legend-text">Original Reference (Lane 1)</span>
               </div>
               <div class="legend-group">
                 <span class="legend-dot dot-take" aria-hidden="true"></span>
-                <span class="legend-text" id="waveform-take-legend">Your Take</span>
+                <span class="legend-text" id="waveform-take-legend">Your Take (Lane 2)</span>
               </div>
               <span class="legend-offset-pill" id="waveform-offset-legend">Offset: 0 ms</span>
             </div>
             <div class="waveform-canvas-box">
-              <canvas id="waveform-canvas" aria-label="Dual Waveform Track Sync Visualizer (Click and drag to adjust timing offset)"></canvas>
+              <canvas id="waveform-canvas" aria-label="Dual Stacked Waveform ADR Sync Visualizer (Click & drag to align syllable timing)"></canvas>
             </div>
 
             <!-- Fine-Tuning Preset Nudge Bar -->
             <div class="nudge-preset-bar">
               <div class="nudge-label">
                 <span>⏱️ Sync Nudge:</span>
-                <span class="shortcut-hint">(or [ ] keys)</span>
+                <span class="shortcut-hint">([ ] keys or drag)</span>
               </div>
               <div class="nudge-buttons">
-                <button class="btn-nudge" data-nudge="-100" title="Shift 100ms earlier" aria-label="Nudge 100 milliseconds earlier">-100ms</button>
-                <button class="btn-nudge" data-nudge="-25" title="Shift 25ms earlier" aria-label="Nudge 25 milliseconds earlier">-25ms</button>
+                <button class="btn-nudge" data-nudge="-100" title="Shift 100ms earlier" aria-label="Nudge 100ms earlier">-100ms</button>
+                <button class="btn-nudge" data-nudge="-25" title="Shift 25ms earlier" aria-label="Nudge 25ms earlier">-25ms</button>
                 <button class="btn-nudge btn-nudge-reset" data-nudge="reset" title="Reset offset to zero" aria-label="Reset offset to 0ms">0 ms</button>
-                <button class="btn-nudge" data-nudge="25" title="Shift 25ms later" aria-label="Nudge 25 milliseconds later">+25ms</button>
-                <button class="btn-nudge" data-nudge="100" title="Shift 100ms later" aria-label="Nudge 100 milliseconds later">+100ms</button>
+                <button class="btn-nudge" data-nudge="25" title="Shift 25ms later" aria-label="Nudge 25ms later">+25ms</button>
+                <button class="btn-nudge" data-nudge="100" title="Shift 100ms later" aria-label="Nudge 100ms later">+100ms</button>
               </div>
               <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0" aria-label="Fine-tuning timing offset slider" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0" aria-valuetext="0 milliseconds">
               <span id="nudge-display" class="nudge-value-readout">0 ms</span>
             </div>
-            <div class="slider-scale-row" aria-hidden="true">
-              <span>-800ms</span>
-              <span>-400ms</span>
-              <span style="color: var(--primary);">0 ms</span>
-              <span>+400ms</span>
-              <span>+800ms</span>
-            </div>
           </div>
 
-          <!-- Timeline Strip Chips -->
-          <div class="timeline-chips-box glass-card" id="timeline-chips" role="region" aria-label="Dialogue Line Timeline">
-            <!-- Timeline items rendered dynamically -->
+          <!-- Timeline Strip Chips (Scene Line Navigation Pills) -->
+          <div class="timeline-chips-wrapper">
+            <div class="timeline-chips-box glass-card" id="timeline-chips" role="region" aria-label="Dialogue Line Timeline">
+              <!-- Timeline line pills rendered dynamically -->
+            </div>
           </div>
         </div>
 
         <!-- Right: Studio Recording & Vintage Hardware Rack Deck -->
         <div class="booth-controls">
           
-          <!-- Monitoring & A/B Comparison Deck -->
+          <!-- Deck 1: Studio Monitoring & Headphone Deck (VOX Amp Style) -->
           <div class="glass-card control-card rack-wood-frame">
-            <div class="panel-header-sm">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>
-              <span>STUDIO MONITORING</span>
+            <div class="panel-header-sm amp-faceplate">
+              <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
+              <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>
+                <span>STUDIO MONITORING</span>
+              </div>
             </div>
             <div class="monitoring-row">
               <!-- Backing Volume -->
@@ -412,18 +493,18 @@
 
               <!-- Metronome Toggle -->
               <label class="toggle-pill" title="Play audible count-in click before recording">
-                <input type="checkbox" id="check-metronome" checked aria-label="Enable Metronome count-in click">
+                <input type="checkbox" id="check-metronome" checked class="switch-checkbox" aria-label="Enable Metronome count-in click">
                 <span>Click</span>
               </label>
 
               <!-- Guide Voice Toggle -->
               <label class="toggle-pill" title="Hear original character dialogue in headphones while recording">
-                <input type="checkbox" id="check-guide-voice" aria-label="Enable Reference Guide Voice in headphones">
+                <input type="checkbox" id="check-guide-voice" class="switch-checkbox" aria-label="Enable Reference Guide Voice in headphones">
                 <span>Guide</span>
               </label>
             </div>
 
-            <!-- A/B Comparison Switch -->
+            <!-- A/B Take Comparison Switch -->
             <div class="ab-switch-box">
               <button id="btn-toggle-ab" class="btn-ab" title="Toggle between your dub and original voice" aria-label="Toggle A/B Audio Comparison">
                 <span id="label-ab-state"><strong style="color: var(--primary);">[ A: Your Dub ]</strong> ⇄ B: Orig</span>
@@ -431,9 +512,9 @@
             </div>
           </div>
 
-          <!-- Big Vintage Hardware Record Trigger & State -->
+          <!-- Deck 2: Big Vintage Hardware Record Trigger & Take Playback -->
           <div class="record-btn-container glass-card rack-wood-frame">
-            <button id="btn-record-main" class="btn-big-record" title="Press Space or Click to Record" aria-label="Punch-In Record (Spacebar)">
+            <button id="btn-record-main" class="btn-big-record" title="Press Spacebar or Click to Record" aria-label="Punch-In Record (Spacebar)">
               <span id="record-icon" aria-hidden="true">●</span>
             </button>
             <div id="record-status-label" class="record-status-label">PRESS SPACE TO RECORD</div>
@@ -450,14 +531,16 @@
             </div>
           </div>
 
-          <!-- Voice Effects Rack (Vintage Guitar Amp Dials) -->
+          <!-- Deck 3: Voice Effects Rack (Vintage Guitar Amp Dials) -->
           <div class="fx-panel glass-card rack-wood-frame">
-            <div class="panel-header-sm" style="justify-content: space-between;">
+            <div class="panel-header-sm amp-faceplate" style="justify-content: space-between;">
+              <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
+              <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
               <div style="display: flex; align-items: center; gap: 6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
                 <span>VOICE DSP AMPLIFIER</span>
               </div>
-              <button id="btn-toggle-advanced-rack" class="btn-link-sm" aria-expanded="false" aria-controls="advanced-vocal-rack">Advanced ▾</button>
+              <button id="btn-toggle-advanced-rack" class="btn-link-sm amp-advanced-btn" aria-expanded="false" aria-controls="advanced-vocal-rack">Advanced ▾</button>
             </div>
             
             <!-- 3-Channel Rotary Amp Dials -->
@@ -478,15 +561,30 @@
 
               <!-- Channel 3: Vocal Boost -->
               <div class="dsp-dial-channel">
-                <span class="dsp-channel-title">BOOST</span>
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                  <span class="dsp-channel-title">BOOST</span>
+                  <button id="btn-auto-match-gain" class="btn btn-ghost btn-xs btn-auto-match" title="Auto-calibrate gain to match original scene dialogue level" aria-label="Auto-Match Scene Vocal Level" style="display: none;">
+                    <span>⚖️ Auto</span>
+                  </button>
+                </div>
                 <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0" aria-label="Vocal Boost Gain (Decibels)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0" aria-valuetext="0 decibels">
-                <span id="val-gain" class="dsp-channel-readout">0 dB</span>
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                  <span id="val-gain" class="dsp-channel-readout">0 dB</span>
+                  <span id="badge-gain-match" class="badge-calibrated uncalibrated" style="font-size: 8.5px; padding: 1px 4px; display: none;" title="Auto-matched to original scene vocal level">Scene Match</span>
+                </div>
               </div>
             </div>
 
-            <!-- Expandable Advanced Studio Rack -->
+            <!-- Expandable Advanced Studio Rack (Noise Reduction, Low-Cut, Compressor) -->
             <div id="advanced-vocal-rack" class="advanced-rack-box">
               <div class="advanced-rack-inner">
+                <div class="toggle-row">
+                  <label class="form-label" style="margin-bottom: 0;" for="check-rack-noise-reduction">AI Voice Cleaner (DeepFilterNet 3)</label>
+                  <input type="checkbox" id="check-rack-noise-reduction" checked class="switch-checkbox">
+                  <!-- Hidden duplicate input for compatibility -->
+                  <input type="checkbox" id="check-noise-reduction" checked style="display: none;">
+                </div>
+
                 <div class="toggle-row">
                   <label class="form-label" style="margin-bottom: 0;" for="check-lowcut">80Hz Low-Cut (De-Hum)</label>
                   <input type="checkbox" id="check-lowcut" checked class="switch-checkbox">
@@ -497,7 +595,7 @@
                   <input type="checkbox" id="check-compressor" checked class="switch-checkbox">
                 </div>
 
-                <div class="advanced-dials-row" style="margin-top: 6px;">
+                <div class="advanced-dials-row" style="margin-top: 8px;">
                   <div class="dsp-dial-channel">
                     <span class="dsp-channel-title">DECAY</span>
                     <input type="range" id="slider-decay" min="0.2" max="4.0" step="0.2" value="1.5" aria-label="Reverb Decay Time (Seconds)" aria-valuemin="0.2" aria-valuemax="4.0" aria-valuenow="1.5" aria-valuetext="1.5 seconds">
@@ -514,7 +612,7 @@
             </div>
           </div>
 
-          <!-- Line Step Navigation -->
+          <!-- Deck 4: Line Step Navigation Deck -->
           <div class="booth-nav-group">
             <button id="btn-prev-line" class="btn btn-secondary btn-sm" style="flex: 1;" aria-label="Go to Previous Line">‹ Prev</button>
             <button id="btn-clear-take" class="btn btn-ghost btn-sm" title="Clear current take" aria-label="Clear Current Voice Take">
@@ -548,6 +646,9 @@
       <div class="screening-theater-box">
         <div class="video-container theater-player">
           <video id="screening-video" playsinline preload="auto" aria-label="Dubbed Scene Finale Video"></video>
+          <button id="btn-expand-theater-video" class="btn-video-expand" title="Expand / Collapse Theater Video" aria-label="Expand Theater Video" aria-pressed="false">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+          </button>
         </div>
       </div>
 
@@ -592,6 +693,27 @@
           <span style="color: var(--primary);">● 50/50 Balanced</span>
           <span>Vocals Heavy (100%)</span>
         </div>
+
+        <!-- Master Dialogue Prominence / Vocal Mix Presence Deck -->
+        <div class="presence-mixer-section" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+          <div class="stem-mixer-header">
+            <div class="stem-title-group">
+              <span>🗣️</span>
+              <span style="font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--accent-brass);">MASTER DIALOGUE PROMINENCE</span>
+            </div>
+            <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (Scene Default)</span>
+          </div>
+          <div class="stem-slider-row" style="margin-top: 4px;">
+            <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">-6dB</span>
+            <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5" value="0" aria-label="Master Dialogue Presence Offset in Decibels" aria-valuemin="-6" aria-valuemax="8" aria-valuenow="0" aria-valuetext="0.0 dB scene default">
+            <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">+8dB</span>
+          </div>
+          <div class="presence-preset-pills" style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">🎬 Scene Default (0dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="2.5">✨ Cinematic (+2.5dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="5.0">🔊 Vocal Forward (+5dB)</button>
+          </div>
+        </div>
       </div>
 
       <div id="export-progress-box" class="export-progress-box glass-card" style="display: none;" aria-live="polite">
@@ -621,7 +743,146 @@
   <!-- Toast Notification Container -->
   <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
+  <!-- Master Dub Video Export Rendering Modal Overlay -->
+  <div id="modal-export-rendering" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="export-modal-title" aria-describedby="export-modal-status-text">
+    <div class="studio-modal-card">
+      <!-- Top-Right Close Button -->
+      <button id="btn-modal-close-x" class="modal-close-btn" style="display: none;" title="Close Popup" aria-label="Close Master Dub Popup">✕</button>
+
+      <div class="render-animation-container">
+        <div class="render-film-reel">
+          <div class="reel-core">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
+          </div>
+          <div class="reel-pulse-ring"></div>
+        </div>
+      </div>
+
+      <div class="modal-header-content">
+        <div class="modal-badge-row">
+          <span class="badge-studio">DUBMATE ENGINE</span>
+          <span class="badge-render-live" id="export-modal-badge">PROCESSING</span>
+        </div>
+        <h2 id="export-modal-title" class="modal-title">Master Dub Rendering</h2>
+        <p id="export-modal-status-text" class="modal-status-text">Applying studio DSP, vocal EQ, and frame-accurate timeline muxing...</p>
+      </div>
+
+      <!-- 3-Stage Progress Steps -->
+      <div class="modal-steps-container">
+        <div class="modal-step-item active" id="modal-step-dsp">
+          <div class="step-num">1</div>
+          <div class="step-info">
+            <div class="step-title">DSP Mastering</div>
+            <div class="step-sub">Vocal EQ & Reverb</div>
+          </div>
+        </div>
+        <div class="step-connector" id="connector-dsp-mux"></div>
+        <div class="modal-step-item" id="modal-step-mux">
+          <div class="step-num">2</div>
+          <div class="step-info">
+            <div class="step-title">Video Muxing</div>
+            <div class="step-sub">FFmpeg Multi-Track</div>
+          </div>
+        </div>
+        <div class="step-connector" id="connector-mux-ready"></div>
+        <div class="modal-step-item" id="modal-step-ready">
+          <div class="step-num">3</div>
+          <div class="step-info">
+            <div class="step-title">Final Package</div>
+            <div class="step-sub">Cinema & Shorts</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- High-Precision Animated Progress Bar -->
+      <div class="modal-progress-track">
+        <div id="export-modal-progress-bar" class="modal-progress-fill" style="width: 30%;"></div>
+      </div>
+
+      <div id="export-modal-reassurance" class="modal-reassurance-notice">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+        <span>Please do not close this window or navigate away while rendering is in progress. Controls are locked to ensure rendering integrity.</span>
+      </div>
+
+      <!-- Modal Actions on Completion -->
+      <div id="export-modal-actions" class="modal-actions" style="display: none;">
+        <button id="btn-modal-close-view" class="btn btn-primary btn-lg" type="button">
+          <span>🎬 Watch in Theater</span>
+        </button>
+        <button id="btn-modal-dismiss" class="btn btn-ghost btn-lg" type="button">
+          <span>✕ Close</span>
+        </button>
+        <a id="btn-modal-download-169" href="#" class="btn btn-secondary btn-lg" download>
+          <span>⬇️ Download 16:9 MP4</span>
+        </a>
+        <a id="btn-modal-download-916" href="#" class="btn btn-secondary btn-lg" download>
+          <span>📱 Download 9:16 Shorts</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pack ZIP Import Loading Overlay -->
+  <div id="modal-import-loading" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+    <div class="studio-modal-card import-modal-card">
+      <div class="render-film-reel">
+        <div class="reel-core">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+        </div>
+        <div class="reel-pulse-ring"></div>
+      </div>
+      <h3 id="import-modal-title" class="modal-title" style="margin-top: 16px;">Verifying & Importing Scene Pack</h3>
+      <p class="modal-status-text" id="import-modal-status-text">🛡️ Scanning file signatures, verifying malware security, and indexing audio stems...</p>
+      <div class="modal-progress-track">
+        <div class="modal-progress-fill indeterminate"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Microphone Noise Calibration Modal -->
+  <div id="modal-mic-calibration" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="calib-modal-title" aria-describedby="calib-modal-status">
+    <div class="studio-modal-card calib-modal-card">
+      <div class="calib-animation-container">
+        <div class="calib-mic-visual">
+          <div class="calib-mic-icon-circle">
+            <span id="calib-modal-icon" class="calib-pulse-icon">🎙️</span>
+          </div>
+          <div id="calib-radar-ring" class="calib-radar-ring"></div>
+        </div>
+      </div>
+
+      <div class="modal-header-content" style="text-align: center; margin-top: 12px;">
+        <div class="modal-badge-row" style="justify-content: center;">
+          <span class="badge-studio">MIC CALIBRATION</span>
+          <span class="badge-render-live" id="calib-modal-badge">PRE-ROLL (1s)</span>
+        </div>
+        <h3 id="calib-modal-title" class="modal-title" style="margin-top: 8px;">Microphone Room Calibration</h3>
+        <p id="calib-modal-status" class="modal-status-text">Get ready... Releasing mouse click and preparing room tone sample.</p>
+      </div>
+
+      <!-- Live Dual-Phase Countdown & Progress Visualizer -->
+      <div class="calib-meter-box">
+        <div class="calib-timer-readout" id="calib-timer-text">1.0s</div>
+        <div class="calib-phase-indicator" id="calib-phase-text">Phase 1: Pre-Roll Delay (Mouse Release)</div>
+        <div class="modal-progress-track" style="margin-top: 10px;">
+          <div id="calib-progress-bar" class="modal-progress-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <div class="modal-reassurance-notice" style="margin-top: 14px; text-align: center; font-size: 11.5px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+        <span>Please stay quiet and avoid clicking or moving. Popup will close automatically.</span>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 16px; justify-content: center;">
+        <button id="btn-cancel-calibration" class="btn btn-ghost btn-sm" type="button" aria-label="Cancel Calibration">
+          <span>✕ Cancel</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts -->
-  <script type="module" src="/js/app.js?v=2.7"></script>
+  <script type="module" src="/js/app.js?v=2.9"></script>
 </body>
 </html>

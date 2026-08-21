@@ -108,3 +108,17 @@ if (-not (Test-Path $cloudflaredPath)) {
 } else {
     Write-Host "   -> cloudflared.exe already present in tools\" -ForegroundColor Green
 }
+
+# 3. DeepFilterNet 3 (AI Vocal De-Noising & Speech Enhancer)
+$deepFilterPath = Join-Path $TargetDir "deep-filter.exe"
+if (-not (Test-Path $deepFilterPath)) {
+    Write-Host "   -> Downloading DeepFilterNet 3 for AI vocal de-noising..." -ForegroundColor Cyan
+    try {
+        Invoke-WebRequest -Uri "https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-pc-windows-msvc.exe" -OutFile $deepFilterPath -UseBasicParsing
+        Write-Host "      DeepFilterNet 3 installed in tools\" -ForegroundColor Green
+    } catch {
+        Write-Warning "DeepFilterNet download failed: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "   -> deep-filter.exe already present in tools\" -ForegroundColor Green
+}

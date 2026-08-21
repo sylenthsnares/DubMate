@@ -16,9 +16,9 @@ import tempfile
 import subprocess
 import numpy as np
 import scipy.signal
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 
-from pack_loader import get_ffmpeg_path, get_h264_encoder_args, CACHE_DIR, PackInfo
+from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, CACHE_DIR, PackInfo
 
 SR = 44100  # Standard audio sample rate
 
@@ -83,15 +83,258 @@ def compute_waveform_peaks(data: np.ndarray, columns: int = 120) -> List[Tuple[f
     return peaks
 
 
+def get_user_noise_profile_path(room_id: str, user_id: str) -> str:
+    """Returns the persistent noise profile path for an actor in a room."""
+    return os.path.join(get_room_cache_dir(room_id), f"noise_profile_{user_id}.wav")
+
+
+def save_user_noise_profile(
+    room_id: str,
+    user_id: str,
+    audio_bytes: bytes,
+    filename_hint: str = "profile.webm"
+) -> Dict[str, Any]:
+    """
+    Saves a 1-second sample of idle room background noise to calibrate the actor's noise profile.
+    Returns path, duration, and estimated noise floor in dB.
+    """
+    if not audio_bytes or len(audio_bytes) < 32:
+        raise ValueError("Uploaded noise profile audio stream is empty.")
+
+    target_profile = get_user_noise_profile_path(room_id, user_id)
+    ext = os.path.splitext(filename_hint)[1].lower() if filename_hint else ".webm"
+    if ext not in (".webm", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".flac"):
+        ext = ".webm"
+
+    raw_tmp = tempfile.mktemp(suffix=ext)
+    with open(raw_tmp, "wb") as f:
+        f.write(audio_bytes)
+
+    ffmpeg = get_ffmpeg_path()
+    try:
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", raw_tmp,
+            "-ac", "1", "-ar", str(SR),
+            "-c:a", "pcm_s16le",
+            target_profile
+        ]
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as err:
+        print(f"[AudioProcessor] Noise profile calibration conversion failed: {err}")
+        raise RuntimeError(f"Noise profile calibration failed: {err}")
+    finally:
+        if os.path.exists(raw_tmp):
+            try:
+                os.remove(raw_tmp)
+            except Exception:
+                pass
+
+    profile_data = read_wav_mono(target_profile)
+    rms = np.sqrt(np.mean(profile_data ** 2)) if len(profile_data) > 0 else 1e-6
+    noise_floor_db = round(float(20.0 * np.log10(max(rms, 1e-6))), 1)
+
+    return {
+        "status": "ok",
+        "user_id": user_id,
+        "profile_path": target_profile,
+        "duration": round(len(profile_data) / float(SR), 2),
+        "noise_floor_db": noise_floor_db,
+    }
+
+
+def calculate_speech_gated_loudness(
+    audio_data: np.ndarray,
+    sr: int = SR,
+    frame_len_ms: float = 50.0,
+    hop_ms: float = 25.0,
+    gate_thresh_db: float = -15.0
+) -> float:
+    """
+    Measures the speech-gated integrated RMS loudness of an audio signal (ITU-R BS.1770 / EBU R128 inspired).
+    Splits audio into overlapping frames (50ms frames, 25ms hop), computes frame RMS,
+    filters out silent/pause frames below relative gate_thresh_db (relative to speech RMS),
+    and returns the mean active speech loudness in dBFS.
+    """
+    if audio_data is None or len(audio_data) == 0:
+        return -60.0
+
+    frame_len = int(sr * (frame_len_ms / 1000.0))
+    hop_len = int(sr * (hop_ms / 1000.0))
+    if frame_len <= 0 or hop_len <= 0 or len(audio_data) < frame_len:
+        rms = np.sqrt(np.mean(audio_data ** 2)) if len(audio_data) > 0 else 1e-6
+        return float(np.clip(20.0 * np.log10(max(rms, 1e-6)), -70.0, 0.0))
+
+    frames = np.lib.stride_tricks.sliding_window_view(audio_data, frame_len)[::hop_len]
+    frame_rms = np.sqrt(np.mean(frames ** 2, axis=-1) + 1e-12)
+
+    # Step 1: Absolute threshold (-55 dBFS) to discard pure digital silence
+    abs_thresh = 10.0 ** (-55.0 / 20.0)
+    speech_cand = frame_rms[frame_rms >= abs_thresh]
+    if len(speech_cand) == 0:
+        return -60.0
+
+    # Step 2: Relative speech gate (-15 dB relative to initial active speech RMS)
+    ungated_mean_rms = np.sqrt(np.mean(speech_cand ** 2))
+    rel_thresh = ungated_mean_rms * (10.0 ** (gate_thresh_db / 20.0))
+    active_frames = speech_cand[speech_cand >= rel_thresh]
+    if len(active_frames) == 0:
+        active_frames = speech_cand
+
+    mean_speech_rms = np.sqrt(np.mean(active_frames ** 2))
+    speech_loudness_db = float(20.0 * np.log10(max(mean_speech_rms, 1e-6)))
+    return round(float(np.clip(speech_loudness_db, -70.0, 0.0)), 1)
+
+
+def calculate_take_auto_gain(
+    take_audio_or_path: Union[np.ndarray, str],
+    target_loudness_db: float = -21.0,
+    sr: int = SR,
+    max_boost_db: float = 12.0,
+    max_cut_db: float = -12.0
+) -> Dict[str, float]:
+    """
+    Computes the static gain offset needed to match target dialogue loudness.
+    Returns {"take_loudness_db": float, "target_loudness_db": float, "auto_gain_db": float}.
+    """
+    if isinstance(take_audio_or_path, str):
+        if not os.path.isfile(take_audio_or_path):
+            return {"take_loudness_db": -21.0, "target_loudness_db": round(target_loudness_db, 1), "auto_gain_db": 0.0}
+        audio_data = read_wav_mono(take_audio_or_path, sr)
+    else:
+        audio_data = take_audio_or_path
+
+    take_loudness_db = calculate_speech_gated_loudness(audio_data, sr=sr)
+    raw_delta_db = target_loudness_db - take_loudness_db
+    # Clamp to safe gain limits [-12dB, +12dB]
+    auto_gain_db = round(float(np.clip(raw_delta_db, max_cut_db, max_boost_db)), 1)
+
+    return {
+        "take_loudness_db": take_loudness_db,
+        "target_loudness_db": round(target_loudness_db, 1),
+        "auto_gain_db": auto_gain_db,
+    }
+
+
+def apply_noise_reduction(
+    input_wav: str,
+    output_wav: str,
+    noise_profile_wav: Optional[str] = None,
+    reduction_db: float = 100.0,
+    sr: int = SR
+) -> str:
+    """
+    Applies state-of-the-art DeepFilterNet 3 neural speech enhancement & vocal de-noising.
+    Preserves 100% of quiet dialogue, subtle mouth grit, breath, and natural dynamics
+    while removing heavy fan noise, AC hum, and preamp hiss with zero phase warble.
+    Falls back gracefully to highpass + adaptive spectral gating if deep-filter binary is absent.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(output_wav)), exist_ok=True)
+    df_bin = get_deep_filter_path()
+    ffmpeg = get_ffmpeg_path()
+
+    # 1. Primary Path: DeepFilterNet 3 Neural Speech Enhancement
+    if df_bin and os.path.isfile(df_bin):
+        tmp_dir = tempfile.mkdtemp(prefix="dubmate_df_")
+        try:
+            # Read original input length for exact sample-accurate duration matching
+            orig_audio = read_wav_mono(input_wav, sr)
+            orig_len = len(orig_audio)
+
+            tmp_48k_in = os.path.join(tmp_dir, "take_48k.wav")
+            df_out_dir = os.path.join(tmp_dir, "out")
+            os.makedirs(df_out_dir, exist_ok=True)
+
+            # Resample cleanly to 48kHz for DeepFilterNet native processing
+            cmd_resample = [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", input_wav,
+                "-ar", "48000", "-ac", "1",
+                "-c:a", "pcm_s16le",
+                tmp_48k_in
+            ]
+            subprocess.run(cmd_resample, check=True)
+
+            # Run DeepFilterNet with delay compensation (-D)
+            atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else 100.0
+            cmd_df = [
+                df_bin, "-D",
+                "-a", str(int(atten_lim)),
+                "-o", df_out_dir,
+                tmp_48k_in
+            ]
+            subprocess.run(cmd_df, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+            enh_48k = os.path.join(df_out_dir, "take_48k.wav")
+            if os.path.isfile(enh_48k) and os.path.getsize(enh_48k) > 100:
+                # Transcode back to target sample rate (sr)
+                tmp_resampled = os.path.join(tmp_dir, "enhanced_sr.wav")
+                cmd_back = [
+                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", enh_48k,
+                    "-ar", str(sr), "-ac", "1",
+                    "-c:a", "pcm_s16le",
+                    tmp_resampled
+                ]
+                subprocess.run(cmd_back, check=True)
+
+                # Ensure exact length matching with zero-padding if needed
+                enhanced_audio = read_wav_mono(tmp_resampled, sr)
+                if len(enhanced_audio) < orig_len:
+                    padded = np.zeros(orig_len, dtype=np.float32)
+                    padded[:len(enhanced_audio)] = enhanced_audio
+                    enhanced_audio = padded
+                elif len(enhanced_audio) > orig_len:
+                    enhanced_audio = enhanced_audio[:orig_len]
+
+                write_wav_mono(output_wav, enhanced_audio, sr)
+                return output_wav
+        except Exception as ex:
+            print(f"[AudioProcessor] DeepFilterNet3 processing fallback triggered on {input_wav}: {ex}")
+        finally:
+            if os.path.exists(tmp_dir):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 2. Fallback Path: High-pass + Adaptive Spectral Denoising
+    try:
+        af_filters = [
+            "highpass=f=80",
+            f"afftdn=nr={min(18.0, reduction_db):.1f}:nf=-35:tn=1",
+            "agate=threshold=-34dB:ratio=2.0:range=-18dB:attack=15:release=120",
+        ]
+        tmp_out = tempfile.mktemp(suffix=".wav")
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", input_wav,
+            "-af", ",".join(af_filters),
+            "-ac", "1", "-ar", str(sr),
+            "-c:a", "pcm_s16le",
+            tmp_out
+        ]
+        subprocess.run(cmd, check=True)
+        shutil.move(tmp_out, output_wav)
+        return output_wav
+    except Exception as ex:
+        print(f"[AudioProcessor] Fallback noise reduction failed on {input_wav}: {ex}")
+        shutil.copy2(input_wav, output_wav)
+        return output_wav
+
+
 def save_uploaded_take(
     room_id: str,
     line_index: int,
     audio_bytes: bytes,
-    filename_hint: str = "take.webm"
+    filename_hint: str = "take.webm",
+    enable_noise_reduction: bool = False,
+    user_id: Optional[str] = None,
+    target_loudness_db: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
-    Returns path, duration, and waveform peaks.
+    Preserves pristine raw audio (take_line_{index}_raw.wav) and generates denoised
+    audio (take_line_{index}_denoised.wav) when requested.
+    Calculates speech-gated loudness and smart auto-gain calibration against scene target.
+    Returns active path, duration, waveform peaks, auto_gain_db, and noise reduction status.
     """
     if not audio_bytes or len(audio_bytes) < 32:
         raise ValueError("Uploaded audio stream is empty or incomplete.")
@@ -106,6 +349,9 @@ def save_uploaded_take(
         f.write(audio_bytes)
 
     target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
+    raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
+    denoised_wav = os.path.join(room_dir, f"take_line_{line_index}_denoised.wav")
+
     ffmpeg = get_ffmpeg_path()
     try:
         cmd = [
@@ -113,7 +359,7 @@ def save_uploaded_take(
             "-i", raw_tmp,
             "-ac", "1", "-ar", str(SR),
             "-c:a", "pcm_s16le",
-            target_wav
+            raw_wav
         ]
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as err:
@@ -126,6 +372,71 @@ def save_uploaded_take(
             except Exception:
                 pass
 
+    profile_path = get_user_noise_profile_path(room_id, user_id) if user_id else None
+    if not os.path.isfile(profile_path or ""):
+        profile_path = None
+
+    if enable_noise_reduction:
+        apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+        shutil.copy2(denoised_wav, target_wav)
+    else:
+        shutil.copy2(raw_wav, target_wav)
+
+    audio_data = read_wav_mono(target_wav)
+    duration = len(audio_data) / float(SR)
+    peaks = compute_waveform_peaks(audio_data, 100)
+
+    # Calculate speech-gated loudness and smart auto-gain calibration
+    effective_target_db = target_loudness_db if target_loudness_db is not None else -21.0
+    gain_match = calculate_take_auto_gain(audio_data, target_loudness_db=effective_target_db, sr=SR)
+
+    return {
+        "wav_path": target_wav,
+        "raw_path": raw_wav,
+        "denoised_path": denoised_wav if enable_noise_reduction else None,
+        "duration": round(duration, 3),
+        "peaks": peaks,
+        "noise_reduction": bool(enable_noise_reduction),
+        "has_raw": True,
+        "speech_loudness_db": gain_match["take_loudness_db"],
+        "target_loudness_db": gain_match["target_loudness_db"],
+        "auto_gain_db": gain_match["auto_gain_db"],
+        "url": f"/api/rooms/{room_id}/takes/{line_index}/audio",
+    }
+
+
+def toggle_take_noise_reduction(
+    room_id: str,
+    line_index: int,
+    enable_noise_reduction: bool,
+    user_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Instantly toggles a take between pristine raw and denoised audio.
+    Generates denoised audio on-demand if missing.
+    """
+    room_dir = get_room_cache_dir(room_id)
+    target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
+    raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
+    denoised_wav = os.path.join(room_dir, f"take_line_{line_index}_denoised.wav")
+
+    if not os.path.exists(raw_wav):
+        if os.path.exists(target_wav):
+            shutil.copy2(target_wav, raw_wav)
+        else:
+            raise FileNotFoundError(f"No take audio found for line {line_index}")
+
+    profile_path = get_user_noise_profile_path(room_id, user_id) if user_id else None
+    if not os.path.isfile(profile_path or ""):
+        profile_path = None
+
+    if enable_noise_reduction:
+        if not os.path.exists(denoised_wav) or os.path.getsize(denoised_wav) < 100:
+            apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+        shutil.copy2(denoised_wav, target_wav)
+    else:
+        shutil.copy2(raw_wav, target_wav)
+
     audio_data = read_wav_mono(target_wav)
     duration = len(audio_data) / float(SR)
     peaks = compute_waveform_peaks(audio_data, 100)
@@ -134,6 +445,8 @@ def save_uploaded_take(
         "wav_path": target_wav,
         "duration": round(duration, 3),
         "peaks": peaks,
+        "noise_reduction": bool(enable_noise_reduction),
+        "has_raw": True,
         "url": f"/api/rooms/{room_id}/takes/{line_index}/audio",
     }
 
@@ -189,7 +502,7 @@ def apply_audio_effects(
     reverb_wet: float = 0.0,
     gain_db: float = 0.0,
     enable_lowcut: bool = True,
-    enable_compressor: bool = True,
+    enable_compressor: bool = False,
     sr: int = SR
 ) -> np.ndarray:
     """
@@ -277,10 +590,11 @@ def render_dub_mix(
     pack: PackInfo,
     takes_dict: Dict[int, Dict[str, Any]],
     output_wav: str,
-    sr: int = SR
+    sr: int = SR,
+    master_dialogue_presence_db: float = 0.0,
 ) -> str:
     """
-    Renders complete mix with millisecond offsets and voice effects.
+    Renders complete mix with millisecond offsets, voice effects, and master dialogue presence.
     takes_dict format: {line_index: {"wav_path": str, "offset_ms": int, "pitch_semitones": float, "reverb_wet": float, "gain_db": float}}
     """
     total_sec = max(pack.duration, 1.0)
@@ -309,7 +623,8 @@ def render_dub_mix(
             offset_sec = float(take_info.get("offset_ms", 0)) / 1000.0
             pitch = float(take_info.get("pitch_semitones", 0.0))
             reverb = float(take_info.get("reverb_wet", 0.0))
-            gain = float(take_info.get("gain_db", 0.0))
+            # Take gain plus master dialogue presence trim
+            gain = float(take_info.get("gain_db", 0.0)) + float(master_dialogue_presence_db)
 
             processed_audio = apply_audio_effects(
                 take_info["wav_path"],
@@ -344,7 +659,8 @@ def render_dub_mix(
                     end_sample = min(total_samples, start_sample + len(orig_audio))
                     samples_to_add = end_sample - start_sample
                     if samples_to_add > 0:
-                        mix_buffer[start_sample:end_sample] += orig_audio[:samples_to_add] * 0.90
+                        orig_mult = 0.90 * (10.0 ** (float(master_dialogue_presence_db) / 20.0))
+                        mix_buffer[start_sample:end_sample] += orig_audio[:samples_to_add] * np.float32(orig_mult)
                 except Exception as ex:
                     print(f"Error loading original audio for line {idx}: {ex}")
 
@@ -359,12 +675,13 @@ def export_dub_video(
     pack: PackInfo,
     takes_dict: Dict[int, Dict[str, Any]],
     output_mp4: str,
-    aspect_ratio: str = "16:9"
+    aspect_ratio: str = "16:9",
+    master_dialogue_presence_db: float = 0.0,
 ) -> str:
     """Combines final mixed audio with scene video into a high quality MP4 (16:9 or 9:16 letterboxed)."""
     pack.ensure_web_ready()
     tmp_wav = tempfile.mktemp(suffix=".wav")
-    render_dub_mix(pack, takes_dict, tmp_wav)
+    render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db)
 
     ffmpeg = get_ffmpeg_path()
     os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)

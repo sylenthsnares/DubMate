@@ -280,6 +280,109 @@ export class AudioEngine {
     });
   }
 
+  // --- 4b. Calibrate Idle Room Noise Profile (1s Pre-Roll + 3s Sampling) ---
+  async recordNoiseProfile(durationMs = 3000, delayMs = 1000, onProgress = null) {
+    this.initContext();
+    await this.requestMicrophone();
+
+    return new Promise((resolve, reject) => {
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      }
+      const options = mimeType ? { mimeType } : {};
+      const recorder = new MediaRecorder(this.stream, options);
+      const chunks = [];
+      let isCancelled = false;
+
+      this.currentNoiseRecorder = {
+        cancel: () => {
+          isCancelled = true;
+          try {
+            if (recorder.state === 'recording') recorder.stop();
+          } catch (e) {}
+          reject(new Error("Calibration cancelled by user"));
+        }
+      };
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        this.currentNoiseRecorder = null;
+        if (isCancelled) return;
+        const mime = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(chunks, { type: mime });
+        resolve(blob);
+      };
+
+      recorder.onerror = (err) => {
+        this.currentNoiseRecorder = null;
+        reject(err);
+      };
+
+      // Phase 1: Pre-Roll Delay (Mouse click acoustic release)
+      const preRollInterval = 40;
+      let preRollElapsed = 0;
+      if (onProgress) onProgress('preroll', 0, delayMs);
+
+      const preRollTimer = setInterval(() => {
+        if (isCancelled) {
+          clearInterval(preRollTimer);
+          return;
+        }
+        preRollElapsed += preRollInterval;
+        if (onProgress) {
+          onProgress('preroll', Math.min(delayMs, preRollElapsed), delayMs);
+        }
+        if (preRollElapsed >= delayMs) {
+          clearInterval(preRollTimer);
+          if (isCancelled) return;
+
+          // Phase 2: 3-Second Room Tone Sampling
+          try {
+            recorder.start(50);
+            let sampleElapsed = 0;
+            const sampleInterval = 40;
+            if (onProgress) onProgress('recording', 0, durationMs);
+
+            const sampleTimer = setInterval(() => {
+              if (isCancelled) {
+                clearInterval(sampleTimer);
+                return;
+              }
+              sampleElapsed += sampleInterval;
+              if (onProgress) {
+                onProgress('recording', Math.min(durationMs, sampleElapsed), durationMs);
+              }
+              if (sampleElapsed >= durationMs) {
+                clearInterval(sampleTimer);
+                try {
+                  if (recorder.state === 'recording') {
+                    recorder.stop();
+                  }
+                } catch (e) {
+                  const mime = recorder.mimeType || 'audio/webm';
+                  resolve(new Blob(chunks, { type: mime }));
+                }
+              }
+            }, sampleInterval);
+          } catch (err) {
+            reject(err);
+          }
+        }
+      }, preRollInterval);
+    });
+  }
+
+  cancelNoiseProfileCalibration() {
+    if (this.currentNoiseRecorder && typeof this.currentNoiseRecorder.cancel === 'function') {
+      this.currentNoiseRecorder.cancel();
+      this.currentNoiseRecorder = null;
+    }
+  }
+
   evictTakeCache(lineIndex) {
     if (lineIndex !== undefined && lineIndex !== null) {
       for (const key of Array.from(this.bufferCache.keys())) {
@@ -366,6 +469,7 @@ export class AudioEngine {
     this.currentPlayingNodes = [];
     this.activeTakeGain = null;
     this.activeOrigGain = null;
+    this.activeDSPNodes = null;
   }
 
   // --- 5. Studio Vocal DSP Chain ---
@@ -427,8 +531,18 @@ export class AudioEngine {
       gainNode.connect(submixGain);
     }
 
+    nodes.gainNode = gainNode;
     nodes.output = submixGain;
     return nodes;
+  }
+
+  setGain(gainDb) {
+    if (this.activeDSPNodes && this.activeDSPNodes.gainNode && this.ctx) {
+      try {
+        const linear = Math.pow(10.0, gainDb / 20.0);
+        this.activeDSPNodes.gainNode.gain.setValueAtTime(linear, this.ctx.currentTime);
+      } catch (e) {}
+    }
   }
 
   // --- 6. Isolated Preview & Real-Time A/B Switching ---
@@ -485,6 +599,7 @@ export class AudioEngine {
         enableLowCut,
         enableCompressor,
       });
+      this.activeDSPNodes = dsp;
 
       this.activeTakeGain = this.ctx.createGain();
       this.activeTakeGain.gain.value = (this.abState === 'A') ? 1.0 : 0.0;

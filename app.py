@@ -66,6 +66,9 @@ class Room:
         self.mode: str = "booth"  # "booth" (solo self-paced) or "studio" (synced prompter)
         self.status: str = "lobby"  # "lobby" | "recording" | "screening"
         self.exported_video_path: Optional[str] = None
+        self.exported_video_9_16_path: Optional[str] = None
+        self.master_dialogue_presence_db: float = 0.0
+        self.export_status: Dict[str, str] = {}
         self.sockets: Set[WebSocket] = set()
 
     def save_to_disk(self):
@@ -108,6 +111,11 @@ class Room:
                     "pitch_semitones": v.get("pitch_semitones", 0.0),
                     "reverb_wet": v.get("reverb_wet", 0.0),
                     "gain_db": v.get("gain_db", 0.0),
+                    "noise_reduction": v.get("noise_reduction", False),
+                    "has_raw": v.get("has_raw", True),
+                    "speech_loudness_db": v.get("speech_loudness_db"),
+                    "target_loudness_db": v.get("target_loudness_db"),
+                    "auto_gain_db": v.get("auto_gain_db", 0.0),
                     "url": v.get("url"),
                     "recorded_at": v.get("recorded_at"),
                 }
@@ -116,6 +124,7 @@ class Room:
             "current_line": self.current_line,
             "mode": self.mode,
             "status": self.status,
+            "master_dialogue_presence_db": getattr(self, "master_dialogue_presence_db", 0.0),
             "has_export": has_export,
             "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,
             "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9" if has_export else None,
@@ -302,18 +311,17 @@ async def add_performance_cache_headers(request: Request, call_next):
     return response
 
 
-def get_packs_registry() -> Dict[str, pack_loader.PackInfo]:
+def get_packs_registry(force_rescan: bool = False) -> Dict[str, pack_loader.PackInfo]:
     global PACKS_CACHE
-    PACKS_CACHE = pack_loader.get_all_packs()
+    if force_rescan or not PACKS_CACHE:
+        PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=force_rescan)
     return PACKS_CACHE
 
 
 @app.get("/api/packs")
 async def list_packs(rescan: bool = False):
-    """Returns list of available dub packs, rescanning the packs directory."""
-    if rescan or not PACKS_CACHE:
-        get_packs_registry()
-    registry = get_packs_registry()
+    """Returns list of available dub packs, using fast memory registry or on-demand rescan."""
+    registry = get_packs_registry(force_rescan=rescan)
     return [p.to_dict() for p in registry.values()]
 
 
@@ -321,7 +329,7 @@ async def list_packs(rescan: bool = False):
 @app.get("/api/packs/rescan")
 async def rescan_packs():
     """Forces an immediate on-demand rescan of the packs directory."""
-    registry = get_packs_registry()
+    registry = get_packs_registry(force_rescan=True)
     scanned_folders = [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.exists(d)]
     return {
         "status": "ok",
@@ -342,21 +350,30 @@ async def get_pack(pack_id: str):
 
 @app.post("/api/packs/import")
 async def import_pack_file(file: UploadFile = File(...)):
-    """Accepts a Choicer Voicer or DubStage .zip archive, extracts and indexes it."""
-    if not file.filename.lower().endswith(".zip"):
+    """Accepts a Choicer Voicer or DubStage .zip archive, validates signatures, scans, and indexes it."""
+    if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip pack archives are supported.")
     try:
         content = await file.read()
+        if len(content) > pack_loader.MAX_ARCHIVE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Archive exceeds maximum allowed size (500 MB).")
+
         pack = pack_loader.import_pack_archive(content, file.filename)
         if not pack:
             raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
-        
-        get_packs_registry()  # Refresh registry
+
+        get_packs_registry(force_rescan=True)  # Refresh registry
         return {
             "status": "ok",
-            "message": f"Successfully imported pack '{pack.name}'",
+            "message": f"Successfully verified and imported pack '{pack.name}'",
             "pack": pack.to_dict()
         }
+    except pack_loader.PackSecurityError as sec_err:
+        print(f"[Security Alert] Pack import rejected: {sec_err}")
+        raise HTTPException(status_code=422, detail=f"{str(sec_err)}")
+    except pack_loader.PackValidationError as val_err:
+        print(f"[Validation Error] Pack import rejected: {val_err}")
+        raise HTTPException(status_code=400, detail=f"{str(val_err)}")
     except HTTPException:
         raise
     except Exception as ex:
@@ -546,6 +563,30 @@ async def get_room(room_id: str):
     return room.to_state_dict()
 
 
+@app.post("/api/rooms/{room_id}/noise_profile")
+async def upload_noise_profile(
+    room_id: str,
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+):
+    """Calibrates and saves a 1-second room background noise profile for an actor."""
+    room = ROOMS.get(room_id.upper())
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    try:
+        content = await file.read()
+        res = audio_processor.save_user_noise_profile(
+            room.room_id,
+            user_id,
+            content,
+            filename_hint=file.filename or "profile.webm"
+        )
+        return res
+    except Exception as ex:
+        print(f"[NoiseProfileError] Failed calibrating noise profile for {user_id} in {room_id}: {ex}")
+        raise HTTPException(status_code=400, detail=str(ex))
+
+
 @app.post("/api/rooms/{room_id}/takes/{line_index}")
 async def upload_take(
     room_id: str,
@@ -557,6 +598,7 @@ async def upload_take(
     pitch_semitones: float = Form(0.0),
     reverb_wet: float = Form(0.0),
     gain_db: float = Form(0.0),
+    noise_reduction: bool = Form(False),
 ):
     room = ROOMS.get(room_id.upper())
     if not room:
@@ -576,12 +618,19 @@ async def upload_take(
         )
 
     try:
+        target_loudness = line.get("reference_loudness_db")
+        if target_loudness is None or target_loudness <= -55.0:
+            target_loudness = getattr(room.pack, "mean_vocal_loudness_db", -21.0)
+
         content = await file.read()
         saved = audio_processor.save_uploaded_take(
             room.room_id,
             line_index,
             content,
-            filename_hint=file.filename or "take.webm"
+            filename_hint=file.filename or "take.webm",
+            enable_noise_reduction=noise_reduction,
+            user_id=user_id,
+            target_loudness_db=target_loudness
         )
     except Exception as ex:
         print(f"[UploadError] Error saving take for room {room_id} line {line_index}: {ex}")
@@ -600,12 +649,59 @@ async def upload_take(
         "pitch_semitones": pitch_semitones,
         "reverb_wet": reverb_wet,
         "gain_db": gain_db,
+        "noise_reduction": saved.get("noise_reduction", noise_reduction),
+        "has_raw": True,
+        "speech_loudness_db": saved.get("speech_loudness_db"),
+        "target_loudness_db": saved.get("target_loudness_db"),
+        "auto_gain_db": saved.get("auto_gain_db", 0.0),
         "recorded_at": time.time(),
     }
 
     room.exported_video_path = None
-    await room.broadcast("take_recorded", {"line_index": line_index, "url": versioned_url})
+    await room.broadcast("take_recorded", {"line_index": line_index, "url": versioned_url, "noise_reduction": room.takes[line_index]["noise_reduction"]})
     return {"status": "ok", "take": room.takes[line_index]}
+
+
+@app.post("/api/rooms/{room_id}/takes/{line_index}/noise_reduction")
+async def toggle_take_noise_reduction_endpoint(
+    room_id: str,
+    line_index: int,
+    payload: Dict[str, Any]
+):
+    """Switches an existing take between raw and denoised audio without re-recording."""
+    room = ROOMS.get(room_id.upper())
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if line_index not in room.takes:
+        raise HTTPException(status_code=404, detail="Take not found")
+
+    enable = bool(payload.get("noise_reduction", False))
+    take = room.takes[line_index]
+    user_id = take.get("user_id", "host")
+
+    try:
+        toggled = audio_processor.toggle_take_noise_reduction(
+            room.room_id,
+            line_index,
+            enable_noise_reduction=enable,
+            user_id=user_id
+        )
+        timestamp_ms = int(time.time() * 1000)
+        versioned_url = f"/api/rooms/{room_id}/takes/{line_index}/audio?v={timestamp_ms}"
+        room.takes[line_index]["noise_reduction"] = enable
+        room.takes[line_index]["url"] = versioned_url
+        room.takes[line_index]["peaks"] = toggled["peaks"]
+        room.takes[line_index]["duration"] = toggled["duration"]
+        room.exported_video_path = None
+        await room.broadcast("take_params_updated", {
+            "line_index": line_index,
+            "url": versioned_url,
+            "noise_reduction": enable
+        })
+        return {"status": "ok", "take": room.takes[line_index]}
+    except Exception as ex:
+        print(f"[ToggleNoiseReductionError] {ex}")
+        raise HTTPException(status_code=400, detail=str(ex))
 
 
 @app.get("/api/rooms/{room_id}/takes/{line_index}/audio")
@@ -625,11 +721,14 @@ async def get_take_audio(room_id: str, line_index: int, request: Request):
 
 
 @app.post("/api/rooms/{room_id}/export")
-async def export_room_dub(room_id: str, aspect_ratio: str = "16:9"):
+async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0):
     """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously."""
     room = ROOMS.get(room_id.upper())
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
+
+    presence_val = float(presence) if presence != 0.0 else getattr(room, "master_dialogue_presence_db", 0.0)
+    room.master_dialogue_presence_db = presence_val
 
     is_9_16 = (aspect_ratio == "9:16")
     suffix = "_9_16" if is_9_16 else ""
@@ -668,6 +767,7 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9"):
         }
 
     room.export_status[aspect_ratio] = "processing"
+    await room.broadcast("export_started", {"aspect_ratio": aspect_ratio})
 
     def render_worker():
         try:
@@ -675,7 +775,8 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9"):
                 room.pack,
                 dict(room.takes),
                 out_path,
-                aspect_ratio="9:16" if is_9_16 else "16:9"
+                aspect_ratio="9:16" if is_9_16 else "16:9",
+                master_dialogue_presence_db=presence_val
             )
             if is_9_16:
                 room.exported_video_9_16_path = out_path
@@ -941,6 +1042,36 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     room.exported_video_path = None
                     await room.broadcast("take_params_updated", {"line_index": line_idx})
 
+            elif msg_type == "toggle_noise_reduction":
+                raw_idx = payload.get("line_index")
+                enable = bool(payload.get("noise_reduction", False))
+                try:
+                    line_idx = int(raw_idx)
+                except (TypeError, ValueError):
+                    line_idx = None
+                if line_idx is not None and line_idx in room.takes:
+                    try:
+                        toggled = audio_processor.toggle_take_noise_reduction(
+                            room.room_id,
+                            line_idx,
+                            enable_noise_reduction=enable,
+                            user_id=user_id
+                        )
+                        timestamp_ms = int(time.time() * 1000)
+                        versioned_url = f"/api/rooms/{room.room_id}/takes/{line_idx}/audio?v={timestamp_ms}"
+                        room.takes[line_idx]["noise_reduction"] = enable
+                        room.takes[line_idx]["url"] = versioned_url
+                        room.takes[line_idx]["peaks"] = toggled["peaks"]
+                        room.takes[line_idx]["duration"] = toggled["duration"]
+                        room.exported_video_path = None
+                        await room.broadcast("take_params_updated", {
+                            "line_index": line_idx,
+                            "url": versioned_url,
+                            "noise_reduction": enable
+                        })
+                    except Exception as ex:
+                        print(f"[WSToggleNoiseReductionError] {ex}")
+
             elif msg_type == "clear_take":
                 raw_idx = payload.get("line_index")
                 try:
@@ -1004,6 +1135,16 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                         "triggered_by": user_id
                     })
 
+            elif msg_type == "set_dialogue_presence":
+                presence_db = float(payload.get("presence_db", 0.0))
+                room.master_dialogue_presence_db = max(-12.0, min(12.0, presence_db))
+                room.exported_video_path = None
+                room.exported_video_9_16_path = None
+                await room.broadcast("dialogue_presence_sync", {
+                    "presence_db": room.master_dialogue_presence_db,
+                    "triggered_by": user_id
+                })
+
             elif msg_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
 
@@ -1028,5 +1169,9 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
+    if sys.platform == "win32":
+        import asyncio
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     # High-performance production mode: eliminates file polling over pack assets
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False, access_log=False)

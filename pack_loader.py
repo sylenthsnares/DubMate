@@ -25,6 +25,36 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
 VIDEO_EXTS = (".mp4", ".ogv", ".mkv", ".webm", ".mov", ".avi")
+SAFE_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+SAFE_TEXT_EXTS = (".ini", ".txt", ".json", ".csv")
+ALLOWED_PACK_EXTS = AUDIO_EXTS + VIDEO_EXTS + SAFE_IMAGE_EXTS + SAFE_TEXT_EXTS
+
+# Dangerous executable / script extensions that must trigger instant security rejection
+PROHIBITED_EXTENSIONS = (
+    ".exe", ".dll", ".so", ".dylib", ".bin", ".com", ".scr", ".msi", ".pif", ".app",
+    ".bat", ".cmd", ".ps1", ".psm1", ".sh", ".bash", ".zsh", ".vbs", ".vbe", ".js",
+    ".jse", ".wsf", ".wsh", ".mjs", ".py", ".pyw", ".pyc", ".pyd", ".php", ".phtml",
+    ".hta", ".reg", ".jar", ".class", ".cgi", ".pl", ".rb", ".elf", ".iso", ".img",
+    ".sys", ".drv", ".cpl", ".inf", ".ins", ".isp", ".lnk", ".url", ".desktop"
+)
+
+# Archive extraction security limits
+MAX_ARCHIVE_SIZE_BYTES = 500 * 1024 * 1024       # 500 MB max zip upload
+MAX_UNCOMPRESSED_SIZE_BYTES = 1200 * 1024 * 1024  # 1.2 GB max uncompressed total
+MAX_ARCHIVE_FILE_COUNT = 500                     # 500 entries max
+MAX_COMPRESSION_RATIO = 50.0                     # Max uncompressed / compressed ratio
+
+class PackSecurityError(Exception):
+    """Raised when an imported pack violates security rules or contains malware/dangerous files."""
+    pass
+
+class PackValidationError(Exception):
+    """Raised when an imported pack is corrupted or missing required pack structure."""
+    pass
+
+# Memory cache for fast pack indexing: full_path -> (mtime, PackInfo)
+PACK_OBJECT_CACHE: Dict[str, tuple[float, Any]] = {}
+
 _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
 
 
@@ -62,6 +92,18 @@ def get_ffprobe_path() -> str:
     if tool:
         return tool
     return "ffprobe"
+
+
+def get_deep_filter_path() -> Optional[str]:
+    """Finds deep-filter binary in project-local tools folder or system PATH."""
+    for name in ("deep-filter.exe", "deep-filter"):
+        local_tool = os.path.join(BASE_DIR, "tools", name)
+        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
+            return local_tool
+    tool = shutil.which("deep-filter")
+    if tool:
+        return tool
+    return None
 
 
 import wave
@@ -191,6 +233,40 @@ def get_cached_line_peaks(pack_id: str, filename: str, file_path: str, columns: 
     except Exception:
         pass
     return peaks
+
+
+def get_cached_line_loudness(pack_id: str, filename: str, file_path: str) -> float:
+    """Retrieves cached speech loudness or calculates and caches it for a dialogue line."""
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', f"{pack_id}_{filename}") + "_loudness.json"
+    cache_path = os.path.join(PEAKS_CACHE_DIR, safe_name)
+    try:
+        if os.path.isfile(cache_path):
+            file_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else 0
+            cache_mtime = os.path.getmtime(cache_path)
+            if cache_mtime >= file_mtime:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, (int, float)):
+                    return float(data)
+    except Exception:
+        pass
+
+    import audio_processor
+    try:
+        if os.path.isfile(file_path):
+            audio_data = audio_processor.read_wav_mono(file_path)
+            loudness = audio_processor.calculate_speech_gated_loudness(audio_data)
+        else:
+            loudness = -21.0
+    except Exception:
+        loudness = -21.0
+
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(loudness, f)
+    except Exception:
+        pass
+    return loudness
 
 
 def timestamp_from_filename(filename: str) -> Optional[float]:
@@ -546,6 +622,7 @@ class PackInfo:
         self.duration: float = 0.0
         self.lines: List[Dict[str, Any]] = []
         self.characters: List[str] = []
+        self.mean_vocal_loudness_db: float = -21.0
 
     @property
     def has_icon(self) -> bool:
@@ -576,6 +653,7 @@ class PackInfo:
             "has_backing": self.backing_track_path is not None,
             "video_url": f"/api/packs/{quoted_id}/video",
             "backing_url": f"/api/packs/{quoted_id}/backing" if self.backing_track_path else None,
+            "mean_vocal_loudness_db": getattr(self, "mean_vocal_loudness_db", -21.0),
             "lines": self.lines,
         }
 
@@ -776,6 +854,7 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         audio_full_path = os.path.join(pack_folder, filename)
         line_duration = probe_duration(audio_full_path)
         peaks = get_cached_line_peaks(pack_id, filename, audio_full_path, 100)
+        ref_loudness = get_cached_line_loudness(pack_id, filename, audio_full_path)
 
         quoted_pack_id = urllib.parse.quote(pack_id)
         quoted_filename = urllib.parse.quote(filename)
@@ -791,10 +870,17 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
             "raw_caption": f"[{char_name}] {caption_text}" if caption_text else f"[{char_name}]",
             "audio_url": f"/api/packs/{quoted_pack_id}/audio/{quoted_filename}",
             "peaks": peaks,
+            "reference_loudness_db": ref_loudness,
             "image": entry.get("image"),
         })
 
     pack.lines = lines
+    if pack.duration <= 0.0 and lines:
+        pack.duration = max(l["end"] for l in lines)
+    valid_loudness = [l["reference_loudness_db"] for l in lines if l.get("reference_loudness_db") is not None and l.get("reference_loudness_db") > -55.0]
+    import numpy as np
+    pack.mean_vocal_loudness_db = round(float(np.mean(valid_loudness)), 1) if valid_loudness else -21.0
+
     char_counts = {}
     for l in lines:
         c = l["character"]
@@ -809,38 +895,109 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
 
 def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pack.zip") -> Optional[PackInfo]:
     """
-    Extracts a Choicer Voicer or DubStage zip archive, identifies pack root,
+    Extracts a Choicer Voicer or DubStage zip archive, validates signatures,
+    enforces strict anti-malware and zip-slip security checks, identifies pack root,
     installs into Packs directory, and returns initialized PackInfo.
     """
     import zipfile
+    import io
+
+    # 1. Magic Bytes / Header Signature Verification
+    if isinstance(archive_path_or_bytes, (bytes, bytearray)):
+        raw_bytes = bytes(archive_path_or_bytes)
+        if len(raw_bytes) < 4 or raw_bytes[:4] not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+            raise PackSecurityError("Invalid file signature: Uploaded file is not a valid ZIP archive.")
+        zip_source = io.BytesIO(raw_bytes)
+    else:
+        if not os.path.isfile(archive_path_or_bytes):
+            raise PackSecurityError("Pack archive file not found.")
+        with open(archive_path_or_bytes, "rb") as fh:
+            header = fh.read(4)
+            if header not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+                raise PackSecurityError("Invalid file signature: Uploaded file is not a valid ZIP archive.")
+        zip_source = archive_path_or_bytes
+
     tmp_extract_dir = tempfile.mkdtemp(prefix="dubmate_import_")
     try:
-        if isinstance(archive_path_or_bytes, (bytes, bytearray)):
-            tmp_zip = os.path.join(tmp_extract_dir, "upload.zip")
-            with open(tmp_zip, "wb") as f:
-                f.write(archive_path_or_bytes)
-            with zipfile.ZipFile(tmp_zip, "r") as z:
-                z.extractall(tmp_extract_dir)
-            if os.path.exists(tmp_zip):
-                os.remove(tmp_zip)
-        else:
-            with zipfile.ZipFile(archive_path_or_bytes, "r") as z:
-                z.extractall(tmp_extract_dir)
+        with zipfile.ZipFile(zip_source, "r") as z:
+            infolist = z.infolist()
+            
+            # 2. File Count and Size Limit Checks (Anti-DoS & Zip-Bomb)
+            if len(infolist) > MAX_ARCHIVE_FILE_COUNT:
+                raise PackSecurityError(f"Archive contains too many entries ({len(infolist)} > {MAX_ARCHIVE_FILE_COUNT}).")
 
-        # Locate the pack root folder inside the extracted contents
+            total_uncompressed = sum(info.file_size for info in infolist)
+            if total_uncompressed > MAX_UNCOMPRESSED_SIZE_BYTES:
+                raise PackSecurityError(
+                    f"Archive uncompressed size ({round(total_uncompressed / (1024 * 1024), 1)} MB) "
+                    f"exceeds maximum allowed limit ({MAX_UNCOMPRESSED_SIZE_BYTES // (1024 * 1024)} MB)."
+                )
+
+            total_compressed = sum(info.compress_size for info in infolist)
+            if total_compressed > 0 and (total_uncompressed / float(total_compressed)) > MAX_COMPRESSION_RATIO:
+                raise PackSecurityError("Suspicious compression ratio detected (potential Zip Bomb attack).")
+
+            # 3. Path Traversal & Malware / Prohibited File Extension Verification
+            canonical_tmp_dir = os.path.abspath(tmp_extract_dir)
+            for info in infolist:
+                norm_name = info.filename.replace("\\", "/")
+                
+                # Check directory traversal
+                if ".." in norm_name or norm_name.startswith("/") or re.match(r'^[a-zA-Z]:', norm_name):
+                    raise PackSecurityError(f"Directory traversal detected in archive path: '{info.filename}'")
+
+                # Sanitize member path to ensure it stays strictly within sandbox
+                dest_path = os.path.abspath(os.path.join(tmp_extract_dir, info.filename))
+                if not dest_path.startswith(canonical_tmp_dir + os.sep) and dest_path != canonical_tmp_dir:
+                    raise PackSecurityError(f"Zip-slip path traversal attempt: '{info.filename}'")
+
+                low_name = norm_name.lower().rstrip()
+                base_name = os.path.basename(low_name)
+                
+                # Skip macOS metadata or harmless system files
+                if base_name in (".ds_store", "thumbs.db", "desktop.ini", ".gitkeep") or "__macosx" in low_name:
+                    continue
+
+                # Block all prohibited executable, script, and system extensions
+                if any(low_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
+                    raise PackSecurityError(f"Security Alert: Prohibited executable or script file detected in archive: '{base_name}'")
+
+                # Block disguised executable extensions e.g. 'video.mp4.exe' or 'line.wav.bat'
+                if any(ext + "." in low_name for ext in (".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".sh", ".py")):
+                    raise PackSecurityError(f"Security Alert: Disguised executable detected in archive: '{base_name}'")
+
+                # Check strict whitelist for non-directory files
+                if not info.is_dir() and not low_name.endswith("/"):
+                    _, ext = os.path.splitext(base_name)
+                    if ext and ext not in ALLOWED_PACK_EXTS:
+                        raise PackSecurityError(
+                            f"Security Alert: Disallowed file extension '{ext}' in '{base_name}'. "
+                            f"DubMate packs only accept audio ({', '.join(AUDIO_EXTS)}), "
+                            f"video ({', '.join(VIDEO_EXTS)}), images, and text/ini subtitle files."
+                        )
+
+            # 4. Safe Sandboxed Extraction
+            for info in infolist:
+                if "__MACOSX" in info.filename or os.path.basename(info.filename).lower() in (".ds_store", "thumbs.db"):
+                    continue
+                z.extract(info, tmp_extract_dir)
+
+        # 5. Pack Root Detection & Structure Verification
         pack_root = None
         for dirpath, _dirnames, filenames in os.walk(tmp_extract_dir):
-            has_video = any(f.lower().startswith("dub_video.") for f in filenames)
+            has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
             has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
             if has_video and has_clips:
                 pack_root = dirpath
                 break
 
         if not pack_root:
-            print(f"[pack_loader] No valid pack found in archive {archive_filename}")
-            return None
+            raise PackValidationError(
+                "Archive does not contain a valid scene dub pack. "
+                "A valid pack must include at least one scene video (e.g. dub_video.mp4) and dialogue audio clips."
+            )
 
-        # Determine target folder name
+        # 6. Safe Destination Sanitization & Installation
         meta = parse_pack_info(pack_root)
         base_title = meta.get("title") or os.path.splitext(os.path.basename(archive_filename))[0]
         safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
@@ -849,34 +1006,63 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
         os.makedirs(target_base, exist_ok=True)
         dest_folder = os.path.join(target_base, safe_folder_name)
 
+        # Ensure dest_folder resolves strictly within target_base
+        if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
+            raise PackSecurityError("Invalid destination folder name.")
+
         if os.path.exists(dest_folder):
             shutil.rmtree(dest_folder)
 
         shutil.copytree(pack_root, dest_folder)
         loaded = load_pack(dest_folder)
         if loaded:
-            print(f"[pack_loader] Successfully imported pack '{loaded.name}' into {dest_folder}")
+            folder_mtime = os.path.getmtime(dest_folder)
+            PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
+            print(f"[pack_loader] Successfully validated, security-cleared, and imported pack '{loaded.name}' into {dest_folder}")
             return loaded
 
-    except Exception as ex:
-        print(f"[pack_loader] Error importing pack archive {archive_filename}: {ex}")
+        raise PackValidationError("Pack files extracted but could not be parsed into a playable studio scene.")
+
     finally:
         if os.path.exists(tmp_extract_dir):
             shutil.rmtree(tmp_extract_dir, ignore_errors=True)
 
-    return None
 
-
-def get_all_packs() -> Dict[str, PackInfo]:
-    """Scans all pack directories and returns dictionary of pack_id -> PackInfo."""
+def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
+    """
+    Scans all pack directories with ultra-fast folder mtime caching.
+    Returns dictionary of pack_id -> PackInfo.
+    """
     packs = {}
     for base in PACKS_DIRS:
         if not os.path.isdir(base):
             continue
-        for item in sorted(os.listdir(base)):
+        try:
+            entries = sorted(os.listdir(base))
+        except Exception:
+            continue
+        for item in entries:
+            if item.startswith(".") or item.startswith("__"):
+                continue
             full_path = os.path.join(base, item)
-            if os.path.isdir(full_path) and not item.startswith("."):
-                pack = load_pack(full_path)
-                if pack and pack.pack_id not in packs:
+            if not os.path.isdir(full_path):
+                continue
+            try:
+                folder_mtime = os.path.getmtime(full_path)
+            except Exception:
+                folder_mtime = 0
+
+            # Fast cache lookup: avoid expensive re-reading of 40+ folders
+            if not force_disk_scan and full_path in PACK_OBJECT_CACHE:
+                cached_mtime, cached_pack = PACK_OBJECT_CACHE[full_path]
+                if cached_mtime == folder_mtime and cached_pack:
+                    packs[cached_pack.pack_id] = cached_pack
+                    continue
+
+            pack = load_pack(full_path)
+            if pack:
+                PACK_OBJECT_CACHE[full_path] = (folder_mtime, pack)
+                if pack.pack_id not in packs:
                     packs[pack.pack_id] = pack
     return packs
+

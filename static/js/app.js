@@ -35,6 +35,11 @@ class DubMateApp {
     this.isPreloadingScreening = false;
     this.isReadyForScreening = false;
 
+    // Noise Reduction & Mic Profile Calibration State
+    this.applyNoiseReduction = localStorage.getItem('dubmate_noise_reduction') !== 'false';
+    this.isCalibratingMic = false;
+    this.hasCustomNoiseProfile = false;
+
     this.initDOM();
     this.initEvents();
     this.initRouter();
@@ -190,6 +195,30 @@ class DubMateApp {
     this.sliderPredelay = document.getElementById('slider-predelay');
     this.valPredelay = document.getElementById('val-predelay');
 
+    // Studio Noise Reduction & Mic Profile Calibration Elements
+    this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
+    this.checkNoiseReduction = document.getElementById('check-noise-reduction');
+    this.checkRackNoiseReduction = document.getElementById('check-rack-noise-reduction');
+    this.btnCalibrateMic = document.getElementById('btn-calibrate-mic');
+    this.calibrateIcon = document.getElementById('calibrate-icon');
+    this.calibrateLabel = document.getElementById('calibrate-label');
+    this.btnResetNoiseProfile = document.getElementById('btn-reset-noise-profile');
+    this.badgeNoiseStatus = document.getElementById('badge-noise-status');
+    this.boothProcessingTitle = document.getElementById('booth-processing-title');
+    this.boothProcessingSub = document.getElementById('booth-processing-sub');
+
+    // Mic Calibration Modal Elements
+    this.modalMicCalibration = document.getElementById('modal-mic-calibration');
+    this.calibModalBadge = document.getElementById('calib-modal-badge');
+    this.calibModalTitle = document.getElementById('calib-modal-title');
+    this.calibModalStatus = document.getElementById('calib-modal-status');
+    this.calibTimerText = document.getElementById('calib-timer-text');
+    this.calibPhaseText = document.getElementById('calib-phase-text');
+    this.calibProgressBar = document.getElementById('calib-progress-bar');
+    this.calibModalIcon = document.getElementById('calib-modal-icon');
+    this.calibRadarRing = document.getElementById('calib-radar-ring');
+    this.btnCancelCalibration = document.getElementById('btn-cancel-calibration');
+
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
     this.btnNextLine = document.getElementById('btn-next-line');
@@ -229,12 +258,46 @@ class DubMateApp {
     this.screeningBackingGainNode = null;
     this.screeningVocalGainNode = null;
     this.isUsingExportedVideo = false;
+
+    // Smart Dialogue Loudness & Prominence Controls
+    this.btnAutoMatchGain = document.getElementById('btn-auto-match-gain');
+    this.badgeGainMatch = document.getElementById('badge-gain-match');
+    this.sliderDialoguePresence = document.getElementById('slider-dialogue-presence');
+    this.valDialoguePresence = document.getElementById('val-dialogue-presence');
+    this.masterDialoguePresence = 0.0;
     this.screeningSyncRafId = null;
 
     // Export Step Indicators
     this.stepDsp = document.getElementById('step-dsp');
     this.stepMux = document.getElementById('step-mux');
     this.stepReady = document.getElementById('step-ready');
+
+    // Master Export Modal Elements
+    this.modalExportRendering = document.getElementById('modal-export-rendering');
+    this.exportModalBadge = document.getElementById('export-modal-badge');
+    this.exportModalTitle = document.getElementById('export-modal-title');
+    this.exportModalStatusText = document.getElementById('export-modal-status-text');
+    this.exportModalProgressBar = document.getElementById('export-modal-progress-bar');
+    this.modalStepDsp = document.getElementById('modal-step-dsp');
+    this.modalStepMux = document.getElementById('modal-step-mux');
+    this.modalStepReady = document.getElementById('modal-step-ready');
+    this.connectorDspMux = document.getElementById('connector-dsp-mux');
+    this.connectorMuxReady = document.getElementById('connector-mux-ready');
+    this.exportModalReassurance = document.getElementById('export-modal-reassurance');
+    this.exportModalActions = document.getElementById('export-modal-actions');
+    this.btnModalCloseView = document.getElementById('btn-modal-close-view');
+    this.btnModalCloseX = document.getElementById('btn-modal-close-x');
+    this.btnModalDismiss = document.getElementById('btn-modal-dismiss');
+    this.btnModalDownload169 = document.getElementById('btn-modal-download-169');
+    this.btnModalDownload916 = document.getElementById('btn-modal-download-916');
+
+    // Booth & Import Loading Overlays
+    this.boothProcessingOverlay = document.getElementById('booth-processing-overlay');
+    this.modalImportLoading = document.getElementById('modal-import-loading');
+
+    // Global Interaction Lock Flags
+    this.isRenderingExport = false;
+    this.isProcessingTake = false;
 
     // Waveform canvas with real-time drag callbacks
     const canvas = document.getElementById('waveform-canvas');
@@ -254,8 +317,33 @@ class DubMateApp {
     this.updateUserUI();
   }
 
+  /** Toggle expand/collapse on booth and theater video containers */
+  initVideoExpand() {
+    const pairs = [
+      { btnId: 'btn-expand-video',         selector: '.stage-main-col .video-container' },
+      { btnId: 'btn-expand-theater-video', selector: '.theater-player' },
+    ];
+    pairs.forEach(({ btnId, selector }) => {
+      const btn = document.getElementById(btnId);
+      const el  = document.querySelector(selector);
+      if (!btn || !el) return;
+      btn.addEventListener('click', () => {
+        el.classList.toggle('video-expanded');
+        const expanded = el.classList.contains('video-expanded');
+        btn.setAttribute('aria-pressed', String(expanded));
+        btn.setAttribute('aria-label',
+          expanded ? 'Collapse Video Monitor' : 'Expand Video Monitor');
+        // Update icon to collapse arrows when expanded
+        btn.innerHTML = expanded
+          ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v5H3M21 8h-5V3M3 16h5v5M16 21v-5h5"/></svg>`
+          : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>`;
+      });
+    });
+  }
+
   initEvents() {
     this.initVideoPrompterSplitter();
+    this.initVideoExpand();
 
     // Back to Home / Leave Room
     const btnHome = document.getElementById('btn-home');
@@ -547,8 +635,34 @@ class DubMateApp {
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
+      if (this.badgeGainMatch) {
+        const take = this.roomState?.takes?.[this.currentLineIndex];
+        if (take && take.auto_gain_db !== undefined) {
+          const isMatched = Math.abs(val - parseFloat(take.auto_gain_db)) < 0.1;
+          this.badgeGainMatch.innerText = isMatched ? `✓ ${take.auto_gain_db >= 0 ? '+' : ''}${take.auto_gain_db} dB (Matched)` : `${take.auto_gain_db >= 0 ? '+' : ''}${take.auto_gain_db} dB (Scene Target)`;
+          this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+        }
+      }
       this.syncTakeParams();
     });
+
+    if (this.btnAutoMatchGain) {
+      this.btnAutoMatchGain.addEventListener('click', () => {
+        const take = this.roomState?.takes?.[this.currentLineIndex];
+        if (take && take.auto_gain_db !== undefined) {
+          const targetGain = parseFloat(take.auto_gain_db);
+          this.sliderGain.value = targetGain;
+          this.valGain.innerText = (targetGain > 0 ? '+' : '') + targetGain + ' dB';
+          this.audio.setGain(targetGain);
+          this.syncTakeParams();
+          if (this.badgeGainMatch) {
+            this.badgeGainMatch.innerText = `✓ ${targetGain >= 0 ? '+' : ''}${targetGain} dB (Matched)`;
+            this.badgeGainMatch.className = 'badge-calibrated calibrated';
+          }
+          this.showToast(`⚖️ Vocal gain calibrated to scene dialogue target (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
+        }
+      });
+    }
 
     // Advanced Vocal Rack
     this.btnToggleAdvancedRack.addEventListener('click', () => {
@@ -587,11 +701,55 @@ class DubMateApp {
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
 
+    // Studio Noise Reduction Synchronization & Calibration Listeners
+    const onNoiseToggleChange = (e) => {
+      this.setNoiseReduction(e.target.checked);
+    };
+
+    if (this.checkLobbyNoiseReduction) {
+      this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
+      this.checkLobbyNoiseReduction.addEventListener('change', onNoiseToggleChange);
+    }
+    if (this.checkNoiseReduction) {
+      this.checkNoiseReduction.checked = this.applyNoiseReduction;
+      this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
+    }
+    if (this.checkRackNoiseReduction) {
+      this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
+      this.checkRackNoiseReduction.addEventListener('change', onNoiseToggleChange);
+    }
+
+    if (this.btnCalibrateMic) {
+      this.btnCalibrateMic.addEventListener('click', () => this.calibrateMicNoiseProfile());
+    }
+    if (this.btnResetNoiseProfile) {
+      this.btnResetNoiseProfile.addEventListener('click', () => this.resetMicNoiseProfile());
+    }
+    if (this.btnCancelCalibration) {
+      this.btnCancelCalibration.addEventListener('click', () => this.cancelMicNoiseCalibration());
+    }
+
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
     // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
     window.addEventListener('keydown', (e) => {
-      // Ignore shortcut triggers when user is focused in text/input fields
+      // Escape key closes modals if they are open and not actively rendering
+      if (e.key === 'Escape') {
+        if (this.modalMicCalibration && this.modalMicCalibration.style.display !== 'none') {
+          this.cancelMicNoiseCalibration();
+          return;
+        }
+        if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
+          this.closeExportModal();
+          return;
+        }
+      }
+
+      // Ignore shortcut triggers when locked or when user is focused in text/input fields
+      if (this.isProcessingTake || this.isRenderingExport) {
+        return;
+      }
+
       if (
         e.target.tagName === 'INPUT' ||
         e.target.tagName === 'TEXTAREA' ||
@@ -625,12 +783,54 @@ class DubMateApp {
       }
     });
 
+    // Master Export Modal Actions
+    if (this.btnModalCloseView) {
+      this.btnModalCloseView.addEventListener('click', () => {
+        this.closeExportModal();
+      });
+    }
+    if (this.btnModalCloseX) {
+      this.btnModalCloseX.addEventListener('click', () => {
+        this.closeExportModal();
+      });
+    }
+    if (this.btnModalDismiss) {
+      this.btnModalDismiss.addEventListener('click', () => {
+        this.closeExportModal();
+      });
+    }
+    if (this.modalExportRendering) {
+      this.modalExportRendering.addEventListener('click', (e) => {
+        // If clicking on the backdrop and not actively rendering, dismiss modal
+        if (e.target === this.modalExportRendering && !this.isRenderingExport) {
+          this.closeExportModal();
+        }
+      });
+    }
+
     // Screening Master Stem Balance Slider
     if (this.sliderScreeningBalance) {
       this.sliderScreeningBalance.addEventListener('input', (e) => {
         this.setScreeningBalance(parseInt(e.target.value, 10));
       });
     }
+
+    // Master Dialogue Presence / Vocal Prominence Slider & Presets
+    if (this.sliderDialoguePresence) {
+      this.sliderDialoguePresence.addEventListener('input', (e) => {
+        this.setMasterDialoguePresence(parseFloat(e.target.value));
+      });
+    }
+
+    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const pres = parseFloat(e.currentTarget.dataset.presence || '0');
+        if (this.sliderDialoguePresence) {
+          this.sliderDialoguePresence.value = pres;
+        }
+        this.setMasterDialoguePresence(pres);
+      });
+    });
 
     // Screening Controls (Host Sync)
     this.btnScreeningPlayPause.addEventListener('click', () => this.handleScreeningPlayPause());
@@ -766,35 +966,35 @@ class DubMateApp {
       this.handleIncomingScreeningSync(data.payload);
     });
 
+    this.socket.on('export_started', (data) => {
+      if (this.views.screening.classList.contains('active')) {
+        this.openExportModal();
+        this.updateExportModalStep(1, 30, "Applying vocal EQ, studio compression & acoustic room reverb...");
+      }
+    });
+
     this.socket.on('export_ready', (data) => {
       const payload = data.payload || data;
       if (payload && (payload.download_url || payload.export_video_url || payload.download_url_16_9)) {
-        this.isUsingExportedVideo = true;
-        if (this.roomState) {
-          this.roomState.has_export = true;
-          this.roomState.export_video_url = payload.export_video_url;
-          this.roomState.download_url = payload.download_url || payload.download_url_16_9;
-        }
-        this.exportProgressBox.style.display = 'block';
-        if (this.exportProgressFill) {
-          this.exportProgressFill.style.transform = 'scaleX(1)';
-        }
-        if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
-        if (this.stepMux) { this.stepMux.className = 'step-item completed'; }
-        if (this.stepReady) { this.stepReady.className = 'step-item active'; }
-
-        this.exportStatusText.innerText = "✅ Master Dubbed Video Rendered Successfully!";
-        if (this.btnDownloadLink) {
-          this.btnDownloadLink.href = payload.download_url_16_9 || payload.download_url || '#';
-        }
-        if (this.btnDownloadLink916) {
-          this.btnDownloadLink916.href = payload.download_url_9_16 || `${payload.download_url || ''}&aspect_ratio=9:16`;
-        }
-        if (this.exportDownloadContainer) {
-          this.exportDownloadContainer.style.display = 'flex';
-        }
-        this.applyExportedVideoToTheater(payload.export_video_url);
+        this.handleExportSuccess(payload);
         this.showToast("🎬 Master Dubbed Video is ready for the Cast!");
+      }
+    });
+
+    this.socket.on('dialogue_presence_sync', (data) => {
+      const pres = parseFloat(data.payload?.presence_db ?? 0.0);
+      this.masterDialoguePresence = pres;
+      if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = pres;
+      if (this.valDialoguePresence) {
+        this.valDialoguePresence.innerText = (pres === 0) ? '0.0 dB (Scene Default)' : ((pres > 0 ? '+' : '') + pres.toFixed(1) + ' dB');
+      }
+      document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
+        const btnVal = parseFloat(btn.dataset.presence || '0');
+        btn.classList.toggle('active', Math.abs(btnVal - pres) < 0.1);
+      });
+      if (this.screeningVocalGainNode && this.audio?.ctx) {
+        const { vocalGain } = this.getScreeningStemGains();
+        this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
       }
     });
   }
@@ -1046,7 +1246,52 @@ class DubMateApp {
 
   // --- Packs & Landing Logic ---
 
+  renderSkeletonPacks() {
+    if (!this.packGrid) return;
+    if (this.packCountBadge) {
+      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning...`;
+    }
+    this.packGrid.innerHTML = `
+      <div class="pack-card pack-card-skeleton">
+        <div class="pack-card-thumb skeleton-thumb"></div>
+        <div class="pack-card-body">
+          <div class="skeleton-line skeleton-title"></div>
+          <div class="skeleton-line skeleton-sub"></div>
+          <div class="skeleton-badges">
+            <div class="skeleton-badge"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        </div>
+      </div>
+      <div class="pack-card pack-card-skeleton">
+        <div class="pack-card-thumb skeleton-thumb"></div>
+        <div class="pack-card-body">
+          <div class="skeleton-line skeleton-title"></div>
+          <div class="skeleton-line skeleton-sub"></div>
+          <div class="skeleton-badges">
+            <div class="skeleton-badge"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        </div>
+      </div>
+      <div class="pack-card pack-card-skeleton">
+        <div class="pack-card-thumb skeleton-thumb"></div>
+        <div class="pack-card-body">
+          <div class="skeleton-line skeleton-title"></div>
+          <div class="skeleton-line skeleton-sub"></div>
+          <div class="skeleton-badges">
+            <div class="skeleton-badge"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   async fetchPacks() {
+    if (!this.packs || this.packs.length === 0) {
+      this.renderSkeletonPacks();
+    }
     try {
       const res = await fetch('/api/packs?t=' + Date.now());
       if (!res.ok) {
@@ -1054,7 +1299,13 @@ class DubMateApp {
       }
       this.packs = await res.json();
       console.log(`[DubMate] Successfully loaded ${this.packs.length} scene packs:`, this.packs.map(p => p.name || p.title));
-      this.renderPacks();
+
+      if (!this.packs || this.packs.length === 0) {
+        // Cold start auto-rescan if server just started with 0 indexed packs
+        await this.rescanPacksDirectory(true);
+      } else {
+        this.renderPacks();
+      }
     } catch (err) {
       console.error("Error fetching packs:", err);
       if (this.packGrid) {
@@ -1068,7 +1319,7 @@ class DubMateApp {
     }
   }
 
-  async rescanPacksDirectory() {
+  async rescanPacksDirectory(silent = false) {
     if (this.isRescanningPacks) return;
     this.isRescanningPacks = true;
 
@@ -1078,6 +1329,9 @@ class DubMateApp {
       this.btnRescanPacks.disabled = true;
       const textSpan = this.btnRescanPacks.querySelector('span');
       if (textSpan) textSpan.innerText = 'Scanning...';
+    }
+    if (this.packCountBadge) {
+      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning...`;
     }
 
     try {
@@ -1096,10 +1350,14 @@ class DubMateApp {
       console.log(`[DubMate] Rescan complete. Loaded ${this.packs.length} packs.`);
       this.renderPacks();
       const count = (this.packs || []).length;
-      this.showToast(`✨ Rescan complete: ${count} scene pack${count === 1 ? '' : 's'} indexed!`);
+      if (!silent) {
+        this.showToast(`✨ Rescan complete: ${count} scene pack${count === 1 ? '' : 's'} indexed!`);
+      }
     } catch (err) {
       console.error("Error during pack rescan:", err);
-      this.showToast(`⚠️ Rescan failed: ${err.message}`);
+      if (!silent) {
+        this.showToast(`⚠️ Rescan failed: ${err.message}`);
+      }
     } finally {
       this.isRescanningPacks = false;
       if (icon) icon.classList.remove('spinning');
@@ -1114,7 +1372,12 @@ class DubMateApp {
   async uploadPackZip(file) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.zip')) {
-      this.showToast("⚠️ Please select a valid .zip pack archive.");
+      this.showToast("⚠️ Security Check: Only valid .zip pack archives are supported.");
+      return;
+    }
+
+    if (file.size > 500 * 1024 * 1024) {
+      this.showToast("⚠️ Pack archive exceeds maximum 500 MB upload limit.");
       return;
     }
 
@@ -1125,7 +1388,14 @@ class DubMateApp {
       btn.innerHTML = `<span class="spinning" style="display:inline-block;">⚙️</span> <span>Importing...</span>`;
     }
 
-    this.showToast(`📦 Importing pack "${file.name}"...`);
+    this.showToast(`🛡️ Verifying & importing pack "${file.name}"...`);
+    if (this.modalImportLoading) {
+      const statusText = document.getElementById('import-modal-status-text');
+      if (statusText) {
+        statusText.innerText = "🛡️ Scanning file signatures, verifying malware security, and indexing audio stems...";
+      }
+      this.modalImportLoading.style.display = 'flex';
+    }
 
     try {
       const formData = new FormData();
@@ -1155,11 +1425,14 @@ class DubMateApp {
         }
       }
 
-      this.showToast(`✨ Pack "${importedPack?.name || file.name}" imported successfully!`);
+      this.showToast(`✨ Pack "${importedPack?.name || file.name}" verified & imported successfully!`);
     } catch (err) {
       console.error("Pack import error:", err);
-      this.showToast(`⚠️ Import failed: ${err.message}`);
+      this.showToast(`⚠️ ${err.message}`);
     } finally {
+      if (this.modalImportLoading) {
+        this.modalImportLoading.style.display = 'none';
+      }
       if (btn) {
         btn.disabled = false;
         btn.innerHTML = origHtml;
@@ -1783,6 +2056,22 @@ class DubMateApp {
       this.valReverb.innerText = Math.round((take.reverb_wet || 0) * 100) + '%';
       this.sliderGain.value = take.gain_db || 0;
       this.valGain.innerText = (take.gain_db > 0 ? '+' : '') + (take.gain_db || 0) + ' dB';
+
+      if (take.auto_gain_db !== undefined) {
+        if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'inline-flex';
+        if (this.badgeGainMatch) {
+          this.badgeGainMatch.style.display = 'inline-block';
+          const matchVal = parseFloat(take.auto_gain_db);
+          const currentGain = parseFloat(this.sliderGain.value) || 0;
+          const isMatched = Math.abs(currentGain - matchVal) < 0.1;
+          this.badgeGainMatch.innerText = isMatched ? `✓ ${matchVal >= 0 ? '+' : ''}${matchVal} dB (Matched)` : `${matchVal >= 0 ? '+' : ''}${matchVal} dB (Scene Target)`;
+          this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+          this.badgeGainMatch.title = `Take Speech Loudness: ${take.speech_loudness_db || '-'} dBFS (Scene Target: ${take.target_loudness_db || '-'} dBFS)`;
+        }
+      } else {
+        if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'none';
+        if (this.badgeGainMatch) this.badgeGainMatch.style.display = 'none';
+      }
     } else {
       this.sliderNudge.value = 0;
       this.nudgeDisplay.innerText = '0 ms';
@@ -1792,7 +2081,14 @@ class DubMateApp {
       this.valReverb.innerText = '0%';
       this.sliderGain.value = 0;
       this.valGain.innerText = '0 dB';
+      if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'none';
+      if (this.badgeGainMatch) this.badgeGainMatch.style.display = 'none';
     }
+
+    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
+    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
+    if (this.checkRackNoiseReduction) this.checkRackNoiseReduction.checked = activeNoiseRed;
+    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
 
     this.updateKnobsVisuals();
 
@@ -1931,7 +2227,7 @@ class DubMateApp {
   }
 
   renderTimelineChips() {
-    if (!this.roomState) return;
+    if (!this.roomState || !this.timelineChips) return;
     this.timelineChips.innerHTML = '';
     const myAssignedChars = this.getMyAssignedCharacters();
 
@@ -1942,11 +2238,11 @@ class DubMateApp {
       }
 
       const chip = document.createElement('div');
-      const hasTake = !!this.roomState.takes[idx];
+      const hasTake = !!(this.roomState.takes && this.roomState.takes[idx]);
       const isActive = idx === this.currentLineIndex;
 
       chip.className = `chip-item ${isActive ? 'active' : ''} ${hasTake ? 'done' : ''} ${isMyLine ? 'my-line' : ''}`;
-      chip.title = `Line ${idx + 1}: ${l.character} (${l.start}s) ${hasTake ? '✓ Done' : ''}`;
+      chip.title = `Line ${idx + 1}: ${l.character} (${l.start}s - ${l.end}s) ${hasTake ? '✓ Take Recorded' : ''}`;
       chip.innerText = String(idx + 1);
 
       chip.addEventListener('click', () => {
@@ -1954,6 +2250,14 @@ class DubMateApp {
       });
 
       this.timelineChips.appendChild(chip);
+
+      if (isActive) {
+        requestAnimationFrame(() => {
+          try {
+            chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          } catch (e) {}
+        });
+      }
     });
   }
 
@@ -2158,7 +2462,7 @@ class DubMateApp {
   setNudgeValue(val, syncSocket = true) {
     const clamped = Math.max(-800, Math.min(800, val));
     this.sliderNudge.value = clamped;
-    this.nudgeDisplay.innerText = `${clamped} ms`;
+    this.nudgeDisplay.innerText = `${clamped > 0 ? '+' : ''}${clamped} ms`;
     const legendElem = document.getElementById('waveform-offset-legend');
     if (legendElem) {
       legendElem.innerText = `Offset: ${clamped > 0 ? '+' : ''}${clamped} ms`;
@@ -2190,6 +2494,251 @@ class DubMateApp {
       reverb_wet: reverb,
       gain_db: gain,
     });
+  }
+
+  // --- Studio Noise Reduction & Mic Profile Calibration ---
+
+  setNoiseReduction(enabled) {
+    this.applyNoiseReduction = !!enabled;
+    localStorage.setItem('dubmate_noise_reduction', this.applyNoiseReduction);
+
+    if (this.checkLobbyNoiseReduction && this.checkLobbyNoiseReduction.checked !== this.applyNoiseReduction) {
+      this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
+    }
+    if (this.checkNoiseReduction && this.checkNoiseReduction.checked !== this.applyNoiseReduction) {
+      this.checkNoiseReduction.checked = this.applyNoiseReduction;
+    }
+    if (this.checkRackNoiseReduction && this.checkRackNoiseReduction.checked !== this.applyNoiseReduction) {
+      this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
+    }
+
+    const currentTake = this.roomState?.takes?.[this.currentLineIndex];
+    if (currentTake && this.views.booth.classList.contains('active') && !this.isProcessingTake) {
+      this.toggleTakeNoiseReduction(this.currentLineIndex, this.applyNoiseReduction);
+    }
+  }
+
+  async calibrateMicNoiseProfile() {
+    if (this.isCalibratingMic) return;
+    if (!this.roomState) {
+      this.showToast("Please join or create a session before calibrating.");
+      return;
+    }
+
+    this.isCalibratingMic = true;
+    const btn = this.btnCalibrateMic;
+    const origIcon = this.calibrateIcon ? this.calibrateIcon.innerText : '🎯';
+    const origLabel = this.calibrateLabel ? this.calibrateLabel.innerText : 'Calibrate Mic (3s Quiet)';
+
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('calibrating-pulse');
+    }
+    if (this.calibrateIcon) this.calibrateIcon.innerText = '🤫';
+    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrating...';
+
+    // 1. Open the Calibration Modal
+    if (this.modalMicCalibration) {
+      this.modalMicCalibration.style.display = 'flex';
+      if (this.calibModalBadge) this.calibModalBadge.innerText = 'PRE-ROLL (1s)';
+      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Microphone Room Calibration';
+      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Get ready... Releasing mouse click and preparing room tone sample.';
+      if (this.calibTimerText) this.calibTimerText.innerText = '1.0s';
+      if (this.calibPhaseText) this.calibPhaseText.innerText = 'Phase 1: Pre-Roll Delay (Mouse Release)';
+      if (this.calibProgressBar) {
+        this.calibProgressBar.style.width = '0%';
+        this.calibProgressBar.className = 'modal-progress-fill';
+      }
+      if (this.calibModalIcon) this.calibModalIcon.innerText = '🤫';
+      if (this.calibRadarRing) this.calibRadarRing.className = 'calib-radar-ring';
+    }
+
+    try {
+      // 1-second pre-roll delay followed by 3-second room tone recording
+      const blob = await this.audio.recordNoiseProfile(3000, 1000, (phase, elapsedMs, totalMs) => {
+        const remainingSec = Math.max(0, (totalMs - elapsedMs) / 1000.0).toFixed(1);
+        const percent = Math.min(100, Math.max(0, (elapsedMs / totalMs) * 100));
+
+        if (phase === 'preroll') {
+          if (this.calibTimerText) this.calibTimerText.innerText = `${remainingSec}s`;
+          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Phase 1: 1s Pre-Roll Delay (Mouse Release)';
+          if (this.calibProgressBar) this.calibProgressBar.style.width = `${percent}%`;
+          if (this.calibModalBadge) this.calibModalBadge.innerText = 'PRE-ROLL (1s)';
+          if (this.calibModalStatus) this.calibModalStatus.innerText = '🤫 Get ready: Releasing mouse click and quieting room...';
+          if (this.calibModalIcon) this.calibModalIcon.innerText = '🤫';
+        } else if (phase === 'recording') {
+          if (this.calibTimerText) this.calibTimerText.innerText = `${remainingSec}s`;
+          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Phase 2: Sampling Room Tone (Stay Quiet)';
+          if (this.calibProgressBar) this.calibProgressBar.style.width = `${percent}%`;
+          if (this.calibModalBadge) this.calibModalBadge.innerText = 'SAMPLING (3s)';
+          if (this.calibModalStatus) this.calibModalStatus.innerText = '🎙️ Listening to room tone (fan hum, AC, mic hiss)...';
+          if (this.calibModalIcon) this.calibModalIcon.innerText = '🎙️';
+          if (this.calibRadarRing) this.calibRadarRing.className = 'calib-radar-ring active-radar';
+        }
+      });
+
+      if (!blob || blob.size < 32) {
+        throw new Error("No audio captured from microphone.");
+      }
+
+      if (this.calibModalBadge) this.calibModalBadge.innerText = 'ANALYZING';
+      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Computing spectral noise fingerprint via FFT...';
+      if (this.calibTimerText) this.calibTimerText.innerText = '0.0s';
+      if (this.calibProgressBar) this.calibProgressBar.style.width = '100%';
+
+      const formData = new FormData();
+      formData.append('file', blob, 'profile.webm');
+      formData.append('user_id', this.user.id);
+
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/noise_profile`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      this.hasCustomNoiseProfile = true;
+
+      if (this.calibModalBadge) this.calibModalBadge.innerText = 'CALIBRATED ✓';
+      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Microphone Calibrated!';
+      if (this.calibModalStatus) this.calibModalStatus.innerText = `✨ Custom noise fingerprint saved (${data.noise_floor_db || -30} dB floor).`;
+      if (this.calibModalIcon) this.calibModalIcon.innerText = '✨';
+
+      if (this.badgeNoiseStatus) {
+        this.badgeNoiseStatus.innerText = '✨ Calibrated ✓';
+        this.badgeNoiseStatus.className = 'badge-calibrated calibrated';
+        this.badgeNoiseStatus.title = `Calibrated custom noise profile (${data.noise_floor_db || -30} dB floor)`;
+      }
+
+      if (this.btnResetNoiseProfile) {
+        this.btnResetNoiseProfile.style.display = 'inline-flex';
+      }
+
+      this.showToast("✨ Microphone noise profile calibrated (1s delay + 3s room sample)!");
+
+      // If active line has a take with noise reduction enabled, re-apply with new profile
+      const take = this.roomState?.takes?.[this.currentLineIndex];
+      if (take && this.applyNoiseReduction && !this.isProcessingTake) {
+        this.toggleTakeNoiseReduction(this.currentLineIndex, true);
+      }
+
+      // Automatically close modal smoothly after brief confirmation
+      await new Promise(r => setTimeout(r, 450));
+      if (this.modalMicCalibration) {
+        this.modalMicCalibration.style.display = 'none';
+      }
+    } catch (err) {
+      if (this.modalMicCalibration) {
+        this.modalMicCalibration.style.display = 'none';
+      }
+      if (err.message && err.message.includes("cancelled")) {
+        this.showToast("Mic calibration cancelled.");
+      } else {
+        console.warn("[App] Calibration failed:", err);
+        this.showToast(`⚠️ Mic calibration failed: ${err.message}`);
+      }
+    } finally {
+      this.isCalibratingMic = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('calibrating-pulse');
+      }
+      if (this.calibrateIcon) this.calibrateIcon.innerText = origIcon;
+      if (this.calibrateLabel) this.calibrateLabel.innerText = origLabel;
+    }
+  }
+
+  cancelMicNoiseCalibration() {
+    this.audio.cancelNoiseProfileCalibration();
+    if (this.modalMicCalibration) {
+      this.modalMicCalibration.style.display = 'none';
+    }
+    this.isCalibratingMic = false;
+    if (this.btnCalibrateMic) {
+      this.btnCalibrateMic.disabled = false;
+      this.btnCalibrateMic.classList.remove('calibrating-pulse');
+    }
+    if (this.calibrateIcon) this.calibrateIcon.innerText = '🎯';
+    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrate Mic (3s Quiet)';
+  }
+
+  resetMicNoiseProfile() {
+    this.hasCustomNoiseProfile = false;
+    if (this.badgeNoiseStatus) {
+      this.badgeNoiseStatus.innerText = '● Auto-Tracking';
+      this.badgeNoiseStatus.className = 'badge-calibrated uncalibrated';
+      this.badgeNoiseStatus.title = 'Using intelligent automatic FFT noise floor tracking';
+    }
+    if (this.btnResetNoiseProfile) {
+      this.btnResetNoiseProfile.style.display = 'none';
+    }
+    this.showToast("Microphone profile reset to automatic FFT tracking.");
+
+    const take = this.roomState?.takes?.[this.currentLineIndex];
+    if (take && this.applyNoiseReduction && !this.isProcessingTake) {
+      this.toggleTakeNoiseReduction(this.currentLineIndex, true);
+    }
+  }
+
+  async toggleTakeNoiseReduction(lineIndex, enable) {
+    if (!this.roomState || !this.roomState.takes || !this.roomState.takes[lineIndex]) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}/noise_reduction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noise_reduction: enable }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.take) {
+        this.roomState.takes[lineIndex] = data.take;
+      }
+
+      this.audio.evictTakeCache(lineIndex);
+
+      if (lineIndex === this.currentLineIndex) {
+        const line = this.roomState.pack.lines[lineIndex];
+        const take = this.roomState.takes[lineIndex];
+        let origPeaks = line.peaks || [];
+        let takePeaks = take ? (take.peaks || []) : [];
+
+        this.waveform.setData({
+          origPeaks,
+          takePeaks,
+          offsetMs: take ? (take.offset_ms || 0) : 0,
+          totalDuration: (line.duration || 3.0) + 0.8,
+        });
+
+        if (take && take.url) {
+          const newBuf = await this.audio.loadAudioBuffer(take.url, true);
+          this.currentTakeBuffer = newBuf;
+          if (newBuf && (!takePeaks || takePeaks.length === 0)) {
+            takePeaks = WaveformRenderer.extractPeaksFromBuffer(newBuf, 100);
+            this.waveform.setData({
+              origPeaks,
+              takePeaks,
+              offsetMs: take.offset_ms || 0,
+              totalDuration: (line.duration || 3.0) + 0.8,
+            });
+          }
+        }
+      }
+
+      this.showToast(enable ? "✨ Studio Noise Reduction applied to take!" : "Raw original take restored (Noise Reduction OFF)");
+    } catch (err) {
+      console.warn("[App] Error toggling take noise reduction:", err);
+      this.showToast(`⚠️ Could not toggle noise reduction: ${err.message}`);
+    }
   }
 
   async toggleRecording() {
@@ -2334,6 +2883,63 @@ class DubMateApp {
     }, recordingDurationSec * 1000);
   }
 
+  setBoothProcessing(isProcessing) {
+    this.isProcessingTake = isProcessing;
+    if (this.boothProcessingOverlay) {
+      this.boothProcessingOverlay.style.display = isProcessing ? 'flex' : 'none';
+    }
+
+    if (this.boothProcessingTitle) {
+      if (this.applyNoiseReduction) {
+        this.boothProcessingTitle.innerText = "✨ AI Voice Clean (DeepFilterNet 3)...";
+      } else {
+        this.boothProcessingTitle.innerText = "🎙️ Processing Voice Take";
+      }
+    }
+    if (this.boothProcessingSub) {
+      if (this.applyNoiseReduction) {
+        this.boothProcessingSub.innerText = "Deep neural filtering isolating voice, removing room fans & AC...";
+      } else {
+        this.boothProcessingSub.innerText = "Transcoding audio, computing waveform peaks & saving to session...";
+      }
+    }
+
+    const interactiveElements = [
+      this.btnPrevLine,
+      this.btnNextLine,
+      this.btnClearTake,
+      this.btnToggleReady,
+      this.btnJumpScreening,
+      this.btnBackLobby,
+      this.btnToggleAB,
+      this.btnPlayOrig,
+      this.btnPreviewTake,
+      this.btnToggleFilterLines,
+      this.sliderNudge,
+      this.sliderBackingVol,
+      this.checkMetronome,
+      this.checkGuideVoice,
+      this.sliderPitch,
+      this.sliderReverb,
+      this.sliderGain,
+      this.btnLeaveRoom,
+      this.navStepLobby,
+      this.navStepBooth,
+      this.navStepScreening
+    ];
+
+    interactiveElements.forEach((el) => {
+      if (el) {
+        el.disabled = isProcessing;
+        el.classList.toggle('ui-interaction-locked', isProcessing);
+      }
+    });
+
+    if (this.timelineChips) {
+      this.timelineChips.classList.toggle('ui-interaction-locked', isProcessing);
+    }
+  }
+
   async finishRecording() {
     this.waveform.setPlayhead(-1);
     if (this.recordingTimeout) {
@@ -2342,6 +2948,7 @@ class DubMateApp {
     }
     this.recordState = 'processing';
     this.updateRecordButtonUI();
+    this.setBoothProcessing(true);
     this.stageVideo.pause();
 
     const res = await this.audio.stopRecording();
@@ -2350,6 +2957,7 @@ class DubMateApp {
     if (!res || !res.blob) {
       this.recordState = 'idle';
       this.updateRecordButtonUI();
+      this.setBoothProcessing(false);
       this.showToast("No audio recorded.");
       return;
     }
@@ -2372,6 +2980,7 @@ class DubMateApp {
     formData.append('pitch_semitones', pitch);
     formData.append('reverb_wet', reverb);
     formData.append('gain_db', gain);
+    formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
 
     try {
       const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}`, {
@@ -2385,6 +2994,14 @@ class DubMateApp {
       if (data.take) {
         if (!this.roomState.takes) this.roomState.takes = {};
         this.roomState.takes[lineIndex] = data.take;
+        // If gain wasn't manually altered away from 0, auto-apply the calculated scene gain
+        if (gain === 0 && data.take.auto_gain_db !== undefined && data.take.auto_gain_db !== 0) {
+          data.take.gain_db = data.take.auto_gain_db;
+          this.sliderGain.value = data.take.auto_gain_db;
+          this.valGain.innerText = (data.take.auto_gain_db > 0 ? '+' : '') + data.take.auto_gain_db + ' dB';
+          this.audio.setGain(data.take.auto_gain_db);
+          this.syncTakeParams();
+        }
       }
       this.audio.evictTakeCache(lineIndex);
       if (recordedBuffer) {
@@ -2399,11 +3016,13 @@ class DubMateApp {
       this.recordState = 'idle';
       this.updateRecordButtonUI();
       this.showToast("Failed to upload take: " + err.message);
+    } finally {
+      this.setBoothProcessing(false);
     }
   }
 
   stepLine(delta) {
-    if (!this.roomState) return;
+    if (this.isProcessingTake || !this.roomState) return;
     this.cancelCurrentCountdown();
     const totalLines = this.roomState.pack.lines.length;
     const myAssignedChars = this.getMyAssignedCharacters();
@@ -2434,6 +3053,7 @@ class DubMateApp {
   }
 
   handleUserFinishedAllLines() {
+    if (this.isProcessingTake) return;
     if (!this.isReadyForScreening) {
       this.toggleMyReadiness();
     } else {
@@ -2455,6 +3075,7 @@ class DubMateApp {
   }
 
   clearCurrentTake() {
+    if (this.isProcessingTake) return;
     this.cancelCurrentCountdown();
     if (confirm("Are you sure you want to clear this take?")) {
       this.socket.clearTake(this.currentLineIndex);
@@ -2468,6 +3089,17 @@ class DubMateApp {
 
   async setupScreeningView() {
     if (!this.roomState) return;
+
+    const presenceVal = parseFloat(this.roomState.master_dialogue_presence_db ?? 0.0);
+    this.masterDialoguePresence = presenceVal;
+    if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = presenceVal;
+    if (this.valDialoguePresence) {
+      this.valDialoguePresence.innerText = (presenceVal === 0) ? '0.0 dB (Scene Default)' : ((presenceVal > 0 ? '+' : '') + presenceVal.toFixed(1) + ' dB');
+    }
+    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
+      const btnVal = parseFloat(btn.dataset.presence || '0');
+      btn.classList.toggle('active', Math.abs(btnVal - presenceVal) < 0.1);
+    });
 
     if (this.roomState.has_export && (this.roomState.export_video_url || this.roomState.download_url)) {
       this.applyExportedVideoToTheater();
@@ -2641,6 +3273,38 @@ class DubMateApp {
     }
   }
 
+  setMasterDialoguePresence(val) {
+    this.masterDialoguePresence = Math.max(-12.0, Math.min(12.0, val));
+    if (this.valDialoguePresence) {
+      this.valDialoguePresence.innerText = (this.masterDialoguePresence === 0)
+        ? '0.0 dB (Scene Default)'
+        : ((this.masterDialoguePresence > 0 ? '+' : '') + this.masterDialoguePresence.toFixed(1) + ' dB');
+    }
+    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
+      const btnVal = parseFloat(btn.dataset.presence || '0');
+      btn.classList.toggle('active', Math.abs(btnVal - this.masterDialoguePresence) < 0.1);
+    });
+
+    if (this.screeningVocalGainNode && this.audio?.ctx) {
+      const { vocalGain } = this.getScreeningStemGains();
+      this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
+    }
+
+    // Reset pre-rendered export cache since dialogue presence changed
+    if (this.roomState) {
+      this.roomState.has_export = false;
+      this.roomState.master_dialogue_presence_db = this.masterDialoguePresence;
+      this.isUsingExportedVideo = false;
+      if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
+    }
+
+    if (this.socket) {
+      this.socket.send('set_dialogue_presence', {
+        presence_db: this.masterDialoguePresence
+      });
+    }
+  }
+
   getScreeningStemGains() {
     // 0 = Backing Dominant, 50 = Balanced (0.65 backing / 0.95 vocals), 100 = Vocals Dominant
     const balanceNorm = (this.screeningBalance - 50) / 50.0; // -1.0 to +1.0
@@ -2656,6 +3320,9 @@ class DubMateApp {
       backingGain = 0.65 * (1.0 - balanceNorm * 0.75); // 0.65 down to 0.16
       vocalGain = 0.95 + balanceNorm * 0.35; // 0.95 up to 1.30
     }
+
+    const presenceMult = Math.pow(10.0, (this.masterDialoguePresence || 0.0) / 20.0);
+    vocalGain *= presenceMult;
 
     return { backingGain, vocalGain };
   }
@@ -2922,53 +3589,160 @@ class DubMateApp {
     }
   }
 
-  async exportFinalVideo() {
-    if (!this.roomState) return;
-    this.exportProgressBox.style.display = 'block';
-    this.exportDownloadContainer.style.display = 'none';
+  openExportModal() {
+    this.isRenderingExport = true;
+    if (this.modalExportRendering) {
+      this.modalExportRendering.style.display = 'flex';
+    }
+    if (this.btnModalCloseX) {
+      this.btnModalCloseX.style.display = 'none';
+    }
+    if (this.exportModalBadge) {
+      this.exportModalBadge.className = 'badge-render-live';
+      this.exportModalBadge.innerText = 'PROCESSING';
+    }
+    if (this.exportModalTitle) {
+      this.exportModalTitle.innerText = 'Master Dub Rendering';
+    }
+    if (this.exportModalReassurance) {
+      this.exportModalReassurance.style.display = 'flex';
+    }
+    if (this.exportModalActions) {
+      this.exportModalActions.style.display = 'none';
+    }
+    this.updateExportModalStep(1, 25, "Applying vocal EQ, studio compression & acoustic room reverb...");
+    this.pauseScreeningPlayback();
+    this.lockScreeningUI(true);
+  }
 
-    // Step 1: DSP Mastering
-    if (this.stepDsp) { this.stepDsp.className = 'step-item active'; }
-    if (this.stepMux) { this.stepMux.className = 'step-item'; }
-    if (this.stepReady) { this.stepReady.className = 'step-item'; }
-    this.exportStatusText.innerText = "Applying vocal EQ, studio compression & acoustic room reverb...";
-    if (this.exportProgressFill) {
-      this.exportProgressFill.style.transform = 'scaleX(0.3)';
+  updateExportModalStep(step, percent, statusText) {
+    if (this.exportModalStatusText) {
+      this.exportModalStatusText.innerText = statusText;
+    }
+    if (this.exportModalProgressBar) {
+      this.exportModalProgressBar.style.width = `${percent}%`;
+    }
+    if (this.modalStepDsp && this.modalStepMux && this.modalStepReady) {
+      this.modalStepDsp.className = 'modal-step-item' + (step > 1 ? ' completed' : (step === 1 ? ' active' : ''));
+      this.modalStepMux.className = 'modal-step-item' + (step > 2 ? ' completed' : (step === 2 ? ' active' : ''));
+      this.modalStepReady.className = 'modal-step-item' + (step >= 3 ? ' active' : '');
+    }
+    if (this.connectorDspMux) {
+      this.connectorDspMux.className = 'step-connector' + (step > 1 ? ' completed' : '');
+    }
+    if (this.connectorMuxReady) {
+      this.connectorMuxReady.className = 'step-connector' + (step > 2 ? ' completed' : '');
+    }
+  }
+
+  handleExportSuccess(data) {
+    this.isUsingExportedVideo = true;
+    this.isRenderingExport = false;
+    if (this.roomState) {
+      this.roomState.has_export = true;
+      this.roomState.export_video_url = data.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
+      this.roomState.download_url = data.download_url || data.download_url_16_9;
     }
 
-    const setExportSuccessUI = (data) => {
-      if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
-      if (this.stepMux) { this.stepMux.className = 'step-item completed'; }
-      if (this.stepReady) { this.stepReady.className = 'step-item active'; }
+    this.updateExportModalStep(3, 100, "✅ Master Dubbed Video Rendered Successfully!");
 
-      if (this.exportProgressFill) {
-        this.exportProgressFill.style.transform = 'scaleX(1)';
-      }
+    if (this.modalStepReady) {
+      this.modalStepReady.className = 'modal-step-item completed';
+    }
+    if (this.connectorMuxReady) {
+      this.connectorMuxReady.className = 'step-connector completed';
+    }
+    if (this.exportModalBadge) {
+      this.exportModalBadge.className = 'badge-render-live ready';
+      this.exportModalBadge.innerText = 'READY';
+    }
+    if (this.exportModalTitle) {
+      this.exportModalTitle.innerText = 'Master Dub Video Ready!';
+    }
+    if (this.exportModalReassurance) {
+      this.exportModalReassurance.style.display = 'none';
+    }
+    if (this.btnModalCloseX) {
+      this.btnModalCloseX.style.display = 'flex';
+    }
+
+    const download169 = data.download_url_16_9 || data.download_url || `/api/rooms/${this.roomState?.room_id}/export/download?aspect_ratio=16:9`;
+    const download916 = data.download_url_9_16 || `/api/rooms/${this.roomState?.room_id}/export/download?aspect_ratio=9:16`;
+
+    if (this.btnModalDownload169) {
+      this.btnModalDownload169.href = download169;
+    }
+    if (this.btnModalDownload916) {
+      this.btnModalDownload916.href = download916;
+    }
+    if (this.exportModalActions) {
+      this.exportModalActions.style.display = 'flex';
+    }
+
+    // Also update legacy inline panel if displayed
+    if (this.exportProgressBox) {
+      this.exportProgressBox.style.display = 'block';
+    }
+    if (this.exportProgressFill) {
+      this.exportProgressFill.style.transform = 'scaleX(1)';
+    }
+    if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
+    if (this.stepMux) { this.stepMux.className = 'step-item completed'; }
+    if (this.stepReady) { this.stepReady.className = 'step-item active'; }
+    if (this.exportStatusText) {
       this.exportStatusText.innerText = "✅ Master Dubbed Video Rendered Successfully!";
-      this.btnDownloadLink.href = data.download_url_16_9 || data.download_url;
-      if (this.btnDownloadLink916) {
-        this.btnDownloadLink916.href = data.download_url_9_16 || `/api/rooms/${this.roomState.room_id}/export/download?aspect_ratio=9:16`;
+    }
+    if (this.btnDownloadLink) {
+      this.btnDownloadLink.href = download169;
+    }
+    if (this.btnDownloadLink916) {
+      this.btnDownloadLink916.href = download916;
+    }
+    if (this.exportDownloadContainer) {
+      this.exportDownloadContainer.style.display = 'flex';
+    }
+
+    this.applyExportedVideoToTheater(data.export_video_url);
+    this.lockScreeningUI(false);
+  }
+
+  closeExportModal() {
+    if (this.modalExportRendering) {
+      this.modalExportRendering.style.display = 'none';
+    }
+    this.isRenderingExport = false;
+    this.lockScreeningUI(false);
+  }
+
+  lockScreeningUI(isLocked) {
+    const controls = [
+      this.btnScreeningPlayPause,
+      this.btnScreeningReplay,
+      this.btnAspect169,
+      this.btnAspect916,
+      this.btnExportVideo,
+      this.btnToolbarProjectZip,
+      this.btnBackBooth,
+      this.sliderScreeningBalance,
+      this.btnLeaveRoom,
+      this.navStepLobby,
+      this.navStepBooth
+    ];
+    controls.forEach((el) => {
+      if (el) {
+        el.disabled = isLocked;
+        el.classList.toggle('ui-interaction-locked', isLocked);
       }
-      this.exportDownloadContainer.style.display = 'block';
+    });
+  }
 
-      const sizeText = data.file_size_mb ? `${data.file_size_mb} MB` : '';
-      const durationText = data.duration ? `${data.duration}s` : (this.roomState?.pack?.duration ? `${Math.round(this.roomState.pack.duration)}s` : '');
-      const metaBadge = (sizeText || durationText) ? ` (${[sizeText, durationText].filter(Boolean).join(' • ')})` : '';
-
-      this.btnDownloadLink.innerHTML = `<span>⬇️ Download Master Video${metaBadge}</span>`;
-
-      // Instantly load the rendered master video into theater preview player
-      if (this.roomState) {
-        this.roomState.has_export = true;
-        this.roomState.export_video_url = data.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-        this.roomState.download_url = data.download_url;
-      }
-      this.applyExportedVideoToTheater();
-      this.showToast("🎬 Master Dubbed Video is ready in Theater & for download!");
-    };
+  async exportFinalVideo() {
+    if (!this.roomState) return;
+    this.openExportModal();
 
     try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${this.selectedAspectRatio}`, {
+      const presenceParam = encodeURIComponent(this.masterDialoguePresence || 0.0);
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${this.selectedAspectRatio}&presence=${presenceParam}`, {
         method: 'POST',
       });
 
@@ -2978,17 +3752,12 @@ class DubMateApp {
       const data = await res.json();
 
       if (data.status === 'ok' || data.status === 'ready') {
-        setExportSuccessUI(data);
+        this.handleExportSuccess(data);
         return;
       }
 
-      // If background rendering in progress, poll until ready
-      if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
-      if (this.stepMux) { this.stepMux.className = 'step-item active'; }
-      this.exportStatusText.innerText = "Encoding master audio and video stems in background...";
-      if (this.exportProgressFill) {
-        this.exportProgressFill.style.transform = 'scaleX(0.7)';
-      }
+      // If background rendering in progress, update step 2 and poll until ready
+      this.updateExportModalStep(2, 65, "Encoding multi-track audio & video stems in frame-accurate sync...");
 
       const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${this.selectedAspectRatio}`;
       let attempts = 0;
@@ -3002,7 +3771,7 @@ class DubMateApp {
             const pollData = await pollRes.json();
             if (pollData.status === 'ready' || pollData.status === 'ok') {
               clearInterval(pollInterval);
-              setExportSuccessUI(pollData);
+              this.handleExportSuccess(pollData);
               return;
             }
             if (String(pollData.status).startsWith('failed')) {
@@ -3016,15 +3785,31 @@ class DubMateApp {
 
         if (attempts >= maxAttempts) {
           clearInterval(pollInterval);
-          this.exportStatusText.innerText = "⚠️ Rendering is taking longer than expected. Please check back shortly.";
+          this.isRenderingExport = false;
+          this.updateExportModalStep(2, 85, "⚠️ Rendering is taking longer than expected. Please check back shortly.");
+          if (this.btnModalCloseX) {
+            this.btnModalCloseX.style.display = 'flex';
+          }
+          if (this.exportModalActions) {
+            this.exportModalActions.style.display = 'flex';
+          }
+          this.lockScreeningUI(false);
         }
       }, 2000);
 
     } catch (err) {
-      if (this.exportProgressFill) {
-        this.exportProgressFill.style.transform = 'scaleX(0)';
+      this.isRenderingExport = false;
+      this.updateExportModalStep(1, 0, "❌ Export failed: " + err.message);
+      if (this.exportModalBadge) {
+        this.exportModalBadge.innerText = 'FAILED';
       }
-      this.exportStatusText.innerText = "❌ Export failed: " + err.message;
+      if (this.btnModalCloseX) {
+        this.btnModalCloseX.style.display = 'flex';
+      }
+      if (this.exportModalActions) {
+        this.exportModalActions.style.display = 'flex';
+      }
+      this.lockScreeningUI(false);
       this.showToast("Export failed: " + err.message);
     }
   }
