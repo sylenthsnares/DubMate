@@ -599,7 +599,16 @@ class DubMateApp {
 
     this.checkMetronome.addEventListener('change', (e) => {
       this.audio.metronomeEnabled = e.target.checked;
+      const tag = document.getElementById('tag-metronome');
+      if (tag) tag.innerText = e.target.checked ? 'ACTIVE' : 'MUTED';
     });
+
+    if (this.checkGuideVoice) {
+      this.checkGuideVoice.addEventListener('change', (e) => {
+        const tag = document.getElementById('tag-guide-voice');
+        if (tag) tag.innerText = e.target.checked ? 'ACTIVE' : 'MUTED';
+      });
+    }
 
     this.btnToggleAB.addEventListener('click', () => this.toggleABState());
 
@@ -659,24 +668,35 @@ class DubMateApp {
             this.badgeGainMatch.innerText = `✓ ${targetGain >= 0 ? '+' : ''}${targetGain} dB (Matched)`;
             this.badgeGainMatch.className = 'badge-calibrated calibrated';
           }
-          this.showToast(`⚖️ Vocal gain calibrated to scene dialogue target (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
+          this.showToast(`Vocal gain calibrated to scene dialogue target (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
         }
       });
     }
 
     // Advanced Vocal Rack
     this.btnToggleAdvancedRack.addEventListener('click', () => {
+      const controlsPanel = document.getElementById('booth-controls-panel') || document.querySelector('.booth-controls');
       const isOpen = this.advancedVocalRack.classList.contains('open');
       if (isOpen) {
         this.advancedVocalRack.classList.remove('open');
+        controlsPanel?.classList.remove('fx-expanded');
         this.btnToggleAdvancedRack.setAttribute('aria-expanded', 'false');
-        this.btnToggleAdvancedRack.innerText = 'Advanced Rack ▾';
+        this.btnToggleAdvancedRack.innerText = 'Advanced ▾';
       } else {
         this.advancedVocalRack.classList.add('open');
+        controlsPanel?.classList.add('fx-expanded');
         this.btnToggleAdvancedRack.setAttribute('aria-expanded', 'true');
-        this.btnToggleAdvancedRack.innerText = 'Advanced Rack ▴';
+        this.btnToggleAdvancedRack.innerText = 'Advanced ▴';
       }
     });
+
+    if (this.checkNoiseReduction) {
+      this.checkNoiseReduction.addEventListener('change', (e) => {
+        const tag = document.getElementById('tag-noise-cleaner');
+        if (tag) tag.innerText = e.target.checked ? 'DFN3' : 'OFF';
+        this.syncTakeParams();
+      });
+    }
 
     this.checkLowcut.addEventListener('change', () => this.syncTakeParams());
     this.checkCompressor.addEventListener('change', () => this.syncTakeParams());
@@ -1560,7 +1580,7 @@ class DubMateApp {
 
       const authorsHtml = (pack.authors && pack.authors.length) ? `
         <span class="badge-author" title="Author: ${pack.authors.join(', ')}">
-          👤 ${pack.authors.map(a => query ? this.highlightMatch(a, query) : a).join(', ')}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${pack.authors.map(a => query ? this.highlightMatch(a, query) : a).join(', ')}
         </span>
       ` : '';
 
@@ -1582,7 +1602,7 @@ class DubMateApp {
           const cap = foundLine.caption || foundLine.raw_caption || foundLine.text || '';
           matchedLineSnippet = `
             <div style="font-size: 11px; color: var(--accent-brass); margin-top: 6px; font-style: italic; background: var(--input); padding: 4px 8px; border-radius: var(--radius-sm); border-left: 2px solid var(--primary);">
-              💬 ${charPrefix}"${this.highlightMatch(cap, query)}"
+              ${charPrefix}"${this.highlightMatch(cap, query)}"
             </div>
           `;
         }
@@ -1594,13 +1614,13 @@ class DubMateApp {
           <div class="pack-card-meta-col">
             <div class="pack-card-header">
               <div class="pack-card-title">${displayTitle}</div>
-              <span class="pack-card-duration">⏱️ ${duration}s</span>
+              <span class="pack-card-duration">${duration}s</span>
             </div>
             ${subtitleHtml}
             <div class="pack-card-badges-row">
               ${formatBadge}
               ${authorsHtml}
-              <span class="pack-line-badge">📜 ${lineCount} lines</span>
+              <span class="pack-line-badge">${lineCount} lines</span>
             </div>
           </div>
         </div>
@@ -1718,12 +1738,12 @@ class DubMateApp {
   toggleMyReadiness() {
     this.isReadyForScreening = !this.isReadyForScreening;
     if (this.isReadyForScreening) {
-      this.labelReadyState.innerText = "✅ Ready for Premiere!";
-      this.btnToggleReady.className = "btn btn-success btn-sm";
-      this.showToast("You are marked READY for the Premiere! 🍿");
+      if (this.labelReadyState) this.labelReadyState.innerText = "Ready for Premiere";
+      this.btnToggleReady.className = "btn btn-success btn-sm btn-ready-toggle ready";
+      this.showToast("Marked READY for the Premiere");
     } else {
-      this.labelReadyState.innerText = "⬜ Mark Ready for Premiere";
-      this.btnToggleReady.className = "btn btn-secondary btn-sm";
+      if (this.labelReadyState) this.labelReadyState.innerText = "Mark Ready";
+      this.btnToggleReady.className = "btn btn-secondary btn-sm btn-ready-toggle";
     }
     if (this.roomState && this.roomState.users && this.roomState.users[this.user.id]) {
       this.roomState.users[this.user.id].is_ready = this.isReadyForScreening;
@@ -1736,16 +1756,18 @@ class DubMateApp {
     if (!this.roomState) return;
     const isHost = (this.user.id === this.roomState.host_id);
     if (!isHost) {
-      this.showToast("Only the Room Host can launch the Group Premiere!");
+      this.showToast("Only the Room Host can launch the Group Premiere");
       return;
     }
-    this.showToast("🎬 Mastering Dubbed Video & Launching Premiere for the Cast...");
+    this.showToast("Mastering Dubbed Video & Launching Premiere for the Cast...");
     this.socket.send('launch_premiere', {});
   }
 
   toggleFilterLines() {
     this.filterMyLinesOnly = !this.filterMyLinesOnly;
-    this.labelFilterLines.innerText = this.filterMyLinesOnly ? "🎭 My Lines Only" : "🌐 All Scene Lines";
+    if (this.labelFilterLines) {
+      this.labelFilterLines.innerText = this.filterMyLinesOnly ? "My Lines Only" : "All Scene Lines";
+    }
     this.renderTimelineChips();
     this.showToast(this.filterMyLinesOnly ? "Filtering timeline to your assigned lines" : "Showing all scene lines");
   }
@@ -1786,12 +1808,12 @@ class DubMateApp {
         }
       }
 
-      const loc = u.location === 'screening' ? '🍿 Screening' : (u.location === 'lobby' ? '🏠 Lobby' : `🎙️ Line ${(u.current_line || 0) + 1}`);
+      const loc = u.location === 'screening' ? 'Screening' : (u.location === 'lobby' ? 'Lobby' : `Line ${(u.current_line || 0) + 1}`);
 
       chip.innerHTML = `
         <div class="actor-hud-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
         <span class="actor-hud-name" title="${u.name}">${u.name}${u.id === this.user.id ? ' (You)' : ''}</span>
-        <span class="actor-hud-char" title="${charFullTooltip}">🎭 ${charDisplayText}</span>
+        <span class="actor-hud-char" title="${charFullTooltip}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${charDisplayText}</span>
         <span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>
         <span class="actor-hud-status-badge ${u.is_ready ? 'badge-ready' : (u.location === 'screening' ? 'badge-screening' : 'badge-recording')}">
           ${u.is_ready ? '✓ Ready' : loc}
@@ -1809,7 +1831,7 @@ class DubMateApp {
     if (this.btnLaunchPremiere) {
       if (isHost) {
         this.btnLaunchPremiere.style.display = 'inline-flex';
-        this.btnLaunchPremiere.innerHTML = `<span>🎬 Launch Premiere (${readyCount}/${users.length} Ready) ›</span>`;
+        this.btnLaunchPremiere.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> <span>Launch Premiere (${readyCount}/${users.length} Ready) ›</span>`;
       } else {
         this.btnLaunchPremiere.style.display = 'none';
       }
@@ -2171,7 +2193,7 @@ class DubMateApp {
 
     if (this.btnNextLine) {
       if (isLast) {
-        this.btnNextLine.innerHTML = '<span>✨ I\'m Finished ✓</span>';
+        this.btnNextLine.innerHTML = '<span>I\'m Finished ✓</span>';
         this.btnNextLine.className = 'btn btn-success btn-sm btn-finished-pulse';
         this.btnNextLine.setAttribute('title', "All lines reviewed! Mark yourself ready for Premiere");
       } else {
@@ -2194,25 +2216,25 @@ class DubMateApp {
 
     if (!isMyLine) {
       this.btnRecordMain.className = 'btn-big-record locked';
-      this.recordIcon.innerText = '🔒';
+      this.recordIcon.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
       const actorText = assignedNames.length > 0 ? assignedNames.join(', ') : 'Another actor';
-      this.recordStatusLabel.innerText = `🔒 Assigned to ${line?.character} (${actorText}) — Read Only`;
+      this.recordStatusLabel.innerText = `Assigned to ${line?.character} (${actorText}) — Read Only`;
       return;
     }
 
     if (this.recordState === 'recording') {
       this.btnRecordMain.className = 'btn-big-record recording';
-      this.recordIcon.innerText = '⏹';
-      this.recordStatusLabel.innerText = "● Recording Live... Click or Space to Stop";
+      this.recordIcon.innerText = '■';
+      this.recordStatusLabel.innerText = "Recording Live... Click or Space to Stop";
     } else if (this.recordState === 'countdown') {
       this.btnRecordMain.className = 'btn-big-record';
       this.recordIcon.innerText = '✕';
       this.recordStatusLabel.innerText = "Counting in... Click to Cancel";
     } else if (this.recordState === 'processing') {
       this.btnRecordMain.className = 'btn-big-record';
-      this.recordIcon.innerText = '⏳';
+      this.recordIcon.innerHTML = `<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>`;
       this.recordStatusLabel.innerText = "Saving take...";
     } else {
       this.btnRecordMain.className = 'btn-big-record';

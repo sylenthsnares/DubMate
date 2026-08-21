@@ -430,7 +430,7 @@ export class WaveformRenderer {
       ctx.fillStyle = 'rgba(168, 159, 149, 0.5)';
       ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('🎙️ No take recorded yet — punch in above or press Space to record your take', 110, lane2MidY + 3);
+      ctx.fillText('No take recorded yet — punch in above or press Space to record', 110, lane2MidY + 3);
     }
 
     // -------------------------------------------------------------
@@ -535,7 +535,7 @@ export class WaveformRenderer {
       ctx.font = '600 9.5px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      ctx.fillText('✋ Click & drag waveform or use [ ] keys to sync', w - 10, lane2Top + 13);
+      ctx.fillText('Drag waveform or use [ ] keys to sync', w - 10, lane2Top + 13);
     }
 
     // -------------------------------------------------------------

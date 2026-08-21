@@ -582,48 +582,20 @@ body::after {
   pointer-events: none;
 }
 
-/* Vintage Hardware Rack Cheeks (Dark Walnut Cheeks with Prominent Gold Glow) */
+/* Vintage Hardware Amplifier Cabinet Chassis (Continuous Tolex Enclosure with Gold Piping) */
 .rack-wood-frame {
   position: relative;
   background: var(--card);
-  border: 1.5px solid rgba(204, 164, 88, 0.48);
-  border-left: 9px solid #3d2b1f;
-  border-right: 9px solid #3d2b1f;
+  border: 1.5px solid rgba(204, 164, 88, 0.45);
   border-radius: var(--radius-lg);
   box-shadow:
-    0 10px 32px -4px rgba(0, 0, 0, 0.9),
-    0 0 18px rgba(204, 164, 88, 0.28),
-    0 0 36px rgba(204, 164, 88, 0.12),
-    inset 0 1px 0 rgba(204, 164, 88, 0.45),
-    inset 0 0 16px rgba(0, 0, 0, 0.7),
-    inset 9px 0 3px rgba(0, 0, 0, 0.4),
-    inset -9px 0 3px rgba(0, 0, 0, 0.4);
-}
-
-/* Woodgrain stripe on the side cheeks */
-.rack-wood-frame::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background:
-    repeating-linear-gradient(
-      180deg,
-      transparent 0, transparent 4px,
-      rgba(0,0,0,0.08) 4px, rgba(0,0,0,0.08) 5px
-    );
-  /* Only show the grain on the left/right cheek strips */
-  -webkit-mask-image: linear-gradient(
-    90deg,
-    #000 0, #000 9px, transparent 9px, transparent calc(100% - 9px), #000 calc(100% - 9px), #000 100%
-  );
-  mask-image: linear-gradient(
-    90deg,
-    #000 0, #000 9px, transparent 9px, transparent calc(100% - 9px), #000 calc(100% - 9px), #000 100%
-  );
-  border-left: 1px solid rgba(255, 255, 255, 0.07);
-  border-right: 1px solid rgba(0, 0, 0, 0.5);
+    0 8px 24px -3px rgba(0, 0, 0, 0.9),
+    0 0 16px rgba(204, 164, 88, 0.2),
+    0 0 32px rgba(204, 164, 88, 0.08),
+    inset 0 1px 0 rgba(255, 235, 175, 0.35),
+    inset 0 0 0 1px rgba(204, 164, 88, 0.15),
+    inset 0 0 16px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
 }
 
 .panel-header {
@@ -1551,8 +1523,10 @@ body::after {
 /* ------------------------------------------------------------- */
 
 .app-container:has(#view-booth.active) {
-  padding: 4px 14px 6px;
-  height: calc(100vh - 84px);
+  padding: 10px 16px 10px;
+  height: calc(100vh - 50px - var(--hud-height, 34px));
+  min-height: 0;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
 }
@@ -1560,9 +1534,9 @@ body::after {
 #view-booth.active {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 100%;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -1570,17 +1544,18 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px;
-  margin-bottom: 6px;
+  padding: 4px 12px;
+  margin-bottom: 10px;
+  min-height: 38px;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
 .stage-info-group {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -1609,22 +1584,71 @@ body::after {
 .stage-action-group {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
+}
+
+/* Redesigned Mark Ready Toggle Button */
+.btn-ready-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid var(--border-wood);
+  background: var(--secondary);
+  color: var(--foreground-muted);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.btn-ready-toggle:hover {
+  background: var(--secondary-hover);
+  border-color: var(--primary);
+  color: var(--foreground);
+}
+.btn-ready-toggle .btn-ready-icon {
+  stroke: var(--foreground-muted);
+  transition: all var(--duration-fast);
+}
+.btn-ready-toggle .btn-ready-icon .check-tick {
+  opacity: 0;
+  transition: opacity var(--duration-fast);
+}
+.btn-ready-toggle.ready {
+  background: rgba(22, 163, 74, 0.16);
+  border-color: rgba(22, 163, 74, 0.6);
+  color: #4ade80;
+  box-shadow: 0 0 14px var(--accent-teal-glow), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+.btn-ready-toggle.ready:hover {
+  background: rgba(22, 163, 74, 0.25);
+  border-color: #4ade80;
+  color: #ffffff;
+}
+.btn-ready-toggle.ready .btn-ready-icon {
+  stroke: #4ade80;
+}
+.btn-ready-toggle.ready .btn-ready-icon .check-tick {
+  opacity: 1;
 }
 
 .booth-layout {
   display: grid;
   grid-template-columns: 1fr 340px;
-  gap: 16px;
+  gap: 12px;
   align-items: stretch;
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  height: 100%;
 }
 
 @media (min-width: 1550px) {
   .booth-layout {
     grid-template-columns: 1fr 360px;
-    gap: 20px;
+    gap: 14px;
   }
 }
 
@@ -1640,20 +1664,16 @@ body::after {
   gap: 10px;
   min-height: 0;
   height: 100%;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  padding-right: 4px;
+  padding-right: 2px;
+  overflow: hidden;
 }
 
-/* Video Viewport - True 16:9 Cinema Monitor with Fluid Resizing */
+/* Video Viewport - True 16:9 Cinema Monitor with Fluid Resizing filling remaining height */
 .video-container {
   position: relative;
-  aspect-ratio: 16 / 9;
-  height: var(--video-h, clamp(200px, 30vh, 320px));
-  min-height: 180px;
-  max-height: min(48vh, 420px);
+  flex: 1 1 0;
+  min-height: 160px;
   width: 100%;
-  max-width: 100%;
   margin: 0 auto;
   background: #000000;
   border-radius: var(--radius-lg);
@@ -1668,7 +1688,6 @@ body::after {
   align-items: center;
   justify-content: center;
   transition: height var(--duration-fast) var(--ease-out);
-  flex-shrink: 0;
 }
 
 body.resizing {
@@ -1682,6 +1701,8 @@ body.resizing .video-container {
 .video-container video {
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   aspect-ratio: 16 / 9;
   object-fit: contain;
   display: block;
@@ -1732,7 +1753,7 @@ body.resizing .video-container {
 /* Subtitle Prompter Card & Vertical Splitter Resizer (Dark Brown Theme with Gold Outline Glow) */
 .caption-card {
   position: relative;
-  padding: 8px 16px 10px;
+  padding: 6px 14px 8px;
   background-color: #120e0b;
   background-image: radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.08) 0%, transparent 75%);
   border: 1.5px solid rgba(204, 164, 88, 0.45);
@@ -1751,8 +1772,8 @@ body.resizing .video-container {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 10px;
-  margin: -8px -16px 4px;
+  height: 8px;
+  margin: -6px -14px 2px;
   cursor: ns-resize;
   user-select: none;
   touch-action: none;
@@ -1783,7 +1804,7 @@ body.resizing .resize-grip-pill {
 
 .caption-char {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 800;
   color: var(--accent-brass);
   letter-spacing: 1.2px;
@@ -1793,16 +1814,16 @@ body.resizing .resize-grip-pill {
 
 .caption-text {
   font-family: var(--font-serif);
-  font-size: 15.5px;
+  font-size: 15px;
   font-weight: 500;
-  line-height: 1.35;
+  line-height: 1.3;
   color: #fffaf2;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
 }
 
 /* Dual Waveform Panel & Track Sync Controls (Dark Brown Theme with Gold Outline Glow) */
 .waveform-panel {
-  padding: 8px 12px 10px;
+  padding: 6px 12px 8px;
   background-color: #14100c;
   background-image: radial-gradient(ellipse at 50% 0%, rgba(204, 164, 88, 0.06) 0%, transparent 60%);
   border: 1.5px solid rgba(204, 164, 88, 0.45);
@@ -1819,7 +1840,7 @@ body.resizing .resize-grip-pill {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .legend-group {
@@ -1829,8 +1850,8 @@ body.resizing .resize-grip-pill {
 }
 
 .legend-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
 }
 .dot-orig {
@@ -1844,7 +1865,7 @@ body.resizing .resize-grip-pill {
 
 .legend-text {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   color: var(--foreground);
   letter-spacing: 0.3px;
@@ -1852,9 +1873,9 @@ body.resizing .resize-grip-pill {
 
 .legend-offset-pill {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 800;
-  padding: 2px 8px;
+  padding: 1px 6px;
   background: var(--input);
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-sm);
@@ -1863,7 +1884,7 @@ body.resizing .resize-grip-pill {
 
 .waveform-canvas-box {
   width: 100%;
-  height: 108px;
+  height: 96px;
   background-color: #0c0907;
   background-image: radial-gradient(ellipse at 50% 50%, rgba(217, 119, 6, 0.05) 0%, transparent 80%);
   border: 1px solid #3d2b1f;
@@ -2020,12 +2041,12 @@ body.resizing .resize-grip-pill {
 .booth-controls {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   height: 100%;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  padding-right: 2px;
+  overflow: hidden;
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .booth-controls .panel-header-sm {
@@ -2038,96 +2059,181 @@ body.resizing .resize-grip-pill {
   letter-spacing: 0.6px;
 }
 
+/* Deck 1: Studio Monitoring & Headphone Deck (Rich Vintage Console) */
 .control-card {
   padding: 0;
   overflow: hidden;
-  flex-shrink: 0;
-}
-
-/* Monitoring Deck (VOX Diamond Grille Cloth & Vintage Controls) */
-.control-card .monitoring-row {
-  padding: 10px 14px 8px;
+  flex: 1.15 1 0;
+  min-height: 170px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  background-color: #120e0b;
-  background-image:
-    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.12) 0%, transparent 75%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
-  background-size: auto, 24px 36px;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.vol-slider-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 100%;
-  width: 100%;
-}
-
-.fx-label-sm {
+.lamp-indicator-gold {
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 800;
-  color: #f7eedd; /* VOX vintage ivory */
-  letter-spacing: 0.5px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-}
-
-.fx-slider {
-  flex: 1;
-  height: 14px;
-  accent-color: var(--primary);
-  cursor: pointer;
-}
-
-.fx-val {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 8.5px;
   font-weight: 800;
   color: #cca458;
-  min-width: 28px;
-  text-align: right;
+  background: rgba(204, 164, 88, 0.15);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(204, 164, 88, 0.35);
+  box-shadow: 0 0 8px rgba(204, 164, 88, 0.2);
+  letter-spacing: 0.5px;
 }
 
-.monitoring-row .toggle-pill {
-  flex: 1;
-  display: inline-flex;
+/* 3-Column Balanced Amp Section: Backing Dial | Click Rocker | Guide Rocker */
+.monitoring-deck-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: var(--input);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-full);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--foreground);
+  justify-items: center;
+  padding: 10px 8px 12px;
+  flex: 1 1 auto;
+  background-color: #120e0b;
+  background-image:
+    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
+  background-size: auto, 24px 36px;
+  gap: 4px;
+}
+
+/* Analog Rocker Switch Channel Column */
+.analog-rocker-channel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  z-index: 3;
+}
+
+.analog-rocker-unit {
   cursor: pointer;
   user-select: none;
-  transition: all var(--duration-fast);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
 }
-.monitoring-row .toggle-pill:hover {
-  border-color: #cca458;
-  color: #ffffff;
-  box-shadow: 0 0 8px rgba(204, 164, 88, 0.25);
+
+.analog-rocker-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
 }
-.monitoring-row .toggle-pill input {
-  accent-color: var(--primary);
+
+/* Recessed Outer Bezel */
+.analog-rocker-housing {
+  width: 32px;
+  height: 48px;
+  background: #080605;
+  border: 1.5px solid #4a3826;
+  border-radius: 4px;
+  padding: 2px;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.9),
+    0 1px 0 rgba(255, 235, 175, 0.15),
+    0 2px 4px rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 200px;
+}
+
+/* 3D Tactile Rocker Paddle */
+.rocker-paddle {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  background: linear-gradient(180deg, #181410 0%, #241d17 50%, #332920 100%);
+  box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.8), 0 1px 3px rgba(0, 0, 0, 0.7);
+  transform: rotateX(12deg);
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+}
+
+.rocker-divider {
+  width: 75%;
+  height: 2px;
+  background: #0d0a08;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 1px 0;
+}
+
+.rocker-symbol {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  transition: all 0.15s ease;
+}
+
+.rocker-i {
+  color: #4a3e35;
+  transform: translateY(1px);
+}
+
+.rocker-o {
+  color: #e2d8ce;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  transform: translateY(-1px);
+}
+
+/* WHEN SWITCH IS ACTIVE (CHECKED = I PRESSED) */
+.analog-rocker-input:checked + .analog-rocker-housing .rocker-paddle,
+.analog-rocker-unit:has(.analog-rocker-input:checked) .rocker-paddle {
+  transform: rotateX(-12deg);
+  background: linear-gradient(180deg, #3d2b16 0%, #20160b 50%, #100b06 100%);
+  box-shadow:
+    inset 0 3px 6px rgba(245, 158, 11, 0.4),
+    0 -1px 3px rgba(0, 0, 0, 0.8),
+    0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.analog-rocker-input:checked + .analog-rocker-housing .rocker-i,
+.analog-rocker-unit:has(.analog-rocker-input:checked) .rocker-i {
+  color: #fef08a;
+  text-shadow: 0 0 6px #f59e0b, 0 0 12px rgba(245, 158, 11, 0.9);
+}
+
+.analog-rocker-input:checked + .analog-rocker-housing .rocker-o,
+.analog-rocker-unit:has(.analog-rocker-input:checked) .rocker-o {
+  color: #4a3e35;
+  text-shadow: none;
+}
+
+.rocker-status-tag {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  color: #cca458;
+  background: #0f0c09;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #3d2c1c;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.5px;
 }
 
 .control-card .ab-switch-box {
-  padding: 6px 12px 10px;
+  padding: 6px 12px 8px;
   background-color: #15120f;
   border-top: 1px solid #7a5c1e; /* Gold piping divider */
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+  flex-shrink: 0;
 }
 
 .btn-ab {
   width: 100%;
-  height: 30px;
+  height: 28px;
   background: linear-gradient(180deg, #25201a 0%, #17130f 100%);
   border: 1px solid #8c6a28;
   border-radius: var(--radius-sm);
@@ -2146,87 +2252,184 @@ body.resizing .resize-grip-pill {
   background: linear-gradient(180deg, #302922 0%, #1e1914 100%);
   border-color: #cca458;
   color: #ffffff;
-  box-shadow: 0 0 10px rgba(204, 164, 88, 0.3);
+  box-shadow: 0 0 12px rgba(204, 164, 88, 0.35);
 }
 
-/* Big Hardware Studio Record Button (Fender Jewel Pilot Lamp with Gold Halo) */
+/* Deck 2: Master Hardware Record Console (Broadcast Deck Surface) */
 .record-btn-container {
-  padding: 12px 14px 14px;
+  padding: 12px 16px 14px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  background: radial-gradient(circle at 50% 30%, #251e18 0%, #17130f 100%);
-  border: 1.5px solid rgba(204, 164, 88, 0.48);
+  justify-content: space-between;
+  gap: 10px;
+  flex: 1.25 1 0;
+  min-height: 185px;
+  background: linear-gradient(180deg, #1b1713 0%, #120e0b 50%, #0d0a08 100%);
+  border: 1.5px solid rgba(204, 164, 88, 0.42);
   border-radius: var(--radius-lg);
   box-shadow:
-    0 10px 32px -4px rgba(0, 0, 0, 0.9),
-    0 0 18px rgba(204, 164, 88, 0.28),
-    0 0 36px rgba(204, 164, 88, 0.12),
-    inset 0 1px 0 rgba(204, 164, 88, 0.4);
-  flex-shrink: 0;
+    0 10px 28px -4px rgba(0, 0, 0, 0.95),
+    0 0 16px rgba(204, 164, 88, 0.15),
+    inset 0 1px 0 rgba(255, 235, 175, 0.25),
+    inset 0 0 20px rgba(0, 0, 0, 0.8);
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.record-console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid rgba(204, 164, 88, 0.18);
+}
+
+.record-track-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #f7eedd;
+  letter-spacing: 0.8px;
+}
+
+.rec-dot-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+}
+
+.record-mode-badge {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  color: #cca458;
+  background: rgba(204, 164, 88, 0.12);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(204, 164, 88, 0.3);
+}
+
+.record-bezel-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.record-halo-ring {
+  position: absolute;
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(239, 68, 68, 0.18) 0%, transparent 70%);
+  pointer-events: none;
+  animation: pulse-halo 2.5s infinite ease-in-out;
+}
+
+@keyframes pulse-halo {
+  0%, 100% { transform: scale(0.95); opacity: 0.5; }
+  50% { transform: scale(1.15); opacity: 0.9; }
 }
 
 .btn-big-record {
-  width: 58px;
-  height: 58px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
-  background: radial-gradient(circle at 40% 35%, #ef4444 0%, #dc2626 50%, #991b1b 100%);
-  border: 3.5px solid #3d2b1f;
-  box-shadow: 
-    0 4px 12px rgba(0, 0, 0, 0.7),
-    0 0 16px rgba(220, 38, 38, 0.4),
-    inset 0 2px 4px rgba(255, 255, 255, 0.4);
+  background: radial-gradient(circle at 38% 32%, #ff4d4d 0%, #dc2626 50%, #881313 100%);
+  border: 4px solid #33261c;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.9),
+    0 0 24px rgba(220, 38, 38, 0.5),
+    inset 0 2px 6px rgba(255, 255, 255, 0.55),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.6);
   color: #ffffff;
-  font-size: 20px;
+  font-size: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   outline: none;
   transition: all var(--duration-fast) var(--ease-out);
+  z-index: 2;
 }
 .btn-big-record:hover {
   transform: scale(1.05);
-  box-shadow: 
-    0 6px 18px rgba(0, 0, 0, 0.8),
-    0 0 22px rgba(220, 38, 38, 0.7),
-    inset 0 2px 5px rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.95),
+    0 0 30px rgba(220, 38, 38, 0.8),
+    inset 0 2px 7px rgba(255, 255, 255, 0.7);
 }
 .btn-big-record:active {
-  transform: scale(0.95);
+  transform: scale(0.96);
 }
 .btn-big-record.recording {
-  background: radial-gradient(circle at 40% 35%, #ff4d4d 0%, #ef4444 60%, #b91c1c 100%);
+  background: radial-gradient(circle at 38% 32%, #ff6b6b 0%, #ef4444 55%, #991b1b 100%);
   animation: pulse-recording 1.2s infinite;
-}
-
-@keyframes pulse-recording {
-  0%, 100% { box-shadow: 0 0 14px rgba(220, 38, 38, 0.5), inset 0 2px 3px rgba(255, 255, 255, 0.4); }
-  50% { box-shadow: 0 0 24px rgba(220, 38, 38, 0.9), inset 0 2px 5px rgba(255, 255, 255, 0.6); }
 }
 
 .record-status-label {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 800;
-  color: var(--foreground-muted);
+  color: #cca458;
   text-align: center;
   letter-spacing: 0.8px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(204, 164, 88, 0.25);
+  width: 100%;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-.listen-btn-group {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-  margin-top: 2px;
+/* Full-Width Record Console Transport */
+.full-width-transport {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+  width: 100% !important;
+  height: 34px !important;
 }
-.listen-btn-group .btn {
-  flex: 1;
-  height: 30px;
+
+.btn-transport-full {
+  width: 100% !important;
+  height: 100% !important;
+  background: linear-gradient(180deg, #2a221b 0%, #17130f 100%);
+  border: 1px solid #73572c;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  padding: 0 8px;
+  color: #f7eedd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all var(--duration-fast);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.btn-transport-full:hover {
+  background: linear-gradient(180deg, #382e25 0%, #201a14 100%);
+  border-color: #cca458;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(204, 164, 88, 0.35);
+}
+
+.btn-transport-full.btn-primary {
+  background: linear-gradient(180deg, #9a3412 0%, #7c2d12 50%, #431407 100%);
+  border-color: #f59e0b;
+}
+.btn-transport-full.btn-primary:hover {
+  background: linear-gradient(180deg, #c2410c 0%, #9a3412 50%, #571909 100%);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
 }
 
 /* ------------------------------------------------------------- */
@@ -2236,16 +2439,20 @@ body.resizing .resize-grip-pill {
 .fx-panel {
   padding: 0;
   overflow: hidden;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  min-height: 148px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Universal VOX Amplifier Faceplate Header (Same-to-Same for Studio Monitoring & Voice DSP) */
+/* Universal VOX Amplifier Faceplate Header */
 .amp-faceplate {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
   padding: 8px 18px 8px 24px !important;
-  height: 38px !important;
+  height: 36px !important;
   background: linear-gradient(180deg,
     #380d17 0%, #240810 45%, #18050a 100%
   ) !important;
@@ -2255,7 +2462,7 @@ body.resizing .resize-grip-pill {
   font-weight: 800 !important;
   letter-spacing: 1.2px !important;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9) !important;
-  border-bottom: 2px solid #b89345 !important;
+  border-bottom: 1.5px solid #b89345 !important;
   box-shadow: inset 0 1px 0 rgba(255, 235, 175, 0.25), 0 2px 5px rgba(0, 0, 0, 0.7) !important;
   position: relative !important;
   overflow: visible !important;
@@ -2266,13 +2473,20 @@ body.resizing .resize-grip-pill {
 }
 .amp-advanced-btn {
   color: #cca458 !important;
-  opacity: 0.85;
+  opacity: 0.9;
   font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(204, 164, 88, 0.3);
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast);
 }
 .amp-advanced-btn:hover {
-  background: rgba(204, 164, 88, 0.15) !important;
-  color: #fff8eb !important;
-  opacity: 1;
+  background: rgba(204, 164, 88, 0.25) !important;
+  color: #ffffff !important;
 }
 
 /* Polished Hardware Screws on VOX Faceplate */
@@ -2287,7 +2501,6 @@ body.resizing .resize-grip-pill {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), inset 0 0 1px rgba(0, 0, 0, 0.6);
   z-index: 2;
 }
-/* Flathead slot */
 .amp-screw::before {
   content: '';
   position: absolute;
@@ -2304,20 +2517,19 @@ body.resizing .resize-grip-pill {
 
 /* Iconic VOX Brown Diamond Grille Cloth */
 .dsp-rack-grid {
-  padding: 12px 10px 18px;
+  padding: 10px 8px 12px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 6px;
   background-color: #120e0b;
   background-image:
-    /* Warm tube glow from inside amp cabinet */
     radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
-    /* VOX Diamond Fret Cloth Pattern */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
   background-size: auto, 24px 36px;
-  border-bottom: 2px solid #2a2016;
+  border-bottom: 1.5px solid #2a2016;
   position: relative;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
+  flex-shrink: 0;
 }
 
 .dsp-dial-channel {
@@ -2349,6 +2561,123 @@ body.resizing .resize-grip-pill {
   border-radius: var(--radius-sm);
   border: 1px solid #3d2c1c;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Expandable Advanced Studio Rack Box */
+.advanced-rack-box {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  background-color: #0e0b08;
+  background-image: radial-gradient(ellipse at 50% 10%, rgba(217, 119, 6, 0.08) 0%, transparent 80%);
+}
+
+.advanced-rack-box.open {
+  max-height: 280px;
+  opacity: 1;
+  overflow-y: auto;
+}
+
+.advanced-rack-inner {
+  padding: 10px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.advanced-rocker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 8px 4px;
+  background-color: #120e0b;
+  background-image:
+    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
+  background-size: auto, 24px 36px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid #2a2016;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
+}
+
+.advanced-dials-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(204, 164, 88, 0.25);
+}
+
+/* WHEN DSP AMPLIFIER IS EXPANDED TO FILL COMPLETE VERTICAL ROOM DOWN TO BOTTOM BUTTONS */
+.booth-controls.fx-expanded .control-card {
+  flex: 0 0 auto;
+  min-height: 90px;
+}
+.booth-controls.fx-expanded .control-card .monitoring-deck-grid {
+  padding: 6px 8px;
+  gap: 4px;
+}
+.booth-controls.fx-expanded .control-card .ab-switch-box {
+  padding: 4px 10px 6px;
+}
+
+.booth-controls.fx-expanded .record-btn-container {
+  flex: 0 0 auto;
+  min-height: 120px;
+  padding: 8px 12px;
+  gap: 6px;
+}
+.booth-controls.fx-expanded .btn-big-record {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+}
+.booth-controls.fx-expanded .listen-btn-group {
+  height: 28px;
+}
+
+.booth-controls.fx-expanded .fx-panel {
+  flex: 1 1 0;
+  min-height: 270px;
+}
+
+.booth-controls.fx-expanded .advanced-rack-box {
+  max-height: 100%;
+  flex: 1 1 auto;
+}
+
+/* Studio Ambient Neon Glow on SVG Icons */
+svg {
+  transition: filter var(--duration-fast) var(--ease-out), stroke var(--duration-fast) var(--ease-out);
+}
+
+.stage-top-bar .btn svg,
+.amp-faceplate svg,
+.listen-btn-group svg,
+.booth-nav-group svg,
+.theater-action-bar svg,
+.btn-auto-match svg {
+  filter: drop-shadow(0 0 3px rgba(204, 164, 88, 0.45));
+}
+
+.stage-top-bar .btn:hover svg,
+.btn-primary svg,
+.btn-primary:hover svg,
+.btn-nudge:hover svg {
+  filter: drop-shadow(0 0 5px var(--accent-amber-glow));
+}
+
+.btn-ready-toggle.ready svg,
+.badge-ready svg,
+.btn-success svg {
+  filter: drop-shadow(0 0 6px var(--accent-teal-glow));
+}
+
+.btn-big-record svg,
+.btn-big-record.recording svg {
+  filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8));
 }
 
 /* Analog Knob Component CSS */

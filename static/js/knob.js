@@ -250,6 +250,7 @@ export function initAllKnobs() {
   const dials = [];
   
   const dialConfigs = [
+    { id: 'slider-backing-vol', size: 44, ticks: 11, unit: '%' },
     { id: 'slider-pitch', size: 40, ticks: 9, unit: 'st' },
     { id: 'slider-reverb', size: 40, ticks: 7, unit: '%' },
     { id: 'slider-gain', size: 40, ticks: 11, unit: 'dB' },

@@ -1,31 +1,17 @@
-# Handover — 2026-08-21, Studio UI Overhaul: Unified VOX Amp Headers & Gold Outline Glows
+# Handover: Studio Booth Layout, Analog I/O Rocker Switches & Full-Width Transport
 
-## State
-The **DubMate Studio Pro** interface overhaul is complete and fully verified. The DAW features a warm dark brown studio palette with matching VOX Burgundy enamel faceplate headers on both the **Studio Monitoring** and **Voice DSP Amplifier** decks. All cards, the 16:9 cinema monitor, and prompter/waveform containers have visible shiny gold hairline borders with soft ambient gold glows and deep analog console drop shadows. Backing prompter and dual waveform sync panels use clean dark brown backgrounds for maximum clarity. All 9 automated tests and live browser walkthroughs pass cleanly.
+## Current State
+- **Studio Monitoring Head Unit**: 3-column balanced vintage amp layout (`BACKING` rotary knob, `CLICK` analog rocker switch, `GUIDE` analog rocker switch) with debossed `I / O` markings, glowing amber illumination, and real-time `ACTIVE` / `MUTED` tags, followed by the full-width `A/B` selector.
+- **Dedicated Master Record Console**: Distinct dark brushed broadcast chassis with top `● TRACK 1 • ADR DUB [ARMED]` header, 68px jewel record pilot lamp with glowing halo, and full-width `Original Ref` / `Preview Take` transport buttons stretching edge-to-edge.
+- **Voice DSP Amplifier & Advanced Rack**: 3-knob main panel (`PITCH`, `REVERB`, `BOOST`) rotary dials; smoothly expands downwards to the bottom buttons when toggling `Advanced ▾`, revealing 3 analog `I / O` rocker switches (`CLEANER`, `LOW-CUT`, `COMPRESS`) and `DECAY`/`PRE-DELAY` dials.
+- All interactions verified and tested by user and automated checks.
 
-## Done this session
-- **Universal VOX Faceplate Headers ([static/css/style.css](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css), [static/index.html](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/index.html))**:
-  - Unified `.amp-faceplate` to style both **Studio Monitoring** and **Voice DSP Amplifier** with the identical VOX deep burgundy gradient (`#380d17` ➔ `#18050a`), gold beaded piping bottom border (`#b89345`), vertically centered flathead screw rivets, gold icons, and vintage ivory typography.
-- **Visible Gold Outlines & Drop Shadows ([static/css/style.css](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css))**:
-  - Upgraded borders to `1.5px solid rgba(204, 164, 88, 0.42 - 0.48)` across all cards, video viewport, and prompter/waveform containers.
-  - Added layered gold ambient glows (`0 0 16px - 18px rgba(204, 164, 88, 0.25)`, `0 0 32px - 36px rgba(204, 164, 88, 0.12)`) and deep console drop shadows (`0 8px 28px -4px rgba(0, 0, 0, 0.85)`).
-- **Clean Dark Brown Prompter & Waveform Surfaces ([static/css/style.css](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css))**:
-  - Removed loud diamond texture from `.caption-card` and `.waveform-panel`.
-  - Applied clean dark brown backgrounds (`#120e0b` / `#14100c` / `#0c0907`) to optimize dialogue contrast and waveform readability.
-- **Fixed Backdrop Soundproofing Wall ([static/css/style.css](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css))**:
-  - Retained 3D acoustic foam pyramid soundproofing wall texture with subtle ambient corner plum/wine spotlighting.
-- **Verification ([test_systematic.py](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/test_systematic.py))**:
-  - Ran systematic test suite: **9/9 tests passed** across all 41 scene packs.
-  - Confirmed visual layout and rendering via browser subagent screenshots.
+## Key Modified Files
+- `static/index.html`: 3-column Studio Monitoring layout, analog `I / O` rocker switch markup, full-width transport button grid.
+- `static/css/style.css`: Analog rocker switches styling, 3-column balanced grids, full-width transport buttons, downward DSP rack expansion.
+- `static/js/app.js`: Status tag sync for switches and noise reduction event handling.
+- `static/js/knob.js`: Rotary knob configuration for backing volume.
+- `static/js/waveform.js`: Cleaned emojis from waveform canvas notifications.
 
-## In flight
-None. All tasks and visual refinements are completed and verified.
-
-## Next
-- Launch local session via [run_web_studio.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_web_studio.bat) (Windows) or `run_mac.sh` (macOS/Linux).
-- Host multiplayer collaborative dubbing rooms via [run_cloudflare.bat](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_cloudflare.bat).
-
-## Read first
-- [static/css/style.css](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css)
-- [static/index.html](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/index.html)
-- [DESIGN.md](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/DESIGN.md)
+## Next Steps
+- Continue feature testing or production builds as requested.
