@@ -1,5 +1,6 @@
 # 🎙️ DubMate Studio Pro — Collaborative Multiplayer Voice Dubbing DAW
 
+[![Release: DubMate v1.2](https://img.shields.io/badge/Release-DubMate%20v1.2-gold.svg)](https://github.com/sylenthsnares/DubMate/releases/tag/v1.2)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Modern%20Async%20Backend-009688.svg)](https://fastapi.tiangolo.com/)
@@ -29,6 +30,16 @@
 - [🧪 Automated Testing & QA](#-automated-testing--qa)
 - [📜 Licensing & Attribution](#-licensing--attribution)
 - [⚖️ Fair Use & Media Disclaimer](#️-fair-use--media-disclaimer)
+
+---
+
+## 🌟 What's New in DubMate v1.2
+
+- **Authentic Analog I/O Rocker Switches**: Tactile `I` (1/ON) and `O` (0/OFF) studio rocker switches with 3D perspective tilting physics, amber neon backlight illumination, and real-time active status readouts across Studio Monitoring (`CLICK`, `GUIDE`) and the Advanced Vocal Rack (`CLEANER`, `LOW-CUT`, `COMPRESS`).
+- **Balanced 3-Column Studio Monitoring Head Unit**: Re-engineered upper hardware head unit into an equal 3-column grid (`BACKING` rotary knob, `CLICK` rocker, `GUIDE` rocker), fully utilizing the card width with zero empty voids.
+- **Edge-to-Edge Broadcast Transport Controls**: Full-width `Original Ref` and `Preview Take` audition buttons spanning the master recording console.
+- **Full Downward DSP Amplifier Expansion**: Clicking **Advanced ▾** dynamically expands the DSP amplifier rack down to the bottom navigation buttons while top decks gracefully adapt.
+- **Zero-Emoji Professional UI**: Completely purged system emojis in favor of crisp SVG iconography, polished brass screws, and studio ambient neon drop-shadows.
 
 ---
 
