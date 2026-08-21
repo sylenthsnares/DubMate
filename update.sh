@@ -2,7 +2,7 @@
 cd "$(dirname "$0")"
 
 echo "====================================================================="
-echo "         🎙️  DubMate Studio Pro — Repository Updater (macOS) 🚀"
+echo "         🎙️  DubMate Studio Pro — Repository Updater (macOS / Linux) 🚀"
 echo "====================================================================="
 echo ""
 echo "Checking for the latest updates from GitHub (sylenthsnares/DubMate)..."
@@ -11,7 +11,7 @@ echo ""
 # 1. Verify Git
 if ! command -v git &> /dev/null; then
     echo "[ERROR] Git is not installed or not in PATH."
-    echo "Please install Git via Homebrew: brew install git"
+    echo "Please install Git (e.g. brew install git or apt install git)."
     exit 1
 fi
 

@@ -143,7 +143,33 @@ else
     fi
 fi
 
-# 5. Summary & Completion
+# 5. Optional: Pack Builder AI Pipeline (Demucs + Whisper)
+echo ""
+echo "====================================================================="
+echo "  🎬 OPTIONAL: DubMate Pack Builder AI Pipeline"
+echo "====================================================================="
+echo "  The Pack Builder lets you create scene dub packs from any video."
+echo "  It uses AI models (Demucs + Whisper) for:"
+echo "    - Automatic vocal/instrumental separation (Apple Silicon / CUDA / CPU)"
+echo "    - Automatic speech-to-text transcription"
+echo ""
+echo "  This requires downloading ~2 GB of AI models (PyTorch + Demucs + Whisper)."
+echo "  DubMate's core dubbing studio works perfectly WITHOUT this."
+echo "====================================================================="
+echo ""
+read -p "Install Pack Builder AI pipeline? [y/N]: " INSTALL_BUILDER
+INSTALL_BUILDER=${INSTALL_BUILDER:-N}
+if [[ "$INSTALL_BUILDER" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "Installing Pack Builder AI dependencies into .venv..."
+    ./.venv/bin/python3 -m pip install -r requirements_builder.txt || true
+    echo "      Pack Builder AI pipeline verified."
+else
+    echo "      Skipped Pack Builder AI installation."
+    echo "      (You can install it anytime: ./.venv/bin/python3 -m pip install -r requirements_builder.txt)"
+fi
+
+# 6. Summary & Completion
 echo ""
 echo "====================================================================="
 echo "  ✅ DubMate Studio Pro Environment Ready!"
@@ -151,6 +177,7 @@ echo "====================================================================="
 echo "  • Python Virtualenv: .venv/ (Isolated)"
 echo "  • Audio/Video Engine: tools/ffmpeg, tools/ffprobe (Isolated)"
 echo "  • Multiplayer Engine: tools/cloudflared (Isolated)"
+echo "  • Pack Authoring Studio: DubMate Pack Builder (Integrated)"
 echo "  • Global System State: UNTOUCHED (Zero global pollution)"
 echo "====================================================================="
 echo ""
@@ -163,3 +190,4 @@ if [[ "$LAUNCH" =~ ^[Yy]$ ]]; then
 else
     echo "You can launch the studio anytime by running ./run_mac.sh"
 fi
+

@@ -109,7 +109,8 @@ export class AudioEngine {
   }
 
   // --- 2. High-Speed Time-Invariant Pitch Shifter ---
-  // Fast SOLA processor optimized for immediate execution with zero thread stalls
+  // Pure time-invariant rotating overlap-add crossfader with linear sub-sample interpolation.
+  // Preserves 100% exact phrase duration, zero speed variation, with seamless phrase synchronicity.
   pitchShiftBuffer(inputBuffer, pitchSemitones) {
     if (!inputBuffer || Math.abs(pitchSemitones) < 0.05) {
       return inputBuffer;
@@ -127,35 +128,42 @@ export class AudioEngine {
     const outBuffer = this.ctx.createBuffer(numChannels, inLength, sampleRate);
 
     const pitchRatio = Math.max(0.25, Math.min(4.0, Math.pow(2.0, pitchSemitones / 12.0)));
-    const grainSize = 1024; // Fast, lightweight grain size
-    const hopSize = 256;    // 75% overlap
-    const grainStep = hopSize / pitchRatio;
-    if (grainStep <= 0.01 || hopSize <= 0) {
-      return inputBuffer;
-    }
-
-    // Pre-calculate Hann window
-    const window = new Float32Array(grainSize);
-    for (let i = 0; i < grainSize; i++) {
-      window[i] = 0.5 * (1.0 - Math.cos((2.0 * Math.PI * i) / (grainSize - 1)));
-    }
+    // Optimal window size for human speech vocals (~46ms at 44.1k/48k)
+    const D = 2048.0;
+    const halfD = D / 2.0;
+    const twoPiOverD = (2.0 * Math.PI) / D;
+    const rateDiff = pitchRatio - 1.0;
 
     for (let ch = 0; ch < numChannels; ch++) {
       const inData = inputBuffer.getChannelData(ch);
       const outData = outBuffer.getChannelData(ch);
-      let outPos = 0;
-      let inPos = 0.0;
 
-      while (outPos + grainSize < inLength && inPos + grainSize < inLength) {
-        const baseIn = Math.floor(inPos);
-        for (let i = 0; i < grainSize; i++) {
-          const sampleIdx = baseIn + Math.floor(i * pitchRatio);
-          if (sampleIdx < inLength) {
-            outData[outPos + i] += inData[sampleIdx] * window[i] * 0.5;
-          }
-        }
-        outPos += hopSize;
-        inPos += grainStep;
+      for (let n = 0; n < inLength; n++) {
+        // Dual crossfading phases separated by 180 degrees (D / 2)
+        const phase1 = ((n * rateDiff) % D + D) % D;
+        const phase2 = (phase1 + halfD) % D;
+
+        // Raised-cosine / Hann windows (w1 + w2 = 1.0 strictly everywhere)
+        const w1 = 0.5 * (1.0 - Math.cos(phase1 * twoPiOverD));
+        const w2 = 0.5 * (1.0 - Math.cos(phase2 * twoPiOverD));
+
+        // Sub-sample linear interpolation for Reader 1
+        const f1 = n + phase1 - halfD;
+        const i1 = Math.floor(f1);
+        const frac1 = f1 - i1;
+        const i1_0 = Math.max(0, Math.min(inLength - 1, i1));
+        const i1_1 = Math.max(0, Math.min(inLength - 1, i1 + 1));
+        const s1 = (1.0 - frac1) * inData[i1_0] + frac1 * inData[i1_1];
+
+        // Sub-sample linear interpolation for Reader 2
+        const f2 = n + phase2 - halfD;
+        const i2 = Math.floor(f2);
+        const frac2 = f2 - i2;
+        const i2_0 = Math.max(0, Math.min(inLength - 1, i2));
+        const i2_1 = Math.max(0, Math.min(inLength - 1, i2 + 1));
+        const s2 = (1.0 - frac2) * inData[i2_0] + frac2 * inData[i2_1];
+
+        outData[n] = w1 * s1 + w2 * s2;
       }
     }
 
@@ -405,7 +413,7 @@ export class AudioEngine {
 
     const fetchPromise = (async () => {
       try {
-        const res = await fetch(url, { cache: 'no-store' });
+        const res = await fetch(url);
         if (!res.ok) {
           console.warn(`[AudioEngine] HTTP ${res.status} fetching ${url}`);
           return null;

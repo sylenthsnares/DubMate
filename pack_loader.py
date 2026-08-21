@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 pack_loader.py
-Scans, parses, and normalizes DubMate / DubStage packs and Choicer Voicer packs.
+Scans, parses, and normalizes DubMate native scene packs and Choicer Voicer packs.
 Extracts character roles, timestamps, captions, backing tracks, cover art, and handles video transcoding.
 """
 
@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Any
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKS_DIRS = [
     os.path.join(BASE_DIR, "Packs"),
-    os.path.join(BASE_DIR, "dubstage-1.1.0", "packs"),
 ]
 CACHE_DIR = os.path.join(BASE_DIR, ".cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -59,17 +58,13 @@ _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
 
 
 def get_ffmpeg_path() -> str:
-    """Finds ffmpeg binary in project-local tools folder, dubstage tools, or system PATH."""
+    """Finds ffmpeg binary in project-local tools folder or system PATH."""
     # 1. Project-local tools directory (Windows .exe or Unix binary)
     for name in ("ffmpeg.exe", "ffmpeg"):
         local_tool = os.path.join(BASE_DIR, "tools", name)
         if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
             return local_tool
-    # 2. DubStage tools fallback
-    dubstage_tool = os.path.join(BASE_DIR, "dubstage-1.1.0", "tools", "ffmpeg.exe")
-    if os.path.isfile(dubstage_tool):
-        return dubstage_tool
-    # 3. System PATH fallback
+    # 2. System PATH fallback
     tool = shutil.which("ffmpeg")
     if tool:
         return tool
@@ -77,17 +72,13 @@ def get_ffmpeg_path() -> str:
 
 
 def get_ffprobe_path() -> str:
-    """Finds ffprobe binary in project-local tools folder, dubstage tools, or system PATH."""
+    """Finds ffprobe binary in project-local tools folder or system PATH."""
     # 1. Project-local tools directory (Windows .exe or Unix binary)
     for name in ("ffprobe.exe", "ffprobe"):
         local_tool = os.path.join(BASE_DIR, "tools", name)
         if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
             return local_tool
-    # 2. DubStage tools fallback
-    dubstage_tool = os.path.join(BASE_DIR, "dubstage-1.1.0", "tools", "ffprobe.exe")
-    if os.path.isfile(dubstage_tool):
-        return dubstage_tool
-    # 3. System PATH fallback
+    # 2. System PATH fallback
     tool = shutil.which("ffprobe")
     if tool:
         return tool
@@ -614,7 +605,7 @@ class PackInfo:
         self.name = name
         self.subtitle: Optional[str] = None
         self.authors: List[str] = []
-        self.pack_type: str = "dubstage"  # "dubstage" | "choicer_voicer"
+        self.pack_type: str = "dubmate"  # "dubmate" | "choicer_voicer"
         self.icon_path: Optional[str] = None
         self.video_path: Optional[str] = None
         self.web_video_path: Optional[str] = None
@@ -685,10 +676,10 @@ def find_pack_icon(folder: str, icon_hint: Optional[str] = None) -> Optional[str
     return None
 
 
-def ensure_dubstage_compatibility(pack_folder: str, pack: PackInfo):
+def ensure_pack_compatibility(pack_folder: str, pack: PackInfo):
     """
     Auto-generates standard _captions.json and _TIMESTAMPS.txt for Choicer Voicer packs
-    so they are 100% compatible with both DubMate and vanilla DubStage.
+    so they are 100% compatible with DubMate native format.
     """
     try:
         captions_path = os.path.join(pack_folder, "_captions.json")
@@ -704,7 +695,7 @@ def ensure_dubstage_compatibility(pack_folder: str, pack: PackInfo):
         if not os.path.isfile(ts_path) and pack.lines:
             lines_out = [
                 f"# {pack.name}",
-                "# Auto-generated DubStage timestamps and subtitle map",
+                "# Auto-generated DubMate timestamps and subtitle map",
                 "# File | start time (s) | subtitle\n"
             ]
             for l in pack.lines:
@@ -714,11 +705,11 @@ def ensure_dubstage_compatibility(pack_folder: str, pack: PackInfo):
             with open(ts_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines_out) + "\n")
     except Exception as ex:
-        print(f"[pack_loader] Could not write DubStage compatibility files for {pack_folder}: {ex}")
+        print(f"[pack_loader] Could not write compatibility files for {pack_folder}: {ex}")
 
 
 def load_pack(pack_folder: str) -> Optional[PackInfo]:
-    """Loads and indexes a single pack folder, supporting both DubStage and Choicer Voicer formats."""
+    """Loads and indexes a single pack folder, supporting both DubMate and Choicer Voicer formats."""
     if not os.path.isdir(pack_folder):
         return None
 
@@ -807,8 +798,8 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         pack.pack_type = "choicer_voicer"
 
     if not entries:
-        # DubStage standard format
-        pack.pack_type = "dubstage"
+        # DubMate standard format
+        pack.pack_type = "dubmate"
         ts_from_txt = read_timestamps_txt(pack_folder)
         captions = read_captions(pack_folder)
 
@@ -887,15 +878,15 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         char_counts[c] = char_counts.get(c, 0) + 1
     pack.characters = sorted(list(character_set), key=lambda c: -char_counts.get(c, 0))
 
-    # Auto-generate DubStage compatibility files if missing
-    ensure_dubstage_compatibility(pack_folder, pack)
+    # Auto-generate standard compatibility files if missing
+    ensure_pack_compatibility(pack_folder, pack)
 
     return pack
 
 
 def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pack.zip") -> Optional[PackInfo]:
     """
-    Extracts a Choicer Voicer or DubStage zip archive, validates signatures,
+    Extracts a Choicer Voicer or DubMate zip archive, validates signatures,
     enforces strict anti-malware and zip-slip security checks, identifies pack root,
     installs into Packs directory, and returns initialized PackInfo.
     """

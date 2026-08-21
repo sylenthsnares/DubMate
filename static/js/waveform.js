@@ -131,13 +131,13 @@ export class WaveformRenderer {
     });
   }
 
-  setData({ origPeaks = [], takePeaks = [], offsetMs = 0, totalDuration = 3.0 }) {
-    this.origPeaks = origPeaks || [];
-    this.takePeaks = takePeaks || [];
-    this.offsetMs = offsetMs || 0;
-    this.totalDuration = Math.max(0.5, totalDuration);
+  setData({ origPeaks = null, takePeaks = null, offsetMs = null, totalDuration = null } = {}) {
+    if (origPeaks !== null && origPeaks !== undefined) this.origPeaks = origPeaks;
+    if (takePeaks !== null && takePeaks !== undefined) this.takePeaks = takePeaks;
+    if (offsetMs !== null && offsetMs !== undefined) this.offsetMs = offsetMs;
+    if (totalDuration !== null && totalDuration !== undefined) this.totalDuration = Math.max(0.5, totalDuration);
     if (this.canvas) {
-      this.canvas.style.cursor = this.takePeaks && this.takePeaks.length > 0 ? 'grab' : 'default';
+      this.canvas.style.cursor = (this.takePeaks && this.takePeaks.length > 0) ? 'grab' : 'default';
     }
     this.requestRender();
   }

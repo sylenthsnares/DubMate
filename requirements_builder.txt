@@ -1,0 +1,10 @@
+# DubMate Pack Builder — AI Processing Pipeline (Optional)
+# Install with: pip install -r requirements_builder.txt
+# Requires ~2 GB download (PyTorch with CUDA GPU acceleration + Demucs + Whisper)
+
+torch>=2.0.0
+torchaudio>=2.0.0
+demucs>=4.0.0
+openai-whisper>=20231117
+pykakasi>=2.3.0
+yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz

@@ -1,6 +1,6 @@
 # 🎙️ DubMate Studio Pro — Collaborative Multiplayer Voice Dubbing DAW
 
-[![Release: DubMate v1.2](https://img.shields.io/badge/Release-DubMate%20v1.2-gold.svg)](https://github.com/sylenthsnares/DubMate/releases/tag/v1.2)
+[![Release: DubMate v1.3](https://img.shields.io/badge/Release-DubMate%20v1.3-gold.svg)](https://github.com/sylenthsnares/DubMate/releases/tag/v1.3)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Modern%20Async%20Backend-009688.svg)](https://fastapi.tiangolo.com/)
@@ -28,18 +28,20 @@
 - [⌨️ Keyboard Shortcuts](#️-keyboard-shortcuts)
 - [📁 Project ZIP Export Structure](#-project-zip-export-structure)
 - [🧪 Automated Testing & QA](#-automated-testing--qa)
-- [📜 Licensing & Attribution](#-licensing--attribution)
+- [📜 Licensing](#-licensing)
 - [⚖️ Fair Use & Media Disclaimer](#️-fair-use--media-disclaimer)
 
 ---
 
-## 🌟 What's New in DubMate v1.2
+## 🌟 What's New in DubMate v1.3 + Pack Builder
 
-- **Authentic Analog I/O Rocker Switches**: Tactile `I` (1/ON) and `O` (0/OFF) studio rocker switches with 3D perspective tilting physics, amber neon backlight illumination, and real-time active status readouts across Studio Monitoring (`CLICK`, `GUIDE`) and the Advanced Vocal Rack (`CLEANER`, `LOW-CUT`, `COMPRESS`).
-- **Balanced 3-Column Studio Monitoring Head Unit**: Re-engineered upper hardware head unit into an equal 3-column grid (`BACKING` rotary knob, `CLICK` rocker, `GUIDE` rocker), fully utilizing the card width with zero empty voids.
-- **Edge-to-Edge Broadcast Transport Controls**: Full-width `Original Ref` and `Preview Take` audition buttons spanning the master recording console.
-- **Full Downward DSP Amplifier Expansion**: Clicking **Advanced ▾** dynamically expands the DSP amplifier rack down to the bottom navigation buttons while top decks gracefully adapt.
-- **Zero-Emoji Professional UI**: Completely purged system emojis in favor of crisp SVG iconography, polished brass screws, and studio ambient neon drop-shadows.
+- **Standalone Pack Builder Studio (`/builder.html`)**: Create professional custom scene dub packs from any video file or YouTube / web URL in seconds.
+- **GPU-Accelerated AI Separation (Demucs)**: Automatically separates vocals and M&E backing tracks locally with PyTorch CUDA acceleration and CPU fallbacks.
+- **Automated Speech Transcription (Whisper AI)**: Generates timestamped dialogue cues and character turn detection across English, Japanese, and multiple languages.
+- **Interactive DAW Waveform Timeline**: Full-viewport multi-track timeline editor with dynamic lane sizing, draggable cue boundary handles, and responsive playback.
+- **Resilient Multi-Stage Video Ingestion**: 3-stage visual progress feedback (Stream Download -> FFmpeg Faststart Standardization -> Studio Ingest & Waveforms) with multi-client streaming fallback.
+- **1-Click Repository Updaters (`update.bat` & `update.sh`)**: Frictionless cross-platform updating of code, virtualenv packages, and local tools.
+- **100% Self-Contained Architecture**: Standalone pure implementation with zero external dependencies.
 
 ---
 
@@ -63,7 +65,7 @@
   - **80Hz Low-Cut Filter**: Eliminates low-frequency desk rumble, HVAC hum, and mic plosives.
   - **Studio Dynamics Compressor & Soft-Knee Limiter**: Transparent mastering limiter preventing digital clipping.
 - **Dual-Waveform Sample Alignment**:
-  - Visual overlay comparing the original Japanese/English reference waveform against the actor's take.
+  - Visual overlay comparing the original reference waveform against the actor's take.
   - Interactive canvas scrub and click-and-drag offset shifting.
   - Fine-tuning nudge controls (`[-800ms, +800ms]` range with `±25ms` and `±100ms` quick steps).
 - **Fast Punch-In Workflow**: Spacebar instant recording, audible count-in click metronome, in-headphone guide voice, and instant A/B reference switching.
@@ -80,10 +82,18 @@
 - **Hardware-Accelerated Encoding**: Auto-detects NVIDIA NVENC, AMD AMF, Intel QuickSync, Apple Silicon VideoToolbox, or optimized multi-core CPU encoding.
 - **NLE-Ready Multi-Track Project Bundle (.zip)**: Export isolated continuous character stems, raw takes, clean video, backing music, cuesheet, and JSON timeline markers.
 
+### 🎨 DubMate Pack Builder Studio (1-Click Scene Authoring)
+- **Zero-Dependency Authoring**: Create custom dubbing scene packs directly inside DubMate from any video file without needing external tools.
+- **GPU-Accelerated AI Separation (Demucs)**: Automatically isolates background music/SFX and dialogue stems using PyTorch with CUDA acceleration (with graceful multi-core CPU fallback).
+- **Automated Speech Transcription (Whisper)**: Detects speech timestamps, dialogue subtitles, and character turns automatically across English, Japanese, and multiple languages.
+- **Interactive Waveform Timeline Editor**: Scrub video frames, adjust cue start/end bounds via drag-and-drop handles, tag character roles, and preview takes.
+- **SRT / WebVTT Subtitle Import**: Drop standard subtitle files to instantly generate cue markers in seconds.
+- **Instant Playtest & 1-Click Export**: Compile packs directly into `Packs/` and jump straight into a multiplayer booth session.
+
 ### 📦 Dual-Engine Scene Pack Compatibility
-- **100% Native Support**: Seamlessly loads both **DubStage** packs and **Choicer Voicer** packs.
+- **100% Native Support**: Seamlessly loads both **DubMate** native packs and **Choicer Voicer** packs.
 - **In-Browser Scene Search**: Instant search filtering across scene titles, authors, characters, and dialogue line keywords (press `/` to focus).
-- **Drag-and-Drop .ZIP Importer**: Drop any GameBanana scene pack zip directly onto the web interface to unpack and index automatically.
+- **Drag-and-Drop .ZIP Importer**: Drop any scene pack zip directly onto the web interface to unpack and index automatically.
 - **Live Rescan**: Reload newly placed packs instantly without restarting the server.
 
 ---
@@ -93,14 +103,18 @@
 ```
 DubMate Studio Pro
 ├── Backend (FastAPI + WebSockets + Uvicorn)
-│   ├── app.py                # REST API, WebSocket room coordinator & cache pruner
-│   ├── pack_loader.py         # Dual-engine scene pack parser (DubStage & Choicer Voicer)
+│   ├── app.py                # REST API, WebSocket room coordinator & builder endpoints
+│   ├── pack_builder.py        # Video ingestion, Demucs AI stems, Whisper speech-to-text, pack assembly
+│   ├── pack_loader.py         # Dual-engine scene pack parser (DubMate & Choicer Voicer)
 │   ├── audio_processor.py     # NumPy/SciPy DSP, FFT convolution reverb, FFmpeg mastering
-│   └── requirements.txt       # Minimal, zero-bloat dependencies
+│   ├── requirements.txt       # Core studio dependencies (ultra-lightweight)
+│   └── requirements_builder.txt # Optional AI pipeline dependencies (PyTorch + Demucs + Whisper)
 ├── Frontend (Modern Vanilla JS + CSS3 + Web Audio API)
 │   ├── static/index.html      # Responsive Studio DAW interface & semantic DOM
+│   ├── static/builder.html    # Standalone DubMate Pack Builder Studio interface
 │   ├── static/css/style.css   # Warm Wood & Analog Hardware Studio design system
 │   ├── static/js/app.js       # Core application controller & stage state machine
+│   ├── static/js/pack_builder.js # Pack Builder timeline controller & SSE client
 │   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Compressor, Reverb)
 │   ├── static/js/knob.js      # Tactile 270° rotary guitar amp dial components
 │   ├── static/js/waveform.js  # Dual-waveform visual alignment & canvas renderer
@@ -111,13 +125,15 @@ DubMate Studio Pro
 │   ├── .venv/                 # Project-local isolated Python virtual environment
 │   └── .cache/                # Automated lightweight transcode & single-session storage
 └── Launchers & Tooling
-    ├── setup_dubmate_win.bat  # Windows 1-click isolated dependency installer
-    ├── setup_dubmate_mac.sh   # macOS/Linux 1-click isolated dependency installer
+    ├── setup_dubmate_win.bat  # Windows 1-click isolated dependency installer (with optional AI pipeline)
+    ├── setup_dubmate_mac.sh   # macOS/Linux 1-click isolated dependency installer (with optional AI pipeline)
     ├── run_web_studio.bat     # Windows self-healing local launcher
     ├── run_cloudflare.bat     # Windows self-healing internet multiplayer launcher
-    ├── update_dubmate.bat     # Windows 1-click repository & dependencies updater
+    ├── update.bat             # Windows 1-click repository & dependencies updater
+    ├── update_dubmate.bat     # Windows 1-click repository & dependencies updater (alias)
     ├── run_mac.sh             # macOS self-healing launcher script
-    ├── update_mac.sh          # macOS 1-click repository & dependencies updater
+    ├── update.sh              # macOS/Linux 1-click repository & dependencies updater
+    ├── update_mac.sh          # macOS 1-click repository & dependencies updater (alias)
     └── README_MAC.md          # Dedicated macOS setup guide
 ```
 
@@ -161,8 +177,8 @@ Double-click **`run_cloudflare.bat`**.
 ### 🔄 Updating DubMate to the Latest Version
 
 Whenever a new version of DubMate is released on GitHub, update your system in one click:
-- **Windows**: Double-click **`update_dubmate.bat`**.
-- **macOS / Linux**: Run `./update_mac.sh`.
+- **Windows**: Double-click **`update.bat`** (or **`update_dubmate.bat`**).
+- **macOS / Linux**: Run `./update.sh` (or `./update_mac.sh`).
 
 *The updater automatically pulls the latest code, stashes any local conflicts, updates Python dependencies inside `.venv/`, verifies local `tools/` binaries, and prompts you to launch the studio immediately.*
 
@@ -174,11 +190,10 @@ See the dedicated [macOS Setup & Quick Start Guide (README_MAC.md)](README_MAC.m
 
 ```bash
 # 1. 1-Click Setup
-chmod +x setup_dubmate_mac.sh run_mac.sh update_mac.sh
+chmod +x setup_dubmate_mac.sh run_mac.sh update.sh update_mac.sh
 ./setup_dubmate_mac.sh
 
 # 2. Launch
-./run_mac.sh
 ./run_mac.sh
 ```
 
@@ -197,8 +212,9 @@ Open `http://localhost:8000` in Google Chrome, Brave, Edge, Firefox, or Safari.
 
 ### Downloading & Installing Packs
 
-1. **Download Scene Packs**:
-   - Browse community packs on [GameBanana Choicer Voicer Mods](https://gamebanana.com/mods/cats/44064) or extract existing DubStage packs.
+1. **Download or Create Scene Packs**:
+   - Create your own scene packs in seconds using the built-in **DubMate Pack Builder Studio** (`/builder.html`).
+   - Or browse and download community packs on [GameBanana Choicer Voicer Mods](https://gamebanana.com/mods/cats/44064).
 2. **Install into DubMate**:
    - **Method A (Web Drag & Drop)**: Drop the downloaded `.zip` file directly onto the DubMate home screen or click **Import .ZIP**.
    - **Method B (Manual Folder)**: Extract the pack folder directly into the `Packs/` directory.
@@ -209,7 +225,7 @@ Open `http://localhost:8000` in Google Chrome, Brave, Edge, Firefox, or Safari.
 
 DubMate natively reads and converts both major scene pack formats:
 
-#### 1. DubStage Format
+#### 1. DubMate Standard Format
 ```
 Packs/Scene_Name/
 ├── dub_video.mp4 (or .ogv / .mkv / .webm)
@@ -285,6 +301,12 @@ python test_systematic.py
 ```
 *Validates pack loader parsing, character bracket extraction, time-invariant pitch shifting, convolution reverb, soft limiter dynamics, REST endpoints, room lifecycles, and project ZIP bundling.*
 
+### Run Pack Builder AI & Ingestion Test Suite
+```bash
+python -m unittest test_pack_builder.py
+```
+*Validates video extraction, Demucs stem isolation, Whisper transcription, Romaji romanization, SRT/VTT parser, and pack assembly.*
+
 ### Run Frontend & DOM Test Suite
 ```bash
 node test_frontend.js
@@ -293,12 +315,9 @@ node test_frontend.js
 
 ---
 
-## 📜 Licensing & Attribution
+## 📜 Licensing
 
 DubMate is open-source software licensed under the **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
-
-### Attribution
-- DubMate was inspired by and maintains 100% interoperability with the pack format established by **[DubStage by xmrius](https://github.com/xmrius/dubstage)** (licensed under GPL-3.0).
 
 ---
 

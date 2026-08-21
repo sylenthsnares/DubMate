@@ -84,7 +84,39 @@ echo [3/3] Checking project-local tools (tools\)...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\download_tools.ps1"
 
 :: -------------------------------------------------------------------
-:: 4. Verification & Completion
+:: 4. Optional: Pack Builder AI Pipeline (Demucs + Whisper)
+:: -------------------------------------------------------------------
+echo.
+echo =====================================================================
+echo   🎬 OPTIONAL: DubMate Pack Builder AI Pipeline
+echo =====================================================================
+echo   The Pack Builder lets you create scene dub packs from any video.
+echo   It uses AI models (Demucs + Whisper) for:
+echo     - Automatic vocal/instrumental separation (GPU-accelerated)
+echo     - Automatic speech-to-text transcription (GPU-accelerated)
+echo.
+echo   This requires downloading ~2 GB of AI models (PyTorch + Demucs + Whisper).
+echo   DubMate's core dubbing studio works perfectly WITHOUT this.
+echo =====================================================================
+echo.
+set /p INSTALL_BUILDER="Install Pack Builder AI pipeline? [y/N]: "
+if /i "%INSTALL_BUILDER%"=="y" (
+    echo.
+    echo Installing Pack Builder AI dependencies into .venv...
+    "%~dp0.venv\Scripts\python.exe" -m pip install -r "%~dp0requirements_builder.txt"
+    if %errorlevel% equ 0 (
+        echo       Pack Builder AI pipeline installed successfully.
+    ) else (
+        echo [WARNING] Pack Builder installation had issues. You can retry later with:
+        echo   .venv\Scripts\pip install -r requirements_builder.txt
+    )
+) else (
+    echo       Skipped Pack Builder AI installation.
+    echo       (You can install it anytime later: .venv\Scripts\pip install -r requirements_builder.txt)
+)
+
+:: -------------------------------------------------------------------
+:: 5. Verification & Completion
 :: -------------------------------------------------------------------
 color 0a
 echo.
@@ -94,6 +126,7 @@ echo =====================================================================
 echo   • Python Virtualenv: .venv\ (Isolated)
 echo   • Audio/Video Engine: tools\ffmpeg.exe, tools\ffprobe.exe (Isolated)
 echo   • Multiplayer Engine: tools\cloudflared.exe (Isolated)
+echo   • Pack Authoring Studio: DubMate Pack Builder (Integrated)
 echo   • Global System State: UNTOUCHED (Zero global pollution)
 echo =====================================================================
 echo.
@@ -109,3 +142,4 @@ if /i "%LAUNCH%"=="Y" (
     echo You can start the studio anytime using run_web_studio.bat or run_cloudflare.bat.
     pause
 )
+

@@ -26,6 +26,7 @@ Desktop studio workstations and creator setups using headphones and dedicated US
 
 - **Audio Engine**: Real-time Web Audio API with non-destructive DSP graph (gain boost, pitch shift, convolution reverb, biquad low-cut filter, dynamics compressor).
 - **Dual-Waveform Sync**: Interactive canvas with millisecond visual envelope matching, mouse/touch drag scrubbing, and fine-tuning nudges (-800ms to +800ms).
+- **Pack Authoring (Pack Builder)**: 1-click browser scene creator using GPU-first Demucs stem separation, Whisper auto-transcription, interactive waveform cue editor, and subtitle file import.
 - **Collaboration**: Real-time WebSocket room synchronization for casting assignments, actor readiness HUD, and synchronized host premiere playback.
 - **Master Export**: Server-side FFmpeg pipeline merging multi-track actor audio takes with background M&E (Music & Effects) stems into high-bitrate MP4 video.
 - **Performance**: Zero layout-thrashing animations, GPU-accelerated transforms, sub-160ms micro-interactions.
@@ -38,8 +39,8 @@ Desktop studio workstations and creator setups using headphones and dedicated US
 
 ## Evidence on Hand
 
-- Fully functional FastAPI + WebSocket backend (`app.py`, `pack_loader.py`, `audio_processor.py`).
-- Complete client-side audio engine (`audio_engine.js`, `waveform.js`, `room_socket.js`).
+- Fully functional FastAPI + WebSocket backend (`app.py`, `pack_builder.py`, `pack_loader.py`, `audio_processor.py`).
+- Complete client-side audio engine (`audio_engine.js`, `waveform.js`, `room_socket.js`, `pack_builder.js`).
 - Shipped scene packs with split vocal and backing audio tracks in `Packs/`.
 
 ## Product Principles

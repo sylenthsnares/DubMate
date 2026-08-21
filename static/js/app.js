@@ -906,7 +906,35 @@ class DubMateApp {
     // Socket events
     this.socket.on('*', (data) => {
       if (data.state) {
-        this.roomState = data.state;
+        const incoming = data.state;
+        if (!this.roomState) {
+          this.roomState = incoming;
+        } else {
+          // Preserve local take peaks if incoming take state does not specify them
+          const oldTakes = this.roomState.takes || {};
+          const newTakes = incoming.takes || {};
+          const mergedTakes = {};
+
+          for (const [k, take] of Object.entries(newTakes)) {
+            const oldTake = oldTakes[k];
+            mergedTakes[k] = {
+              ...take,
+              peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (oldTake?.peaks || []),
+            };
+          }
+
+          this.roomState = {
+            ...this.roomState,
+            ...incoming,
+            pack: incoming.pack || this.roomState.pack,
+            users: incoming.users || this.roomState.users,
+            role_assignments: incoming.role_assignments || this.roomState.role_assignments,
+            takes: mergedTakes,
+            // Keep local current_line if in booth mode (solo self-paced dubbing)
+            current_line: (incoming.mode === 'studio') ? incoming.current_line : this.currentLineIndex,
+          };
+        }
+
         if (this.currentView === 'lobby') {
           this.renderLobbyState();
         }
@@ -915,6 +943,19 @@ class DubMateApp {
         }
         this.renderCastActivityHUD();
         this.updateScreeningControls();
+      }
+    });
+
+    this.socket.on('line_changed', (data) => {
+      const lineIdx = data.payload?.line_index;
+      const targetUserId = data.payload?.user_id;
+      if (targetUserId && this.roomState?.users?.[targetUserId]) {
+        this.roomState.users[targetUserId].current_line = lineIdx;
+        this.renderCastActivityHUD();
+      }
+      // Only sync client line automatically if in "studio" (synced prompter) mode
+      if (this.roomState?.mode === 'studio' && lineIdx !== undefined && lineIdx !== this.currentLineIndex) {
+        this.loadBoothLine(lineIdx);
       }
     });
 
@@ -1146,10 +1187,20 @@ class DubMateApp {
 
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
+    const selectPackParam = params.get('select_pack');
     if (roomParam) {
       this.joinRoom(roomParam);
     } else {
       this.showView('landing');
+      if (selectPackParam) {
+        this.selectPack(selectPackParam);
+        setTimeout(() => {
+          const card = document.querySelector(`.pack-card[data-pack-id="${selectPackParam}"]`);
+          if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 200);
+      }
     }
   }
 
@@ -1587,7 +1638,7 @@ class DubMateApp {
       const isCV = (pack.pack_type === 'choicer_voicer');
       const formatBadge = isCV
         ? `<span class="badge-format cv" title="Choicer Voicer Native Format">CV Pack</span>`
-        : `<span class="badge-format dubstage" title="DubStage Native Format">DubStage</span>`;
+        : `<span class="badge-format dubmate" title="DubMate Standard Format">DubMate</span>`;
 
       const thumbImg = (pack.has_icon && pack.icon_url)
         ? `<div class="pack-card-thumb"><img src="${pack.icon_url}" alt="${rawTitle} cover" loading="lazy"></div>`
@@ -2122,6 +2173,28 @@ class DubMateApp {
     let origPeaks = line.peaks || [];
     let takePeaks = take ? (take.peaks || []) : [];
 
+    // Fallback: If take exists but peaks are not yet loaded in state, fetch on-demand or check cache
+    if (take && (!takePeaks || takePeaks.length === 0)) {
+      if (this.takePeaksCache?.has(index)) {
+        takePeaks = this.takePeaksCache.get(index);
+      } else {
+        // Asynchronously fetch compact peaks from dedicated endpoint
+        fetch(`/api/rooms/${this.roomState.room_id}/takes/${index}/peaks`)
+          .then(r => r.ok ? r.json() : null)
+          .then(pData => {
+            if (pData && pData.peaks && pData.peaks.length > 0 && currentSeq === this.loadLineSeq) {
+              if (!this.takePeaksCache) this.takePeaksCache = new Map();
+              this.takePeaksCache.set(index, pData.peaks);
+              if (this.roomState?.takes?.[index]) {
+                this.roomState.takes[index].peaks = pData.peaks;
+              }
+              this.waveform.setData({ takePeaks: pData.peaks });
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
     this.waveform.setData({
       origPeaks,
       takePeaks,
@@ -2131,7 +2204,10 @@ class DubMateApp {
 
     this.renderTimelineChips();
 
-    // 2. Asynchronous Audio Buffer Loading (with race condition guarding & fault tolerance)
+    // 2. Intelligent Adjacent-Line Prefetching (loads neighbors into memory for 0ms transitions)
+    this.prefetchAdjacentLines(index);
+
+    // 3. Asynchronous Audio Buffer Loading (with race condition guarding & fault tolerance)
     (async () => {
       try {
         const origBuf = await this.audio.loadAudioBuffer(line.audio_url);
@@ -2152,11 +2228,16 @@ class DubMateApp {
 
       if (take && take.url) {
         try {
-          const takeBuf = await this.audio.loadAudioBuffer(take.url, true);
+          const takeBuf = await this.audio.loadAudioBuffer(take.url);
           if (currentSeq !== this.loadLineSeq) return;
           this.currentTakeBuffer = takeBuf;
           if ((!takePeaks || takePeaks.length === 0) && takeBuf) {
             takePeaks = WaveformRenderer.extractPeaksFromBuffer(takeBuf, 100);
+            if (!this.takePeaksCache) this.takePeaksCache = new Map();
+            this.takePeaksCache.set(index, takePeaks);
+            if (this.roomState?.takes?.[index]) {
+              this.roomState.takes[index].peaks = takePeaks;
+            }
             this.waveform.setData({
               origPeaks,
               takePeaks,
@@ -2200,6 +2281,25 @@ class DubMateApp {
         this.btnNextLine.innerHTML = '<span>Next Line ›</span>';
         this.btnNextLine.className = 'btn btn-primary btn-sm';
         this.btnNextLine.setAttribute('title', "Go to next dialogue line");
+      }
+    }
+  }
+
+  prefetchAdjacentLines(currentIndex) {
+    if (!this.roomState || !this.roomState.pack || !this.roomState.pack.lines) return;
+    const lines = this.roomState.pack.lines;
+    const neighbors = [currentIndex + 1, currentIndex - 1, currentIndex + 2].filter(
+      i => i >= 0 && i < lines.length
+    );
+
+    for (const nIdx of neighbors) {
+      const nLine = lines[nIdx];
+      if (nLine && nLine.audio_url) {
+        this.audio.loadAudioBuffer(nLine.audio_url).catch(() => {});
+      }
+      const nTake = this.roomState.takes?.[nIdx];
+      if (nTake && nTake.url) {
+        this.audio.loadAudioBuffer(nTake.url).catch(() => {});
       }
     }
   }
