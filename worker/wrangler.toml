@@ -4,8 +4,8 @@ compatibility_date = "2025-02-04"
 
 [[kv_namespaces]]
 binding = "ROOMS"
-id = "<KV_NAMESPACE_ID>"
+id = "e954cacd7b034f8ca646c2142034614b"
 
 [[routes]]
-pattern = "dubmate.bkaproductions.com/*"
+pattern = "dubmate.bkaproductions.com"
 custom_domain = true
