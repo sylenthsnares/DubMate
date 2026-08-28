@@ -27,6 +27,13 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     tar -xzf "$PY_TAR" -C "/tmp/py-$TRIPLE"
     cp "/tmp/py-$TRIPLE/python/bin/python3" "$PY_TARGET"
     chmod +x "$PY_TARGET"
+
+    # Install dependencies into standalone Python runtime
+    "/tmp/py-$TRIPLE/python/bin/python3" -m pip install -r "$PROJECT_ROOT/requirements.txt" --no-warn-script-location -q || true
+
+    # Copy full standalone runtime into resources
+    mkdir -p "$RESOURCE_DIR/python-runtime"
+    cp -r "/tmp/py-$TRIPLE/python/"* "$RESOURCE_DIR/python-runtime/" || true
   fi
 
   # 2. FFmpeg Static Binary

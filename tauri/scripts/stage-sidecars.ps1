@@ -81,7 +81,7 @@ if (Test-Path $LocalCf) {
     Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $CfTarget -UseBasicParsing
 }
 
-# 5. Application Resources (app.py, audio_processor, pack_loader, static, VERSION)
+# 5. Application Resources (app.py, audio_processor, pack_loader, static, VERSION, python-runtime)
 $ResourceDir = Join-Path $ScriptDir "..\src-tauri\resources"
 New-Item -ItemType Directory -Force $ResourceDir | Out-Null
 Write-Host "[5/5] Staging application Python files and static assets into resources..."
@@ -96,6 +96,10 @@ $StaticSrc = Join-Path $ProjectRoot "static"
 if (Test-Path $StaticSrc) {
     Copy-Item $StaticSrc (Join-Path $ResourceDir "static") -Recurse -Force
 }
+
+$PyTargetResource = Join-Path $ResourceDir "python-runtime"
+Write-Host "[5/5] Staging full Python embedded runtime into resources..."
+Copy-Item $PyRuntimeDir $PyTargetResource -Recurse -Force
 
 Write-Host "========================================================="
 Write-Host "  ✅ ALL SIDECARS & RESOURCES STAGED SUCCESSFULLY FOR $Triple"

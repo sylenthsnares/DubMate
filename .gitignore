@@ -62,6 +62,7 @@ docs/
 # Tauri Build & Staging Artifacts
 tauri/src-tauri/target/
 tauri/src-tauri/sidecar/
+tauri/src-tauri/resources/
 worker/node_modules/
 tauri/node_modules/
 

@@ -63,6 +63,129 @@ pub fn find_app_py(app: &tauri::AppHandle) -> Option<PathBuf> {
     None
 }
 
+pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
+    // 1. Check in resource_dir (packaged app)
+    if let Ok(res_dir) = app.path().resource_dir() {
+        #[cfg(target_os = "windows")]
+        let names = ["python.exe", "python-x86_64-pc-windows-msvc.exe"];
+        #[cfg(not(target_os = "windows"))]
+        let names = ["bin/python3", "bin/python", "python3", "python"];
+
+        for name in names {
+            let candidates = [
+                res_dir.join("python-runtime").join(name),
+                res_dir.join("resources").join("python-runtime").join(name),
+                res_dir.join("sidecar").join("python-runtime").join(name),
+                res_dir.join(name),
+            ];
+            for p in candidates {
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    // 2. Check exe directory (installed root)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            #[cfg(target_os = "windows")]
+            let names = ["python.exe", "python-x86_64-pc-windows-msvc.exe"];
+            #[cfg(not(target_os = "windows"))]
+            let names = ["bin/python3", "bin/python", "python3", "python"];
+
+            for name in names {
+                let candidates = [
+                    exe_dir.join("resources").join("python-runtime").join(name),
+                    exe_dir.join("python-runtime").join(name),
+                    exe_dir.join("sidecar").join("python-runtime").join(name),
+                    exe_dir.join(name),
+                ];
+                for p in candidates {
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Check CWD and dev paths (dev mode)
+    if let Ok(cwd) = std::env::current_dir() {
+        #[cfg(target_os = "windows")]
+        let candidates = [
+            cwd.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python.exe"),
+            cwd.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python-x86_64-pc-windows-msvc.exe"),
+            cwd.join("src-tauri").join("sidecar").join("python-runtime").join("python.exe"),
+            cwd.join("sidecar").join("python-runtime").join("python.exe"),
+            cwd.join(".venv").join("Scripts").join("python.exe"),
+        ];
+        #[cfg(not(target_os = "windows"))]
+        let candidates = [
+            cwd.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("bin").join("python3"),
+            cwd.join(".venv").join("bin").join("python3"),
+            cwd.join(".venv").join("bin").join("python"),
+        ];
+
+        for p in candidates {
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+
+        if let Some(parent) = cwd.parent() {
+            #[cfg(target_os = "windows")]
+            let p_cands = [
+                parent.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python.exe"),
+                parent.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python-x86_64-pc-windows-msvc.exe"),
+                parent.join(".venv").join("Scripts").join("python.exe"),
+            ];
+            #[cfg(not(target_os = "windows"))]
+            let p_cands = [
+                parent.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("bin").join("python3"),
+                parent.join(".venv").join("bin").join("python3"),
+            ];
+            for p in p_cands {
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    // 4. System PATH fallback
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = std::process::Command::new("where").arg("python").output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let p = PathBuf::from(line.trim());
+                    if p.is_file() && !line.contains("WindowsApps") {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(output) = std::process::Command::new("which").arg("python3").output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(first) = stdout.lines().next() {
+                    let p = PathBuf::from(first.trim());
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 pub fn get_app_install_dir(app: &tauri::AppHandle) -> PathBuf {
     if let Some(app_py) = find_app_py(app) {
         if let Some(parent) = app_py.parent() {
@@ -188,63 +311,129 @@ async fn start_sidecars(app: tauri::AppHandle) {
     };
     let app_dir = app_py_path.parent().unwrap_or(&app_py_path);
 
-    let _ = app.emit("startup-progress", "Launching Python studio runtime...");
+    let _ = app.emit("startup-progress", "Resolving Python runtime...");
 
-    // 1. Spawn Python FastAPI sidecar
-    match app.shell().sidecar("sidecar/python-runtime/python") {
-        Ok(sidecar_cmd) => {
+    // 1. Resolve and Spawn Python FastAPI sidecar
+    let mut spawned = false;
+    if let Some(py_exe) = find_python_exe(&app) {
+        println!("[DubMate] Launching Python from: {:?}", py_exe);
+        let _ = app.emit("startup-progress", format!("Launching Python engine ({:?})...", py_exe.file_name().unwrap_or_default()));
+
+        let mut cmd = std::process::Command::new(&py_exe);
+        cmd.current_dir(app_dir)
+            .arg("-u")
+            .arg(&app_py_path);
+
+        // Add adjacent site-packages to PYTHONPATH if present
+        if let Some(py_dir) = py_exe.parent() {
+            let site_pkgs = py_dir.join("Lib").join("site-packages");
+            if site_pkgs.is_dir() {
+                cmd.env("PYTHONPATH", &site_pkgs);
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        cmd.stdout(std::process::Stdio::piped())
+           .stderr(std::process::Stdio::piped());
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                let pid = child.id();
+                {
+                    let state = app.state::<SharedState>();
+                    let mut data = state.0.lock().unwrap();
+                    data.python_pid = Some(pid);
+                }
+                spawned = true;
+
+                let mut stdout = child.stdout.take();
+                let mut stderr = child.stderr.take();
+
+                tauri::async_runtime::spawn(async move {
+                    if let Some(out) = stdout.take() {
+                        use std::io::{BufRead, BufReader};
+                        let reader = BufReader::new(out);
+                        for line in reader.lines().map_while(Result::ok) {
+                            println!("[Python] {}", line);
+                        }
+                    }
+                });
+
+                let app_err_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(err) = stderr.take() {
+                        use std::io::{BufRead, BufReader};
+                        let reader = BufReader::new(err);
+                        for line in reader.lines().map_while(Result::ok) {
+                            eprintln!("[Python ERR] {}", line);
+                            if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error:") {
+                                let _ = app_err_clone.emit("startup-progress", format!("Python info: {}", line.trim()));
+                            }
+                        }
+                    }
+                });
+
+                let app_exit_clone = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Ok(status) = child.wait() {
+                        eprintln!("[Python] Process exited with status: {:?}", status);
+                        if !status.success() {
+                            let _ = app_exit_clone.emit("server-error", format!("Studio engine process exited (exit code: {:?})", status.code()));
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                eprintln!("[Sidecar Error] Failed to spawn Python directly: {}", e);
+            }
+        }
+    }
+
+    // Fallback: try Tauri shell sidecar API
+    if !spawned {
+        if let Ok(sidecar_cmd) = app.shell().sidecar("sidecar/python-runtime/python") {
             let cmd = sidecar_cmd
                 .current_dir(app_dir)
                 .args(["-u", app_py_path.to_str().unwrap()]);
 
-            match cmd.spawn() {
-                Ok((mut rx, child)) => {
-                    let pid = child.pid();
-                    {
-                        let state = app.state::<SharedState>();
-                        let mut data = state.0.lock().unwrap();
-                        data.python_pid = Some(pid);
-                    }
+            if let Ok((mut rx, child)) = cmd.spawn() {
+                spawned = true;
+                {
+                    let state = app.state::<SharedState>();
+                    let mut data = state.0.lock().unwrap();
+                    data.python_pid = Some(child.pid());
+                }
 
-                    let app_clone = app.clone();
-                    // Drain stdout / stderr in background task
-                    tauri::async_runtime::spawn(async move {
-                        while let Some(event) = rx.recv().await {
-                            match event {
-                                CommandEvent::Stdout(bytes) => {
-                                    let line = String::from_utf8_lossy(&bytes);
-                                    print!("[Python] {}", line);
-                                }
-                                CommandEvent::Stderr(bytes) => {
-                                    let line = String::from_utf8_lossy(&bytes);
-                                    eprint!("[Python ERR] {}", line);
-                                    if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error:") {
-                                        let _ = app_clone.emit("startup-progress", format!("Python info: {}", line.trim()));
-                                    }
-                                }
-                                CommandEvent::Terminated(term) => {
-                                    eprintln!("[Python] Process exited with code {:?}", term.code);
-                                    if term.code != Some(0) {
-                                        let _ = app_clone.emit("server-error", format!("Studio engine process exited unexpectedly (code: {:?})", term.code));
-                                    }
-                                }
-                                _ => {}
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            CommandEvent::Stdout(bytes) => {
+                                let line = String::from_utf8_lossy(&bytes);
+                                print!("[Python] {}", line);
                             }
+                            CommandEvent::Stderr(bytes) => {
+                                let line = String::from_utf8_lossy(&bytes);
+                                eprintln!("[Python ERR] {}", line);
+                            }
+                            _ => {}
                         }
-                    });
-                }
-                Err(e) => {
-                    eprintln!("[Sidecar Error] Failed to spawn Python sidecar: {}", e);
-                    let _ = app.emit("server-error", format!("Failed to spawn Python runtime: {}", e));
-                    return;
-                }
+                    }
+                });
             }
         }
-        Err(e) => {
-            eprintln!("[Sidecar Error] Python sidecar binary resolution failed: {}", e);
-            let _ = app.emit("server-error", format!("Python sidecar executable not found: {}", e));
-            return;
-        }
+    }
+
+    if !spawned {
+        eprintln!("[Sidecar Error] Unable to launch Python runtime!");
+        let _ = app.emit("server-error", "Unable to start Python runtime. Please ensure Python is installed or reinstall DubMate Studio.");
+        return;
     }
 
     // 2. Poll localhost:8000/health until responsive (max 60 attempts x 500ms = 30s)
