@@ -1,0 +1,45 @@
+﻿{
+  "$schema": "../gen/schemas/config.schema.json",
+  "productName": "DubMate Studio",
+  "version": "1.0.0",
+  "identifier": "com.dubmate.studio",
+  "build": {
+    "beforeDevCommand": "",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pwsh -File scripts/stage-sidecars.ps1",
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "DubMate Studio",
+        "width": 960,
+        "height": 680,
+        "minWidth": 800,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "backgroundColor": "#0d0d0d"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": [
+      "sidecar/python-runtime/python",
+      "sidecar/cloudflared",
+      "sidecar/ffmpeg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

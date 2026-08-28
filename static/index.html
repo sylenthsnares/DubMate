@@ -1491,6 +1491,71 @@
     </div>
   </div>
 
+  <!-- Host Transfer Confirmation Modal -->
+  <div id="modal-host-transfer-confirm" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="transfer-modal-title">
+    <div class="studio-modal-card" style="max-width: 460px; text-align: left;">
+      <div class="modal-header-content">
+        <div class="modal-badge-row">
+          <span class="badge-studio" style="color: #f59e0b; border-color: rgba(245, 158, 11, 0.4);">HOST ROLE HAND-OFF</span>
+          <span class="badge-render-live" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border-color: rgba(239, 68, 68, 0.3);">⚠️ RESET WARNING</span>
+        </div>
+        <h3 id="transfer-modal-title" class="modal-title" style="margin-top: 10px; font-size: 18px;">Hand Off Host Designation</h3>
+      </div>
+      <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: var(--radius-md); padding: 14px; margin-top: 14px;">
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #fca5a5;">
+          <strong>Warning:</strong> Passing the host role will reset the active session state.
+        </p>
+        <ul style="margin: 8px 0 0 0; padding-left: 18px; font-size: 12px; color: var(--foreground-muted); line-height: 1.4;">
+          <li>All active audio takes and room recordings will be cleared.</li>
+          <li>Character casting assignments will reset.</li>
+          <li>The room will migrate and reload on <strong id="transfer-target-name" style="color: #fff;">Actor</strong>'s local computer with their scene packs.</li>
+        </ul>
+      </div>
+      <div class="modal-actions" style="margin-top: 20px; justify-content: flex-end; gap: 10px;">
+        <button id="btn-cancel-transfer" class="btn btn-ghost btn-md" type="button">Cancel</button>
+        <button id="btn-confirm-transfer" class="btn btn-danger btn-md" type="button">
+          <span>👑 Confirm & Hand Off Host</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Host Transfer Fullscreen Reconnect Overlay -->
+  <div id="modal-host-transfer-overlay" class="studio-modal-overlay" style="display: none; z-index: 9999;" role="dialog" aria-modal="true">
+    <div class="studio-modal-card" style="max-width: 420px; text-align: center;">
+      <div class="render-film-reel" style="margin: 0 auto;">
+        <div class="reel-core" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">
+          👑
+        </div>
+        <div class="reel-pulse-ring" style="border-color: rgba(245, 158, 11, 0.4);"></div>
+      </div>
+      <h3 id="transfer-overlay-title" class="modal-title" style="margin-top: 16px; font-size: 18px;">Host Migration in Progress</h3>
+      <p id="transfer-overlay-desc" class="modal-status-text" style="margin-top: 6px;">Migrating studio host and reconnecting cast members to new session...</p>
+      <div class="modal-progress-track" style="margin-top: 16px;">
+        <div class="modal-progress-fill indeterminate"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Version Mismatch Modal -->
+  <div id="modal-version-mismatch" class="studio-modal-overlay" style="display: none; z-index: 10000;" role="dialog" aria-modal="true">
+    <div class="studio-modal-card" style="max-width: 440px; text-align: center;">
+      <div style="font-size: 40px; margin-bottom: 8px;">🚀</div>
+      <h3 class="modal-title" style="font-size: 20px; color: #ef4444;">DubMate Update Required</h3>
+      <p style="font-size: 13px; color: var(--foreground-muted); line-height: 1.5; margin-top: 10px;">
+        Your installed version (<code id="version-mismatch-yours">v1.0.0</code>) is older than this studio session requires (<code id="version-mismatch-required">v1.0.0</code>).
+      </p>
+      <p style="font-size: 12px; color: #a1a1aa; margin-top: 8px;">
+        Please restart DubMate to download and apply the mandatory update automatically.
+      </p>
+      <div class="modal-actions" style="margin-top: 22px; justify-content: center;">
+        <button onclick="window.location.reload()" class="btn btn-primary btn-md" type="button">
+          <span>🔄 Relaunch / Refresh</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts -->
   <script type="module" src="/js/app.js?v=3.0"></script>
 </body>

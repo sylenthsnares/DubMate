@@ -1,0 +1,25 @@
+﻿{
+  "name": "dubmate-room-registry",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker room code registry for DubMate Multiplayer Studio",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "test": "node --experimental-strip-types tests/worker.test.mjs"
+  },
+  "keywords": [
+    "dubmate",
+    "cloudflare-worker",
+    "tunnel-registry"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250214.0",
+    "typescript": "^5.7.3",
+    "wrangler": "^3.109.2"
+  }
+}

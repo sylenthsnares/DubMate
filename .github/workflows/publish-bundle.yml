@@ -1,0 +1,51 @@
+﻿name: Publish App Bundle
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read VERSION
+        id: ver
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run tests
+        run: |
+          pip install -r requirements.txt -q
+          pip install httpx fastapi pytest -q
+          python test_host_transfer.py
+          python test_systematic.py
+
+      - name: Create app bundle zip
+        run: |
+          zip -r app-bundle-v${{ steps.ver.outputs.VERSION }}.zip \
+            app.py \
+            audio_processor.py \
+            pack_loader.py \
+            pack_builder.py \
+            static/ \
+            VERSION \
+            requirements.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.ver.outputs.VERSION }}
+          name: "DubMate v${{ steps.ver.outputs.VERSION }}"
+          body_path: CHANGELOG.md
+          files: app-bundle-v${{ steps.ver.outputs.VERSION }}.zip
+          token: ${{ secrets.GITHUB_TOKEN }}

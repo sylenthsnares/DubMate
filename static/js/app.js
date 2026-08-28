@@ -347,6 +347,7 @@ class DubMateApp {
     this.initVideoExpand();
     this.initModeDropdown();
     this.initJoinModal();
+    this.initHostTransferModals();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
@@ -1050,6 +1051,103 @@ class DubMateApp {
         const { vocalGain } = this.getScreeningStemGains();
         this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
       }
+    });
+
+    this.socket.on('host_transfer_pending', async (data) => {
+      const payload = data.payload || {};
+      const newHostId = payload.new_host_id;
+      const newHostName = payload.new_host_name || 'Cast Member';
+
+      this.showHostTransferOverlay(`Host designation is migrating to ${newHostName}...`);
+
+      // If WE are the designated new host, coordinate local room creation & Worker tunnel update
+      if (newHostId === this.user.id) {
+        try {
+          const isTauri = typeof window.__TAURI__ !== 'undefined';
+          let myTunnelUrl = '';
+          let myRoomToken = '';
+
+          if (isTauri && window.__TAURI__.core?.invoke) {
+            myTunnelUrl = await window.__TAURI__.core.invoke('get_tunnel_url');
+            myRoomToken = await window.__TAURI__.core.invoke('get_room_token');
+          } else {
+            myTunnelUrl = window.location.origin;
+          }
+
+          const currentRoomCode = this.roomState?.room_id || '';
+          const currentPackId = this.selectedPackId || this.roomState?.pack?.pack_id || '';
+
+          // 1. If Worker registry domain is active, update KV
+          if (currentRoomCode && myRoomToken) {
+            try {
+              await fetch(`https://dubmate.bkaproductions.com/rooms/${currentRoomCode}/update`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${myRoomToken}`,
+                },
+                body: JSON.stringify({
+                  tunnel_url: myTunnelUrl,
+                  app_version: window.__dubmate_app_version || '1.0.0',
+                }),
+              });
+            } catch (wErr) {
+              console.warn('[HostTransfer] Worker update warning:', wErr);
+            }
+          }
+
+          // 2. Create fresh room on our local FastAPI server
+          const newRoomResp = await fetch('/api/rooms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pack_id: currentPackId,
+              host_name: this.user.name,
+              host_color: this.user.color,
+              app_version: window.__dubmate_app_version || '1.0.0',
+            }),
+          });
+          const newRoomData = await newRoomResp.json();
+          const newRoomId = newRoomData.room_id;
+
+          // 3. Notify the old host's server to broadcast confirmation to all cast members
+          this.socket.completeTransfer(myTunnelUrl, newRoomId);
+        } catch (err) {
+          console.error('[HostTransfer] Failed to coordinate transfer:', err);
+          this.hideHostTransferOverlay();
+          this.showToast('⚠️ Could not complete host migration: ' + err.message);
+        }
+      }
+    });
+
+    this.socket.on('host_transfer_confirmed', (data) => {
+      const payload = data.payload || {};
+      const newHostId = payload.new_host_id;
+      const newTunnelUrl = payload.new_tunnel_url;
+
+      if (newHostId === this.user.id) {
+        // We are the new host — reload into our own active studio session
+        this.showToast('👑 You are now the session host!');
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 800);
+      } else if (newTunnelUrl) {
+        // Reconnect to the new host's public tunnel URL
+        this.showToast('🚀 Reconnecting to new host studio...');
+        setTimeout(() => {
+          window.location.href = newTunnelUrl;
+        }, 1200);
+      }
+    });
+
+    this.socket.on('host_transfer_cancelled', () => {
+      this.hideHostTransferOverlay();
+      this.showToast('⚠️ Host transfer cancelled or timed out.');
+    });
+
+    this.socket.on('version_mismatch', (data) => {
+      const payload = data.payload || {};
+      this.showVersionMismatchModal(payload.required || '1.0.0', payload.yours || '0.0.0');
     });
   }
 
@@ -1840,6 +1938,91 @@ class DubMateApp {
     });
   }
 
+  initHostTransferModals() {
+    this.modalHostTransferConfirm = document.getElementById('modal-host-transfer-confirm');
+    this.modalHostTransferOverlay = document.getElementById('modal-host-transfer-overlay');
+    this.modalVersionMismatch = document.getElementById('modal-version-mismatch');
+    this.transferTargetNameSpan = document.getElementById('transfer-target-name');
+    this.btnConfirmTransfer = document.getElementById('btn-confirm-transfer');
+    this.btnCancelTransfer = document.getElementById('btn-cancel-transfer');
+    this.pendingTransferTargetId = null;
+
+    // Delegated click handler on document for "Make Host" buttons
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-hand-off-host');
+      if (btn) {
+        const targetUserId = btn.dataset.userId;
+        const targetUserName = btn.dataset.userName || 'Cast Member';
+        this.openHostTransferConfirmModal(targetUserId, targetUserName);
+      }
+    });
+
+    if (this.btnCancelTransfer) {
+      this.btnCancelTransfer.addEventListener('click', () => {
+        this.closeHostTransferConfirmModal();
+      });
+    }
+
+    if (this.btnConfirmTransfer) {
+      this.btnConfirmTransfer.addEventListener('click', () => {
+        if (this.pendingTransferTargetId) {
+          this.socket.initiateTransfer(this.pendingTransferTargetId);
+          this.closeHostTransferConfirmModal();
+          this.showHostTransferOverlay('Transferring host role and migrating session...');
+        }
+      });
+    }
+
+    if (this.modalHostTransferConfirm) {
+      this.modalHostTransferConfirm.addEventListener('click', (e) => {
+        if (e.target === this.modalHostTransferConfirm) {
+          this.closeHostTransferConfirmModal();
+        }
+      });
+    }
+  }
+
+  openHostTransferConfirmModal(targetUserId, targetUserName) {
+    this.pendingTransferTargetId = targetUserId;
+    if (this.transferTargetNameSpan) {
+      this.transferTargetNameSpan.innerText = targetUserName;
+    }
+    if (this.modalHostTransferConfirm) {
+      this.modalHostTransferConfirm.style.display = 'flex';
+    }
+  }
+
+  closeHostTransferConfirmModal() {
+    this.pendingTransferTargetId = null;
+    if (this.modalHostTransferConfirm) {
+      this.modalHostTransferConfirm.style.display = 'none';
+    }
+  }
+
+  showHostTransferOverlay(msg) {
+    if (this.modalHostTransferOverlay) {
+      const desc = document.getElementById('transfer-overlay-desc');
+      if (desc && msg) desc.innerText = msg;
+      this.modalHostTransferOverlay.style.display = 'flex';
+    }
+  }
+
+  hideHostTransferOverlay() {
+    if (this.modalHostTransferOverlay) {
+      this.modalHostTransferOverlay.style.display = 'none';
+    }
+  }
+
+  showVersionMismatchModal(required, yours) {
+    if (this.modalVersionMismatch) {
+      const elReq = document.getElementById('version-mismatch-required');
+      const elYours = document.getElementById('version-mismatch-yours');
+      if (elReq) elReq.innerText = `v${required}`;
+      if (elYours) elYours.innerText = `v${yours}`;
+      this.modalVersionMismatch.style.display = 'flex';
+    }
+  }
+
   promptJoinRoom(roomId) {
     const cleanCode = (roomId || '').trim().toUpperCase();
     if (!cleanCode) {
@@ -2094,17 +2277,25 @@ class DubMateApp {
     const userSummary = users.map(u => `${u.id}:${u.name}:${u.is_online}:${u.color}`).join('|');
     if (this._lastUserSummary !== userSummary) {
       this._lastUserSummary = userSummary;
+      const amIHost = (this.roomState.host_id === this.user.id);
       if (this.lobbyCastList) {
         this.lobbyCastList.innerHTML = users.map(u => `
           <div class="user-pill lobby-user-item" style="justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <div class="user-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-              <span class="lobby-user-name">${u.name} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''}</span>
+              <span class="lobby-user-name">${u.name} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''} ${u.id === this.roomState.host_id ? '<span class="user-you-tag" style="color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.1);">Host</span>' : ''}</span>
             </div>
-            <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
-              <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
-              <span>${u.is_online ? 'Online' : 'Offline'}</span>
-            </span>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              ${(amIHost && u.id !== this.user.id && u.is_online) ? `
+                <button class="btn btn-xs btn-outline-amber btn-hand-off-host" data-user-id="${u.id}" data-user-name="${u.name.replace(/"/g, '&quot;')}" title="Hand off host designation to ${u.name}" style="font-size: 10.5px; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; background: rgba(245, 158, 11, 0.08); cursor: pointer;">
+                  👑 Make Host
+                </button>
+              ` : ''}
+              <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
+                <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
+                <span>${u.is_online ? 'Online' : 'Offline'}</span>
+              </span>
+            </div>
           </div>
         `).join('');
       }

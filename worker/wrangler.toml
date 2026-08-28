@@ -1,0 +1,11 @@
+﻿name = "dubmate-room-registry"
+main = "src/index.ts"
+compatibility_date = "2025-02-04"
+
+[[kv_namespaces]]
+binding = "ROOMS"
+id = "<KV_NAMESPACE_ID>"
+
+[[routes]]
+pattern = "dubmate.bkaproductions.com/*"
+custom_domain = true

@@ -38,7 +38,8 @@ export class RoomSocket {
 
     this.ws.onopen = () => {
       console.log(`[Socket] Connected to room ${roomId} as ${userName}`);
-      this.send('join', { name: userName, color: userColor });
+      const appVersion = window.__dubmate_app_version || "1.0.0";
+      this.send('join', { name: userName, color: userColor, app_version: appVersion });
       this.startPing();
     };
 
@@ -152,5 +153,13 @@ export class RoomSocket {
 
   clearTake(lineIndex) {
     this.send('clear_take', { line_index: lineIndex });
+  }
+
+  initiateTransfer(targetUserId) {
+    this.send('initiate_transfer', { target_user_id: targetUserId });
+  }
+
+  completeTransfer(newTunnelUrl, newRoomId) {
+    this.send('complete_transfer', { new_tunnel_url: newTunnelUrl, new_room_id: newRoomId });
   }
 }
