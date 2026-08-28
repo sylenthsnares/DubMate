@@ -108,22 +108,35 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Background task: check for mandatory updates and start sidecars
+            // Background task: check for updates and start sidecars
             tauri::async_runtime::spawn(async move {
-                let current_version = "1.0.3";
+                let current_version = "1.0.4";
+                let app_py_exists = crate::find_app_py(&handle).is_some();
                 
-                // 1. Mandatory Update Check
+                if app_py_exists {
+                    // Start Python and Cloudflare sidecars immediately so engine is ready without delay
+                    let h = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        start_sidecars(h).await;
+                    });
+                }
+
+                // Mandatory Update Check
                 let update_res = updater::check_for_update(current_version, &handle).await;
                 let _ = handle.emit("update-status", &update_res);
 
                 match &update_res {
                     UpdateCheckResult::UpdateAvailable { .. } => {
-                        // Wait for user to trigger update from the UI
-                        println!("[Updater] Update available or initial bundle required. Holding sidecar startup.");
+                        if !app_py_exists {
+                            println!("[Updater] Initial bundle required before starting sidecars.");
+                        } else {
+                            println!("[Updater] Update available in background.");
+                        }
                     }
                     _ => {
-                        // Start Python and Cloudflare sidecars immediately
-                        start_sidecars(handle.clone()).await;
+                        if !app_py_exists {
+                            start_sidecars(handle.clone()).await;
+                        }
                     }
                 }
             });
@@ -168,55 +181,98 @@ async fn start_sidecars(app: tauri::AppHandle) {
         Some(p) => p,
         None => {
             eprintln!("[Sidecar Error] app.py not found in working directory or resources!");
+            let _ = app.emit("server-error", "app.py not found in application directory or resources. If this is a new installation, please apply the update bundle.");
+            let _ = app.emit("startup-progress", "Error: Application files missing.");
             return;
         }
     };
     let app_dir = app_py_path.parent().unwrap_or(&app_py_path);
 
+    let _ = app.emit("startup-progress", "Launching Python studio runtime...");
+
     // 1. Spawn Python FastAPI sidecar
-    if let Ok(sidecar_cmd) = app.shell().sidecar("sidecar/python-runtime/python") {
-        let cmd = sidecar_cmd
-            .current_dir(app_dir)
-            .args([app_py_path.to_str().unwrap()]);
+    match app.shell().sidecar("sidecar/python-runtime/python") {
+        Ok(sidecar_cmd) => {
+            let cmd = sidecar_cmd
+                .current_dir(app_dir)
+                .args(["-u", app_py_path.to_str().unwrap()]);
 
-        if let Ok((mut rx, child)) = cmd.spawn() {
-            {
-                let state = app.state::<SharedState>();
-                let mut data = state.0.lock().unwrap();
-                data.python_pid = Some(child.pid());
-            }
-
-            // Drain stdout / stderr in background task
-            tauri::async_runtime::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        CommandEvent::Stdout(bytes) => {
-                            let line = String::from_utf8_lossy(&bytes);
-                            print!("[Python] {}", line);
-                        }
-                        CommandEvent::Stderr(bytes) => {
-                            let line = String::from_utf8_lossy(&bytes);
-                            eprint!("[Python ERR] {}", line);
-                        }
-                        _ => {}
+            match cmd.spawn() {
+                Ok((mut rx, child)) => {
+                    let pid = child.pid();
+                    {
+                        let state = app.state::<SharedState>();
+                        let mut data = state.0.lock().unwrap();
+                        data.python_pid = Some(pid);
                     }
+
+                    let app_clone = app.clone();
+                    // Drain stdout / stderr in background task
+                    tauri::async_runtime::spawn(async move {
+                        while let Some(event) = rx.recv().await {
+                            match event {
+                                CommandEvent::Stdout(bytes) => {
+                                    let line = String::from_utf8_lossy(&bytes);
+                                    print!("[Python] {}", line);
+                                }
+                                CommandEvent::Stderr(bytes) => {
+                                    let line = String::from_utf8_lossy(&bytes);
+                                    eprint!("[Python ERR] {}", line);
+                                    if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error:") {
+                                        let _ = app_clone.emit("startup-progress", format!("Python info: {}", line.trim()));
+                                    }
+                                }
+                                CommandEvent::Terminated(term) => {
+                                    eprintln!("[Python] Process exited with code {:?}", term.code);
+                                    if term.code != Some(0) {
+                                        let _ = app_clone.emit("server-error", format!("Studio engine process exited unexpectedly (code: {:?})", term.code));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
                 }
-            });
+                Err(e) => {
+                    eprintln!("[Sidecar Error] Failed to spawn Python sidecar: {}", e);
+                    let _ = app.emit("server-error", format!("Failed to spawn Python runtime: {}", e));
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[Sidecar Error] Python sidecar binary resolution failed: {}", e);
+            let _ = app.emit("server-error", format!("Python sidecar executable not found: {}", e));
+            return;
         }
     }
 
-    // 2. Poll localhost:8000/health until responsive (max 30s)
-    let client = reqwest::Client::new();
-    for _ in 0..60 {
+    // 2. Poll localhost:8000/health until responsive (max 60 attempts x 500ms = 30s)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    let mut is_ready = false;
+    for i in 1..=60 {
+        let _ = app.emit("startup-progress", format!("Connecting to Studio Engine... ({}/60)", i));
         if let Ok(resp) = client.get("http://127.0.0.1:8000/health").send().await {
             if resp.status().is_success() {
                 let state = app.state::<SharedState>();
                 state.0.lock().unwrap().is_server_ready = true;
+                is_ready = true;
                 let _ = app.emit("server-ready", ());
+                println!("[DubMate] Server healthy on http://127.0.0.1:8000");
                 break;
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    if !is_ready {
+        eprintln!("[Sidecar Error] Studio engine did not respond on http://127.0.0.1:8000 within 30 seconds");
+        let _ = app.emit("server-error", "Studio engine did not respond on port 8000 in time. Please check if another application is using port 8000 or click Retry.");
+        return;
     }
 
     // 3. Spawn cloudflared tunnel sidecar

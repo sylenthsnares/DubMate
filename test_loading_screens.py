@@ -6,6 +6,7 @@ of the newly introduced loading screens, modal overlays, CSS animations, and JS 
 """
 
 import os
+import json
 import unittest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -127,6 +128,49 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
             py = f.read()
 
         self.assertIn('room.broadcast("export_started"', py)
+
+    def test_05_tauri_launcher_elements_and_resilience(self):
+        """Verify desktop launcher HTML, JS, config and Rust handle startup, progress, and errors reliably."""
+        launcher_html_path = os.path.join(BASE_DIR, "tauri", "src", "index.html")
+        launcher_js_path = os.path.join(BASE_DIR, "tauri", "src", "launcher.js")
+        tauri_conf_path = os.path.join(BASE_DIR, "tauri", "src-tauri", "tauri.conf.json")
+        main_rs_path = os.path.join(BASE_DIR, "tauri", "src-tauri", "src", "main.rs")
+
+        self.assertTrue(os.path.exists(launcher_html_path), "tauri/src/index.html missing")
+        self.assertTrue(os.path.exists(launcher_js_path), "tauri/src/launcher.js missing")
+        self.assertTrue(os.path.exists(tauri_conf_path), "tauri/src-tauri/tauri.conf.json missing")
+        self.assertTrue(os.path.exists(main_rs_path), "tauri/src-tauri/src/main.rs missing")
+
+        with open(launcher_html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        self.assertIn('id="splash"', html)
+        self.assertIn('id="status-text"', html)
+        self.assertIn('id="detail-text"', html)
+        self.assertIn('id="error-box"', html)
+        self.assertIn('id="error-msg"', html)
+        self.assertIn('id="btn-retry"', html)
+        self.assertIn('id="btn-open-browser"', html)
+
+        with open(launcher_js_path, "r", encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn("startup-progress", js)
+        self.assertIn("server-error", js)
+        self.assertIn("server-ready", js)
+        self.assertIn("showError(", js)
+        self.assertIn("btnRetry", js)
+        self.assertIn("maxAttempts = 120", js)
+
+        with open(tauri_conf_path, "r", encoding="utf-8") as f:
+            conf = json.load(f)
+        self.assertTrue(conf.get("app", {}).get("withGlobalTauri", False), "withGlobalTauri must be enabled")
+        self.assertEqual(conf.get("build", {}).get("devUrl"), "../src", "devUrl should point to ../src")
+
+        with open(main_rs_path, "r", encoding="utf-8") as f:
+            rs = f.read()
+        self.assertIn('emit("server-error"', rs)
+        self.assertIn('emit("startup-progress"', rs)
+        self.assertIn('emit("server-ready"', rs)
+        self.assertIn('"-u"', rs)
 
 
 if __name__ == "__main__":

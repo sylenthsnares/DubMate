@@ -1,15 +1,16 @@
 {
   "$schema": "../gen/schemas/config.schema.json",
   "productName": "DubMate Studio",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "com.dubmate.studio",
   "build": {
     "beforeDevCommand": "",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "../src",
     "beforeBuildCommand": "",
     "frontendDist": "../src"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",

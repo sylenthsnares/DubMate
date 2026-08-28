@@ -12,6 +12,9 @@
       --primary: #d97706;
       --text: #f4f4f6;
       --text-muted: #8b8b9e;
+      --danger: #dc2626;
+      --danger-bg: rgba(220, 38, 38, 0.12);
+      --danger-border: rgba(220, 38, 38, 0.35);
     }
     * {
       box-sizing: border-box;
@@ -35,7 +38,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 16px;
+      gap: 14px;
     }
     .logo {
       font-size: 22px;
@@ -59,19 +62,93 @@
     }
     .status {
       font-size: 13px;
+      color: var(--text);
+      font-family: monospace;
+      font-weight: 600;
+    }
+    .detail {
+      font-size: 11px;
       color: var(--text-muted);
       font-family: monospace;
+      max-width: 400px;
+      word-break: break-word;
     }
-    .updater-box {
+    .updater-box, .error-box {
       display: none;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 28px;
       width: 90%;
-      max-width: 440px;
+      max-width: 460px;
       text-align: center;
       box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+    }
+    .error-box {
+      border-color: var(--danger-border);
+    }
+    .error-icon {
+      font-size: 32px;
+      margin: 12px 0 6px 0;
+    }
+    .error-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .error-msg {
+      font-size: 12px;
+      color: #fca5a5;
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin: 12px 0 20px 0;
+      line-height: 1.4;
+      word-break: break-word;
+      font-family: monospace;
+      text-align: left;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .error-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 9px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .btn:active {
+      transform: translateY(1px);
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #b45309;
+    }
+    .btn-secondary {
+      background: #272732;
+      color: #f4f4f6;
+      border: 1px solid #3b3b4a;
+    }
+    .btn-secondary:hover {
+      background: #323240;
     }
     .progress-bar {
       width: 100%;
@@ -101,6 +178,7 @@
     <div class="logo">🎙️ DUBMATE <span>STUDIO PRO</span></div>
     <div class="spinner"></div>
     <div id="status-text" class="status">Starting Studio Engine...</div>
+    <div id="detail-text" class="detail">Initializing local services...</div>
   </div>
 
   <div id="updater-box" class="updater-box">
@@ -112,6 +190,17 @@
     <div class="progress-meta">
       <span id="progress-percent">0%</span>
       <span id="progress-text">Downloading bundle...</span>
+    </div>
+  </div>
+
+  <div id="error-box" class="error-box">
+    <div class="logo">🎙️ DUBMATE <span>STUDIO</span></div>
+    <div class="error-icon">⚠️</div>
+    <h3 class="error-title">Engine Startup Delayed</h3>
+    <p id="error-msg" class="error-msg">The Studio engine at http://127.0.0.1:8000 could not be reached.</p>
+    <div class="error-actions">
+      <button id="btn-retry" class="btn btn-primary">🔄 Retry Connection</button>
+      <button id="btn-open-browser" class="btn btn-secondary">🌐 Open in Browser</button>
     </div>
   </div>
 

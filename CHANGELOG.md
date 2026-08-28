@@ -1,5 +1,13 @@
 # DubMate Studio Changelog
 
+## [1.0.4] - 2026-08-28
+
+### Desktop Launcher Startup Fixes
+- **Non-Blocking Engine Launch**: Decoupled Python and Cloudflare sidecar startup from the synchronous GitHub OTA update check, eliminating startup stalls on offline or slow connections.
+- **Tauri Global API Injection**: Enabled `withGlobalTauri` and configured static `devUrl` so event listeners (`server-ready`, `startup-progress`) trigger reliably.
+- **Unbuffered Diagnostics**: Enabled Python `-u` unbuffered output and real-time process monitoring for clean startup telemetry.
+- **Resilient Polling & Error Recovery**: Extended health check polling to 60s with progressive status updates, a dedicated error recovery card, and a "Retry Connection" action.
+
 ## [1.0.3] - 2026-08-28
 
 ### Unified Desktop & Web Experience

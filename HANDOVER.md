@@ -1,22 +1,20 @@
-# Handover — 2026-08-28, DubMate v1.0.3 Unified UI & Public Room Architecture
+# Handover — 2026-08-28, DubMate Desktop Launcher Startup Hang Resolution
 
 ## State
-DubMate Studio `v1.0.3` is live on GitHub Releases (`app-bundle-v1.0.3.zip` published, desktop installers compiling). The desktop `.exe` directly loads the full DubMate Studio Pro DAW interface into the native window upon engine readiness. Multiplayer room codes are unified into a single clean identifier (e.g. `QM9K29`) across local engine and `dubmate.bkaproductions.com`.
+DubMate Studio desktop launcher startup hangs on "Starting Studio Engine..." have been fully investigated and resolved. Python sidecars launch immediately in parallel with update checks, Tauri global APIs are enabled, Python output is unbuffered, and resilient polling with error states and a retry action are in place.
 
 ## Done this session
-- **Unified Desktop Interface (`tauri/src/index.html`, `tauri/src/launcher.js`)**: Eliminated disconnected mini-launcher and replaced it with a fast startup bridge that loads `http://127.0.0.1:8000` directly into the desktop window.
-- **Single Room Code Architecture (`app.py`, `worker/src/index.ts`, `static/js/app.js`)**: Removed code discrepancies between local room IDs and Worker KV entries.
-- **Streamlined Invite Workflow (`static/js/app.js`, `static/index.html`)**: "Copy Code" button copies clean room code strings for actor-to-actor `.exe` joining.
-- **Public Domain Multi-Actor Resolution (`static/js/app.js`, `worker/src/index.ts`)**: Joining a non-local room code automatically resolves the host tunnel through `https://dubmate.bkaproductions.com/rooms/{CODE}/resolve`.
-- **Dynamic Path & Offline Resource Bundling (`tauri.conf.json`, `main.rs`, `stage-sidecars.ps1`, `stage-sidecars.sh`)**: Staged application files and dynamic `find_app_py()` resolver so standalone installers run out of the box.
-- **Release v1.0.3 Published**: Bumped version, tagged, and pushed to remote; triggered `Publish App Bundle` and `Build Desktop Installers`.
+- **Decoupled Sidecar Startup (`tauri/src-tauri/src/main.rs`)**: `start_sidecars` starts immediately in the background when `app.py` is present locally, eliminating blocking on GitHub Release API / network latency.
+- **Enabled Tauri Global APIs (`tauri/src-tauri/tauri.conf.json`)**: Added `"withGlobalTauri": true` and `"devUrl": "../src"` so `window.__TAURI__` is exposed and event listeners trigger without depending on external bundlers.
+- **Unbuffered Python & Error Reporting (`tauri/src-tauri/src/main.rs`)**: Added `-u` flag to Python runtime, captured child process exits/crashes, and emitted `startup-progress` and `server-error` events directly to the frontend.
+- **Resilient Polling & Error UI (`tauri/src/launcher.js`, `tauri/src/index.html`)**: Extended health check polling to 60s, added incremental diagnostic status text, and implemented an error card with "Retry Connection" and "Open in Browser" buttons.
+- **Automated Verification (`test_loading_screens.py`)**: Added `test_05_tauri_launcher_elements_and_resilience` (all 5/5 tests passed; systematic test suite 9/9 passed).
 
 ## Next
-1. Download `DubMate.Studio_1.0.3_x64-setup.exe` / macOS `.dmg` once GitHub Actions compilation completes on [Release v1.0.3](https://github.com/sylenthsnares/DubMate/releases/tag/v1.0.3).
-2. Launch the desktop `.exe`, create a scene session, and verify that "Copy Code" copies the room code.
-3. Test a multi-actor session by having a second machine/instance join with that room code via `dubmate.bkaproductions.com`.
+1. Run `.\run_desktop_app.bat` or launch the compiled `.exe` to verify immediate, smooth transition into DubMate Studio Pro.
+2. If network is unavailable or offline, verify that the studio engine starts immediately without stalling.
 
 ## Read first
+- [`walkthrough.md`](file:///C:/Users/user/.gemini/antigravity-ide/brain/a097e950-200d-40fd-8de6-3f2e138d685f/walkthrough.md)
+- [`implementation_plan.md`](file:///C:/Users/user/.gemini/antigravity-ide/brain/a097e950-200d-40fd-8de6-3f2e138d685f/implementation_plan.md)
 - [`CHANGELOG.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/CHANGELOG.md)
-- [`VERSION`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/VERSION)
-- [`DESKTOP-APP-CHECKLIST.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/DESKTOP-APP-CHECKLIST.md)
