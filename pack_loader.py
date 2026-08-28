@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import urllib.parse
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKS_DIRS = [
@@ -370,14 +370,30 @@ def parse_ini_metadata(path: str) -> Dict[str, Any]:
 
 def parse_pack_info(folder: str) -> Dict[str, Any]:
     """
-    Parses Choicer Voicer _pack_info.ini:
-    [data]
-    title="Nodt crashout"
-    subtitle="top 5 toughest quincys"
-    icon="nodt.png"
-    authors=["ChickenGobln"]
+    Parses pack metadata from pack.json (DubMate native) or _pack_info.ini (Choicer Voicer).
     """
     info = {"title": None, "subtitle": None, "icon": None, "authors": []}
+
+    # 1. DubMate native pack.json
+    json_path = os.path.join(folder, "pack.json")
+    if os.path.isfile(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8", errors="replace") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                info["title"] = data.get("title") or data.get("name")
+                info["subtitle"] = data.get("subtitle")
+                info["icon"] = data.get("icon")
+                auths = data.get("authors")
+                if isinstance(auths, list):
+                    info["authors"] = [str(a).strip() for a in auths if str(a).strip()]
+                elif isinstance(auths, str) and auths.strip():
+                    info["authors"] = [auths.strip()]
+                return info
+        except Exception:
+            pass
+
+    # 2. Choicer Voicer _pack_info.ini
     for cand in ("_pack_info.ini", "pack_info.ini"):
         path = os.path.join(folder, cand)
         if os.path.isfile(path):
@@ -468,7 +484,70 @@ def extract_character_from_caption_or_name(caption: str, filename: str) -> str:
     return char_name
 
 
-_DETECTED_ENCODER = None
+_DETECTED_ENCODER: Optional[str] = None
+_CACHED_ENCODER_INFO: Optional[Dict[str, Any]] = None
+
+
+def preflight_probe_hardware_encoder() -> Dict[str, Any]:
+    """
+    Probes system video encoding capabilities and caches optimal hardware encoder settings.
+    Logs clear diagnostics and ensures zero-latency runtime exports.
+    """
+    global _DETECTED_ENCODER, _CACHED_ENCODER_INFO
+    if _CACHED_ENCODER_INFO is not None:
+        return _CACHED_ENCODER_INFO
+
+    ff = get_ffmpeg_path()
+    candidates = [
+        ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"], "NVIDIA NVENC (GeForce / RTX)", "NVIDIA", True),
+        ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"], "AMD AMF (Radeon RX)", "AMD", True),
+        ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"], "Intel QuickSync (Arc / Core iGPU)", "Intel", True),
+        ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"], "Apple Silicon VideoToolbox (M1/M2/M3/M4)", "Apple", True),
+    ]
+
+    detected = None
+    for name, probe_args, desc, vendor, is_hw in candidates:
+        try:
+            test_cmd = [
+                ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
+                *probe_args, "-f", "null", "-"
+            ]
+            res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0:
+                detected = {
+                    "encoder": name,
+                    "description": desc,
+                    "vendor": vendor,
+                    "is_hardware": is_hw,
+                }
+                _DETECTED_ENCODER = name
+                break
+        except Exception:
+            continue
+
+    if detected is None:
+        cpu_cores = os.cpu_count() or 4
+        threads = max(1, min(cpu_cores, 8))
+        detected = {
+            "encoder": "libx264",
+            "description": f"Universal Multi-Core CPU (libx264 - {threads} threads)",
+            "vendor": "CPU",
+            "is_hardware": False,
+            "threads": threads,
+        }
+        _DETECTED_ENCODER = "libx264"
+
+    _CACHED_ENCODER_INFO = detected
+    badge = "[Hardware Accelerated]" if detected["is_hardware"] else "[Multi-Core CPU]"
+    print(f"[DubMate Acceleration] {badge} {detected['description']}")
+    return _CACHED_ENCODER_INFO
+
+
+def get_hardware_encoder_info() -> Dict[str, Any]:
+    """Returns cached hardware encoder info, running pre-flight probe if needed."""
+    if _CACHED_ENCODER_INFO is None:
+        return preflight_probe_hardware_encoder()
+    return _CACHED_ENCODER_INFO
 
 
 def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
@@ -482,28 +561,7 @@ def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
     """
     global _DETECTED_ENCODER
     if _DETECTED_ENCODER is None:
-        ff = get_ffmpeg_path()
-        candidates = [
-            ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"]),
-            ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"]),
-            ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"]),
-            ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"]),
-        ]
-        for name, probe_args in candidates:
-            try:
-                test_cmd = [
-                    ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
-                    *probe_args, "-f", "null", "-"
-                ]
-                res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if res.returncode == 0:
-                    _DETECTED_ENCODER = name
-                    break
-            except Exception:
-                continue
-
-        if _DETECTED_ENCODER is None:
-            _DETECTED_ENCODER = "libx264"
+        preflight_probe_hardware_encoder()
 
     # Hardware-specific parameters
     if _DETECTED_ENCODER == "h264_nvenc":
@@ -644,6 +702,7 @@ class PackInfo:
             "has_backing": self.backing_track_path is not None,
             "video_url": f"/api/packs/{quoted_id}/video",
             "backing_url": f"/api/packs/{quoted_id}/backing" if self.backing_track_path else None,
+            "export_url": f"/api/packs/{quoted_id}/export",
             "mean_vocal_loudness_db": getattr(self, "mean_vocal_loudness_db", -21.0),
             "lines": self.lines,
         }
@@ -1019,6 +1078,143 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
             shutil.rmtree(tmp_extract_dir, ignore_errors=True)
 
 
+def import_multiple_pack_archives(archives: List[Tuple[Any, str]]) -> Dict[str, Any]:
+    """
+    Imports multiple pack .zip archives in a single batch with isolated per-pack validation.
+    Returns summary reporting total, imported packs, and quarantined errors.
+    """
+    imported_packs: List[PackInfo] = []
+    errors: List[Dict[str, str]] = []
+
+    for content_bytes, filename in archives:
+        try:
+            if len(content_bytes) > MAX_ARCHIVE_SIZE_BYTES:
+                errors.append({"filename": filename, "error": "Archive exceeds maximum 500 MB upload limit."})
+                continue
+
+            pack = import_pack_archive(content_bytes, archive_filename=filename)
+            if pack:
+                imported_packs.append(pack)
+            else:
+                errors.append({"filename": filename, "error": "Could not parse valid scene pack structure."})
+        except Exception as ex:
+            errors.append({"filename": filename, "error": str(ex)})
+
+    return {
+        "status": "ok" if imported_packs else ("error" if errors else "empty"),
+        "total": len(archives),
+        "imported_count": len(imported_packs),
+        "failed_count": len(errors),
+        "packs": [p.to_dict() for p in imported_packs],
+        "errors": errors,
+    }
+
+
+def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[str, Any]:
+    """
+    Imports an entire directory tree containing one or multiple unpacked scene packs or nested zip archives.
+    Maintains security sandboxing:
+    - Rejects path traversal (..)
+    - Blocks executable binaries and dangerous scripts
+    - Recursively scans discovered pack root folders (directories with dub_video + audio lines)
+    - Automatically unpacks and installs each scene pack into Packs/
+    """
+    tmp_stage_dir = tempfile.mkdtemp(prefix="dubmate_folder_import_")
+    canonical_stage = os.path.abspath(tmp_stage_dir)
+    imported_packs: List[PackInfo] = []
+    errors: List[Dict[str, str]] = []
+
+    try:
+        # 1. Stage all uploaded files into temporary sandbox directory
+        for content, rel_path in files_with_paths:
+            # Normalize path separators
+            clean_rel = rel_path.replace("\\", "/").strip("/")
+            norm_path = os.path.normpath(clean_rel)
+
+            if ".." in norm_path.split(os.sep):
+                continue
+
+            base_name = os.path.basename(norm_path).lower()
+            if any(base_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
+                continue
+
+            dest = os.path.abspath(os.path.join(tmp_stage_dir, norm_path))
+            if not dest.startswith(canonical_stage + os.sep):
+                continue
+
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(content)
+
+        # 2. Check for any nested .zip files first
+        for root, _dirs, files in os.walk(tmp_stage_dir):
+            for f in files:
+                if f.lower().endswith(".zip"):
+                    zip_full = os.path.join(root, f)
+                    try:
+                        with open(zip_full, "rb") as zf:
+                            pack = import_pack_archive(zf.read(), archive_filename=f)
+                            if pack:
+                                imported_packs.append(pack)
+                    except Exception as ex:
+                        errors.append({"filename": f, "error": str(ex)})
+
+        # 3. Discover all distinct unpacked scene pack root directories in the staged tree
+        discovered_pack_roots = []
+        for dirpath, _dirnames, filenames in os.walk(tmp_stage_dir):
+            has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
+            has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
+            if has_video and has_clips:
+                # Ensure we don't pick subdirectories if parent is already a pack root
+                is_sub = False
+                for p_root in discovered_pack_roots:
+                    if dirpath.startswith(p_root + os.sep):
+                        is_sub = True
+                        break
+                if not is_sub:
+                    discovered_pack_roots.append(dirpath)
+
+        # 4. Install each discovered unpacked pack
+        target_base = PACKS_DIRS[0]
+        os.makedirs(target_base, exist_ok=True)
+
+        for pack_root in discovered_pack_roots:
+            try:
+                meta = parse_pack_info(pack_root)
+                base_title = meta.get("title") or os.path.basename(pack_root)
+                safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
+                dest_folder = os.path.join(target_base, safe_folder_name)
+
+                if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
+                    continue
+
+                if os.path.exists(dest_folder):
+                    shutil.rmtree(dest_folder)
+
+                shutil.copytree(pack_root, dest_folder)
+                loaded = load_pack(dest_folder)
+                if loaded:
+                    folder_mtime = os.path.getmtime(dest_folder)
+                    PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
+                    imported_packs.append(loaded)
+                    print(f"[pack_loader] Successfully installed unpacked pack '{loaded.name}' into {dest_folder}")
+            except Exception as ex:
+                errors.append({"filename": os.path.basename(pack_root), "error": str(ex)})
+
+    finally:
+        if os.path.exists(tmp_stage_dir):
+            shutil.rmtree(tmp_stage_dir, ignore_errors=True)
+
+    return {
+        "status": "ok" if imported_packs else "error",
+        "total": len(imported_packs) + len(errors),
+        "imported_count": len(imported_packs),
+        "failed_count": len(errors),
+        "packs": [p.to_dict() for p in imported_packs],
+        "errors": errors,
+    }
+
+
 def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
     """
     Scans all pack directories with ultra-fast folder mtime caching.
@@ -1056,4 +1252,51 @@ def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
                 if pack.pack_id not in packs:
                     packs[pack.pack_id] = pack
     return packs
+
+
+def export_pack_archive(pack_id_or_folder: str, output_zip_path: Optional[str] = None) -> str:
+    """
+    Packages an entire scene pack folder into a clean, portable .zip archive.
+    Returns the absolute path to the generated .zip file.
+    """
+    import zipfile
+
+    # 1. Resolve pack folder
+    pack_folder = None
+    if os.path.isdir(pack_id_or_folder):
+        pack_folder = os.path.abspath(pack_id_or_folder)
+    else:
+        for base in PACKS_DIRS:
+            candidate = os.path.join(base, pack_id_or_folder)
+            if os.path.isdir(candidate):
+                pack_folder = os.path.abspath(candidate)
+                break
+
+    if not pack_folder or not os.path.isdir(pack_folder):
+        raise FileNotFoundError(f"Pack folder not found for '{pack_id_or_folder}'")
+
+    pack_name = os.path.basename(os.path.normpath(pack_folder))
+    safe_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', pack_name).strip() or "scene_pack"
+
+    # 2. Determine destination zip path
+    if not output_zip_path:
+        exports_dir = os.path.join(CACHE_DIR, "exports", "packs")
+        os.makedirs(exports_dir, exist_ok=True)
+        output_zip_path = os.path.join(exports_dir, f"{safe_name}.zip")
+    else:
+        os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
+
+    # 3. Create zip archive containing all pack assets at the root of the archive
+    with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(pack_folder):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith("__")]
+            for file in sorted(files):
+                if file.startswith(".") or file.startswith("__") or file.endswith(".tmp"):
+                    continue
+                file_abs = os.path.join(root, file)
+                rel_path = os.path.relpath(file_abs, pack_folder)
+                zf.write(file_abs, arcname=rel_path)
+
+    return output_zip_path
+
 

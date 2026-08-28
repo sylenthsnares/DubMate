@@ -1,26 +1,39 @@
-# Handover — 2026-08-22, DubMate v1.3 + Pack Builder Release & Pure Architecture
+# Handover — 2026-08-28, Pack Builder Timeline Deletion, 1-5 Track Bounds & Vertically Resizable Timeline
 
 ## State
-DubMate v1.3 is complete, verified, and packaged for release. It introduces the standalone browser-native Pack Builder Studio (`/builder.html`), Demucs vocal/instrumental AI isolation, Whisper speech transcription, Romaji romanization, multi-stage YouTube and video ingestion, dynamic DAW timeline editor, and 1-click cross-platform updaters (`update.bat`, `update.sh`). All mentions of legacy third-party dependencies have been removed. All test suites pass 100%.
+All requested Pack Builder improvements are complete, polished, and verified:
+1. Reliable inline timeline dialogue segment deletion without drag/selection conflicts.
+2. 1 initial audio track default, expandable up to 5 tracks with dynamic lane heights and disabled states.
+3. Full-viewport bottom stretching with vertically resizable splitter handle (`#timeline-splitter-handle`), allowing users to expand the timeline while dynamically adjusting video/dialogue cues height and keeping video playback controls fixed beneath the video.
+All 34 automated unit/frontend tests and live browser subagent sessions passed 100%.
 
 ## Done this session
-- **1-Click Updaters**: Created `update.bat` (Windows) and `update.sh` (macOS/Linux) for automated git sync, virtualenv package upgrades (including optional Pack Builder AI dependencies), and portable tools integrity checks. Synchronized `update_dubmate.bat` and `update_mac.sh`.
-- **Pure Self-Contained Architecture**: Purged all references, legacy fallback directories, and attributions to external projects (`dubstage`) across `pack_loader.py`, `pack_builder.py`, `app.py`, `static/index.html`, `static/js/app.js`, `static/css/style.css`, `Packs/README.md`, and `README.md`.
-- **Pack Loader & Builder Normalization**: Normalized scene pack classification to `dubmate` native format while retaining full compatibility with `choicer_voicer` packs.
-- **Verification & QA**: Executed complete backend test suites (`test_systematic.py` 9/9, `test_pack_builder.py` 10/10, `test_pack_security.py`, `test_loudness_alignment.py`, `test_noise_reduction.py`, `test_loading_screens.py`) — all passing.
-- **Documentation & Release Prep**: Updated `README.md` with DubMate v1.3 release notes, architecture diagram, and test commands.
+- **Timeline Dialogue Deletion**:
+  - [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js): Fixed event propagation (`stopPropagation()` & `preventDefault()`) across `mousedown`, `mouseup`, and `click` on `.segment-inline-delete-btn`; prevented block `mousedown` from tearing down the DOM before click fires; reset drag states on deletion.
+  - [`static/css/style.css`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css): Styled `.segment-inline-delete-btn` with `z-index: 15; pointer-events: auto;` and child SVG with `pointer-events: none`.
+- **Audio Tracks 1 to 5 Limit & Dynamic Proportions**:
+  - [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js): Initialized `this.tracks = ['Audio Track 1']`. Enforced max limit of 5 in `addAudioTrack()` and min limit of 1 in `deleteAudioTrack()`.
+  - Added `getLaneDimensions()` to keep 1 track compact (~70px) and scale 2 to 5 tracks dynamically (~38px - 64px) to fit inside the panel.
+  - [`static/builder.html`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/builder.html): Updated default badge text to `1 Audio Track`.
+- **Vertically Resizable DAW Splitter Handle**:
+  - [`static/builder.html`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/builder.html): Added `#timeline-splitter-handle` between top row and bottom timeline panel.
+  - [`static/css/style.css`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css): Added `.timeline-splitter-handle` styling with amber hover glow, `row-resize` cursor, `body.resizing-timeline` global lock, and dynamic `--timeline-panel-height` variable on `.editor-bottom-timeline-panel`.
+  - [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js): Implemented `initSplitterEvents()` with mousedown, touchstart, double-click reset to default (240px), clamped height range (130px to window height - 260px), real-time `requestAnimationFrame` re-rendering, and `localStorage` persistence.
+  - Sized `.editor-video-pane` to `height: 100%`, `.editor-video-container` to `flex: 1`, `.builder-control-deck` to `flex-shrink: 0`, and `.editor-right-sidebar` to `height: 100%`.
+- **Verification**:
+  - `node scratch/test_pack_builder_frontend.js` (34/34 tests passed).
+  - Live browser subagent verified segment deletion, 1-to-5 track limits, upward/downward timeline vertical resizing, and double-click reset.
 
 ## In flight
-None. The repository is in a clean, tested state ready for git commit, push, and GitHub release `v1.3`.
+None. All requested items implemented and verified.
 
 ## Next
-1. Execute `git commit`, `git push`, and publish GitHub Release `"DubMate v1.3 + Pack Builder"` with tag `v1.3`.
-2. Playtest new end-to-end video ingestion -> cue editing -> multiplayer booth workflow.
+1. Test authoring and compiling complete scene dub packs end-to-end.
+2. Verify multiplayer session playback with multi-track dub packs in Studio Pro.
 
 ## Watch out
-- **Faststart Headers**: Videos downloaded or imported in Pack Builder automatically undergo FFmpeg faststart and standard H.264/AAC transcoding so browser `<video>` can seek smoothly without downloading entire files.
+- `localStorage` key `dubmate_pack_builder_timeline_h` remembers custom timeline height across page reloads. Double-clicking the splitter bar resets it to default (240px).
 
 ## Read first
-- [`pack_builder.py`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/pack_builder.py) — Core Demucs, Whisper, and yt-dlp pipelines.
-- [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js) — Interactive DAW timeline, cue editor, and multi-stage ingest state machine.
-- [`app.py`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/app.py) — Builder REST APIs and media range streaming.
+- [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js) — Splitter events, drag calculations, dynamic lane scaling, and segment deletion.
+- [`static/css/style.css`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css) — Splitter handle and flexible top-row/fixed deck styles.

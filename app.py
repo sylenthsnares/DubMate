@@ -14,6 +14,7 @@ import random
 import shutil
 import asyncio
 import threading
+import urllib.parse
 from typing import Dict, List, Optional, Set, Any
 from contextlib import asynccontextmanager
 
@@ -320,6 +321,10 @@ def load_persisted_rooms():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global PACKS_CACHE
+    try:
+        pack_loader.preflight_probe_hardware_encoder()
+    except Exception as ex:
+        print(f"[DubMate Acceleration] Startup probe warning: {ex}")
     PACKS_CACHE = pack_loader.get_all_packs()
     print(f"[DubMate] Loaded {len(PACKS_CACHE)} packs into studio registry.")
     load_persisted_rooms()
@@ -350,6 +355,16 @@ async def add_performance_cache_headers(request: Request, call_next):
         elif path.endswith((".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico", ".mp4", ".wav", ".mp3", ".ogg")):
             response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
     return response
+
+
+@app.get("/api/system/encoder")
+async def get_system_encoder():
+    """Returns detected video encoding hardware acceleration metadata."""
+    info = pack_loader.get_hardware_encoder_info()
+    return {
+        "status": "ok",
+        **info
+    }
 
 
 def get_packs_registry(force_rescan: bool = False) -> Dict[str, pack_loader.PackInfo]:
@@ -390,36 +405,103 @@ async def get_pack(pack_id: str):
 
 
 @app.post("/api/packs/import")
-async def import_pack_file(file: UploadFile = File(...)):
-    """Accepts a Choicer Voicer or DubMate .zip archive, validates signatures, scans, and indexes it."""
-    if not file.filename or not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Only .zip pack archives are supported.")
-    try:
-        content = await file.read()
-        if len(content) > pack_loader.MAX_ARCHIVE_SIZE_BYTES:
-            raise HTTPException(status_code=413, detail="Archive exceeds maximum allowed size (500 MB).")
+async def import_pack_files(
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
+    paths: Optional[str] = Form(None)
+):
+    """
+    Accepts single or batch pack imports:
+    1. Single or multiple .zip archives (GameBanana / Pack Builder).
+    2. Entire folder trees with relative paths (from folder drag-and-drop or webkitdirectory input).
+    Validates signatures, sandboxes, and indexes all discovered packs.
+    """
+    uploaded_files: List[UploadFile] = []
+    if files:
+        uploaded_files.extend(files)
+    if file:
+        uploaded_files.append(file)
 
-        pack = pack_loader.import_pack_archive(content, file.filename)
-        if not pack:
-            raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
+    if not uploaded_files:
+        raise HTTPException(status_code=400, detail="No files uploaded for pack import.")
 
-        get_packs_registry(force_rescan=True)  # Refresh registry
-        return {
-            "status": "ok",
-            "message": f"Successfully verified and imported pack '{pack.name}'",
-            "pack": pack.to_dict()
-        }
-    except pack_loader.PackSecurityError as sec_err:
-        print(f"[Security Alert] Pack import rejected: {sec_err}")
-        raise HTTPException(status_code=422, detail=f"{str(sec_err)}")
-    except pack_loader.PackValidationError as val_err:
-        print(f"[Validation Error] Pack import rejected: {val_err}")
-        raise HTTPException(status_code=400, detail=f"{str(val_err)}")
-    except HTTPException:
-        raise
-    except Exception as ex:
-        print(f"[app] Error importing pack: {ex}")
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(ex)}")
+    # 1. Check if folder tree with relative paths was provided
+    if paths:
+        try:
+            rel_paths = json.loads(paths)
+        except Exception:
+            rel_paths = [f.filename for f in uploaded_files]
+
+        if len(rel_paths) != len(uploaded_files):
+            rel_paths = [f.filename for f in uploaded_files]
+
+        file_tuples = []
+        for uf, r_path in zip(uploaded_files, rel_paths):
+            content = await uf.read()
+            file_tuples.append((content, r_path or uf.filename or "unknown"))
+
+        result = pack_loader.import_pack_folder_tree(file_tuples)
+        get_packs_registry(force_rescan=True)
+        return result
+
+    # 2. Check if all uploaded files are .zip archives
+    all_zip = all(f.filename and f.filename.lower().endswith(".zip") for f in uploaded_files)
+    if not all_zip and len(uploaded_files) > 1:
+        # Multiple loose files without explicit paths
+        file_tuples = []
+        for uf in uploaded_files:
+            content = await uf.read()
+            file_tuples.append((content, uf.filename or "unknown"))
+        result = pack_loader.import_pack_folder_tree(file_tuples)
+        get_packs_registry(force_rescan=True)
+        return result
+
+    # 3. Batch or single .zip import
+    if len(uploaded_files) == 1 and uploaded_files[0].filename and uploaded_files[0].filename.lower().endswith(".zip"):
+        single_file = uploaded_files[0]
+        try:
+            content = await single_file.read()
+            if len(content) > pack_loader.MAX_ARCHIVE_SIZE_BYTES:
+                raise HTTPException(status_code=413, detail="Archive exceeds maximum allowed size (500 MB).")
+
+            pack = pack_loader.import_pack_archive(content, single_file.filename)
+            if not pack:
+                raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
+
+            get_packs_registry(force_rescan=True)
+            return {
+                "status": "ok",
+                "message": f"Successfully verified and imported pack '{pack.name}'",
+                "pack": pack.to_dict(),
+                "packs": [pack.to_dict()],
+                "imported_count": 1,
+                "failed_count": 0,
+            }
+        except pack_loader.PackSecurityError as sec_err:
+            print(f"[Security Alert] Pack import rejected: {sec_err}")
+            raise HTTPException(status_code=422, detail=f"{str(sec_err)}")
+        except pack_loader.PackValidationError as val_err:
+            print(f"[Validation Error] Pack import rejected: {val_err}")
+            raise HTTPException(status_code=400, detail=f"{str(val_err)}")
+        except HTTPException:
+            raise
+        except Exception as ex:
+            print(f"[app] Error importing pack: {ex}")
+            raise HTTPException(status_code=500, detail=f"Import failed: {str(ex)}")
+
+    # Multi-zip batch upload
+    archive_tuples = []
+    for uf in uploaded_files:
+        if uf.filename and uf.filename.lower().endswith(".zip"):
+            content = await uf.read()
+            archive_tuples.append((content, uf.filename))
+
+    if not archive_tuples:
+        raise HTTPException(status_code=400, detail="No valid .zip archives found in upload.")
+
+    result = pack_loader.import_multiple_pack_archives(archive_tuples)
+    get_packs_registry(force_rescan=True)
+    return result
 
 
 @app.get("/api/packs/{pack_id}/icon")
@@ -555,6 +637,45 @@ async def get_pack_audio_line(pack_id: str, filename: str, request: Request):
         media_type=media_type,
         cache_control="public, max-age=86400, stale-while-revalidate=604800"
     )
+
+
+@app.get("/api/packs/{pack_id}/export")
+async def export_pack_zip(pack_id: str):
+    """Packages and streams a scene pack as a downloadable .zip archive."""
+    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+    pack_folder = pack.folder if pack else None
+
+    if not pack_folder or not os.path.isdir(pack_folder):
+        for base in pack_loader.PACKS_DIRS:
+            candidate = os.path.join(base, pack_id)
+            if os.path.isdir(candidate):
+                pack_folder = candidate
+                break
+
+    if not pack_folder or not os.path.isdir(pack_folder):
+        raise HTTPException(status_code=404, detail="Pack not found")
+
+    try:
+        clean_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', pack.name if pack else pack_id).strip() or "scene_pack"
+        zip_filename = f"{clean_name}.zip"
+        zip_dir = os.path.join(EXPORTS_DIR, "packs")
+        os.makedirs(zip_dir, exist_ok=True)
+        zip_path = os.path.join(zip_dir, f"DubMate_Pack_{clean_name}_{pack_id}.zip")
+
+        pack_loader.export_pack_archive(pack_folder, output_zip_path=zip_path)
+
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=zip_filename,
+            headers={
+                "Content-Disposition": f'attachment; filename="{zip_filename}"',
+                "Cache-Control": "no-cache",
+            }
+        )
+    except Exception as ex:
+        print(f"[PackExportError] Error generating pack ZIP for {pack_id}: {ex}")
+        raise HTTPException(status_code=500, detail=f"Failed to export pack ZIP: {str(ex)}")
 
 
 @app.post("/api/rooms")
@@ -699,7 +820,13 @@ async def upload_take(
     }
 
     room.exported_video_path = None
-    await room.broadcast("take_recorded", {"line_index": line_index, "url": versioned_url, "noise_reduction": room.takes[line_index]["noise_reduction"]})
+    await room.broadcast("take_recorded", {
+        "line_index": line_index,
+        "url": versioned_url,
+        "noise_reduction": room.takes[line_index]["noise_reduction"],
+        "user_name": user_name,
+        "user_id": user_id,
+    })
     return {"status": "ok", "take": room.takes[line_index]}
 
 
@@ -1878,11 +2005,13 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     progress.pack_info = loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name}
     progress.update("done", 1.0, f"Successfully created and installed pack '{pack_name}'!", stage="done")
 
+    quoted_pack_id = urllib.parse.quote(pack_id)
     return {
         "status": "ok",
         "message": f"Successfully created and installed pack '{pack_name}'!",
         "pack_id": pack_id,
-        "pack": loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name},
+        "download_url": f"/api/packs/{quoted_pack_id}/export",
+        "pack": loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name, "export_url": f"/api/packs/{quoted_pack_id}/export"},
     }
 
 

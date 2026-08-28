@@ -1,19 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DubMate Studio Pro — Collaborative Scene Dubbing DAW</title>
-  <meta name="description" content="Collaborative anime and scene dubbing multiplayer Digital Audio Workstation with warm analog tone, guitar amp voice DSP dials, waveform track syncing, and group premiere theater.">
-  
+  <meta name="description"
+    content="Collaborative anime and scene dubbing multiplayer Digital Audio Workstation with warm analog tone, guitar amp voice DSP dials, waveform track syncing, and group premiere theater.">
+
   <!-- Preconnected Google Fonts for High Performance & Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+
   <link rel="stylesheet" href="/css/style.css?v=3.5">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
 </head>
+
 <body>
 
   <!-- Hidden SVG Filters: Film Grain, Wood Grain, Amp Metal Grain -->
@@ -21,15 +27,15 @@
     <defs>
       <!-- Global subtle film grain (3.8% body::after) -->
       <filter id="sf-grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="linearRGB">
-        <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="3" stitchTiles="stitch" result="noise"/>
-        <feColorMatrix type="saturate" values="0" in="noise" result="grey"/>
-        <feComposite operator="in" in="grey" in2="SourceGraphic" result="masked"/>
-        <feBlend in="SourceGraphic" in2="masked" mode="soft-light"/>
+        <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="3" stitchTiles="stitch" result="noise" />
+        <feColorMatrix type="saturate" values="0" in="noise" result="grey" />
+        <feComposite operator="in" in="grey" in2="SourceGraphic" result="masked" />
+        <feBlend in="SourceGraphic" in2="masked" mode="soft-light" />
       </filter>
       <!-- Amp panel heavy grain (17% overlay on dsp-rack-grid) -->
       <filter id="sf-amp-grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="linearRGB">
-        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch" result="noise"/>
-        <feColorMatrix type="saturate" values="0" in="noise" result="grey"/>
+        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch" result="noise" />
+        <feColorMatrix type="saturate" values="0" in="noise" result="grey" />
       </filter>
     </defs>
   </svg>
@@ -38,56 +44,126 @@
   <!-- Top Studio Command Header -->
   <header class="app-header">
     <div class="header-left">
-      <div class="logo" id="btn-home" title="Return to Scenes / Home" role="button" tabindex="0" aria-label="DubMate Studio Home">
-        <div class="logo-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+      <div class="logo-dropdown-container" id="logo-dropdown-container">
+        <div class="logo logo-with-dropdown" id="btn-mode-dropdown" title="Switch Studio Mode" role="button" tabindex="0"
+          aria-haspopup="true" aria-expanded="false" aria-label="Switch DubMate Studio Mode">
+          <div class="logo-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" x2="12" y1="19" y2="22" />
+            </svg>
+          </div>
+          <div class="logo-title">DUBMATE</div>
+          <span class="logo-badge">STUDIO PRO</span>
+          <svg class="logo-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
-        <div class="logo-title">DUBMATE</div>
-        <span class="logo-badge">STUDIO PRO</span>
+
+        <!-- Mode Switcher Menu -->
+        <div class="logo-dropdown-menu" id="mode-dropdown-menu" style="display: none;">
+          <a href="/" class="mode-dropdown-item active" id="mode-opt-studio">
+            <div class="mode-item-icon">🎙️</div>
+            <div class="mode-item-content">
+              <div class="mode-item-title-row">
+                <span class="mode-item-title">DubMate Studio Pro</span>
+                <span class="mode-active-pill">Active</span>
+              </div>
+              <span class="mode-item-desc">Multiplayer Scene Dubbing DAW & Screening</span>
+            </div>
+          </a>
+          <a href="/builder.html" class="mode-dropdown-item" id="mode-opt-builder">
+            <div class="mode-item-icon">🎬</div>
+            <div class="mode-item-content">
+              <div class="mode-item-title-row">
+                <span class="mode-item-title">DubMate Pack Builder</span>
+              </div>
+              <span class="mode-item-desc">AI Vocal Isolation & Scene Pack Authoring</span>
+            </div>
+          </a>
+        </div>
       </div>
 
       <!-- Studio Stage Breadcrumbs (Visible inside active room) -->
-      <nav id="studio-breadcrumbs" class="studio-breadcrumbs" style="display: none;" aria-label="Studio Stage Navigation">
-        <button id="nav-step-lobby" class="crumb-btn active" title="Casting Board & Room Lobby" aria-label="Go to Casting Board Lobby">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <nav id="studio-breadcrumbs" class="studio-breadcrumbs" style="display: none;"
+        aria-label="Studio Stage Navigation">
+        <button id="nav-step-lobby" class="crumb-btn active" title="Casting Board & Room Lobby"
+          aria-label="Go to Casting Board Lobby">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
           <span class="crumb-text">Lobby</span>
         </button>
         <span class="crumb-arrow" aria-hidden="true">›</span>
         <button id="nav-step-booth" class="crumb-btn" title="Solo Recording Booth" aria-label="Go to Recording Booth">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" x2="12" y1="19" y2="22" />
+          </svg>
           <span class="crumb-text">Booth</span>
         </button>
         <span class="crumb-arrow" aria-hidden="true">›</span>
-        <button id="nav-step-screening" class="crumb-btn" title="Finale Screening Room" aria-label="Go to Premiere Screening">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="3" rx="2"/><polyline points="12 18 12 22"/><path d="M8 22h8"/></svg>
+        <button id="nav-step-screening" class="crumb-btn" title="Finale Screening Room"
+          aria-label="Go to Premiere Screening">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="15" x="2" y="3" rx="2" />
+            <polyline points="12 18 12 22" />
+            <path d="M8 22h8" />
+          </svg>
           <span class="crumb-text">Premiere</span>
-          <span id="crumb-premiere-live" class="badge-live-dot" style="display: none;" title="Premiere is Live!" aria-hidden="true"></span>
+          <span id="crumb-premiere-live" class="badge-live-dot" style="display: none;" title="Premiere is Live!"
+            aria-hidden="true"></span>
         </button>
       </nav>
     </div>
 
     <div class="header-status">
-      <div id="header-room-badge" class="room-badge" style="display: none;" title="Click to copy invite link" role="button" tabindex="0" aria-label="Copy Room Invite Link">
+      <div id="header-room-badge" class="room-badge" style="display: none;" title="Click to copy invite link"
+        role="button" tabindex="0" aria-label="Copy Room Invite Link">
         <span class="room-label">ROOM</span>
         <span id="header-room-code" class="room-code">------</span>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
       </div>
       <div id="header-user-pill" class="user-pill" style="display: none;">
         <div id="header-user-avatar" class="user-avatar" aria-hidden="true">A</div>
         <span id="header-user-name" class="user-name">Actor</span>
       </div>
-      <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;" title="Leave Room and Return to Scenes" aria-label="Leave Studio Session">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+      <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;"
+        title="Leave Room and Return to Scenes" aria-label="Leave Studio Session">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" x2="9" y1="12" y2="12" />
+        </svg>
         <span>Exit</span>
       </button>
     </div>
   </header>
 
   <!-- Live Cast Activity HUD Ribbon -->
-  <div id="cast-activity-bar" class="cast-activity-bar" style="display: none;" role="region" aria-label="Live Cast Activity" aria-live="polite">
+  <div id="cast-activity-bar" class="cast-activity-bar" style="display: none;" role="region"
+    aria-label="Live Cast Activity" aria-live="polite">
     <div class="cast-activity-header">
       <span class="cast-hud-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
         CAST HUD
       </span>
       <span id="premiere-status-summary" class="premiere-status-summary">0/0 Ready</span>
@@ -104,7 +180,8 @@
     <section id="view-landing" class="view-section active" aria-label="Studio Setup & Scene Selection">
       <div class="hero-banner">
         <h1 class="hero-title">Dub Anime & Scenes <span class="hero-title-accent">Together with Friends</span></h1>
-        <p class="hero-subtitle">Cast iconic characters, record voice lines with tactile analog amp controls and visual waveform sync, shape tracks with studio DSP, and screen your full master dub live.</p>
+        <p class="hero-subtitle">Cast iconic characters, record voice lines with tactile analog amp controls and visual
+          waveform sync, shape tracks with studio DSP, and screen your full master dub live.</p>
       </div>
 
       <div class="landing-grid">
@@ -112,24 +189,34 @@
         <div class="glass-card panel-actor-setup">
           <div class="panel-header">
             <span class="panel-icon" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
             </span>
             <h3 class="panel-title">Actor Profile & Session</h3>
           </div>
 
           <div class="form-group" style="margin-top: 16px;">
             <label class="form-label" for="input-user-name">Your Actor Name</label>
-            <input type="text" id="input-user-name" class="form-input" placeholder="e.g. Levi Ackerman" maxlength="24" autocomplete="nickname">
+            <input type="text" id="input-user-name" class="form-input" placeholder="e.g. Levi Ackerman" maxlength="24"
+              autocomplete="nickname">
           </div>
 
           <div class="form-group">
             <label class="form-label">Avatar Color Theme</label>
             <div class="color-palette" id="color-palette" role="radiogroup" aria-label="Avatar Color Selection">
-              <div class="color-option selected" data-color="#d97706" style="background: #d97706;" title="Vintage Amber" role="radio" aria-checked="true" tabindex="0"></div>
-              <div class="color-option" data-color="#cca458" style="background: #cca458;" title="Walnut Gold" role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#dc2626" style="background: #dc2626;" title="Pilot Red" role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#16a34a" style="background: #16a34a;" title="Studio Olive" role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#b45309" style="background: #b45309;" title="Terracotta Bronze" role="radio" aria-checked="false" tabindex="0"></div>
+              <div class="color-option selected" data-color="#d97706" style="background: #d97706;" title="Vintage Amber"
+                role="radio" aria-checked="true" tabindex="0"></div>
+              <div class="color-option" data-color="#cca458" style="background: #cca458;" title="Walnut Gold"
+                role="radio" aria-checked="false" tabindex="0"></div>
+              <div class="color-option" data-color="#dc2626" style="background: #dc2626;" title="Pilot Red" role="radio"
+                aria-checked="false" tabindex="0"></div>
+              <div class="color-option" data-color="#16a34a" style="background: #16a34a;" title="Studio Olive"
+                role="radio" aria-checked="false" tabindex="0"></div>
+              <div class="color-option" data-color="#b45309" style="background: #b45309;" title="Terracotta Bronze"
+                role="radio" aria-checked="false" tabindex="0"></div>
             </div>
           </div>
 
@@ -138,11 +225,20 @@
           <!-- Tab Selection: Host vs Join -->
           <div class="tab-pill-group" role="tablist">
             <button id="tab-btn-create" class="tab-pill active" role="tab" aria-selected="true">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path
+                  d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+              </svg>
               Create Room
             </button>
             <button id="tab-btn-join" class="tab-pill" role="tab" aria-selected="false">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="7.5" cy="15.5" r="5.5" />
+                <path d="m21 2-9.6 9.6" />
+                <path d="m15.5 7.5 3 3L22 7l-3-3" />
+              </svg>
               Join Code
             </button>
           </div>
@@ -156,7 +252,8 @@
           <div id="panel-join-room" style="display: none;">
             <div class="form-group">
               <label class="form-label" for="input-room-code">6-Character Room Code</label>
-              <input type="text" id="input-room-code" class="form-input code-input" placeholder="e.g. DUB789" maxlength="6" autocomplete="off" spellcheck="false">
+              <input type="text" id="input-room-code" class="form-input code-input" placeholder="e.g. DUB789"
+                maxlength="6" autocomplete="off" spellcheck="false">
             </div>
             <button id="btn-join-room" class="btn btn-secondary btn-lg" style="width: 100%;">
               <span>Join Session Room ›</span>
@@ -169,25 +266,63 @@
           <div class="panel-header" style="justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="panel-icon" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M7 3v18" />
+                  <path d="M3 7.5h4" />
+                  <path d="M3 12h18" />
+                  <path d="M3 16.5h4" />
+                  <path d="M17 3v18" />
+                  <path d="M17 7.5h4" />
+                  <path d="M17 16.5h4" />
+                </svg>
               </span>
               <h3 class="panel-title">Choose Scene Dub Pack</h3>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <a href="/builder.html" id="btn-open-builder" class="btn btn-primary btn-sm" title="Create a custom scene dub pack from any video with AI vocal isolation" aria-label="Open Pack Builder Studio" style="text-decoration: none;">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              <a href="/builder.html" id="btn-open-builder" class="btn btn-primary btn-sm"
+                title="Create a custom scene dub pack from any video with AI vocal isolation"
+                aria-label="Open Pack Builder Studio" style="text-decoration: none;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
                 <span>Create Pack</span>
               </a>
-              <button id="btn-import-pack" class="btn btn-secondary btn-sm" title="Import scene pack (.zip from GameBanana or Pack Builder)" aria-label="Import Scene Pack ZIP">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              <button id="btn-import-pack" class="btn btn-secondary btn-sm"
+                title="Import scene pack (.zip from GameBanana or Pack Builder)" aria-label="Import Scene Pack ZIP">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" x2="12" y1="3" y2="15" />
+                </svg>
                 <span>Import .ZIP</span>
               </button>
               <input type="file" id="input-pack-zip" accept=".zip" style="display: none;">
-              <button id="btn-rescan-packs" class="btn btn-secondary btn-sm" title="Rescan Packs directory for newly added or updated scenes" aria-label="Rescan Scene Packs Directory">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+              <button id="btn-rescan-packs" class="btn btn-secondary btn-sm"
+                title="Rescan Packs directory for newly added or updated scenes"
+                aria-label="Rescan Scene Packs Directory">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                  <path d="M3 21v-5h5" />
+                </svg>
                 <span>Rescan</span>
               </button>
-              <span id="pack-count-badge" class="badge-accent"><span class="spinning" style="display: inline-flex; align-items: center; justify-content: center;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span> Scanning...</span>
+              <span id="pack-count-badge" class="badge-accent"><span class="spinning"
+                  style="display: inline-flex; align-items: center; justify-content: center;"><svg width="11"
+                    height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                    <path d="M21 21v-5h-5" />
+                  </svg></span> Scanning...</span>
             </div>
           </div>
 
@@ -195,10 +330,17 @@
           <div class="pack-search-container">
             <div class="search-input-wrapper">
               <span class="search-icon" aria-hidden="true">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
               </span>
-              <input type="text" id="input-pack-search" class="form-input search-input" placeholder="Search scenes, characters, or dialogue keywords..." autocomplete="off" spellcheck="false" aria-label="Search scene packs">
-              <button id="btn-clear-search" class="btn-clear-search" style="display: none;" title="Clear search" aria-label="Clear search input">✕</button>
+              <input type="text" id="input-pack-search" class="form-input search-input"
+                placeholder="Search scenes, characters, or dialogue keywords..." autocomplete="off" spellcheck="false"
+                aria-label="Search scene packs">
+              <button id="btn-clear-search" class="btn-clear-search" style="display: none;" title="Clear search"
+                aria-label="Clear search input">✕</button>
               <kbd class="search-kbd" title="Press '/' to focus search">/</kbd>
             </div>
           </div>
@@ -206,9 +348,15 @@
           <!-- Drag and Drop Overlay Indicator -->
           <div id="pack-dropzone" class="pack-dropzone" style="display: none;">
             <div class="dropzone-inner">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" x2="12" y1="3" y2="15" />
+              </svg>
               <div class="dropzone-title">Drop Choicer Voicer / GameBanana .ZIP Here</div>
-              <div class="dropzone-sub">DubMate will automatically verify security, unpack, index, and load it into your studio</div>
+              <div class="dropzone-sub">DubMate will automatically verify security, unpack, index, and load it into your
+                studio</div>
             </div>
           </div>
 
@@ -262,15 +410,26 @@
             <span id="lobby-line-count" class="char-tag">0 Lines</span>
           </div>
           <h2 id="lobby-pack-title" class="lobby-pack-title">Scene Title</h2>
-          <p class="lobby-desc">Assign characters to players below. Multiple characters can be voiced by the same actor.</p>
+          <p class="lobby-desc">Assign characters to players below. Multiple characters can be voiced by the same actor.
+          </p>
         </div>
         <div class="lobby-action-group">
-          <button id="btn-leave-room-lobby" class="btn btn-ghost" aria-label="Leave Studio Session and Return to Scenes">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+          <button id="btn-leave-room-lobby" class="btn btn-ghost"
+            aria-label="Leave Studio Session and Return to Scenes">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" x2="9" y1="12" y2="12" />
+            </svg>
             <span>← Leave Room</span>
           </button>
           <button id="btn-copy-invite" class="btn btn-secondary" aria-label="Copy Invite Link to Clipboard">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+            </svg>
             <span>Copy Link</span>
           </button>
           <button id="btn-start-session" class="btn btn-primary btn-lg">
@@ -284,7 +443,13 @@
         <div class="glass-card panel-casting">
           <div class="panel-header">
             <span class="panel-icon" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
             </span>
             <h3 class="panel-title">Character Casting Board</h3>
           </div>
@@ -307,25 +472,44 @@
           <div class="glass-card">
             <div class="panel-header">
               <span class="panel-icon" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
               </span>
               <h3 class="panel-title">Recording Workflow</h3>
             </div>
-            
+
             <div style="padding: 16px;">
-              <div class="mode-card selected" id="mode-card-booth" data-mode="booth" role="button" tabindex="0" aria-label="Select Solo Recording Booth Mode">
+              <div class="mode-card selected" id="mode-card-booth" data-mode="booth" role="button" tabindex="0"
+                aria-label="Select Solo Recording Booth Mode">
                 <div class="mode-icon" aria-hidden="true">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" x2="12" y1="19" y2="22" />
+                  </svg>
                 </div>
                 <div class="mode-details">
                   <div class="mode-name">Solo Recording Booth</div>
-                  <div class="mode-desc">Record all your character's lines self-paced without waiting for others. (Recommended)</div>
+                  <div class="mode-desc">Record all your character's lines self-paced without waiting for others.
+                    (Recommended)</div>
                 </div>
               </div>
 
-              <div class="mode-card" id="mode-card-studio" data-mode="studio" role="button" tabindex="0" aria-label="Select Synced Studio Prompter Mode">
+              <div class="mode-card" id="mode-card-studio" data-mode="studio" role="button" tabindex="0"
+                aria-label="Select Synced Studio Prompter Mode">
                 <div class="mode-icon" aria-hidden="true">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
                 </div>
                 <div class="mode-details">
                   <div class="mode-name">Synced Studio Prompter</div>
@@ -338,14 +522,21 @@
                 <div class="lobby-noise-header">
                   <div class="lobby-noise-title-group">
                     <span class="lobby-noise-icon" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                        <line x1="12" x2="12" y1="19" y2="22" />
+                      </svg>
                     </span>
                     <span class="lobby-noise-title">Studio Noise Reduction</span>
                   </div>
-                  <input type="checkbox" id="check-lobby-noise-reduction" checked class="switch-checkbox" aria-label="Toggle Studio Noise Reduction">
+                  <input type="checkbox" id="check-lobby-noise-reduction" checked class="switch-checkbox"
+                    aria-label="Toggle Studio Noise Reduction">
                 </div>
                 <p class="lobby-noise-desc">
-                  Adaptive FFT spectral filter removes background mic hiss, fan hum, and room noise. Raw takes are always preserved so you can switch anytime.
+                  Adaptive FFT spectral filter removes background mic hiss, fan hum, and room noise. Raw takes are
+                  always preserved so you can switch anytime.
                 </p>
               </div>
             </div>
@@ -355,7 +546,13 @@
             <div class="panel-header" style="justify-content: space-between;">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span class="panel-icon" aria-hidden="true">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
                 </span>
                 <h3 class="panel-title">Connected Cast</h3>
               </div>
@@ -378,7 +575,8 @@
           <div class="processing-spinner-ring"></div>
           <div class="processing-content">
             <div id="booth-processing-title" class="processing-title">Processing Voice Take</div>
-            <div id="booth-processing-sub" class="processing-sub">Normalizing audio, computing waveform peaks & saving to session...</div>
+            <div id="booth-processing-sub" class="processing-sub">Normalizing audio, computing waveform peaks & saving
+              to session...</div>
           </div>
         </div>
       </div>
@@ -392,23 +590,42 @@
           </div>
           <span id="booth-character-badge" class="char-tag char-tag-active">Character</span>
           <span id="booth-time-badge" class="time-badge">00:00.00 - 00:00.00</span>
-          <button id="btn-toggle-filter-lines" class="btn btn-secondary btn-sm" title="Toggle between all lines and your assigned lines" aria-label="Toggle My Lines Only">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          <button id="btn-toggle-filter-lines" class="btn btn-secondary btn-sm"
+            title="Toggle between all lines and your assigned lines" aria-label="Toggle My Lines Only">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
             <span id="label-filter-lines">My Lines Only</span>
           </button>
         </div>
 
         <div class="stage-action-group">
-          <button id="btn-toggle-ready" class="btn btn-secondary btn-sm btn-ready-toggle" aria-label="Toggle Ready for Premiere Status">
-            <svg class="btn-ready-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path class="check-tick" d="m9 12 2 2 4-4"/></svg>
+          <button id="btn-toggle-ready" class="btn btn-secondary btn-sm btn-ready-toggle"
+            aria-label="Toggle Ready for Premiere Status">
+            <svg class="btn-ready-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path class="check-tick" d="m9 12 2 2 4-4" />
+            </svg>
             <span id="label-ready-state">Mark Ready</span>
           </button>
-          <button id="btn-jump-screening" class="btn btn-primary btn-sm" title="Enter the Finale Screening Theater" aria-label="Enter Screening Theater">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="3" rx="2"/><polyline points="12 18 12 22"/><path d="M8 22h8"/></svg>
+          <button id="btn-jump-screening" class="btn btn-primary btn-sm" title="Enter the Finale Screening Theater"
+            aria-label="Enter Screening Theater">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="15" x="2" y="3" rx="2" />
+              <polyline points="12 18 12 22" />
+              <path d="M8 22h8" />
+            </svg>
             <span>Screening Theater ›</span>
           </button>
-          <button id="btn-launch-premiere" class="btn btn-primary btn-sm" style="display: none;" aria-label="Launch Premiere for Entire Cast">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <button id="btn-launch-premiere" class="btn btn-primary btn-sm" style="display: none;"
+            aria-label="Launch Premiere for Entire Cast">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
             <span id="label-launch-premiere">Launch Premiere ›</span>
           </button>
         </div>
@@ -417,24 +634,31 @@
       <div class="booth-layout">
         <!-- Left / Center: Cinema Video Monitor, Subtitle Prompter, Dual Waveform Sync & Scene Timeline -->
         <div class="stage-main-col">
-          
+
           <!-- Cinema Video Monitor (Full Width in Main Stage) -->
           <div class="video-container">
-            <video id="stage-video" muted defaultMuted playsinline preload="auto" aria-label="Scene Reference Video"></video>
+            <video id="stage-video" muted defaultMuted playsinline preload="auto"
+              aria-label="Scene Reference Video"></video>
             <div id="video-overlay" class="video-overlay hidden" aria-live="polite">
               <div class="countdown-circle">
                 <div id="overlay-countdown" class="countdown-num">3</div>
               </div>
               <div id="overlay-status-text" class="overlay-status-text">GET READY...</div>
             </div>
-            <button id="btn-expand-video" class="btn-video-expand" title="Expand / Collapse Video Monitor" aria-label="Expand Video Monitor" aria-pressed="false">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <button id="btn-expand-video" class="btn-video-expand" title="Expand / Collapse Video Monitor"
+              aria-label="Expand Video Monitor" aria-pressed="false">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+              </svg>
             </button>
           </div>
 
           <!-- Subtitle / Caption Prompter with Smooth Splitter Resizer -->
           <div id="stage-caption-card" class="caption-card glass-card resizable-prompter" aria-live="polite">
-            <div id="prompter-resize-handle" class="prompter-resize-handle" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag up/down to resize video (Double-click to reset)" aria-label="Resize Video Viewport">
+            <div id="prompter-resize-handle" class="prompter-resize-handle" role="separator"
+              aria-orientation="horizontal" tabindex="0" title="Drag up/down to resize video (Double-click to reset)"
+              aria-label="Resize Video Viewport">
               <span class="resize-grip-pill"></span>
             </div>
             <div id="stage-caption-char" class="caption-char">CHARACTER</div>
@@ -455,31 +679,44 @@
               <span class="legend-offset-pill" id="waveform-offset-legend">Offset: 0 ms</span>
             </div>
             <div class="waveform-canvas-box">
-              <canvas id="waveform-canvas" aria-label="Dual Stacked Waveform ADR Sync Visualizer (Click & drag to align syllable timing)"></canvas>
+              <canvas id="waveform-canvas"
+                aria-label="Dual Stacked Waveform ADR Sync Visualizer (Click & drag to align syllable timing)"></canvas>
             </div>
 
             <!-- Fine-Tuning Preset Nudge Bar -->
             <div class="nudge-preset-bar">
               <div class="nudge-label">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
                 <span>Sync Nudge:</span>
                 <span class="shortcut-hint">([ ] keys or drag)</span>
               </div>
               <div class="nudge-buttons">
-                <button class="btn-nudge" data-nudge="-100" title="Shift 100ms earlier" aria-label="Nudge 100ms earlier">-100ms</button>
-                <button class="btn-nudge" data-nudge="-25" title="Shift 25ms earlier" aria-label="Nudge 25ms earlier">-25ms</button>
-                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" title="Reset offset to zero" aria-label="Reset offset to 0ms">0 ms</button>
-                <button class="btn-nudge" data-nudge="25" title="Shift 25ms later" aria-label="Nudge 25ms later">+25ms</button>
-                <button class="btn-nudge" data-nudge="100" title="Shift 100ms later" aria-label="Nudge 100ms later">+100ms</button>
+                <button class="btn-nudge" data-nudge="-100" title="Shift 100ms earlier"
+                  aria-label="Nudge 100ms earlier">-100ms</button>
+                <button class="btn-nudge" data-nudge="-25" title="Shift 25ms earlier"
+                  aria-label="Nudge 25ms earlier">-25ms</button>
+                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" title="Reset offset to zero"
+                  aria-label="Reset offset to 0ms">0 ms</button>
+                <button class="btn-nudge" data-nudge="25" title="Shift 25ms later"
+                  aria-label="Nudge 25ms later">+25ms</button>
+                <button class="btn-nudge" data-nudge="100" title="Shift 100ms later"
+                  aria-label="Nudge 100ms later">+100ms</button>
               </div>
-              <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0" aria-label="Fine-tuning timing offset slider" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0" aria-valuetext="0 milliseconds">
+              <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0"
+                aria-label="Fine-tuning timing offset slider" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0"
+                aria-valuetext="0 milliseconds">
               <span id="nudge-display" class="nudge-value-readout">0 ms</span>
             </div>
           </div>
 
           <!-- Timeline Strip Chips (Scene Line Navigation Pills) -->
           <div class="timeline-chips-wrapper">
-            <div class="timeline-chips-box glass-card" id="timeline-chips" role="region" aria-label="Dialogue Line Timeline">
+            <div class="timeline-chips-box glass-card" id="timeline-chips" role="region"
+              aria-label="Dialogue Line Timeline">
               <!-- Timeline line pills rendered dynamically -->
             </div>
           </div>
@@ -487,25 +724,31 @@
 
         <!-- Right: Studio Recording & Vintage Hardware Rack Deck -->
         <div class="booth-controls" id="booth-controls-panel">
-          
+
           <!-- Deck 1: Studio Monitoring & Headphone Deck (VOX Amp Style) -->
           <div class="glass-card control-card rack-wood-frame" id="card-studio-monitoring">
             <div class="panel-header-sm amp-faceplate">
               <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
               <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
               <div style="display: flex; align-items: center; gap: 6px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+                </svg>
                 <span>STUDIO MONITORING</span>
               </div>
               <span class="lamp-indicator-gold" title="Studio Audio Engine Active">48kHz STEREO</span>
             </div>
-            
+
             <!-- 3-Column Balanced Amp Section: Backing Dial | Click Rocker | Guide Rocker -->
             <div class="monitoring-deck-grid">
               <!-- Column 1: Master Backing Level Channel -->
               <div class="dsp-dial-channel amp-master-vol">
                 <span class="dsp-channel-title">BACKING</span>
-                <input type="range" id="slider-backing-vol" min="0" max="100" step="5" value="60" aria-label="Backing Track Volume (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="60" aria-valuetext="60 percent">
+                <input type="range" id="slider-backing-vol" min="0" max="100" step="5" value="60"
+                  aria-label="Backing Track Volume (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="60"
+                  aria-valuetext="60 percent">
                 <span id="val-backing-vol" class="dsp-channel-readout">60%</span>
               </div>
 
@@ -513,7 +756,8 @@
               <div class="analog-rocker-channel">
                 <span class="dsp-channel-title">CLICK</span>
                 <label class="analog-rocker-unit" title="Toggle Metronome Count-In Click">
-                  <input type="checkbox" id="check-metronome" checked class="analog-rocker-input" aria-label="Enable Metronome count-in click">
+                  <input type="checkbox" id="check-metronome" checked class="analog-rocker-input"
+                    aria-label="Enable Metronome count-in click">
                   <div class="analog-rocker-housing">
                     <div class="rocker-paddle">
                       <span class="rocker-symbol rocker-i">I</span>
@@ -529,7 +773,8 @@
               <div class="analog-rocker-channel">
                 <span class="dsp-channel-title">GUIDE</span>
                 <label class="analog-rocker-unit" title="Toggle Reference Guide Dialogue in Headphones">
-                  <input type="checkbox" id="check-guide-voice" class="analog-rocker-input" aria-label="Enable Reference Guide Voice in headphones">
+                  <input type="checkbox" id="check-guide-voice" class="analog-rocker-input"
+                    aria-label="Enable Reference Guide Voice in headphones">
                   <div class="analog-rocker-housing">
                     <div class="rocker-paddle">
                       <span class="rocker-symbol rocker-i">I</span>
@@ -544,8 +789,10 @@
 
             <!-- A/B Channel Selector Bar -->
             <div class="ab-switch-box">
-              <button id="btn-toggle-ab" class="btn-ab" title="Toggle between your dub and original voice" aria-label="Toggle A/B Audio Comparison">
-                <span id="label-ab-state"><strong style="color: var(--primary);">[ A: Your Dub ]</strong> ⇄ B: Orig</span>
+              <button id="btn-toggle-ab" class="btn-ab" title="Toggle between your dub and original voice"
+                aria-label="Toggle A/B Audio Comparison">
+                <span id="label-ab-state"><strong style="color: var(--primary);">[ A: Your Dub ]</strong> ⇄ B:
+                  Orig</span>
               </button>
             </div>
           </div>
@@ -564,22 +811,29 @@
             <!-- Center Record Pilot Lamp Button -->
             <div class="record-bezel-wrapper">
               <div class="record-halo-ring"></div>
-              <button id="btn-record-main" class="btn-big-record" title="Press Spacebar or Click to Record" aria-label="Punch-In Record (Spacebar)">
+              <button id="btn-record-main" class="btn-big-record" title="Press Spacebar or Click to Record"
+                aria-label="Punch-In Record (Spacebar)">
                 <span id="record-icon" aria-hidden="true">●</span>
               </button>
             </div>
 
             <!-- Tape Transport Status Readout Strip -->
             <div id="record-status-label" class="record-status-label">PRESS SPACEBAR TO RECORD</div>
-            
+
             <!-- Full-Width Audition / Playback Transport Controls -->
             <div class="listen-btn-group full-width-transport">
-              <button id="btn-play-orig" class="btn btn-secondary btn-transport-full" title="Listen to original clip (Reference)" aria-label="Play Original Voice Reference">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <button id="btn-play-orig" class="btn btn-secondary btn-transport-full"
+                title="Listen to original clip (Reference)" aria-label="Play Original Voice Reference">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
                 <span>Original Ref</span>
               </button>
-              <button id="btn-preview-take" class="btn btn-primary btn-transport-full" title="Preview your take with backing track" aria-label="Preview Take with Backing Track">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <button id="btn-preview-take" class="btn btn-primary btn-transport-full"
+                title="Preview your take with backing track" aria-label="Preview Take with Backing Track">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
                 <span>Preview Take</span>
               </button>
             </div>
@@ -591,25 +845,39 @@
               <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
               <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
               <div style="display: flex; align-items: center; gap: 6px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2v4" />
+                  <path d="M12 18v4" />
+                  <path d="M4.93 4.93l2.83 2.83" />
+                  <path d="M16.24 16.24l2.83 2.83" />
+                  <path d="M2 12h4" />
+                  <path d="M18 12h4" />
+                </svg>
                 <span>VOICE DSP AMPLIFIER</span>
               </div>
-              <button id="btn-toggle-advanced-rack" class="amp-advanced-btn" aria-expanded="false" aria-controls="advanced-vocal-rack">Advanced ▾</button>
+              <button id="btn-toggle-advanced-rack" class="amp-advanced-btn" aria-expanded="false"
+                aria-controls="advanced-vocal-rack">Advanced ▾</button>
             </div>
-            
+
             <!-- 3-Channel Rotary Amp Dials -->
             <div class="dsp-rack-grid">
               <!-- Channel 1: Pitch Shift -->
               <div class="dsp-dial-channel">
                 <span class="dsp-channel-title">PITCH</span>
-                <input type="range" id="slider-pitch" min="-12" max="12" step="1" value="0" aria-label="Voice Pitch Shift (Semitones)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0" aria-valuetext="0 semitones">
+                <input type="range" id="slider-pitch" min="-12" max="12" step="1" value="0"
+                  aria-label="Voice Pitch Shift (Semitones)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
+                  aria-valuetext="0 semitones">
                 <span id="val-pitch" class="dsp-channel-readout">0 st</span>
               </div>
 
               <!-- Channel 2: Acoustic Reverb -->
               <div class="dsp-dial-channel">
                 <span class="dsp-channel-title">REVERB</span>
-                <input type="range" id="slider-reverb" min="0" max="100" step="5" value="0" aria-label="Acoustic Reverb Wet Mix (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0 percent">
+                <input type="range" id="slider-reverb" min="0" max="100" step="5" value="0"
+                  aria-label="Acoustic Reverb Wet Mix (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                  aria-valuetext="0 percent">
                 <span id="val-reverb" class="dsp-channel-readout">0%</span>
               </div>
 
@@ -617,15 +885,25 @@
               <div class="dsp-dial-channel">
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                   <span class="dsp-channel-title">BOOST</span>
-                  <button id="btn-auto-match-gain" class="btn btn-ghost btn-xs btn-auto-match" title="Auto-calibrate gain to match original scene dialogue level" aria-label="Auto-Match Scene Vocal Level" style="display: none;">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 15 5-5 5 5 10-10"/><path d="M17 5h5v5"/></svg>
+                  <button id="btn-auto-match-gain" class="btn btn-ghost btn-xs btn-auto-match"
+                    title="Auto-calibrate gain to match original scene dialogue level"
+                    aria-label="Auto-Match Scene Vocal Level" style="display: none;">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m2 15 5-5 5 5 10-10" />
+                      <path d="M17 5h5v5" />
+                    </svg>
                     <span>Auto</span>
                   </button>
                 </div>
-                <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0" aria-label="Vocal Boost Gain (Decibels)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0" aria-valuetext="0 decibels">
+                <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0"
+                  aria-label="Vocal Boost Gain (Decibels)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
+                  aria-valuetext="0 decibels">
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                   <span id="val-gain" class="dsp-channel-readout">0 dB</span>
-                  <span id="badge-gain-match" class="badge-calibrated uncalibrated" style="font-size: 8.5px; padding: 1px 4px; display: none;" title="Auto-matched to original scene vocal level">Scene Match</span>
+                  <span id="badge-gain-match" class="badge-calibrated uncalibrated"
+                    style="font-size: 8.5px; padding: 1px 4px; display: none;"
+                    title="Auto-matched to original scene vocal level">Scene Match</span>
                 </div>
               </div>
             </div>
@@ -638,7 +916,8 @@
                   <div class="analog-rocker-channel">
                     <span class="dsp-channel-title">CLEANER</span>
                     <label class="analog-rocker-unit" title="AI Voice Cleaner (DeepFilterNet 3)">
-                      <input type="checkbox" id="check-noise-reduction" checked class="analog-rocker-input" aria-label="Toggle AI Voice Cleaner">
+                      <input type="checkbox" id="check-noise-reduction" checked class="analog-rocker-input"
+                        aria-label="Toggle AI Voice Cleaner">
                       <div class="analog-rocker-housing">
                         <div class="rocker-paddle">
                           <span class="rocker-symbol rocker-i">I</span>
@@ -685,13 +964,17 @@
                 <div class="advanced-dials-row">
                   <div class="dsp-dial-channel">
                     <span class="dsp-channel-title">DECAY</span>
-                    <input type="range" id="slider-decay" min="0.2" max="4.0" step="0.2" value="1.5" aria-label="Reverb Decay Time (Seconds)" aria-valuemin="0.2" aria-valuemax="4.0" aria-valuenow="1.5" aria-valuetext="1.5 seconds">
+                    <input type="range" id="slider-decay" min="0.2" max="4.0" step="0.2" value="1.5"
+                      aria-label="Reverb Decay Time (Seconds)" aria-valuemin="0.2" aria-valuemax="4.0"
+                      aria-valuenow="1.5" aria-valuetext="1.5 seconds">
                     <span id="val-decay" class="dsp-channel-readout">1.5s</span>
                   </div>
 
                   <div class="dsp-dial-channel">
                     <span class="dsp-channel-title">PRE-DELAY</span>
-                    <input type="range" id="slider-predelay" min="0" max="60" step="5" value="20" aria-label="Reverb Pre-Delay Time (Milliseconds)" aria-valuemin="0" aria-valuemax="60" aria-valuenow="20" aria-valuetext="20 milliseconds">
+                    <input type="range" id="slider-predelay" min="0" max="60" step="5" value="20"
+                      aria-label="Reverb Pre-Delay Time (Milliseconds)" aria-valuemin="0" aria-valuemax="60"
+                      aria-valuenow="20" aria-valuetext="20 milliseconds">
                     <span id="val-predelay" class="dsp-channel-readout">20ms</span>
                   </div>
                 </div>
@@ -701,11 +984,19 @@
 
           <!-- Deck 4: Line Step Navigation Deck -->
           <div class="booth-nav-group">
-            <button id="btn-prev-line" class="btn btn-secondary btn-sm" style="flex: 1;" aria-label="Go to Previous Line">‹ Prev</button>
-            <button id="btn-clear-take" class="btn btn-ghost btn-sm" title="Clear current take" aria-label="Clear Current Voice Take">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            <button id="btn-prev-line" class="btn btn-secondary btn-sm" style="flex: 1;"
+              aria-label="Go to Previous Line">‹ Prev</button>
+            <button id="btn-clear-take" class="btn btn-ghost btn-sm" title="Clear current take"
+              aria-label="Clear Current Voice Take">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18" />
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+              </svg>
             </button>
-            <button id="btn-next-line" class="btn btn-primary btn-sm" style="flex: 2;" aria-label="Go to Next Line">Next Line ›</button>
+            <button id="btn-next-line" class="btn btn-primary btn-sm" style="flex: 2;" aria-label="Go to Next Line">Next
+              Line ›</button>
           </div>
 
         </div>
@@ -719,15 +1010,27 @@
         <div class="screening-title-row">
           <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
             <span class="theater-icon" aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="3" rx="2"/><polyline points="12 18 12 22"/><path d="M8 22h8"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="15" x="2" y="3" rx="2" />
+                <polyline points="12 18 12 22" />
+                <path d="M8 22h8" />
+              </svg>
             </span>
             <h2 class="screening-title">Finale Screening Theater</h2>
             <span id="screening-host-badge" class="badge-host">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"/></svg>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
+              </svg>
               <span>Host Controller</span>
             </span>
             <span id="screening-master-badge" class="badge-master" style="display: none;">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path
+                  d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+              </svg>
               <span>Master Rendered MP4</span>
             </span>
           </div>
@@ -735,65 +1038,117 @@
             <span>‹ Return to Recording Booth</span>
           </button>
         </div>
-        <p id="screening-status-desc" class="screening-desc">Host controls synchronized playback for all connected friends.</p>
+        <p id="screening-status-desc" class="screening-desc">Host controls synchronized playback for all connected
+          friends.</p>
       </div>
 
       <div class="screening-theater-box">
         <div class="video-container theater-player">
           <video id="screening-video" playsinline preload="auto" aria-label="Dubbed Scene Finale Video"></video>
-          <button id="btn-expand-theater-video" class="btn-video-expand" title="Expand / Collapse Theater Video" aria-label="Expand Theater Video" aria-pressed="false">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+          <button id="btn-expand-theater-video" class="btn-video-expand" title="Expand / Collapse Theater Video"
+            aria-label="Expand Theater Video" aria-pressed="false">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+            </svg>
           </button>
         </div>
       </div>
 
       <!-- Synchronized Master Playback Controls -->
       <div class="screening-controls-bar glass-card" role="toolbar" aria-label="Screening Transport Controls">
-        <button id="btn-screening-play-pause" class="btn btn-primary btn-lg" style="min-width: 160px;" aria-label="Play or Pause Dubbed Scene">
+        <button id="btn-screening-play-pause" class="btn btn-primary btn-lg" style="min-width: 160px;"
+          aria-label="Play or Pause Dubbed Scene">
           <span id="screening-play-icon">▶ Play Dub</span>
         </button>
-        <button id="btn-screening-replay" class="btn btn-secondary btn-lg" aria-label="Replay Dubbed Scene">↺ Replay</button>
-        
+        <button id="btn-screening-replay" class="btn btn-secondary btn-lg" aria-label="Replay Dubbed Scene">↺
+          Replay</button>
+
         <!-- Aspect Ratio Selector Pill -->
         <div class="aspect-ratio-toggle-group" role="radiogroup" aria-label="Export Video Aspect Ratio">
-          <button id="btn-aspect-16-9" class="btn btn-aspect active" role="radio" aria-checked="true" title="16:9 Cinema Landscape">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/></svg>
+          <button id="btn-aspect-16-9" class="btn btn-aspect active" role="radio" aria-checked="true"
+            title="16:9 Cinema Landscape">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="14" x="2" y="5" rx="2" />
+            </svg>
             <span>16:9</span>
           </button>
-          <button id="btn-aspect-9-16" class="btn btn-aspect" role="radio" aria-checked="false" title="9:16 Vertical (Shorts / Reels / TikTok with Letterboxing)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2"/></svg>
+          <button id="btn-aspect-9-16" class="btn btn-aspect" role="radio" aria-checked="false"
+            title="9:16 Vertical (Shorts / Reels / TikTok with Letterboxing)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect width="14" height="20" x="5" y="2" rx="2" />
+            </svg>
             <span>9:16 Shorts</span>
           </button>
         </div>
 
         <button id="btn-export-video" class="btn btn-success btn-lg" aria-label="Export Master MP4 Video">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" x2="12" y1="15" y2="3" />
+          </svg>
           <span id="label-export-btn">Export Master MP4</span>
         </button>
 
-        <button id="btn-toolbar-project-zip" type="button" class="btn btn-project-zip btn-lg" aria-label="Download Full Project ZIP with Stems, Video and Cuesheet" title="Download NLE-ready multi-track bundle (MP3 stems, clean video, takes, timeline cues)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+        <button id="btn-toolbar-project-zip" type="button" class="btn btn-project-zip btn-lg"
+          aria-label="Download Full Project ZIP with Stems, Video and Cuesheet"
+          title="Download NLE-ready multi-track bundle (MP3 stems, clean video, takes, timeline cues)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path
+              d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+            <path d="m3.3 7 8.7 5 8.7-5" />
+            <path d="M12 22V12" />
+          </svg>
           <span id="label-toolbar-project-zip">Download Full Project (.zip)</span>
         </button>
       </div>
 
       <!-- Master Audio Stem Balance Mixer Deck -->
-      <div class="screening-stem-mixer glass-card rack-wood-frame" role="region" aria-label="Screening Audio Stem Balance">
+      <div class="screening-stem-mixer glass-card rack-wood-frame" role="region"
+        aria-label="Screening Audio Stem Balance">
         <div class="stem-mixer-header">
           <div class="stem-title-group">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><circle cx="4" cy="14" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="20" cy="16" r="2"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 21v-7" />
+              <path d="M4 10V3" />
+              <path d="M12 21v-9" />
+              <path d="M12 8V3" />
+              <path d="M20 21v-5" />
+              <path d="M20 12V3" />
+              <circle cx="4" cy="14" r="2" />
+              <circle cx="12" cy="8" r="2" />
+              <circle cx="20" cy="16" r="2" />
+            </svg>
             <span>MASTER STEM BALANCE</span>
           </div>
           <span id="val-screening-balance" class="stem-val-badge">Balanced (50/50)</span>
         </div>
         <div class="stem-slider-row">
           <span class="stem-tag stem-tag-music">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
             <span>Backing Stem</span>
           </span>
-          <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1" value="50" aria-label="Master Audio Stem Balance (Backing Track vs Vocal Dub Takes)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 percent balanced">
+          <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1" value="50"
+            aria-label="Master Audio Stem Balance (Backing Track vs Vocal Dub Takes)" aria-valuemin="0"
+            aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 percent balanced">
           <span class="stem-tag stem-tag-vocals">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" x2="12" y1="19" y2="22" />
+            </svg>
             <span>Vocal Takes</span>
           </span>
         </div>
@@ -804,23 +1159,36 @@
         </div>
 
         <!-- Master Dialogue Prominence / Vocal Mix Presence Deck -->
-        <div class="presence-mixer-section" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+        <div class="presence-mixer-section"
+          style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
           <div class="stem-mixer-header">
             <div class="stem-title-group">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-              <span style="font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--accent-brass);">MASTER DIALOGUE PROMINENCE</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              </svg>
+              <span
+                style="font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--accent-brass);">MASTER
+                DIALOGUE PROMINENCE</span>
             </div>
-            <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (Scene Default)</span>
+            <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (Scene
+              Default)</span>
           </div>
           <div class="stem-slider-row" style="margin-top: 4px;">
             <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">-6dB</span>
-            <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5" value="0" aria-label="Master Dialogue Presence Offset in Decibels" aria-valuemin="-6" aria-valuemax="8" aria-valuenow="0" aria-valuetext="0.0 dB scene default">
+            <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5" value="0"
+              aria-label="Master Dialogue Presence Offset in Decibels" aria-valuemin="-6" aria-valuemax="8"
+              aria-valuenow="0" aria-valuetext="0.0 dB scene default">
             <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">+8dB</span>
           </div>
           <div class="presence-preset-pills" style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">Scene Default (0dB)</button>
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="2.5">Cinematic (+2.5dB)</button>
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="5.0">Vocal Forward (+5dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">Scene
+              Default (0dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="2.5">Cinematic
+              (+2.5dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="5.0">Vocal Forward
+              (+5dB)</button>
           </div>
         </div>
       </div>
@@ -837,17 +1205,37 @@
           <span class="step-item" id="step-mux">Video Muxing</span>
           <span class="step-item" id="step-ready">Ready</span>
         </div>
-        <div id="export-download-container" style="display: none; margin-top: 16px; text-align: center; gap: 12px; justify-content: center; flex-wrap: wrap;">
-          <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download aria-label="Download 16:9 Cinema MP4">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+        <div id="export-download-container"
+          style="display: none; margin-top: 16px; text-align: center; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download
+            aria-label="Download 16:9 Cinema MP4">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" x2="12" y1="15" y2="3" />
+            </svg>
             <span>Download 16:9 Cinema MP4</span>
           </a>
-          <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download aria-label="Download 9:16 Vertical Shorts MP4">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download
+            aria-label="Download 9:16 Vertical Shorts MP4">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" x2="12" y1="15" y2="3" />
+            </svg>
             <span>Download 9:16 Shorts MP4</span>
           </a>
-          <button id="btn-download-project-zip" type="button" class="btn btn-project-zip btn-lg" aria-label="Download Full Project ZIP with Stems, Video and Cuesheet">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+          <button id="btn-download-project-zip" type="button" class="btn btn-project-zip btn-lg"
+            aria-label="Download Full Project ZIP with Stems, Video and Cuesheet">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path
+                d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+              <path d="m3.3 7 8.7 5 8.7-5" />
+              <path d="M12 22V12" />
+            </svg>
             <span id="label-download-project-zip">Download Full Project (.zip)</span>
           </button>
         </div>
@@ -860,15 +1248,26 @@
   <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Master Dub Video Export Rendering Modal Overlay -->
-  <div id="modal-export-rendering" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="export-modal-title" aria-describedby="export-modal-status-text">
+  <div id="modal-export-rendering" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true"
+    aria-labelledby="export-modal-title" aria-describedby="export-modal-status-text">
     <div class="studio-modal-card">
       <!-- Top-Right Close Button -->
-      <button id="btn-modal-close-x" class="modal-close-btn" style="display: none;" title="Close Popup" aria-label="Close Master Dub Popup">✕</button>
+      <button id="btn-modal-close-x" class="modal-close-btn" style="display: none;" title="Close Popup"
+        aria-label="Close Master Dub Popup">✕</button>
 
       <div class="render-animation-container">
         <div class="render-film-reel">
           <div class="reel-core">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 2v4" />
+              <path d="M12 18v4" />
+              <path d="M4.93 4.93l2.83 2.83" />
+              <path d="M16.24 16.24l2.83 2.83" />
+              <path d="M2 12h4" />
+              <path d="M18 12h4" />
+            </svg>
           </div>
           <div class="reel-pulse-ring"></div>
         </div>
@@ -880,7 +1279,8 @@
           <span class="badge-render-live" id="export-modal-badge">PROCESSING</span>
         </div>
         <h2 id="export-modal-title" class="modal-title">Master Dub Rendering</h2>
-        <p id="export-modal-status-text" class="modal-status-text">Applying studio DSP, vocal EQ, and frame-accurate timeline muxing...</p>
+        <p id="export-modal-status-text" class="modal-status-text">Applying studio DSP, vocal EQ, and frame-accurate
+          timeline muxing...</p>
       </div>
 
       <!-- 3-Stage Progress Steps -->
@@ -916,25 +1316,46 @@
       </div>
 
       <div id="export-modal-reassurance" class="modal-reassurance-notice">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-        <span>Please do not close this window or navigate away while rendering is in progress. Controls are locked to ensure rendering integrity.</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" x2="12" y1="8" y2="12" />
+          <line x1="12" x2="12.01" y1="16" y2="16" />
+        </svg>
+        <span>Please do not close this window or navigate away while rendering is in progress. Controls are locked to
+          ensure rendering integrity.</span>
       </div>
 
       <!-- Modal Actions on Completion -->
       <div id="export-modal-actions" class="modal-actions" style="display: none;">
         <button id="btn-modal-close-view" class="btn btn-primary btn-lg" type="button">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="3" rx="2"/><polyline points="12 18 12 22"/><path d="M8 22h8"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="15" x="2" y="3" rx="2" />
+            <polyline points="12 18 12 22" />
+            <path d="M8 22h8" />
+          </svg>
           <span>Watch in Theater</span>
         </button>
         <button id="btn-modal-dismiss" class="btn btn-ghost btn-lg" type="button">
           <span>✕ Close</span>
         </button>
         <a id="btn-modal-download-169" href="#" class="btn btn-secondary btn-lg" download>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" x2="12" y1="15" y2="3" />
+          </svg>
           <span>Download 16:9 MP4</span>
         </a>
         <a id="btn-modal-download-916" href="#" class="btn btn-secondary btn-lg" download>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" x2="12" y1="15" y2="3" />
+          </svg>
           <span>Download 9:16 Shorts</span>
         </a>
       </div>
@@ -942,16 +1363,22 @@
   </div>
 
   <!-- Pack ZIP Import Loading Overlay -->
-  <div id="modal-import-loading" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+  <div id="modal-import-loading" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true"
+    aria-labelledby="import-modal-title">
     <div class="studio-modal-card import-modal-card">
       <div class="render-film-reel">
         <div class="reel-core">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            <polyline points="9 12 11 14 15 10" />
+          </svg>
         </div>
         <div class="reel-pulse-ring"></div>
       </div>
       <h3 id="import-modal-title" class="modal-title" style="margin-top: 16px;">Verifying & Importing Scene Pack</h3>
-      <p class="modal-status-text" id="import-modal-status-text">Scanning file signatures, verifying malware security, and indexing audio stems...</p>
+      <p class="modal-status-text" id="import-modal-status-text">Scanning file signatures, verifying malware security,
+        and indexing audio stems...</p>
       <div class="modal-progress-track">
         <div class="modal-progress-fill indeterminate"></div>
       </div>
@@ -959,13 +1386,20 @@
   </div>
 
   <!-- Microphone Noise Calibration Modal -->
-  <div id="modal-mic-calibration" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="calib-modal-title" aria-describedby="calib-modal-status">
+  <div id="modal-mic-calibration" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true"
+    aria-labelledby="calib-modal-title" aria-describedby="calib-modal-status">
     <div class="studio-modal-card calib-modal-card">
       <div class="calib-animation-container">
         <div class="calib-mic-visual">
           <div class="calib-mic-icon-circle">
-            <span id="calib-modal-icon" class="calib-pulse-icon" style="display: inline-flex; align-items: center; justify-content: center;">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            <span id="calib-modal-icon" class="calib-pulse-icon"
+              style="display: inline-flex; align-items: center; justify-content: center;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" x2="12" y1="19" y2="22" />
+              </svg>
             </span>
           </div>
           <div id="calib-radar-ring" class="calib-radar-ring"></div>
@@ -978,7 +1412,8 @@
           <span class="badge-render-live" id="calib-modal-badge">PRE-ROLL (1s)</span>
         </div>
         <h3 id="calib-modal-title" class="modal-title" style="margin-top: 8px;">Microphone Room Calibration</h3>
-        <p id="calib-modal-status" class="modal-status-text">Get ready... Releasing mouse click and preparing room tone sample.</p>
+        <p id="calib-modal-status" class="modal-status-text">Get ready... Releasing mouse click and preparing room tone
+          sample.</p>
       </div>
 
       <!-- Live Dual-Phase Countdown & Progress Visualizer -->
@@ -991,7 +1426,12 @@
       </div>
 
       <div class="modal-reassurance-notice" style="margin-top: 14px; text-align: center; font-size: 11.5px;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" x2="12" y1="8" y2="12" />
+          <line x1="12" x2="12.01" y1="16" y2="16" />
+        </svg>
         <span>Please stay quiet and avoid clicking or moving. Popup will close automatically.</span>
       </div>
 
@@ -1003,7 +1443,56 @@
     </div>
   </div>
 
+  <!-- Join Room Actor Name & Mic Setup Modal -->
+  <div id="modal-join-room" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true"
+    aria-labelledby="join-modal-title">
+    <div class="studio-modal-card join-modal-card">
+      <div class="modal-header-content" style="text-align: center; margin-top: 6px;">
+        <div class="modal-badge-row" style="justify-content: center;">
+          <span class="badge-studio">CAST CHECK-IN</span>
+          <span class="badge-render-live" id="join-modal-room-badge">ROOM: ----</span>
+        </div>
+        <h3 id="join-modal-title" class="modal-title" style="margin-top: 10px; font-size: 18px;">Join Dubbing Stage</h3>
+        <p class="modal-status-text" id="join-modal-subtitle">Choose your actor name and mic color before entering the studio.</p>
+      </div>
+
+      <div class="join-modal-form" style="margin-top: 20px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; align-items: center; gap: 14px; background: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-wood);">
+          <div id="join-modal-avatar-preview" class="join-modal-avatar-preview" style="background-color: var(--primary);">A</div>
+          <div style="flex: 1; min-width: 0;">
+            <label for="input-join-actor-name" style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; display: block;">Actor / Cast Name</label>
+            <input type="text" id="input-join-actor-name" class="form-input" placeholder="e.g. John Doe, Spike, Lucy" maxlength="28" style="width: 100%; font-size: 14px; font-weight: 600; padding: 7px 10px;" autocomplete="off" autocorrect="off">
+          </div>
+        </div>
+
+        <div class="form-group" style="text-align: left;">
+          <label style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">Presence Color</label>
+          <div id="join-color-palette" class="color-palette" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div class="color-option selected" data-color="#d97706" style="background-color: #d97706;" title="Vintage Amber" role="radio" aria-checked="true" tabindex="0"></div>
+            <div class="color-option" data-color="#cca458" style="background-color: #cca458;" title="Walnut Gold" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#dc2626" style="background-color: #dc2626;" title="Pilot Red" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#16a34a" style="background-color: #16a34a;" title="Studio Olive" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#b45309" style="background-color: #b45309;" title="Terracotta Bronze" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#7c5cff" style="background-color: #7c5cff;" title="Electric Violet" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#ec4899" style="background-color: #ec4899;" title="Magenta Neon" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#06b6d4" style="background-color: #06b6d4;" title="Cyan Console" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#8b5cf6" style="background-color: #8b5cf6;" title="Purple Tone" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#f59e0b" style="background-color: #f59e0b;" title="Amber Glow" role="radio" aria-checked="false" tabindex="0"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 22px; justify-content: flex-end; gap: 10px;">
+        <button id="btn-cancel-join-modal" class="btn btn-ghost btn-md" type="button">Cancel</button>
+        <button id="btn-confirm-join-modal" class="btn btn-primary btn-md" type="button">
+          <span>🎙️ Enter Studio</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts -->
-  <script type="module" src="/js/app.js?v=2.9"></script>
+  <script type="module" src="/js/app.js?v=3.0"></script>
 </body>
+
 </html>

@@ -207,6 +207,152 @@ body::after {
   outline: 2px solid var(--primary);
 }
 
+/* Mode Switcher Dropdown */
+.logo-dropdown-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.logo-with-dropdown {
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.logo-with-dropdown:hover {
+  background: var(--secondary);
+  border-color: var(--border-wood);
+}
+
+.logo-with-dropdown:focus-visible {
+  outline: 2px solid var(--primary);
+}
+
+.logo-chevron {
+  color: var(--foreground-muted);
+  transition: transform var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.logo-dropdown-container.open .logo-chevron {
+  transform: rotate(180deg);
+  color: var(--primary);
+}
+
+.logo-dropdown-container.open .logo-with-dropdown {
+  background: var(--secondary);
+  border-color: var(--border-wood);
+}
+
+.logo-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 290px;
+  background: #1c1815;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(217, 119, 6, 0.15);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  backdrop-filter: blur(12px);
+  animation: dropdownFadeIn 140ms var(--ease-out);
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mode-dropdown-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--foreground);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  border: 1px solid transparent;
+}
+
+.mode-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-wood);
+}
+
+.mode-dropdown-item.active {
+  background: rgba(217, 119, 6, 0.12);
+  border-color: rgba(217, 119, 6, 0.35);
+}
+
+.mode-item-icon {
+  font-size: 16px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.mode-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-item-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mode-item-title {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.mode-dropdown-item.active .mode-item-title {
+  color: var(--primary);
+}
+
+.mode-active-pill {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: #12100e;
+}
+
+.mode-item-desc {
+  font-size: 11px;
+  color: var(--foreground-muted);
+  line-height: 1.35;
+}
+
 .logo-icon {
   display: flex;
   align-items: center;
@@ -1234,6 +1380,28 @@ body::after {
   background: rgba(217, 119, 6, 0.15);
   border-color: var(--primary);
   color: var(--primary);
+}
+
+.btn-pack-download-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--foreground-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: all 0.15s ease;
+  margin-left: auto;
+}
+.btn-pack-download-icon:hover {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
 }
 
 /* Pack Card Skeleton Shimmer Loading State */
@@ -3162,14 +3330,15 @@ svg {
   font-weight: 700;
 }
 
-/* Toast Notifications */
+/* Toast Notifications (Top-Left below DubMate Header Logo) */
 #toast-container {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 1000;
+  top: 68px;
+  left: 24px;
+  z-index: 1200;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   pointer-events: none;
 }
@@ -3183,8 +3352,33 @@ svg {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
-  box-shadow: var(--shadow-panel);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
+  backdrop-filter: blur(8px);
+}
+
+/* Join Room Actor Name & Mic Setup Modal */
+.join-modal-card {
+  max-width: 440px;
+  background: #1c1814;
+  border: 1px solid var(--border-wood);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(217, 119, 6, 0.2);
+}
+
+.join-modal-avatar-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.15);
 }
 
 /* ------------------------------------------------------------- */
@@ -3953,12 +4147,35 @@ svg {
   padding: 12px 16px 28px;
 }
 
+body:has(#view-step-editor.active) {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body:has(#view-step-editor.active) .builder-main-container {
+  padding: 8px 16px 8px;
+  height: calc(100vh - 50px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .builder-view {
   display: none;
 }
 
 .builder-view.active {
   display: block;
+}
+
+#view-step-editor.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
 }
 
 .builder-hero {
@@ -4397,28 +4614,32 @@ svg {
 }
 
 /* Step 3: Multi-Track DAW Timeline & Cue Editor */
-/* Step 3: Multi-Track DAW Timeline & Cue Editor */
 .editor-workspace-layout {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .editor-top-row {
   display: grid;
-  grid-template-columns: 460px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 480px minmax(0, 1fr);
+  gap: 12px;
   align-items: stretch;
+  flex: 1;
+  min-height: 280px;
 }
 
 .editor-video-pane {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 460px;
+  width: 480px;
   flex-shrink: 0;
+  height: 100%;
 }
 
 .editor-video-container {
@@ -4428,7 +4649,8 @@ svg {
   background: #000000;
   border: 1px solid var(--border-wood);
   width: 100%;
-  height: 240px;
+  flex: 1;
+  min-height: 180px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4659,13 +4881,78 @@ svg {
   text-align: center;
 }
 
+/* Resizable Splitter Handle Bar between Video Pane & DAW Timeline */
+.timeline-splitter-handle {
+  width: 100%;
+  height: 12px;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -2px 0;
+  position: relative;
+  z-index: 30;
+  user-select: none;
+  touch-action: none;
+  background: transparent;
+  transition: all 140ms ease;
+}
+
+.splitter-grip-line {
+  width: 80px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: rgba(204, 164, 88, 0.25);
+  border: 1px solid rgba(204, 164, 88, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.splitter-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #cca458;
+  opacity: 0.6;
+}
+
+.timeline-splitter-handle:hover .splitter-grip-line,
+.timeline-splitter-handle.dragging .splitter-grip-line {
+  width: 150px;
+  height: 6px;
+  background: linear-gradient(90deg, #cca458 0%, #d97706 50%, #cca458 100%);
+  border-color: #f59e0b;
+  box-shadow: 0 0 14px rgba(217, 119, 6, 0.7);
+}
+
+.timeline-splitter-handle:hover .splitter-dot,
+.timeline-splitter-handle.dragging .splitter-dot {
+  background: #ffffff;
+  opacity: 1;
+}
+
+body.resizing-timeline {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
+body.resizing-timeline * {
+  user-select: none !important;
+  cursor: row-resize !important;
+}
+
 /* Bottom Full-Width Multi-Track DAW Panel */
 .editor-bottom-timeline-panel {
-  padding: 12px 16px;
+  padding: 8px 14px 8px;
   width: 100%;
   overflow: hidden;
-  flex: 1;
-  min-height: 280px;
+  height: var(--timeline-panel-height, 240px);
+  min-height: 120px;
+  max-height: 75vh;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
 }
@@ -4674,7 +4961,8 @@ svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
 }
 
 .timeline-header-left {
@@ -4705,6 +4993,14 @@ svg {
   border-radius: var(--radius-full);
 }
 
+#btn-add-audio-track:disabled,
+#btn-add-audio-track[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
 .timeline-hint {
   font-size: 10.5px;
   color: var(--foreground-dim);
@@ -4714,7 +5010,8 @@ svg {
 .daw-timeline-container {
   display: flex;
   flex: 1;
-  min-height: 240px;
+  min-height: 0;
+  height: 100%;
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -4723,7 +5020,7 @@ svg {
 }
 
 .daw-channel-strips {
-  width: 190px;
+  width: 165px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -4731,6 +5028,8 @@ svg {
   background: rgba(18, 14, 11, 0.96);
   padding-top: 24px; /* Matches ruler height */
   user-select: none;
+  height: 100%;
+  overflow-y: hidden;
 }
 
 .daw-channel-header {
@@ -4818,6 +5117,8 @@ svg {
   user-select: none;
   cursor: grab;
   background: rgba(10, 8, 6, 0.9);
+  height: 100%;
+  min-height: 0;
 }
 
 .timeline-canvas-scroll-container.panning {
@@ -4847,7 +5148,7 @@ svg {
 
 .timeline-viewport {
   position: relative;
-  min-height: 216px;
+  min-height: 0;
 }
 
 .timeline-channel-grid-guides {
@@ -4956,12 +5257,12 @@ svg {
 }
 
 .segment-inline-delete-btn {
-  background: rgba(220, 38, 38, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(220, 38, 38, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.35);
   color: #ffffff;
   border-radius: 50%;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   display: none;
   align-items: center;
   justify-content: center;
@@ -4969,7 +5270,14 @@ svg {
   cursor: pointer;
   margin-left: 4px;
   flex-shrink: 0;
-  transition: transform 120ms ease;
+  transition: all 120ms ease;
+  z-index: 15;
+  position: relative;
+  pointer-events: auto;
+}
+
+.segment-inline-delete-btn svg {
+  pointer-events: none;
 }
 
 .builder-segment-block:hover .segment-inline-delete-btn,
@@ -4978,8 +5286,9 @@ svg {
 }
 
 .segment-inline-delete-btn:hover {
-  transform: scale(1.2);
+  transform: scale(1.18);
   background: #dc2626;
+  box-shadow: 0 0 8px rgba(220, 38, 38, 0.7);
 }
 
 .timeline-playhead {
@@ -5016,7 +5325,8 @@ svg {
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  height: 350px;
+  height: 100%;
+  min-height: 280px;
   overflow: hidden;
 }
 

@@ -25,13 +25,13 @@ export class PackBuilderApp {
     this.characterColors = new Map();
     this.currentStep = 'upload';
     this.currentIngestTab = 'file'; // 'file' | 'url'
-    
+
     // Waveform & Timeline Engine State
     this.waveformPeaks = [];
     this.pixelsPerSecond = 80; // Zoom factor
     this.selectedSegmentIndex = null;
     this.activeAudioTrack = 'vocals'; // 'vocals' | 'full'
-    
+
     // Drag & Pan States
     this.isDragging = false;
     this.dragType = null; // 'move' | 'start' | 'end'
@@ -47,12 +47,41 @@ export class PackBuilderApp {
     this.panStartX = 0;
     this.panScrollLeft = 0;
 
+    // Timeline Vertical Splitter Resizing
+    this.isResizingTimeline = false;
+    this.resizeStartY = 0;
+    this.resizeStartHeight = 240;
+    this._resizeFrameId = null;
+
     this.animationFrameId = null;
 
     this.initDOM();
     this.initEvents();
     this.initKeyboardShortcuts();
     this.detectHardware();
+  }
+
+  async detectHardware() {
+    try {
+      const res = await fetch('/api/system/encoder');
+      if (res.ok) {
+        const data = await res.json();
+        if (this.deviceLabel) {
+          const isHw = data.is_hardware;
+          const vendor = data.vendor || 'GPU';
+          const enc = (data.encoder || '').replace('h264_', '').toUpperCase();
+          this.deviceLabel.innerText = isHw ? `⚡ ${vendor} ${enc}` : `💻 ${data.encoder}`;
+        }
+        if (this.devicePill) {
+          this.devicePill.title = `Encoding Engine: ${data.description}`;
+          if (data.is_hardware) {
+            this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[PackBuilder] Could not detect hardware acceleration engine:', e);
+    }
   }
 
   initDOM() {
@@ -129,7 +158,7 @@ export class PackBuilderApp {
     this.btnZoomOut = document.getElementById('btn-zoom-out');
     this.btnZoomIn = document.getElementById('btn-zoom-in');
     this.labelZoom = document.getElementById('label-zoom');
-    
+
     // Timeline Canvas & Multi-Track Overlay
     this.timelineScrollWrap = document.getElementById('timeline-scroll-wrap');
     this.timelineRuler = document.getElementById('timeline-ruler');
@@ -140,8 +169,10 @@ export class PackBuilderApp {
     this.dawChannelStrips = document.getElementById('daw-channel-strips');
     this.labelDawChannelCount = document.getElementById('label-daw-channel-count');
     this.timelineChannelGuides = document.getElementById('timeline-channel-guides');
+    this.timelineSplitterHandle = document.getElementById('timeline-splitter-handle');
+    this.editorBottomTimelinePanel = document.querySelector('.editor-bottom-timeline-panel');
     this.btnAddAudioTrack = document.getElementById('btn-add-audio-track');
-    this.tracks = ['Audio Track 1', 'Audio Track 2', 'Audio Track 3', 'Audio Track 4'];
+    this.tracks = ['Audio Track 1'];
 
     // Sidebar & Cues
     this.labelCueCount = document.getElementById('label-cue-count');
@@ -161,10 +192,13 @@ export class PackBuilderApp {
     this.compileProgressBox = document.getElementById('compile-progress-box');
     this.compileStatusMsg = document.getElementById('compile-status-msg');
     this.compileSuccessBox = document.getElementById('compile-success-box');
+    this.btnDownloadPackZip = document.getElementById('btn-download-pack-zip');
     this.btnPlaytestNow = document.getElementById('btn-playtest-now');
   }
 
   initEvents() {
+    this.initModeDropdown();
+
     // 0. Mode Tabs (File vs YouTube URL)
     if (this.tabBtnFile && this.tabBtnUrl) {
       this.tabBtnFile.addEventListener('click', () => this.switchIngestTab('file'));
@@ -284,8 +318,8 @@ export class PackBuilderApp {
 
     // 10. Timeline Canvas Pan (Grab to Pan & Click to Seek)
     this.timelineScrollWrap.addEventListener('mousedown', (e) => {
-      // Don't initiate pan if clicked on a segment handle or block
-      if (e.target.closest('.builder-segment-handle') || e.target.closest('.builder-segment-block') || e.target.closest('button')) {
+      // Don't initiate pan if clicked on a segment handle, block, delete button, or interactive element
+      if (e.target.closest('.builder-segment-handle') || e.target.closest('.builder-segment-block') || e.target.closest('.segment-inline-delete-btn') || e.target.closest('button') || e.target.closest('input')) {
         return;
       }
       this.isPanning = true;
@@ -314,6 +348,54 @@ export class PackBuilderApp {
 
     // 15. Playtest button
     this.btnPlaytestNow.addEventListener('click', () => this.launchPlaytestSession());
+
+    // 16. Window resize listener for dynamic timeline layout scaling
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (this.currentStep !== 'editor') return;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        this.renderWaveformCanvas();
+        this.renderTimelineSegments();
+      }, 80);
+    });
+
+    // 17. Timeline Vertical Splitter Resizing
+    this.initSplitterEvents();
+  }
+
+  initSplitterEvents() {
+    if (!this.timelineSplitterHandle || !this.editorBottomTimelinePanel) return;
+
+    const startResize = (clientY) => {
+      this.isResizingTimeline = true;
+      this.resizeStartY = clientY;
+      this.resizeStartHeight = this.editorBottomTimelinePanel.clientHeight || 240;
+      this.timelineSplitterHandle.classList.add('dragging');
+      document.body.classList.add('resizing-timeline');
+    };
+
+    this.timelineSplitterHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startResize(e.clientY);
+    });
+
+    this.timelineSplitterHandle.addEventListener('touchstart', (e) => {
+      if (e.touches && e.touches.length > 0) {
+        startResize(e.touches[0].clientY);
+      }
+    }, { passive: true });
+
+    // Double-click to reset to default height (240px)
+    this.timelineSplitterHandle.addEventListener('dblclick', () => {
+      const defaultH = 240;
+      this.editorBottomTimelinePanel.style.setProperty('--timeline-panel-height', `${defaultH}px`);
+      this.editorBottomTimelinePanel.style.height = `${defaultH}px`;
+      localStorage.removeItem('dubmate_pack_builder_timeline_h');
+      this.renderWaveformCanvas();
+      this.renderTimelineSegments();
+      this.showToast('Reset timeline height to default (240px)');
+    });
   }
 
   initKeyboardShortcuts() {
@@ -344,7 +426,7 @@ export class PackBuilderApp {
         e.preventDefault();
         this.seekRelative(e.shiftKey ? 2.0 : 0.2);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (this.selectedSegmentIndex !== null && !e.repeat) {
+        if (this.selectedSegmentIndex !== null && this.selectedSegmentIndex >= 0 && this.selectedSegmentIndex < this.segments.length && !e.repeat) {
           e.preventDefault();
           this.deleteSegment(this.selectedSegmentIndex);
         }
@@ -403,7 +485,7 @@ export class PackBuilderApp {
     this.selectedVideoName.innerText = file.name;
     const mbSize = (file.size / (1024 * 1024)).toFixed(1);
     this.selectedVideoStats.innerText = `${mbSize} MB • Processing source ready`;
-    
+
     if (!this.inputPackTitle.value) {
       const base = file.name.replace(/\.[^/.]+$/, '').replace(/[_\-]+/g, ' ');
       this.inputPackTitle.value = base.charAt(0).toUpperCase() + base.slice(1);
@@ -693,6 +775,16 @@ export class PackBuilderApp {
       this.renderTimelineSegments();
     }, { once: true });
 
+    // Restore custom timeline height if saved
+    const savedTimelineH = localStorage.getItem('dubmate_pack_builder_timeline_h');
+    if (savedTimelineH && this.editorBottomTimelinePanel) {
+      const parsedH = parseInt(savedTimelineH, 10);
+      if (!isNaN(parsedH) && parsedH >= 120 && parsedH <= (window.innerHeight || 800) - 200) {
+        this.editorBottomTimelinePanel.style.setProperty('--timeline-panel-height', `${parsedH}px`);
+        this.editorBottomTimelinePanel.style.height = `${parsedH}px`;
+      }
+    }
+
     this.updateCharacterPalette();
     await this.fetchWaveformPeaks(this.activeAudioTrack || 'vocals');
 
@@ -754,6 +846,32 @@ export class PackBuilderApp {
     this.labelZoom.innerText = `${pct}%`;
   }
 
+  updateTrackButtonsState() {
+    if (this.btnAddAudioTrack) {
+      const isMax = this.tracks.length >= 5;
+      this.btnAddAudioTrack.disabled = isMax;
+      this.btnAddAudioTrack.title = isMax ? 'Maximum 5 audio tracks reached' : 'Add another audio track lane (up to 5)';
+    }
+  }
+
+  getLaneDimensions() {
+    const numLanes = Math.max(1, Math.min(5, this.tracks.length));
+    const containerHeight = Math.max(160, this.timelineScrollWrap?.clientHeight || 200);
+    const TOTAL_HEIGHT = Math.max(140, containerHeight - 24);
+
+    // Keep individual tracks sleek and compact:
+    // When 1 track: ~68px (well-proportioned, not a giant full-height block)
+    // When 2-5 tracks: scales dynamically (~38px - 64px) to fit up to 5 tracks inside the panel
+    let laneHeight;
+    if (numLanes === 1) {
+      laneHeight = Math.min(70, Math.max(50, Math.floor(TOTAL_HEIGHT * 0.45)));
+    } else {
+      laneHeight = Math.max(38, Math.min(64, Math.floor(TOTAL_HEIGHT / numLanes)));
+    }
+    const totalHeight = laneHeight * numLanes;
+    return { numLanes, laneHeight, totalHeight, TOTAL_HEIGHT };
+  }
+
   renderChannelStrips(activeLanes = []) {
     if (!this.dawChannelStrips) return;
     this.dawChannelStrips.innerHTML = '';
@@ -761,11 +879,9 @@ export class PackBuilderApp {
     if (this.labelDawChannelCount) {
       this.labelDawChannelCount.innerText = `${this.tracks.length} Audio Track${this.tracks.length === 1 ? '' : 's'}`;
     }
+    this.updateTrackButtonsState();
 
-    const numLanes = Math.max(1, this.tracks.length);
-    const containerHeight = Math.max(240, this.timelineScrollWrap?.clientHeight || 240);
-    const TOTAL_HEIGHT = Math.max(200, containerHeight - 24);
-    const laneHeight = Math.max(48, Math.floor(TOTAL_HEIGHT / numLanes));
+    const { numLanes, laneHeight } = this.getLaneDimensions();
 
     this.tracks.forEach((trackName, idx) => {
       const header = document.createElement('div');
@@ -774,6 +890,7 @@ export class PackBuilderApp {
       header.dataset.channel = idx;
 
       const isActive = activeLanes.includes(idx);
+      const canDelete = this.tracks.length > 1;
 
       header.innerHTML = `
         <div class="channel-id-badge">A${idx + 1}</div>
@@ -782,9 +899,11 @@ export class PackBuilderApp {
         </div>
         <div class="channel-header-actions">
           <div class="channel-indicator ${isActive ? 'active' : ''}" title="${isActive ? 'Active dialogue take' : 'Idle'}"></div>
-          <button class="btn-del-track" data-channel="${idx}" title="Delete Track A${idx + 1}">
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
+          ${canDelete ? `
+            <button type="button" class="btn-del-track" data-channel="${idx}" title="Delete Track A${idx + 1}">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" style="pointer-events: none;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          ` : ''}
         </div>
       `;
 
@@ -800,10 +919,12 @@ export class PackBuilderApp {
       });
 
       const delBtn = header.querySelector('.btn-del-track');
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.deleteAudioTrack(idx);
-      });
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.deleteAudioTrack(idx);
+        });
+      }
 
       this.dawChannelStrips.appendChild(header);
 
@@ -817,14 +938,15 @@ export class PackBuilderApp {
   }
 
   addAudioTrack() {
-    if (this.tracks.length >= 8) {
-      this.showToast('Maximum 8 audio tracks reached.');
+    if (this.tracks.length >= 5) {
+      this.showToast('Maximum 5 audio tracks reached.');
       return;
     }
     const nextNum = this.tracks.length + 1;
     this.tracks.push(`Audio Track ${nextNum}`);
     this.renderWaveformCanvas();
     this.renderTimelineSegments();
+    this.updateTrackButtonsState();
     this.showToast(`Added Audio Track ${nextNum}`);
   }
 
@@ -837,6 +959,7 @@ export class PackBuilderApp {
     this.tracks.splice(idx, 1);
     this.renderWaveformCanvas();
     this.renderTimelineSegments();
+    this.updateTrackButtonsState();
     this.showToast(`Deleted ${removedName}. Remaining tracks expanded to fit.`);
   }
 
@@ -845,25 +968,21 @@ export class PackBuilderApp {
     if (!canvas || !this.timelineScrollWrap) return;
 
     const totalWidth = Math.max(this.timelineScrollWrap.clientWidth || 800, Math.ceil((this.duration || 5) * this.pixelsPerSecond));
-    const numLanes = Math.max(1, this.tracks.length);
-    const containerHeight = Math.max(240, this.timelineScrollWrap.clientHeight || 240);
-    const TOTAL_HEIGHT = Math.max(200, containerHeight - 24);
-    const laneHeight = Math.max(48, Math.floor(TOTAL_HEIGHT / numLanes));
-    const height = laneHeight * numLanes;
+    const { numLanes, laneHeight, totalHeight } = this.getLaneDimensions();
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = totalWidth * dpr;
-    canvas.height = height * dpr;
+    canvas.height = totalHeight * dpr;
     canvas.style.width = `${totalWidth}px`;
-    canvas.style.height = `${height}px`;
+    canvas.style.height = `${totalHeight}px`;
 
     this.timelineViewport.style.width = `${totalWidth}px`;
-    this.timelineViewport.style.height = `${height}px`;
+    this.timelineViewport.style.height = `${totalHeight}px`;
     this.renderTimelineRuler(totalWidth);
 
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, totalWidth, height);
+    ctx.clearRect(0, 0, totalWidth, totalHeight);
 
     // Draw center guidelines for all audio track lanes
     for (let l = 0; l < numLanes; l++) {
@@ -883,7 +1002,7 @@ export class PackBuilderApp {
     for (let l = 0; l < numLanes; l++) {
       const midY = l * laneHeight + laneHeight / 2;
       const ampScale = l === 0 ? 0.44 : 0.28;
-      
+
       const grad = ctx.createLinearGradient(0, midY - (laneHeight * ampScale), 0, midY + (laneHeight * ampScale));
       if (l === 0) {
         grad.addColorStop(0, 'rgba(245, 158, 11, 0.85)');
@@ -938,10 +1057,7 @@ export class PackBuilderApp {
     const overlay = this.timelineSegmentsOverlay;
     overlay.innerHTML = '';
 
-    const numLanes = Math.max(1, this.tracks.length);
-    const containerHeight = Math.max(240, this.timelineScrollWrap?.clientHeight || 240);
-    const TOTAL_HEIGHT = Math.max(200, containerHeight - 24);
-    const laneHeight = Math.max(48, Math.floor(TOTAL_HEIGHT / numLanes));
+    const { numLanes, laneHeight, totalHeight } = this.getLaneDimensions();
 
     // Compute collision lanes for overlapping segments constrained to numLanes
     const laneEndTimes = new Array(numLanes).fill(0);
@@ -973,7 +1089,6 @@ export class PackBuilderApp {
     const activeLanes = Array.from(new Set(segmentLanes));
     this.renderChannelStrips(activeLanes);
 
-    const totalHeight = laneHeight * numLanes;
     this.timelineViewport.style.height = `${totalHeight}px`;
 
     this.segments.forEach((seg, idx) => {
@@ -1022,10 +1137,20 @@ export class PackBuilderApp {
       // Inline Delete Action Button right on the block
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'segment-inline-delete-btn';
-      deleteBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      deleteBtn.type = 'button';
+      deleteBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" style="pointer-events: none;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
       deleteBtn.title = 'Delete this dialogue line';
+
+      // Prevent mousedown / mouseup from triggering segment block drag or deselect
+      deleteBtn.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+      });
+      deleteBtn.addEventListener('mouseup', (e) => {
+        e.stopPropagation();
+      });
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         this.deleteSegment(idx);
       });
 
@@ -1038,7 +1163,10 @@ export class PackBuilderApp {
 
       // Mouse drag handlers on segment block
       block.addEventListener('mousedown', (e) => {
-        if (e.target === deleteBtn) return;
+        if (e.target.closest('.segment-inline-delete-btn')) {
+          e.stopPropagation();
+          return;
+        }
         if (e.target === handleL || e.target === handleR) {
           this.startDrag(idx, e.target.dataset.type, e.clientX, e.clientY);
         } else {
@@ -1072,7 +1200,7 @@ export class PackBuilderApp {
       card.id = `cue-card-${idx}`;
 
       // Build options for character dropdown
-      const charOptionsHtml = allCast.map(c => 
+      const charOptionsHtml = allCast.map(c =>
         `<option value="${c}" ${c === seg.character ? 'selected' : ''}>${c}</option>`
       ).join('') + '<option value="__ADD_NEW__">+ New Character...</option>';
 
@@ -1270,7 +1398,7 @@ export class PackBuilderApp {
   selectSegment(idx) {
     this.selectedSegmentIndex = idx;
     this.renderTimelineSegments();
-    
+
     const allCards = this.segmentsListContainer.querySelectorAll('.builder-cue-card');
     allCards.forEach((c, i) => c.classList.toggle('selected', i === idx));
     const targetCard = document.getElementById(`cue-card-${idx}`);
@@ -1294,6 +1422,27 @@ export class PackBuilderApp {
   }
 
   handleGlobalMouseMove(e) {
+    // 0. Handle Timeline Vertical Resizing
+    if (this.isResizingTimeline) {
+      const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : null);
+      if (clientY !== null && this.editorBottomTimelinePanel) {
+        const deltaY = this.resizeStartY - clientY;
+        const minH = 130;
+        const maxH = Math.max(minH, (window.innerHeight || 800) - 260);
+        const newH = Math.max(minH, Math.min(maxH, this.resizeStartHeight + deltaY));
+        this.editorBottomTimelinePanel.style.setProperty('--timeline-panel-height', `${newH}px`);
+        this.editorBottomTimelinePanel.style.height = `${newH}px`;
+        if (!this._resizeFrameId) {
+          this._resizeFrameId = requestAnimationFrame(() => {
+            this._resizeFrameId = null;
+            this.renderWaveformCanvas();
+            this.renderTimelineSegments();
+          });
+        }
+      }
+      return;
+    }
+
     // 1. Handle Canvas Grab Panning
     if (this.isPanning) {
       const deltaX = e.clientX - this.panStartX;
@@ -1341,12 +1490,30 @@ export class PackBuilderApp {
   }
 
   handleGlobalMouseUp(e) {
+    // 0. End Timeline Vertical Resizing
+    if (this.isResizingTimeline) {
+      this.isResizingTimeline = false;
+      if (this.timelineSplitterHandle) {
+        this.timelineSplitterHandle.classList.remove('dragging');
+      }
+      document.body.classList.remove('resizing-timeline');
+      const finalH = this.editorBottomTimelinePanel?.clientHeight;
+      if (finalH) {
+        try {
+          localStorage.setItem('dubmate_pack_builder_timeline_h', String(finalH));
+        } catch (err) { /* ignore quota */ }
+      }
+      this.renderWaveformCanvas();
+      this.renderTimelineSegments();
+      return;
+    }
+
     // 1. End Canvas Panning
     if (this.isPanning) {
       this.isPanning = false;
       this.timelineScrollWrap.classList.remove('panning');
       document.body.style.userSelect = '';
-      
+
       // If user clicked without dragging, seek to click position
       if (!this.hasMovedPastThreshold && e && e.target) {
         const rect = this.timelineViewport.getBoundingClientRect();
@@ -1371,7 +1538,7 @@ export class PackBuilderApp {
         this.renderTimelineSegments();
         this.renderSegmentsList();
         this.syncSegmentsToServer();
-      } else if (modifiedIdx !== null) {
+      } else if (modifiedIdx !== null && this.segments[modifiedIdx]) {
         this.selectSegment(modifiedIdx);
         this.seekTo(this.segments[modifiedIdx].start);
       }
@@ -1475,6 +1642,9 @@ export class PackBuilderApp {
 
   deleteSegment(idx) {
     if (idx < 0 || idx >= this.segments.length) return;
+    this.isDragging = false;
+    this.dragSegmentIndex = null;
+    this.dragType = null;
     this.segments.splice(idx, 1);
     this.selectedSegmentIndex = null;
     this.renderTimelineSegments();
@@ -1703,6 +1873,11 @@ export class PackBuilderApp {
 
       const data = await res.json();
       this.compiledPackId = data.pack_id;
+      const downloadUrl = data.download_url || `/api/packs/${encodeURIComponent(data.pack_id)}/export`;
+      if (this.btnDownloadPackZip) {
+        this.btnDownloadPackZip.href = downloadUrl;
+        this.btnDownloadPackZip.setAttribute('download', `${packName}.zip`);
+      }
 
       this.compileProgressBox.style.display = 'none';
       this.compileSuccessBox.style.display = 'block';
@@ -1722,8 +1897,8 @@ export class PackBuilderApp {
     }
 
     const hostName = (this.compileAuthor.value && this.compileAuthor.value.trim()) ||
-                     localStorage.getItem('dubmate_user_name') ||
-                     'Host';
+      localStorage.getItem('dubmate_user_name') ||
+      'Host';
 
     try {
       const res = await fetch('/api/rooms', {
@@ -1756,19 +1931,71 @@ export class PackBuilderApp {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
 
+  initModeDropdown() {
+    const container = document.getElementById('logo-dropdown-container');
+    const btnDropdown = document.getElementById('btn-mode-dropdown');
+    const menu = document.getElementById('mode-dropdown-menu');
+    if (!container || !btnDropdown || !menu) return;
+
+    const toggleMenu = (show) => {
+      const isCurrentlyOpen = container.classList.contains('open');
+      const target = (typeof show === 'boolean') ? show : !isCurrentlyOpen;
+      if (target) {
+        container.classList.add('open');
+        menu.style.display = 'flex';
+        btnDropdown.setAttribute('aria-expanded', 'true');
+      } else {
+        container.classList.remove('open');
+        menu.style.display = 'none';
+        btnDropdown.setAttribute('aria-expanded', 'false');
+      }
+    };
+
+    btnDropdown.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenu();
+    });
+
+    btnDropdown.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        toggleMenu(true);
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!container.contains(e.target)) {
+        toggleMenu(false);
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && container.classList.contains('open')) {
+        toggleMenu(false);
+        btnDropdown.focus();
+      }
+    });
+  }
+
   showToast(message) {
     const container = document.getElementById('toast-container');
     if (!container) return;
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.innerText = message;
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-6px)';
+    toast.style.transition = 'opacity 160ms ease-out, transform 160ms ease-out';
     container.appendChild(toast);
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+    });
     setTimeout(() => {
       toast.style.opacity = '0';
-      toast.style.transform = 'translateY(-8px)';
-      toast.style.transition = 'opacity 160ms ease-out, transform 160ms ease-out';
+      toast.style.transform = 'translateY(-6px)';
       setTimeout(() => toast.remove(), 180);
-    }, 3000);
+    }, 3200);
   }
 }
 

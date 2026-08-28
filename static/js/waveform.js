@@ -39,7 +39,7 @@ export class WaveformRenderer {
 
   requestRender() {
     if (this._rafId) return;
-    const raf = (typeof window !== 'undefined' && window.requestAnimationFrame) 
+    const raf = (typeof window !== 'undefined' && window.requestAnimationFrame)
       ? window.requestAnimationFrame.bind(window)
       : (typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame : ((cb) => setTimeout(cb, 16)));
     this._rafId = raf(() => {
@@ -212,7 +212,7 @@ export class WaveformRenderer {
     const rulerHeight = 16;
     const tracksTotalHeight = h - rulerHeight;
     const trackHeight = Math.floor(tracksTotalHeight / 2);
-    
+
     // Lane 1: Original Reference Track (Top Half)
     const lane1Top = 0;
     const lane1Bottom = trackHeight;
@@ -253,7 +253,7 @@ export class WaveformRenderer {
     const tickInterval = this.totalDuration > 6.0 ? 1.0 : (this.totalDuration > 3.0 ? 0.5 : 0.25);
     for (let t = 0; t <= this.totalDuration; t += tickInterval) {
       const x = Math.round((t / this.totalDuration) * w);
-      
+
       // Vertical grid line through both tracks
       ctx.beginPath();
       ctx.moveTo(x + 0.5, 0);
@@ -507,7 +507,7 @@ export class WaveformRenderer {
       ctx.lineWidth = 1;
       ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
       ctx.shadowBlur = 8;
-      
+
       const badgeW = 148;
       const badgeH = 22;
       ctx.beginPath();

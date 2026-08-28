@@ -39,6 +39,7 @@ class DubMateApp {
     this.applyNoiseReduction = localStorage.getItem('dubmate_noise_reduction') !== 'false';
     this.isCalibratingMic = false;
     this.hasCustomNoiseProfile = false;
+    this.pendingJoinRoomId = null;
 
     this.initDOM();
     this.initEvents();
@@ -49,7 +50,7 @@ class DubMateApp {
   loadUser() {
     const saved = localStorage.getItem('dubmate_user');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { return JSON.parse(saved); } catch (e) { }
     }
     const randomId = 'u_' + Math.random().toString(36).substring(2, 9);
     return {
@@ -320,12 +321,12 @@ class DubMateApp {
   /** Toggle expand/collapse on booth and theater video containers */
   initVideoExpand() {
     const pairs = [
-      { btnId: 'btn-expand-video',         selector: '.stage-main-col .video-container' },
+      { btnId: 'btn-expand-video', selector: '.stage-main-col .video-container' },
       { btnId: 'btn-expand-theater-video', selector: '.theater-player' },
     ];
     pairs.forEach(({ btnId, selector }) => {
       const btn = document.getElementById(btnId);
-      const el  = document.querySelector(selector);
+      const el = document.querySelector(selector);
       if (!btn || !el) return;
       btn.addEventListener('click', () => {
         el.classList.toggle('video-expanded');
@@ -344,20 +345,8 @@ class DubMateApp {
   initEvents() {
     this.initVideoPrompterSplitter();
     this.initVideoExpand();
-
-    // Back to Home / Leave Room
-    const btnHome = document.getElementById('btn-home');
-    if (btnHome) {
-      btnHome.addEventListener('click', () => {
-        if (this.roomState) {
-          if (confirm('Leave current dubbing session and return to scenes?')) {
-            this.leaveRoom();
-          }
-        } else {
-          this.showView('landing');
-        }
-      });
-    }
+    this.initModeDropdown();
+    this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
@@ -977,7 +966,7 @@ class DubMateApp {
         try {
           const freshBuf = await this.audio.loadAudioBuffer(take.url, true);
           this.screeningBuffers.set(take.url, freshBuf);
-        } catch (e) {}
+        } catch (e) { }
       }
 
       if (lineIdx === this.currentLineIndex) {
@@ -986,8 +975,12 @@ class DubMateApp {
       this.renderTimelineChips();
       this.renderCastActivityHUD();
 
-      const userName = data.payload?.user_name || 'Cast member';
-      this.showToast(`🎙️ ${userName} updated Line ${(lineIdx !== undefined ? lineIdx + 1 : '')}!`);
+      const userName = data.payload?.user_name || this.roomState?.takes?.[lineIdx]?.user_name || 'Cast member';
+      if (data.payload?.user_id === this.user.id) {
+        this.showToast("Take recorded & saved! 🎙️");
+      } else {
+        this.showToast(`🎙️ ${userName} recorded their take for Line ${(lineIdx !== undefined ? lineIdx + 1 : '')}!`);
+      }
     });
 
     this.socket.on('take_cleared', (data) => {
@@ -1088,7 +1081,7 @@ class DubMateApp {
       if (e && e.pointerId) {
         try {
           handle.releasePointerCapture(e.pointerId);
-        } catch (err) {}
+        } catch (err) { }
       }
 
       window.removeEventListener('pointermove', onPointerMove);
@@ -1114,7 +1107,7 @@ class DubMateApp {
 
       try {
         handle.setPointerCapture(e.pointerId);
-      } catch (err) {}
+      } catch (err) { }
 
       window.addEventListener('pointermove', onPointerMove, { passive: false });
       window.addEventListener('pointerup', endDrag);
@@ -1189,7 +1182,7 @@ class DubMateApp {
     const roomParam = params.get('room');
     const selectPackParam = params.get('select_pack');
     if (roomParam) {
-      this.joinRoom(roomParam);
+      this.promptJoinRoom(roomParam);
     } else {
       this.showView('landing');
       if (selectPackParam) {
@@ -1300,13 +1293,19 @@ class DubMateApp {
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.innerText = message;
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-6px)';
+    toast.style.transition = 'opacity 160ms var(--ease-out), transform 160ms var(--ease-out)';
     container.appendChild(toast);
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+    });
     setTimeout(() => {
       toast.style.opacity = '0';
-      toast.style.transform = 'translateY(-8px)';
-      toast.style.transition = 'opacity 160ms var(--ease-out), transform 160ms var(--ease-out)';
+      toast.style.transform = 'translateY(-6px)';
       setTimeout(() => toast.remove(), 180);
-    }, 3000);
+    }, 3200);
   }
 
   copyRoomLink() {
@@ -1622,7 +1621,7 @@ class DubMateApp {
       const duration = Math.round(pack.duration || (pack.lines && pack.lines.length ? pack.lines[pack.lines.length - 1].end : 0));
       const lineCount = pack.line_count || (pack.lines ? pack.lines.length : 0);
       const characters = pack.characters || [];
-      
+
       const subtitleHtml = pack.subtitle ? `
         <div class="pack-card-subtitle" title="${pack.subtitle}">
           ${query ? this.highlightMatch(pack.subtitle, query) : pack.subtitle}
@@ -1672,6 +1671,10 @@ class DubMateApp {
               ${formatBadge}
               ${authorsHtml}
               <span class="pack-line-badge">${lineCount} lines</span>
+              <a href="${pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`}" class="btn-pack-download-icon" title="Download ${rawTitle} (.zip)" download onclick="event.stopPropagation()">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>ZIP</span>
+              </a>
             </div>
           </div>
         </div>
@@ -1716,13 +1719,200 @@ class DubMateApp {
     }
   }
 
+  initModeDropdown() {
+    const container = document.getElementById('logo-dropdown-container');
+    const btnDropdown = document.getElementById('btn-mode-dropdown');
+    const menu = document.getElementById('mode-dropdown-menu');
+    const optStudio = document.getElementById('mode-opt-studio');
+    if (!container || !btnDropdown || !menu) return;
+
+    const toggleMenu = (show) => {
+      const isCurrentlyOpen = container.classList.contains('open');
+      const target = (typeof show === 'boolean') ? show : !isCurrentlyOpen;
+      if (target) {
+        container.classList.add('open');
+        menu.style.display = 'flex';
+        btnDropdown.setAttribute('aria-expanded', 'true');
+      } else {
+        container.classList.remove('open');
+        menu.style.display = 'none';
+        btnDropdown.setAttribute('aria-expanded', 'false');
+      }
+    };
+
+    btnDropdown.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenu();
+    });
+
+    btnDropdown.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        toggleMenu(true);
+      }
+    });
+
+    if (optStudio) {
+      optStudio.addEventListener('click', (e) => {
+        if (this.roomState) {
+          e.preventDefault();
+          if (confirm('Leave current dubbing session and return to scenes?')) {
+            this.leaveRoom();
+            toggleMenu(false);
+          }
+        } else {
+          toggleMenu(false);
+        }
+      });
+    }
+
+    document.addEventListener('click', (e) => {
+      if (!container.contains(e.target)) {
+        toggleMenu(false);
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && container.classList.contains('open')) {
+        toggleMenu(false);
+        btnDropdown.focus();
+      }
+    });
+  }
+
+  initJoinModal() {
+    this.modalJoinRoom = document.getElementById('modal-join-room');
+    this.joinModalRoomBadge = document.getElementById('join-modal-room-badge');
+    this.inputJoinActorName = document.getElementById('input-join-actor-name');
+    this.joinModalAvatarPreview = document.getElementById('join-modal-avatar-preview');
+    this.joinColorPalette = document.getElementById('join-color-palette');
+    this.btnCancelJoinModal = document.getElementById('btn-cancel-join-modal');
+    this.btnConfirmJoinModal = document.getElementById('btn-confirm-join-modal');
+
+    if (!this.modalJoinRoom) return;
+
+    if (this.inputJoinActorName) {
+      this.inputJoinActorName.addEventListener('input', (e) => {
+        const name = (e.target.value || '').trim();
+        const initial = name ? name.charAt(0).toUpperCase() : 'A';
+        if (this.joinModalAvatarPreview) {
+          this.joinModalAvatarPreview.innerText = initial;
+        }
+      });
+
+      this.inputJoinActorName.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.confirmJoinModal();
+        }
+      });
+    }
+
+    if (this.joinColorPalette) {
+      this.joinColorPalette.querySelectorAll('.color-option').forEach((opt) => {
+        opt.addEventListener('click', () => {
+          this.joinColorPalette.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
+          opt.classList.add('selected');
+          this.user.color = opt.dataset.color;
+          if (this.joinModalAvatarPreview) {
+            this.joinModalAvatarPreview.style.backgroundColor = this.user.color;
+          }
+        });
+      });
+    }
+
+    if (this.btnCancelJoinModal) {
+      this.btnCancelJoinModal.addEventListener('click', () => {
+        this.closeJoinModal();
+      });
+    }
+
+    if (this.btnConfirmJoinModal) {
+      this.btnConfirmJoinModal.addEventListener('click', () => {
+        this.confirmJoinModal();
+      });
+    }
+
+    this.modalJoinRoom.addEventListener('click', (e) => {
+      if (e.target === this.modalJoinRoom) {
+        this.closeJoinModal();
+      }
+    });
+  }
+
+  promptJoinRoom(roomId) {
+    const cleanCode = (roomId || '').trim().toUpperCase();
+    if (!cleanCode) {
+      this.showToast("Please enter a room code!");
+      return;
+    }
+    this.pendingJoinRoomId = cleanCode;
+
+    if (this.joinModalRoomBadge) {
+      this.joinModalRoomBadge.innerText = `ROOM: ${cleanCode}`;
+    }
+    if (this.inputJoinActorName) {
+      this.inputJoinActorName.value = this.user.name || '';
+      const initial = (this.user.name || 'Actor').trim().charAt(0).toUpperCase() || 'A';
+      if (this.joinModalAvatarPreview) {
+        this.joinModalAvatarPreview.innerText = initial;
+        this.joinModalAvatarPreview.style.backgroundColor = this.user.color || '#d97706';
+      }
+    }
+    if (this.joinColorPalette) {
+      this.joinColorPalette.querySelectorAll('.color-option').forEach((opt) => {
+        const isMatch = (opt.dataset.color === this.user.color);
+        opt.classList.toggle('selected', isMatch);
+        opt.setAttribute('aria-checked', isMatch ? 'true' : 'false');
+      });
+    }
+    if (this.modalJoinRoom) {
+      this.modalJoinRoom.style.display = 'flex';
+      setTimeout(() => {
+        if (this.inputJoinActorName) {
+          this.inputJoinActorName.focus();
+          this.inputJoinActorName.select();
+        }
+      }, 50);
+    }
+  }
+
+  confirmJoinModal() {
+    const name = (this.inputJoinActorName?.value || '').trim() || ('Actor ' + Math.floor(Math.random() * 900 + 100));
+    this.user.name = name;
+    this.saveUser();
+    this.updateUserUI();
+
+    if (this.modalJoinRoom) {
+      this.modalJoinRoom.style.display = 'none';
+    }
+
+    if (this.pendingJoinRoomId) {
+      const codeToJoin = this.pendingJoinRoomId;
+      this.pendingJoinRoomId = null;
+      this.joinRoom(codeToJoin);
+    }
+  }
+
+  closeJoinModal() {
+    if (this.modalJoinRoom) {
+      this.modalJoinRoom.style.display = 'none';
+    }
+    this.pendingJoinRoomId = null;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('room')) {
+      url.searchParams.delete('room');
+      window.history.pushState({}, '', url.pathname);
+    }
+  }
+
   joinRoomFromInput() {
-    const code = this.inputRoomCode.value.trim().toUpperCase();
+    const code = (this.inputRoomCode?.value || '').trim().toUpperCase();
     if (!code) {
       this.showToast("Please enter a room code!");
       return;
     }
-    this.joinRoom(code);
+    this.promptJoinRoom(code);
   }
 
   async joinRoom(roomId) {
@@ -2072,7 +2262,7 @@ class DubMateApp {
     if (!this.roomState?.pack?.backing_url) return null;
     try {
       this.backingBuffer = await this.audio.loadAudioBuffer(this.roomState.pack.backing_url);
-    } catch (e) {}
+    } catch (e) { }
     return this.backingBuffer;
   }
 
@@ -2096,10 +2286,10 @@ class DubMateApp {
           this.stageVideo.currentTime = Math.max(0, line.start);
         } else {
           this.stageVideo.addEventListener('loadedmetadata', () => {
-            try { this.stageVideo.currentTime = Math.max(0, line.start); } catch (e) {}
+            try { this.stageVideo.currentTime = Math.max(0, line.start); } catch (e) { }
           }, { once: true });
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // Calculate your line numbering (e.g. Line 3 of 6)
@@ -2191,7 +2381,7 @@ class DubMateApp {
               this.waveform.setData({ takePeaks: pData.peaks });
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     }
 
@@ -2295,11 +2485,11 @@ class DubMateApp {
     for (const nIdx of neighbors) {
       const nLine = lines[nIdx];
       if (nLine && nLine.audio_url) {
-        this.audio.loadAudioBuffer(nLine.audio_url).catch(() => {});
+        this.audio.loadAudioBuffer(nLine.audio_url).catch(() => { });
       }
       const nTake = this.roomState.takes?.[nIdx];
       if (nTake && nTake.url) {
-        this.audio.loadAudioBuffer(nTake.url).catch(() => {});
+        this.audio.loadAudioBuffer(nTake.url).catch(() => { });
       }
     }
   }
@@ -2377,7 +2567,7 @@ class DubMateApp {
         requestAnimationFrame(() => {
           try {
             chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-          } catch (e) {}
+          } catch (e) { }
         });
       }
     });
@@ -2446,7 +2636,7 @@ class DubMateApp {
 
     try {
       await this.stageVideo.play();
-    } catch (e) {}
+    } catch (e) { }
 
     const startAudioTime = performance.now();
     const durationSec = Math.max(line.duration || 3.0, (this.origBuffer?.duration || 3.0)) + 0.2;
@@ -2522,7 +2712,7 @@ class DubMateApp {
 
     try {
       await this.stageVideo.play();
-    } catch (e) {}
+    } catch (e) { }
 
     const pitch = parseFloat(this.sliderPitch.value);
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
@@ -2950,9 +3140,9 @@ class DubMateApp {
     try {
       const p = this.stageVideo.play();
       if (p && typeof p.catch === 'function') {
-        p.catch(() => {});
+        p.catch(() => { });
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // Backing track
     if (this.backingBuffer) {
@@ -3250,10 +3440,10 @@ class DubMateApp {
         this.screeningVideo.currentTime = 0;
       } else {
         this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) {}
+          try { this.screeningVideo.currentTime = 0; } catch (e) { }
         }, { once: true });
       }
-    } catch (e) {}
+    } catch (e) { }
 
     this.screeningVideo.muted = false;
     this.screeningVideo.volume = 1.0;
@@ -3281,10 +3471,10 @@ class DubMateApp {
         this.screeningVideo.currentTime = 0;
       } else {
         this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) {}
+          try { this.screeningVideo.currentTime = 0; } catch (e) { }
         }, { once: true });
       }
-    } catch (e) {}
+    } catch (e) { }
 
     this.screeningVideo.muted = true;
     this.screeningVideo.volume = 0;
@@ -3326,7 +3516,7 @@ class DubMateApp {
             .then(b => {
               if (b) this.screeningBuffers.set(this.roomState.pack.backing_url, b);
             })
-            .catch(() => {})
+            .catch(() => { })
         );
       }
 
@@ -3342,11 +3532,11 @@ class DubMateApp {
                     this.screeningBuffers.set(take.url, b);
                     // Pre-cache pitch-shifted buffer in background for 0ms instant playback
                     if (Math.abs(take.pitch_semitones || 0) > 0.05) {
-                      try { this.audio.pitchShiftBuffer(b, take.pitch_semitones); } catch (e) {}
+                      try { this.audio.pitchShiftBuffer(b, take.pitch_semitones); } catch (e) { }
                     }
                   }
                 })
-                .catch(() => {})
+                .catch(() => { })
             );
           }
         } else if (line.audio_url && !this.screeningBuffers.has(line.audio_url)) {
@@ -3355,7 +3545,7 @@ class DubMateApp {
               .then(b => {
                 if (b) this.screeningBuffers.set(line.audio_url, b);
               })
-              .catch(() => {})
+              .catch(() => { })
           );
         }
       }
@@ -3598,7 +3788,7 @@ class DubMateApp {
             }
           } else if (Math.abs(drift) >= 0.35 && !this.screeningVideo.seeking) {
             // Large drift: perform smooth hard seek
-            try { this.screeningVideo.currentTime = expectedVideoTime; } catch (e) {}
+            try { this.screeningVideo.currentTime = expectedVideoTime; } catch (e) { }
             this.screeningVideo.playbackRate = 1.0;
           } else {
             this.screeningVideo.playbackRate = 1.0;
