@@ -16,6 +16,10 @@ const dom = new JSDOM(html, {
 });
 
 // Mock browser APIs missing in JSDOM
+dom.window.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+dom.window.cancelAnimationFrame = (id) => clearTimeout(id);
+global.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+global.cancelAnimationFrame = (id) => clearTimeout(id);
 dom.window.ResizeObserver = class {
   observe() {}
   unobserve() {}
