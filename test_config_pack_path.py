@@ -112,9 +112,14 @@ class TestConfigPackPath(unittest.TestCase):
         """Verify pointing directly to a single pack directory automatically resolves its container."""
         temp_single_base = tempfile.mkdtemp(prefix="dubmate_test_single_")
         mock_pack = os.path.join(temp_single_base, "Mock_Sample_Pack")
-
-        if os.path.exists(source_pack):
-            shutil.copytree(source_pack, mock_pack)
+        os.makedirs(mock_pack, exist_ok=True)
+        # Create minimal valid pack files
+        with open(os.path.join(mock_pack, "dub_video.mp4"), "wb") as f:
+            f.write(b"0" * 100)
+        with open(os.path.join(mock_pack, "_captions.json"), "w", encoding="utf-8") as f:
+            f.write('{"01_Test_0-000.wav": "[Hero] Testing line"}')
+        with open(os.path.join(mock_pack, "01_Test_0-000.wav"), "wb") as f:
+            f.write(b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00")
 
         try:
             # Point directly to Mock_Sample_Pack subfolder
