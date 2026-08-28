@@ -22,7 +22,10 @@ import pack_loader
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BUILDER_CACHE_DIR = os.path.join(pack_loader.CACHE_DIR, "builder")
-os.makedirs(BUILDER_CACHE_DIR, exist_ok=True)
+try:
+    os.makedirs(BUILDER_CACHE_DIR, exist_ok=True)
+except Exception:
+    pass
 
 # Default character color palette (Warm Analog Studio & Pro DAW palette)
 DEFAULT_CHARACTER_COLORS = [

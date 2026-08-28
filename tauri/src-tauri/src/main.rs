@@ -233,7 +233,7 @@ fn main() {
 
             // Background task: check for updates and start sidecars
             tauri::async_runtime::spawn(async move {
-                let current_version = "1.0.4";
+                let current_version = "1.0.5";
                 let app_py_exists = crate::find_app_py(&handle).is_some();
                 
                 if app_py_exists {
@@ -324,11 +324,16 @@ async fn start_sidecars(app: tauri::AppHandle) {
             .arg("-u")
             .arg(&app_py_path);
 
-        // Add adjacent site-packages to PYTHONPATH if present
+        // Add adjacent site-packages and app_dir to PYTHONPATH and set PYTHONHOME
         if let Some(py_dir) = py_exe.parent() {
+            cmd.env("PYTHONHOME", py_dir);
             let site_pkgs = py_dir.join("Lib").join("site-packages");
+            let mut pypath = vec![app_dir.to_path_buf()];
             if site_pkgs.is_dir() {
-                cmd.env("PYTHONPATH", &site_pkgs);
+                pypath.push(site_pkgs);
+            }
+            if let Ok(joined) = std::env::join_paths(pypath) {
+                cmd.env("PYTHONPATH", joined);
             }
         }
 
@@ -366,25 +371,43 @@ async fn start_sidecars(app: tauri::AppHandle) {
                 });
 
                 let app_err_clone = app.clone();
+                let last_error_buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+                let last_error_writer = last_error_buf.clone();
+
                 tauri::async_runtime::spawn(async move {
                     if let Some(err) = stderr.take() {
                         use std::io::{BufRead, BufReader};
                         let reader = BufReader::new(err);
                         for line in reader.lines().map_while(Result::ok) {
                             eprintln!("[Python ERR] {}", line);
-                            if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error:") {
-                                let _ = app_err_clone.emit("startup-progress", format!("Python info: {}", line.trim()));
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                let mut b = last_error_writer.lock().unwrap();
+                                *b = trimmed.to_string();
+                            }
+                            if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error") {
+                                let _ = app_err_clone.emit("startup-progress", format!("Python: {}", line.trim()));
                             }
                         }
                     }
                 });
 
                 let app_exit_clone = app.clone();
+                let last_error_reader = last_error_buf.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     if let Ok(status) = child.wait() {
                         eprintln!("[Python] Process exited with status: {:?}", status);
                         if !status.success() {
-                            let _ = app_exit_clone.emit("server-error", format!("Studio engine process exited (exit code: {:?})", status.code()));
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                            let err_msg = {
+                                let b = last_error_reader.lock().unwrap();
+                                if !b.is_empty() {
+                                    b.clone()
+                                } else {
+                                    format!("Process exited with status {:?}", status.code())
+                                }
+                            };
+                            let _ = app_exit_clone.emit("server-error", format!("Studio engine error: {}", err_msg));
                         }
                     }
                 });

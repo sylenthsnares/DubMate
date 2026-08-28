@@ -36,8 +36,15 @@ import pack_builder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 EXPORTS_DIR = os.path.join(pack_loader.CACHE_DIR, "exports")
-os.makedirs(EXPORTS_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
+try:
+    os.makedirs(EXPORTS_DIR, exist_ok=True)
+except Exception:
+    pass
+
+try:
+    os.makedirs(STATIC_DIR, exist_ok=True)
+except Exception:
+    pass
 
 # In-memory pack cache & room manager
 PACKS_CACHE: Dict[str, pack_loader.PackInfo] = {}

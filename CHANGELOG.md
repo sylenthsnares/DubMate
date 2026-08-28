@@ -1,5 +1,14 @@
 # DubMate Studio Changelog
 
+## [1.0.5] - 2026-08-28
+
+### Desktop Packaging & Runtime Permissions
+- **Safe User Home Caching**: Relocated internal `.cache` and temporary export directories to user space (`~/.dubmate/cache`), eliminating `PermissionError` (exit code 1) when running from restricted folders like `C:\Program Files`.
+- **Complete Embedded Python Runtime**: Bundled full DLLs, standard library archive, `.pyd` dynamic extensions, and `Lib/site-packages` into desktop installer resources.
+- **Direct Multi-Source Python Resolver**: Added automatic search paths in native Rust launcher with `PYTHONHOME`/`PYTHONPATH` configuration.
+- **Live Error Diagnostics Capture**: Detailed stderr trace capture and telemetry reporting directly onto the launcher recovery card.
+- **macOS Resource Staging Fix**: Corrected `$RESOURCE_DIR` definition order in `stage-sidecars.sh` to ensure universal macOS builds stage cleanly.
+
 ## [1.0.4] - 2026-08-28
 
 ### Desktop Launcher Startup Fixes

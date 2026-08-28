@@ -19,8 +19,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKS_DIRS = [
     os.path.join(BASE_DIR, "Packs"),
 ]
-CACHE_DIR = os.path.join(BASE_DIR, ".cache")
-os.makedirs(CACHE_DIR, exist_ok=True)
+def get_cache_dir() -> str:
+    """Returns persistent cache directory with guaranteed user write permissions."""
+    try:
+        user_home = os.path.expanduser("~")
+        cache_dir = os.path.join(user_home, ".dubmate", "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+    except Exception:
+        try:
+            local_cache = os.path.join(BASE_DIR, ".cache")
+            os.makedirs(local_cache, exist_ok=True)
+            return local_cache
+        except Exception:
+            temp_cache = os.path.join(tempfile.gettempdir(), "dubmate_cache")
+            os.makedirs(temp_cache, exist_ok=True)
+            return temp_cache
+
+CACHE_DIR = get_cache_dir()
 
 def get_config_path() -> str:
     """Returns the persistent config file path in user home or project base dir."""
@@ -289,7 +305,10 @@ def probe_duration(file_path: str) -> float:
 
 
 PEAKS_CACHE_DIR = os.path.join(CACHE_DIR, "peaks")
-os.makedirs(PEAKS_CACHE_DIR, exist_ok=True)
+try:
+    os.makedirs(PEAKS_CACHE_DIR, exist_ok=True)
+except Exception:
+    pass
 
 
 def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List[List[float]]:

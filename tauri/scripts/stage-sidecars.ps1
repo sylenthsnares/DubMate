@@ -37,8 +37,15 @@ $PthFiles = Get-ChildItem $PyRuntimeDir -Filter "*._pth"
 foreach ($pth in $PthFiles) {
     $pthContent = Get-Content $pth.FullName -Raw
     $pthContent = $pthContent -replace "#import site", "import site"
-    $pthContent = $pthContent + "`r`nLib\site-packages`r`n."
+    if ($pthContent -notmatch "Lib\\site-packages") {
+        $pthContent = $pthContent + "`r`nLib\site-packages`r`n.`r`n.."
+    }
     Set-Content -Path $pth.FullName -Value $pthContent -Encoding ASCII
+}
+$Py312Pth = Join-Path $PyRuntimeDir "python312._pth"
+$TriplePth = Join-Path $PyRuntimeDir "python-$Triple._pth"
+if (Test-Path $Py312Pth) {
+    Copy-Item $Py312Pth $TriplePth -Force
 }
 
 # 2. Bootstrap PIP & Install Dependencies into Embedded Python

@@ -5,8 +5,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SIDECAR_DIR="$SCRIPT_DIR/../src-tauri/sidecar"
+RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"
 
 mkdir -p "$SIDECAR_DIR"
+mkdir -p "$RESOURCE_DIR"
 
 echo "========================================================="
 echo "  🎙️ Staging DubMate Desktop Sidecars (macOS Universal)"
