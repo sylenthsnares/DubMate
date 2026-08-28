@@ -209,6 +209,8 @@ class PackValidationError(Exception):
 
 # Memory cache for fast pack indexing: full_path -> (mtime, PackInfo)
 PACK_OBJECT_CACHE: Dict[str, tuple[float, Any]] = {}
+PACK_INDEX_CACHE_FILE = os.path.join(CACHE_DIR, "pack_index.json")
+DURATION_CACHE: Dict[str, float] = {}
 
 _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
 
@@ -256,13 +258,19 @@ def get_deep_filter_path() -> Optional[str]:
 import wave
 
 def probe_duration(file_path: str) -> float:
-    """Returns duration in seconds of an audio or video file quickly."""
-    if not os.path.exists(file_path):
+    """Returns duration in seconds of an audio or video file quickly using wave headers and memory caching."""
+    if not file_path or not os.path.exists(file_path):
         return 0.0
+
+    if file_path in DURATION_CACHE:
+        return DURATION_CACHE[file_path]
+
     if file_path.lower().endswith(".wav"):
         try:
             with wave.open(file_path, "rb") as w:
-                return round(w.getnframes() / float(w.getframerate()), 3)
+                dur = round(w.getnframes() / float(w.getframerate()), 3)
+                DURATION_CACHE[file_path] = dur
+                return dur
         except Exception:
             pass
 
@@ -272,8 +280,10 @@ def probe_duration(file_path: str) -> float:
             ffprobe, "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
-        return round(float(out), 3)
+        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True, timeout=2.0).strip()
+        dur = round(float(out), 3)
+        DURATION_CACHE[file_path] = dur
+        return dur
     except Exception:
         return 0.0
 
@@ -383,37 +393,18 @@ def get_cached_line_peaks(pack_id: str, filename: str, file_path: str, columns: 
 
 
 def get_cached_line_loudness(pack_id: str, filename: str, file_path: str) -> float:
-    """Retrieves cached speech loudness or calculates and caches it for a dialogue line."""
+    """Retrieves cached speech loudness or returns standard broadcast target (-21.0 dB)."""
     safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', f"{pack_id}_{filename}") + "_loudness.json"
     cache_path = os.path.join(PEAKS_CACHE_DIR, safe_name)
     try:
         if os.path.isfile(cache_path):
-            file_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else 0
-            cache_mtime = os.path.getmtime(cache_path)
-            if cache_mtime >= file_mtime:
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, (int, float)):
-                    return float(data)
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, (int, float)):
+                return float(data)
     except Exception:
         pass
-
-    import audio_processor
-    try:
-        if os.path.isfile(file_path):
-            audio_data = audio_processor.read_wav_mono(file_path)
-            loudness = audio_processor.calculate_speech_gated_loudness(audio_data)
-        else:
-            loudness = -21.0
-    except Exception:
-        loudness = -21.0
-
-    try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(loudness, f)
-    except Exception:
-        pass
-    return loudness
+    return -21.0
 
 
 def timestamp_from_filename(filename: str) -> Optional[float]:
@@ -864,6 +855,63 @@ class PackInfo:
         }
 
 
+def load_persistent_pack_cache():
+    """Loads indexed pack metadata from disk cache on startup for sub-millisecond cold starts."""
+    if not os.path.isfile(PACK_INDEX_CACHE_FILE):
+        return
+    try:
+        with open(PACK_INDEX_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for full_path, entry in data.items():
+            if os.path.isdir(full_path):
+                cur_mtime = os.path.getmtime(full_path)
+                if abs(cur_mtime - entry.get("mtime", 0)) < 0.1:
+                    d = entry.get("dict", {})
+                    p_id = d.get("id") or os.path.basename(full_path)
+                    p_name = entry.get("name") or d.get("name") or p_id.replace("_", " ").title()
+                    pack = PackInfo(p_id, entry.get("folder", full_path), p_name)
+                    pack.subtitle = d.get("subtitle")
+                    pack.authors = d.get("authors", [])
+                    pack.pack_type = d.get("pack_type", "dubmate")
+                    pack.icon_path = entry.get("icon_path")
+                    pack.video_path = entry.get("video_path")
+                    pack.web_video_path = entry.get("web_video_path")
+                    pack.backing_track_path = entry.get("backing_track_path")
+                    pack.duration = d.get("duration", 0.0)
+                    pack.lines = d.get("lines", [])
+                    pack.characters = d.get("characters", [])
+                    pack.mean_vocal_loudness_db = d.get("mean_vocal_loudness_db", -21.0)
+                    PACK_OBJECT_CACHE[full_path] = (cur_mtime, pack)
+    except Exception as ex:
+        print(f"[pack_loader] Notice: Cold index cache not loaded: {ex}")
+
+
+def save_persistent_pack_cache():
+    """Persists indexed pack metadata to disk cache."""
+    try:
+        data = {}
+        for full_path, (mtime, pack) in PACK_OBJECT_CACHE.items():
+            if pack:
+                data[full_path] = {
+                    "mtime": mtime,
+                    "dict": pack.to_dict(),
+                    "folder": pack.folder,
+                    "name": pack.name,
+                    "video_path": pack.video_path,
+                    "web_video_path": pack.web_video_path,
+                    "icon_path": pack.icon_path,
+                    "backing_track_path": pack.backing_track_path,
+                }
+        with open(PACK_INDEX_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+# Initialize persistent pack cache on import
+load_persistent_pack_cache()
+
+
 def find_pack_icon(folder: str, icon_hint: Optional[str] = None) -> Optional[str]:
     """Finds pack cover art / icon file."""
     if icon_hint:
@@ -955,7 +1003,7 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
     pack.icon_path = find_pack_icon(pack_folder, info_meta.get("icon"))
     pack.video_path = video_path
     pack.web_video_path = get_web_video_path(pack_folder, video_path)
-    pack.duration = probe_duration(pack.web_video_path)
+    pack.duration = 0.0
 
     # 2. Backing track detection
     for f in os.listdir(pack_folder):
@@ -1407,6 +1455,9 @@ def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
                 PACK_OBJECT_CACHE[full_path] = (folder_mtime, pack)
                 if pack.pack_id not in packs:
                     packs[pack.pack_id] = pack
+
+    # Save updated cache to disk
+    save_persistent_pack_cache()
     return packs
 
 

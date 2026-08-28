@@ -1505,11 +1505,15 @@ class DubMateApp {
       console.error("Error fetching packs:", err);
       if (this.packGrid) {
         this.packGrid.innerHTML = `
-          <div style="color: var(--foreground-muted); padding: 24px; text-align: center; grid-column: 1 / -1;">
-            <p style="margin-bottom: 12px;">⚠️ Could not load scene packs from backend.</p>
+          <div style="color: var(--foreground-muted); padding: 32px 24px; text-align: center; grid-column: 1 / -1;">
+            <div style="font-size: 32px; margin-bottom: 8px;">🔌</div>
+            <p style="margin-bottom: 8px; font-weight: 600; color: #fca5a5;">Could not connect to DubMate Engine</p>
+            <p style="font-size: 12px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px;">
+              The studio could not reach <code>http://127.0.0.1:8000</code>. Please ensure the DubMate engine is running.
+            </p>
             <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
-              <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Retry / Rescan</button>
-              <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.promptSetPackFolder()">📁 Set Pack Folder</button>
+              <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.fetchPacks()">↺ Retry Connection</button>
+              <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">📁 Configure Packs Folder</button>
             </div>
           </div>
         `;
@@ -1586,7 +1590,11 @@ class DubMateApp {
         this.closePackConfigModal();
       }, 1200);
     } catch (err) {
-      this.showWebConfigFeedback(`❌ ${err.message}`, false);
+      let errMsg = err.message || "Unknown error";
+      if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
+        errMsg = "Could not reach local DubMate engine on port 8000. Please ensure the server is running.";
+      }
+      this.showWebConfigFeedback(`❌ ${errMsg}`, false);
     } finally {
       if (this.btnSavePackConfig) {
         this.btnSavePackConfig.disabled = false;

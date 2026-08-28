@@ -268,7 +268,11 @@ if (btnSaveConfig) {
       }, 1400);
 
     } catch (err) {
-      showConfigFeedback(`❌ ${err.message}`, false);
+      let errMsg = err.message || "Unknown error";
+      if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
+        errMsg = "Could not reach local engine on port 8000. Please wait a moment while the engine initializes.";
+      }
+      showConfigFeedback(`❌ ${errMsg}`, false);
       btnSaveConfig.disabled = false;
       if (saveConfigSpinner) saveConfigSpinner.style.display = "none";
       if (saveConfigText) saveConfigText.innerText = "Scan & Save Location";
