@@ -1806,11 +1806,39 @@ class DubMateApp {
           pack_id: this.selectedPackId,
           host_name: this.user.name,
           host_color: this.user.color,
+          app_version: window.__dubmate_app_version || '1.0.0',
         }),
       });
       const data = await res.json();
       this.user.id = data.user_id;
       this.saveUser();
+
+      // If running over public Cloudflare tunnel, auto-register room code on dubmate.bkaproductions.com
+      const origin = window.location.origin;
+      if (origin.includes('.trycloudflare.com') || origin.includes('bkaproductions.com')) {
+        try {
+          const regResp = await fetch('https://dubmate.bkaproductions.com/rooms/create', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-DubMate-Key': 'dubmate_sec_99f3810a4c28f14b67e0e7a12b',
+            },
+            body: JSON.stringify({
+              tunnel_url: origin,
+              app_version: '1.0.0',
+            }),
+          });
+          if (regResp.ok) {
+            const regData = await regResp.json();
+            window.__dubmate_room_code = regData.code;
+            window.__dubmate_room_token = regData.room_token;
+            console.log(`[Registry] Registered room ${regData.code} on dubmate.bkaproductions.com`);
+          }
+        } catch (rErr) {
+          console.warn('[Registry] Registration note:', rErr);
+        }
+      }
+
       this.joinRoom(data.room_id);
     } catch (err) {
       this.showToast("Error creating room: " + err.message);
