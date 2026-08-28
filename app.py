@@ -751,6 +751,47 @@ async def export_pack_zip(pack_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to export pack ZIP: {str(ex)}")
 
 
+ACTIVE_TUNNEL_URL: Optional[str] = None
+
+
+async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: str):
+    """Registers the local room code with the public Cloudflare worker registry."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                "https://dubmate.bkaproductions.com/rooms/create",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-DubMate-Key": "dubmate_sec_99f3810a4c28f14b67e0e7a12b",
+                },
+                json={
+                    "code": room_id,
+                    "tunnel_url": tunnel_url,
+                    "app_version": app_version,
+                },
+            )
+            if resp.status_code in (200, 201):
+                print(f"[Worker Registry] Unified room code {room_id} registered with {tunnel_url}")
+    except Exception as e:
+        print(f"[Worker Registry] Note: Could not register with worker: {e}")
+
+
+@app.get("/api/tunnel")
+async def get_tunnel_endpoint():
+    return {"tunnel_url": ACTIVE_TUNNEL_URL}
+
+
+@app.post("/api/tunnel")
+async def set_tunnel_endpoint(payload: Dict[str, Any]):
+    global ACTIVE_TUNNEL_URL
+    url = payload.get("tunnel_url")
+    if url:
+        ACTIVE_TUNNEL_URL = str(url).strip()
+        print(f"[DubMate] Active public tunnel registered: {ACTIVE_TUNNEL_URL}")
+    return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL}
+
+
 @app.post("/api/rooms")
 async def create_room(payload: Dict[str, Any]):
     pack_id = payload.get("pack_id")
@@ -770,9 +811,18 @@ async def create_room(payload: Dict[str, Any]):
     room = Room(room_id, pack, host_id, host_name, host_color, min_required_version=app_version)
     ROOMS[room_id] = room
 
+    # Auto-register unified room code on dubmate.bkaproductions.com if tunnel is active
+    if ACTIVE_TUNNEL_URL and ACTIVE_TUNNEL_URL.startswith("https://"):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(register_room_with_worker(room_id, ACTIVE_TUNNEL_URL, app_version))
+        except Exception:
+            pass
+
     return {
         "room_id": room_id,
         "user_id": host_id,
+        "tunnel_url": ACTIVE_TUNNEL_URL,
         "state": room.to_state_dict(),
     }
 

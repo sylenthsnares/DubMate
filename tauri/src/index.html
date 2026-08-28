@@ -3,193 +3,118 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DubMate Studio</title>
-  <link rel="stylesheet" href="launcher.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <title>DubMate Studio Pro</title>
+  <style>
+    :root {
+      --bg: #0d0d10;
+      --card: #141419;
+      --border: #272732;
+      --primary: #d97706;
+      --text: #f4f4f6;
+      --text-muted: #8b8b9e;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      user-select: none;
+      overflow: hidden;
+    }
+    .splash {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: #fff;
+    }
+    .logo span {
+      color: var(--primary);
+    }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(217, 119, 6, 0.2);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .status {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+    .updater-box {
+      display: none;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      width: 90%;
+      max-width: 440px;
+      text-align: center;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+    }
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #272732;
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 20px 0 10px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #d97706, #f59e0b);
+      transition: width 0.2s;
+    }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+  </style>
 </head>
 <body>
-  <div class="app-container">
-    <!-- Top Header -->
-    <header class="app-header">
-      <div class="brand">
-        <div class="brand-badge">PRO</div>
-        <div class="brand-title">DubMate <span>Studio</span></div>
-      </div>
-      <div class="header-actions">
-        <button id="btn-open-config" class="btn-header-config" title="Configure Scene Packs Folder">
-          <span class="btn-icon">📁</span>
-          <span class="btn-text">Pack Folder</span>
-        </button>
-        <div class="status-indicator">
-          <span id="status-dot" class="dot dot-amber"></span>
-          <span id="status-text">Booting audio engine...</span>
-        </div>
-      </div>
-    </header>
+  <div id="splash" class="splash">
+    <div class="logo">🎙️ DUBMATE <span>STUDIO PRO</span></div>
+    <div class="spinner"></div>
+    <div id="status-text" class="status">Starting Studio Engine...</div>
+  </div>
 
-    <!-- Main Content Views -->
-    <main class="main-content">
-      <!-- 1. Launcher View -->
-      <section id="view-launcher" class="view active">
-        <div class="hero-section">
-          <h1 class="hero-title">Collaborative Scene Dubbing</h1>
-          <p class="hero-subtitle">Host or join a multi-track voice acting room with hardware-calibrated DSP and millisecond sync.</p>
-        </div>
-
-        <div class="mode-cards-grid">
-          <!-- Create Room Card -->
-          <div class="mode-card" id="card-create">
-            <div class="card-icon">👑</div>
-            <h2 class="card-title">Host a Session</h2>
-            <p class="card-desc">Load a scene pack from your library and invite voice actors with a room code.</p>
-
-            <div class="card-form">
-              <div class="form-group">
-                <div class="form-label-row">
-                  <label for="select-pack">Choose Scene Pack</label>
-                  <button type="button" id="btn-quick-config" class="btn-link-action" title="Change scene pack folder location">📁 Set Folder</button>
-                </div>
-                <select id="select-pack" class="form-control">
-                  <option value="">Loading scene packs...</option>
-                </select>
-                <div id="box-pack-warning" class="pack-warning-box" style="display: none;">
-                  <span class="warning-text">⚠️ No scene packs detected in active folder.</span>
-                  <button type="button" id="btn-fix-pack-path" class="btn btn-secondary btn-sm">📁 Set Folder Location</button>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label for="input-host-name">Your Actor Name</label>
-                <input type="text" id="input-host-name" class="form-control" placeholder="e.g. SoundDirector" maxlength="24">
-              </div>
-
-              <button id="btn-create-room" class="btn btn-primary" disabled>
-                <span>🎙️ Launch Room</span>
-              </button>
-            </div>
-
-            <!-- Room Created Result Box -->
-            <div id="room-created-box" class="room-result-box" style="display: none;">
-              <div class="result-header">
-                <span class="result-badge">ROOM READY</span>
-                <span class="result-label">Share with Cast:</span>
-              </div>
-              <div class="code-display">
-                <span id="created-room-code" class="code-text">DUB-XXXX</span>
-                <button id="btn-copy-code" class="btn-copy" title="Copy join link">Copy Link</button>
-              </div>
-              <p class="result-hint">Friends can enter this code in their DubMate app or visit <code id="share-link-text">dubmate.bkaproductions.com</code></p>
-              <button id="btn-enter-studio" class="btn btn-success">
-                <span>Enter Dubbing Stage ›</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Join Room Card -->
-          <div class="mode-card" id="card-join">
-            <div class="card-icon">🎧</div>
-            <h2 class="card-title">Join a Room</h2>
-            <p class="card-desc">Enter a 6-character room code shared by your session host.</p>
-
-            <div class="card-form">
-              <div class="form-group">
-                <label for="input-join-code">Room Code</label>
-                <input type="text" id="input-join-code" class="form-control code-input" placeholder="DUB-XXXX" maxlength="8" autocomplete="off">
-              </div>
-
-              <div class="form-group">
-                <label for="input-guest-name">Your Actor Name</label>
-                <input type="text" id="input-guest-name" class="form-control" placeholder="e.g. Spike, Lucy" maxlength="24">
-              </div>
-
-              <button id="btn-join-room" class="btn btn-secondary">
-                <span>Join Stage ›</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 2. Mandatory Update View -->
-      <section id="view-updater" class="view" style="display: none;">
-        <div class="update-card">
-          <div class="update-icon">🚀</div>
-          <h2 class="update-title">DubMate Update Required</h2>
-          <p class="update-subtitle">A mandatory engine update (<span id="update-target-version">v1.1.0</span>) is available to ensure multiplayer compatibility.</p>
-
-          <div class="update-progress-container">
-            <div class="progress-bar-track">
-              <div id="update-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
-            </div>
-            <div class="progress-meta">
-              <span id="update-progress-text">Ready to download</span>
-              <span id="update-progress-percent">0%</span>
-            </div>
-          </div>
-
-          <div class="changelog-box">
-            <div class="changelog-title">What's New:</div>
-            <div id="update-changelog-text" class="changelog-content">Loading release notes...</div>
-          </div>
-
-          <div class="update-actions">
-            <button id="btn-start-update" class="btn btn-primary btn-lg">
-              <span>⚡ Download & Apply Update</span>
-            </button>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <!-- Footer -->
-    <footer class="app-footer">
-      <span class="footer-left">DubMate Studio Pro &bull; v1.0.2</span>
-      <span class="footer-right">Local Engine: <strong id="footer-engine-status">Offline</strong></span>
-    </footer>
-
-    <!-- 3. Pack Configuration Modal Dialog -->
-    <div id="modal-config" class="modal-backdrop" style="display: none;">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div class="modal-title-group">
-            <span class="modal-icon">📁</span>
-            <h3 class="modal-title">Scene Packs Folder Location</h3>
-          </div>
-          <button id="btn-close-config" class="btn-modal-close" title="Close dialog">&times;</button>
-        </div>
-        <div class="modal-body">
-          <p class="modal-desc">
-            Specify the folder on your computer where your DubMate scene packs or downloaded <code>.zip</code> packs are located. This path is saved permanently for all future launches.
-          </p>
-
-          <div class="form-group">
-            <label for="input-pack-path">Packs Directory Path</label>
-            <div class="input-with-action">
-              <input type="text" id="input-pack-path" class="form-control mono-input" placeholder="e.g. C:\DubMate\Packs or D:\MyScenePacks" autocomplete="off" spellcheck="false">
-              <label class="btn-browse-folder" title="Browse local directory">
-                <span>Browse...</span>
-                <input type="file" id="file-folder-picker" webkitdirectory directory multiple style="display: none;">
-              </label>
-            </div>
-            <span class="field-hint" id="current-active-path-label">Active: <code id="active-path-text">Loading...</code></span>
-          </div>
-
-          <div id="config-feedback" class="config-feedback-box" style="display: none;"></div>
-        </div>
-
-        <div class="modal-footer">
-          <button id="btn-cancel-config" class="btn btn-ghost">Cancel</button>
-          <button id="btn-save-config" class="btn btn-primary">
-            <span id="save-config-spinner" class="spinner" style="display: none;">⚙️</span>
-            <span id="save-config-text">Scan & Save Location</span>
-          </button>
-        </div>
-      </div>
+  <div id="updater-box" class="updater-box">
+    <div class="logo">🎙️ DUBMATE <span>UPDATE</span></div>
+    <p id="updater-msg" style="font-size: 13px; color: #a1a1aa; margin-top: 8px;">Applying update...</p>
+    <div class="progress-bar">
+      <div id="progress-fill" class="progress-fill"></div>
+    </div>
+    <div class="progress-meta">
+      <span id="progress-percent">0%</span>
+      <span id="progress-text">Downloading bundle...</span>
     </div>
   </div>
 
-  <script type="module" src="launcher.js"></script>
+  <script src="launcher.js"></script>
 </body>
 </html>

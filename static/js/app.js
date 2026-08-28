@@ -1434,9 +1434,10 @@ class DubMateApp {
   }
 
   copyRoomLink() {
-    const url = window.location.origin + window.location.pathname + '?room=' + this.roomState.room_id;
-    navigator.clipboard.writeText(url);
-    this.showToast("Room invite link copied! 📋");
+    const code = this.roomState?.room_id || '';
+    if (!code) return;
+    navigator.clipboard.writeText(code);
+    this.showToast(`Room code ${code} copied! 📋`);
   }
 
   // --- Packs & Landing Logic ---
@@ -2258,15 +2259,34 @@ class DubMateApp {
   }
 
   async joinRoom(roomId) {
+    const cleanCode = (roomId || '').trim().toUpperCase();
     try {
-      const res = await fetch(`/api/rooms/${roomId}`);
+      let res = await fetch(`/api/rooms/${cleanCode}`);
       if (!res.ok) {
+        // If room is not hosted on this local instance, resolve via dubmate.bkaproductions.com
+        try {
+          const resolveResp = await fetch(`https://dubmate.bkaproductions.com/rooms/${encodeURIComponent(cleanCode)}/resolve`, {
+            headers: { 'Accept': 'application/json' }
+          });
+          if (resolveResp.ok) {
+            const data = await resolveResp.json();
+            if (data && data.tunnel_url) {
+              this.showToast(`Connecting to host for room ${cleanCode}... 🚀`);
+              // Navigate to host's tunnel room session
+              window.location.href = `${data.tunnel_url}?room=${encodeURIComponent(cleanCode)}`;
+              return;
+            }
+          }
+        } catch (resolveErr) {
+          console.warn('[Registry] Public resolve check:', resolveErr);
+        }
+
         // Strip stale room parameter so user is returned cleanly to scene explorer
         const url = new URL(window.location.href);
         url.searchParams.delete('room');
         window.history.pushState({}, '', url.pathname);
 
-        this.showToast("Room not found or expired.");
+        this.showToast(`Room '${cleanCode}' not found or expired.`);
         this.showView('landing');
         return;
       }

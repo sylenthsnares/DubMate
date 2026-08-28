@@ -7,6 +7,7 @@ export interface RoomEntry {
 
 export interface CreateRoomRequest {
   tunnel_url: string;
+  code?: string;
   app_version?: string;
 }
 

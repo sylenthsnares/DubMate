@@ -245,7 +245,17 @@ async fn start_sidecars(app: tauri::AppHandle) {
                                 data.tunnel_url = Some(tunnel_url.clone());
                                 data.is_tunnel_ready = true;
                             }
-                            let _ = app_clone.emit("tunnel-ready", tunnel_url);
+                            let _ = app_clone.emit("tunnel-ready", tunnel_url.clone());
+
+                            // Notify local FastAPI server of active tunnel URL
+                            let url_clone = tunnel_url.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let c = reqwest::Client::new();
+                                let _ = c.post("http://127.0.0.1:8000/api/tunnel")
+                                    .json(&serde_json::json!({ "tunnel_url": url_clone }))
+                                    .send()
+                                    .await;
+                            });
                         }
                     }
                 }

@@ -141,21 +141,23 @@ export default {
         return jsonResponse({ error: "Missing or invalid tunnel_url (must start with https://)" }, 400);
       }
 
-      // Generate unique room code with collision check
-      let code = "";
-      let collision = true;
-      for (let i = 0; i < 10; i++) {
-        const candidate = generateRoomCode();
-        const existing = await env.ROOMS.get(candidate);
-        if (!existing) {
-          code = candidate;
-          collision = false;
-          break;
+      // Generate unique room code with collision check or use provided room code
+      let code = body.code ? body.code.trim().toUpperCase() : "";
+      if (!code) {
+        let collision = true;
+        for (let i = 0; i < 10; i++) {
+          const candidate = generateRoomCode();
+          const existing = await env.ROOMS.get(candidate);
+          if (!existing) {
+            code = candidate;
+            collision = false;
+            break;
+          }
         }
-      }
 
-      if (collision || !code) {
-        return jsonResponse({ error: "Could not allocate unique room code. Please retry." }, 500);
+        if (collision || !code) {
+          return jsonResponse({ error: "Could not allocate unique room code. Please retry." }, 500);
+        }
       }
 
       const roomToken = generateToken();
@@ -166,8 +168,11 @@ export default {
         app_version: (body.app_version || "1.0.0").trim(),
       };
 
-      // 12 hours TTL = 43200 seconds
+      // 12 hours TTL = 43200 seconds (store under primary code and alias)
       await env.ROOMS.put(code, JSON.stringify(entry), { expirationTtl: 43200 });
+      if (!code.startsWith("DUB-")) {
+        await env.ROOMS.put(`DUB-${code}`, JSON.stringify(entry), { expirationTtl: 43200 });
+      }
 
       const responsePayload: CreateRoomResponse = {
         code,
@@ -236,16 +241,20 @@ export default {
     const resolveMatch = path.match(/^\/(?:rooms\/([A-Za-z0-9-]+)\/resolve|join\/([A-Za-z0-9-]+))$/);
     if (request.method === "GET" && resolveMatch) {
       const rawCode = (resolveMatch[1] || resolveMatch[2]).toUpperCase();
-      const code = rawCode.startsWith("DUB-") ? rawCode : `DUB-${rawCode}`;
-
-      const rawEntry = await env.ROOMS.get(code);
+      let rawEntry = await env.ROOMS.get(rawCode);
+      if (!rawEntry && !rawCode.startsWith("DUB-")) {
+        rawEntry = await env.ROOMS.get(`DUB-${rawCode}`);
+      }
+      if (!rawEntry && rawCode.startsWith("DUB-")) {
+        rawEntry = await env.ROOMS.get(rawCode.replace(/^DUB-/, ""));
+      }
       const acceptsJson = (request.headers.get("Accept") || "").includes("application/json");
 
       if (!rawEntry) {
         if (acceptsJson) {
-          return jsonResponse({ error: "Room not found or expired", code }, 404);
+          return jsonResponse({ error: "Room not found or expired", code: rawCode }, 404);
         }
-        return errorHtml(`Room <strong>${code}</strong> was not found or has expired.<br>Ask your session host to share an active room code.`);
+        return errorHtml(`Room <strong>${rawCode}</strong> was not found or has expired.<br>Ask your session host to share an active room code.`);
       }
 
       let entry: RoomEntry;
