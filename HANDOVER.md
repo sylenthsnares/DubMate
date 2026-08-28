@@ -1,39 +1,29 @@
-# Handover — 2026-08-28, Pack Builder Timeline Deletion, 1-5 Track Bounds & Vertically Resizable Timeline
+# Handover — 2026-08-28, Desktop App Architecture, Rotating Host, and Cloudflare Worker Registry
 
 ## State
-All requested Pack Builder improvements are complete, polished, and verified:
-1. Reliable inline timeline dialogue segment deletion without drag/selection conflicts.
-2. 1 initial audio track default, expandable up to 5 tracks with dynamic lane heights and disabled states.
-3. Full-viewport bottom stretching with vertically resizable splitter handle (`#timeline-splitter-handle`), allowing users to expand the timeline while dynamically adjusting video/dialogue cues height and keeping video playback controls fixed beneath the video.
-All 34 automated unit/frontend tests and live browser subagent sessions passed 100%.
+DubMate Studio is transitioning from a browser-only tool to a standalone cross-platform desktop application with dynamic multiplayer host-handover. The Cloudflare Worker KV room registry is live on `dubmate.bkaproductions.com`. All 5 sub-projects are implemented and passing automated test suites.
 
 ## Done this session
-- **Timeline Dialogue Deletion**:
-  - [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js): Fixed event propagation (`stopPropagation()` & `preventDefault()`) across `mousedown`, `mouseup`, and `click` on `.segment-inline-delete-btn`; prevented block `mousedown` from tearing down the DOM before click fires; reset drag states on deletion.
-  - [`static/css/style.css`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css): Styled `.segment-inline-delete-btn` with `z-index: 15; pointer-events: auto;` and child SVG with `pointer-events: none`.
-- **Audio Tracks 1 to 5 Limit & Dynamic Proportions**:
-  - [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js): Initialized `this.tracks = ['Audio Track 1']`. Enforced max limit of 5 in `addAudioTrack()` and min limit of 1 in `deleteAudioTrack()`.
-  - Added `getLaneDimensions()` to keep 1 track compact (~70px) and scale 2 to 5 tracks dynamically (~38px - 64px) to fit inside the panel.
-  - [`static/builder.html`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/builder.html): Updated default badge text to `1 Audio Track`.
-- **Vertically Resizable DAW Splitter Handle**:
-  - [`static/builder.html`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/builder.html): Added `#timeline-splitter-handle` between top row and bottom timeline panel.
-  - [`static/css/style.css`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css): Added `.timeline-splitter-handle` styling with amber hover glow, `row-resize` cursor, `body.resizing-timeline` global lock, and dynamic `--timeline-panel-height` variable on `.editor-bottom-timeline-panel`.
-  - [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js): Implemented `initSplitterEvents()` with mousedown, touchstart, double-click reset to default (240px), clamped height range (130px to window height - 260px), real-time `requestAnimationFrame` re-rendering, and `localStorage` persistence.
-  - Sized `.editor-video-pane` to `height: 100%`, `.editor-video-container` to `flex: 1`, `.builder-control-deck` to `flex-shrink: 0`, and `.editor-right-sidebar` to `height: 100%`.
-- **Verification**:
-  - `node scratch/test_pack_builder_frontend.js` (34/34 tests passed).
-  - Live browser subagent verified segment deletion, 1-to-5 track limits, upward/downward timeline vertical resizing, and double-click reset.
+- **Cloudflare Worker KV Registry (`worker/`)**: Deployed live to `dubmate.bkaproductions.com` with KV namespace `ROOMS` (`e954cacd7b034f8ca646c2142034614b`), handling `POST /rooms/create`, `POST /rooms/:code/update`, and `GET /rooms/:code/resolve` with secret key authentication and 12-hour TTL.
+- **Rotating Host Protocol (`app.py`, `static/js/room_socket.js`, `static/js/app.js`)**: Implemented clean slate host transfer with lobby `👑 Make Host` button, confirmation warning modal, 10s server timeout guard, and room broadcast state reset.
+- **Version Gating & Health Probe (`app.py`, `VERSION`)**: Added `/health` endpoint and enforced `min_required_version` on room creation and WebSocket `join` to prevent client desync.
+- **Tauri v2 Desktop Shell (`tauri/`)**: Implemented Rust supervisor (`main.rs`, `state.rs`, `updater.rs`) managing Python FastAPI (port 8000) and cloudflared sidecars with automatic PID cleanup, plus obsidian/amber Launcher UI (`tauri/src/`).
+- **CI/CD & Releases (`.github/workflows/`)**: Created `.github/workflows/publish-bundle.yml` (passing on `main`) and `.github/workflows/build-installer.yml`. Published official `DubMate v1.0.0` release on GitHub.
 
 ## In flight
-None. All requested items implemented and verified.
+- **Desktop Installer CI (`build-installer.yml`)**: Windows x64 `.msi` / `.exe` installer compilation in progress on GitHub Actions (`run/33171873581`). macOS universal target requires splitting into native `aarch64` / `x86_64` targets in the CI matrix.
 
 ## Next
-1. Test authoring and compiling complete scene dub packs end-to-end.
-2. Verify multiplayer session playback with multi-track dub packs in Studio Pro.
+1. Verify Windows `.msi` / `.exe` installer asset appears under GitHub Releases `v1.0.0` once CI run completes.
+2. In `.github/workflows/build-installer.yml`, refine the macOS matrix entry to target `aarch64-apple-darwin` natively instead of `universal-apple-darwin` for standard Apple Silicon DMG packaging.
+3. Test live host rotation end-to-end between two desktop client instances.
 
 ## Watch out
-- `localStorage` key `dubmate_pack_builder_timeline_h` remembers custom timeline height across page reloads. Double-clicking the splitter bar resets it to default (240px).
+- `cloudflared` prints its `trycloudflare.com` URL to **`stderr`**, not stdout; the Rust supervisor in `main.rs` listens on `CommandEvent::Stderr`.
+- Sidecars in `tauri/src-tauri/sidecar/` must retain their target triple suffix (e.g. `cloudflared-x86_64-pc-windows-msvc.exe`) on disk for Tauri packaging.
+- The CPython embeddable package requires `import site` uncommented in `python312._pth` to find `Lib\site-packages`.
 
 ## Read first
-- [`static/js/pack_builder.js`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/js/pack_builder.js) — Splitter events, drag calculations, dynamic lane scaling, and segment deletion.
-- [`static/css/style.css`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/static/css/style.css) — Splitter handle and flexible top-row/fixed deck styles.
+- [`DESKTOP-APP-CHECKLIST.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/DESKTOP-APP-CHECKLIST.md) — Master implementation checklist for all 5 sub-projects.
+- [`docs/superpowers/specs/2026-08-28-desktop-app-design.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/docs/superpowers/specs/2026-08-28-desktop-app-design.md) — Technical architecture and data models.
+- [`worker/src/index.ts`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/worker/src/index.ts) — Live Cloudflare Worker KV registry implementation.
