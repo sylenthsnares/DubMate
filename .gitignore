@@ -64,3 +64,12 @@ tauri/src-tauri/target/
 tauri/src-tauri/sidecar/
 worker/node_modules/
 tauri/node_modules/
+
+# Executable & Installer Testing Sandbox
+test_executables/*
+!test_executables/README.md
+!test_executables/fetch_latest_test_exe.ps1
+*.exe
+*.msi
+*.dmg
+!tools/*.exe
