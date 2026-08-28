@@ -1,18 +1,18 @@
-# Handover — 2026-08-28, DubMate v1.0.2 Release
+# Handover — 2026-08-28, DubMate v1.0.3 Release
 
 ## State
-DubMate Studio `v1.0.2` has sub-second scene pack indexing (cached down from 14s to 0.25s), persistent folder location discovery in `~/.dubmate/config.json`, robust error handling for local engine connectivity, and multi-platform desktop release workflow triggers.
+DubMate Studio `v1.0.3` unifies the desktop application with the authentic Studio Pro DAW interface on launch, establishes a single unified room code architecture across local engine and Cloudflare Worker registry, streamlines "Copy Code" for actor-to-actor `.exe` joining, and provides seamless public routing via `dubmate.bkaproductions.com`.
 
 ## Done this session
-- **Sub-Second Indexing & Persistent Pack Cache (`pack_loader.py`)**: Added persistent `pack_index.json` caching and audio header duration probing. Loading 58 packs dropped from 14.3s to 0.25s.
-- **Connection Error Handling (`static/js/app.js`, `tauri/src/launcher.js`)**: Enhanced error cards and feedback to clearly indicate local backend status when port 8000 is still booting or unreachable.
-- **Persistent Pack Configuration**: Added dynamic directory resolution and `GET/POST /api/config` endpoints.
-- **Release Version Bump (`v1.0.2`)**: Synchronized versions across `VERSION`, `CHANGELOG.md`, `tauri.conf.json`, `Cargo.toml`, `launcher.js`, and `index.html`.
-- **Automated Test Validation**: Verified all test suites pass 100%.
+- **Unified Desktop Interface**: Configured Tauri desktop app to immediately load the full DubMate Studio Pro web interface into the native window upon engine readiness.
+- **Single Unified Room Code**: Eliminated discrepancy between local room codes and public Cloudflare Worker KV codes.
+- **Streamlined Copy Code**: Updated clipboard invite action to copy the exact room code string.
+- **Public Domain Multi-Actor Resolution**: Integrated automatic room resolution through `https://dubmate.bkaproductions.com/rooms/{CODE}/resolve` for joining remote host sessions.
+- **Release Version Bump (`v1.0.3`)**: Synchronized version across `VERSION`, `CHANGELOG.md`, `tauri.conf.json`, `Cargo.toml`, `main.rs`, and `package.json`.
 
 ## Next
-1. Monitor GitHub Actions workflow for building release bundles and desktop installers.
-2. Download latest installer from GitHub Releases once compilation finishes.
+1. Monitor GitHub Actions release pipeline for `app-bundle-v1.0.3.zip` and desktop installer binaries (`DubMate.Studio_1.0.3_x64-setup.exe` & macOS `.dmg`).
+2. Test multiplayer session creation and `.exe`-to-`.exe` joining with room code.
 
 ## Read first
 - [`CHANGELOG.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/CHANGELOG.md)

@@ -1,6 +1,6 @@
 [package]
 name = "dubmate-studio"
-version = "1.0.2"
+version = "1.0.3"
 description = "DubMate Studio Pro Desktop Application"
 authors = ["DubMate Team"]
 edition = "2021"

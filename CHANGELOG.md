@@ -1,5 +1,14 @@
 # DubMate Studio Changelog
 
+## [1.0.3] - 2026-08-28
+
+### Unified Desktop & Web Experience
+- Desktop application window now loads the authentic DubMate Studio Pro DAW interface directly on launch.
+- Unified single room code architecture: removed duplicate codes between local engine and worker registry.
+- Streamlined "Copy Code" invite workflow copying clean room codes for actor-to-actor `.exe` joining.
+- Seamless public room code routing through `dubmate.bkaproductions.com` for cross-device and remote `.exe` multiplayer sessions.
+- Bundled offline application resources and dynamic path resolution in desktop installers.
+
 ## [1.0.2] - 2026-08-28
 
 ### Performance

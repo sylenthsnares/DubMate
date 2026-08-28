@@ -110,7 +110,7 @@ fn main() {
 
             // Background task: check for mandatory updates and start sidecars
             tauri::async_runtime::spawn(async move {
-                let current_version = "1.0.2";
+                let current_version = "1.0.3";
                 
                 // 1. Mandatory Update Check
                 let update_res = updater::check_for_update(current_version, &handle).await;

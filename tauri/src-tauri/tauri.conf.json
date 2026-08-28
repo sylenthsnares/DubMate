@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/config.schema.json",
   "productName": "DubMate Studio",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "identifier": "com.dubmate.studio",
   "build": {
     "beforeDevCommand": "",
