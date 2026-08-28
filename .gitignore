@@ -60,3 +60,9 @@ test_*.js
 test_*.py
 docs/
 *.log
+
+# Tauri Build & Staging Artifacts
+tauri/src-tauri/target/
+tauri/src-tauri/sidecar/
+worker/node_modules/
+tauri/node_modules/
