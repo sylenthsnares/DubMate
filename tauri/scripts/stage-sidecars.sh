@@ -37,12 +37,19 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     chmod +x "$FFMPEG_TARGET"
   fi
 
-  # 3. cloudflared Darwin Binary
+  # 3. cloudflared Darwin Binary (.tgz archive)
   CF_TARGET="$SIDECAR_DIR/cloudflared-$TRIPLE"
   if [ ! -f "$CF_TARGET" ]; then
     ARCH=$(echo "$TRIPLE" | cut -d'-' -f1)
-    echo "[3/3] Downloading cloudflared binary for $ARCH..."
-    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-$ARCH" -o "$CF_TARGET"
+    if [ "$ARCH" = "x86_64" ]; then
+      CF_ARCH="amd64"
+    else
+      CF_ARCH="arm64"
+    fi
+    echo "[3/3] Downloading cloudflared binary for $CF_ARCH..."
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-${CF_ARCH}.tgz" -o "/tmp/cf-${CF_ARCH}.tgz"
+    tar -xzf "/tmp/cf-${CF_ARCH}.tgz" -C "/tmp"
+    cp "/tmp/cloudflared" "$CF_TARGET"
     chmod +x "$CF_TARGET"
   fi
 done

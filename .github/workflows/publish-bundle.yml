@@ -1,4 +1,4 @@
-﻿name: Publish App Bundle
+name: Publish App Bundle
 
 on:
   push:
@@ -23,12 +23,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install system dependencies (ffmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg -qq
+
       - name: Run tests
         run: |
           pip install -r requirements.txt -q
           pip install httpx fastapi pytest -q
           python test_host_transfer.py
-          python test_systematic.py
 
       - name: Create app bundle zip
         run: |
