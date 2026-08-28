@@ -6,12 +6,13 @@
   "build": {
     "beforeDevCommand": "",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "powershell -ExecutionPolicy Bypass -File scripts/stage-sidecars.ps1",
+    "beforeBuildCommand": "",
     "frontendDist": "../src"
   },
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "DubMate Studio",
         "width": 960,
         "height": 680,
