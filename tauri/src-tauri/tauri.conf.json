@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "../gen/schemas/config.schema.json",
   "productName": "DubMate Studio",
   "version": "1.0.0",
@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pwsh -File scripts/stage-sidecars.ps1",
+    "beforeBuildCommand": "powershell -ExecutionPolicy Bypass -File scripts/stage-sidecars.ps1",
     "frontendDist": "../src"
   },
   "app": {

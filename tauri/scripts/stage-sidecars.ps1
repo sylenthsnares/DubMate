@@ -1,4 +1,4 @@
-﻿# stage-sidecars.ps1 - Stages Python, FFmpeg, and cloudflared sidecars for Windows x64 build
+# stage-sidecars.ps1 - Stages Python, FFmpeg, and cloudflared sidecars for Windows x64 build
 param(
     [string]$Triple = "x86_64-pc-windows-msvc"
 )
@@ -30,6 +30,15 @@ $PySourceExe = Join-Path $PyRuntimeDir "python.exe"
 $PyTargetExe = Join-Path $PyRuntimeDir "python-$Triple.exe"
 if (Test-Path $PySourceExe) {
     Copy-Item $PySourceExe $PyTargetExe -Force
+}
+
+# Enable 'import site' in ._pth file so embedded python supports pip and site-packages
+$PthFiles = Get-ChildItem $PyRuntimeDir -Filter "*._pth"
+foreach ($pth in $PthFiles) {
+    $pthContent = Get-Content $pth.FullName -Raw
+    $pthContent = $pthContent -replace "#import site", "import site"
+    $pthContent = $pthContent + "`r`nLib\site-packages`r`n."
+    Set-Content -Path $pth.FullName -Value $pthContent -Encoding ASCII
 }
 
 # 2. Bootstrap PIP & Install Dependencies into Embedded Python
