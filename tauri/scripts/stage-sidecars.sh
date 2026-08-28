@@ -16,7 +16,9 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
   echo "--- Processing architecture target: $TRIPLE ---"
   
   # 1. Standalone Python Runtime (indygreg / python-build-standalone)
-  PY_TARGET="$SIDECAR_DIR/python-runtime-$TRIPLE"
+  PY_RUNTIME_DIR="$SIDECAR_DIR/python-runtime"
+  mkdir -p "$PY_RUNTIME_DIR"
+  PY_TARGET="$PY_RUNTIME_DIR/python-$TRIPLE"
   if [ ! -f "$PY_TARGET" ]; then
     echo "[1/3] Downloading Standalone Python 3.12 for $TRIPLE..."
     PY_TAR="/tmp/python-$TRIPLE.tar.gz"
