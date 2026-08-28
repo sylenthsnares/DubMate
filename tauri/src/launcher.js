@@ -306,7 +306,7 @@ if (btnCreateRoom) {
           pack_id: packId,
           host_name: hostName,
           host_color: "#d97706",
-          app_version: "1.0.1"
+          app_version: "1.0.2"
         })
       });
       const localData = await localResp.json();
@@ -322,7 +322,7 @@ if (btnCreateRoom) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               tunnel_url: currentTunnelUrl,
-              app_version: "1.0.1"
+              app_version: "1.0.2"
             })
           });
           if (workerResp.ok) {

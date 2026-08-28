@@ -1,5 +1,15 @@
 # DubMate Studio Changelog
 
+## [1.0.2] - 2026-08-28
+
+### Performance
+- Sub-second persistent pack indexing cache (`pack_index.json`) reducing 58+ scene pack boot time from 14.3s to 0.25s.
+- Fast audio header probing for instant scene duration calculation without spawning external processes on cached assets.
+
+### Improvements
+- Local backend connectivity state monitoring and enhanced user feedback cards during initialization.
+- GitHub Actions desktop installer CI workflow optimization for Windows and macOS native build runners.
+
 ## [1.0.1] - 2026-08-28
 
 ### Added
