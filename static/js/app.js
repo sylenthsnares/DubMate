@@ -124,6 +124,13 @@ class DubMateApp {
     this.btnImportPack = document.getElementById('btn-import-pack');
     this.inputPackZip = document.getElementById('input-pack-zip');
     this.packDropzone = document.getElementById('pack-dropzone');
+    this.btnOpenPackFolder = document.getElementById('btn-open-pack-folder');
+    this.modalPackConfig = document.getElementById('modal-pack-config');
+    this.webInputPackPath = document.getElementById('web-input-pack-path');
+    this.webConfigFeedback = document.getElementById('web-config-feedback');
+    this.btnSavePackConfig = document.getElementById('btn-save-pack-config');
+    this.btnClosePackConfig = document.getElementById('btn-close-pack-config');
+    this.webConfigActiveCount = document.getElementById('web-config-active-count');
     this.btnCreateRoom = document.getElementById('btn-create-room');
     this.btnJoinRoom = document.getElementById('btn-join-room');
     this.inputRoomCode = document.getElementById('input-room-code');
@@ -437,6 +444,26 @@ class DubMateApp {
         if (file) {
           this.uploadPackZip(file);
         }
+      });
+    }
+
+    if (this.btnOpenPackFolder) {
+      this.btnOpenPackFolder.addEventListener('click', () => this.openPackConfigModal());
+    }
+    if (this.btnClosePackConfig) {
+      this.btnClosePackConfig.addEventListener('click', () => this.closePackConfigModal());
+    }
+    if (this.btnSavePackConfig) {
+      this.btnSavePackConfig.addEventListener('click', () => this.savePackConfig());
+    }
+    if (this.modalPackConfig) {
+      this.modalPackConfig.addEventListener('click', (e) => {
+        if (e.target === this.modalPackConfig) this.closePackConfigModal();
+      });
+    }
+    if (this.webInputPackPath) {
+      this.webInputPackPath.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this.savePackConfig();
       });
     }
 
@@ -1490,36 +1517,96 @@ class DubMateApp {
     }
   }
 
-  async promptSetPackFolder() {
-    let currentDir = "";
+  async openPackConfigModal() {
+    if (!this.modalPackConfig) return;
+    this.modalPackConfig.style.display = 'flex';
+    if (this.webConfigFeedback) this.webConfigFeedback.style.display = 'none';
+
     try {
-      const cRes = await fetch('/api/config');
-      if (cRes.ok) {
-        const cData = await cRes.json();
-        currentDir = cData.packs_dir || "";
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const data = await res.json();
+        if (this.webInputPackPath) {
+          this.webInputPackPath.value = data.packs_dir || '';
+        }
+        if (this.webConfigActiveCount) {
+          this.webConfigActiveCount.innerText = `${data.pack_count || 0} Packs Loaded`;
+        }
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn("Could not fetch active packs config:", err);
+    }
 
-    const newPath = window.prompt("Enter scene packs directory path on disk (saved for future launches):", currentDir);
-    if (!newPath || !newPath.trim()) return;
+    if (this.webInputPackPath) {
+      setTimeout(() => this.webInputPackPath.focus(), 50);
+    }
+  }
+
+  closePackConfigModal() {
+    if (this.modalPackConfig) {
+      this.modalPackConfig.style.display = 'none';
+    }
+  }
+
+  async savePackConfig() {
+    const rawPath = this.webInputPackPath ? this.webInputPackPath.value.trim() : '';
+    if (!rawPath) {
+      this.showWebConfigFeedback("Please enter a valid directory path.", false);
+      return;
+    }
+
+    if (this.btnSavePackConfig) {
+      this.btnSavePackConfig.disabled = true;
+      const textSpan = document.getElementById('web-save-config-text');
+      if (textSpan) textSpan.innerText = 'Scanning & Saving...';
+    }
 
     try {
-      this.showToast("⚙️ Updating pack directory and scanning...");
       const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packs_dir: newPath.trim() })
+        body: JSON.stringify({ packs_dir: rawPath })
       });
       const data = await res.json();
+
       if (!res.ok) {
         throw new Error(data.detail || data.message || "Failed to update directory");
       }
+
       this.packs = data.packs || [];
       this.renderPacks();
+      this.showWebConfigFeedback(`✅ ${data.message || `Loaded ${data.pack_count} scene packs!`}`, true);
       this.showToast(`✨ ${data.message || `Loaded ${data.pack_count} scene packs!`}`);
+
+      if (this.webConfigActiveCount) {
+        this.webConfigActiveCount.innerText = `${data.pack_count || 0} Packs Loaded`;
+      }
+
+      setTimeout(() => {
+        this.closePackConfigModal();
+      }, 1200);
     } catch (err) {
-      this.showToast(`❌ Error: ${err.message}`);
+      this.showWebConfigFeedback(`❌ ${err.message}`, false);
+    } finally {
+      if (this.btnSavePackConfig) {
+        this.btnSavePackConfig.disabled = false;
+        const textSpan = document.getElementById('web-save-config-text');
+        if (textSpan) textSpan.innerText = '📁 Scan & Save Location';
+      }
     }
+  }
+
+  showWebConfigFeedback(msg, isSuccess) {
+    if (!this.webConfigFeedback) return;
+    this.webConfigFeedback.style.display = 'block';
+    this.webConfigFeedback.style.background = isSuccess ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+    this.webConfigFeedback.style.border = isSuccess ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)';
+    this.webConfigFeedback.style.color = isSuccess ? '#6ee7b7' : '#fca5a5';
+    this.webConfigFeedback.innerText = msg;
+  }
+
+  promptSetPackFolder() {
+    this.openPackConfigModal();
   }
 
   async rescanPacksDirectory(silent = false) {
@@ -1689,15 +1776,16 @@ class DubMateApp {
         this.packCountBadge.innerText = '0 Packs';
       }
       this.packGrid.innerHTML = `
-        <div class="empty-packs-guide glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
-          <div style="font-size: 36px; margin-bottom: 12px;">📦</div>
-          <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--foreground);">No Scene Packs Loaded</h3>
-          <p style="font-size: 13px; color: var(--foreground-muted); max-width: 480px; margin: 0 auto 16px; line-height: 1.6;">
-            Download dub packs from <a href="https://gamebanana.com/mods/cats/44064" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline; font-weight: 600;">GameBanana Choicer Voicer</a> or drop any .zip pack directly here.
+        <div class="empty-packs-guide glass-card" style="grid-column: 1 / -1; padding: 36px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
+          <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
+          <h3 style="font-size: 17px; font-weight: 700; margin-bottom: 8px; color: var(--foreground);">No Scene Packs Loaded</h3>
+          <p style="font-size: 13px; color: var(--foreground-muted); max-width: 500px; margin: 0 auto 18px; line-height: 1.6;">
+            Select your Scene Packs folder on disk, import a .zip pack from GameBanana, or create a new pack with Pack Builder.
           </p>
-          <div style="display: flex; justify-content: center; gap: 10px;">
-            <button class="btn btn-primary btn-sm" onclick="document.getElementById('input-pack-zip').click()">📁 Import .ZIP Pack</button>
-            <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Rescan Directory</button>
+          <div style="display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">📁 Set Scene Packs Folder</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('input-pack-zip').click()">Import .ZIP Pack</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Rescan</button>
           </div>
         </div>
       `;

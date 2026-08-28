@@ -32,6 +32,12 @@ class TestConfigPackPath(unittest.TestCase):
         cls.client = TestClient(app.app)
         cls.client.__enter__()
 
+    def tearDown(self):
+        default_dir = os.path.abspath(pack_loader.get_default_packs_dir())
+        pack_loader.save_config({"packs_dir": default_dir})
+        pack_loader.init_pack_dirs()
+        pack_loader.PACK_OBJECT_CACHE.clear()
+
     @classmethod
     def tearDownClass(cls):
         # Restore default packs dir
@@ -105,15 +111,14 @@ class TestConfigPackPath(unittest.TestCase):
     def test_04_single_pack_folder_auto_resolution(self):
         """Verify pointing directly to a single pack directory automatically resolves its container."""
         temp_single_base = tempfile.mkdtemp(prefix="dubmate_test_single_")
-        source_pack = os.path.join(pack_loader.BASE_DIR, "Packs", "Deku_vs_Todoroki")
-        target_pack = os.path.join(temp_single_base, "Solo_Pack")
+        mock_pack = os.path.join(temp_single_base, "Mock_Sample_Pack")
 
         if os.path.exists(source_pack):
-            shutil.copytree(source_pack, target_pack)
+            shutil.copytree(source_pack, mock_pack)
 
         try:
-            # Point directly to Solo_Pack subfolder
-            resp = self.client.post("/api/config", json={"packs_dir": target_pack})
+            # Point directly to Mock_Sample_Pack subfolder
+            resp = self.client.post("/api/config", json={"packs_dir": mock_pack})
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
             self.assertEqual(data["status"], "ok")
@@ -121,6 +126,13 @@ class TestConfigPackPath(unittest.TestCase):
             print(f"[Test 4] Single pack folder resolved parent '{data['packs_dir']}' and loaded {data['pack_count']} packs.")
         finally:
             shutil.rmtree(temp_single_base, ignore_errors=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Restore configuration to standard workspace Packs folder
+        default_packs = os.path.abspath(os.path.join(pack_loader.BASE_DIR, "Packs"))
+        pack_loader.save_config({"packs_dir": default_packs})
+        pack_loader.init_pack_dirs()
 
 
 if __name__ == "__main__":
