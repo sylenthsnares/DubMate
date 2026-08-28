@@ -56,8 +56,6 @@ dubstage-1.1.0/tools/
 .impeccable/
 AGENTS.md
 install-antigravity-skills.ps1
-test_*.js
-test_*.py
 docs/
 *.log
 

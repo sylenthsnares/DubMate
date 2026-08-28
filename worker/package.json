@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "dubmate-room-registry",
   "version": "1.0.0",
   "description": "Cloudflare Worker room code registry for DubMate Multiplayer Studio",

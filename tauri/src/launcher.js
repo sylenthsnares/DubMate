@@ -1,4 +1,4 @@
-﻿// launcher.js - DubMate Desktop App Launcher & Auto-Updater Controller
+// launcher.js - DubMate Desktop App Launcher & Auto-Updater Controller
 
 const WORKER_REGISTRY_URL = "https://dubmate.bkaproductions.com";
 

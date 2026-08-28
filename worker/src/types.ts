@@ -1,4 +1,4 @@
-﻿export interface RoomEntry {
+export interface RoomEntry {
   tunnel_url: string;    // Full https://xxxx.trycloudflare.com URL
   room_token: string;    // 32-char hex secret — only the host ever sees this
   created_at: number;    // Unix timestamp (seconds)

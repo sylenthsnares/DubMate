@@ -1,4 +1,4 @@
-﻿name = "dubmate-room-registry"
+name = "dubmate-room-registry"
 main = "src/index.ts"
 compatibility_date = "2025-02-04"
 

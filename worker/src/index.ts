@@ -1,4 +1,4 @@
-﻿import type { RoomEntry, CreateRoomRequest, UpdateRoomRequest, CreateRoomResponse, UpdateRoomResponse } from "./types.ts";
+import type { RoomEntry, CreateRoomRequest, UpdateRoomRequest, CreateRoomResponse, UpdateRoomResponse } from "./types.ts";
 
 export interface Env {
   ROOMS: KVNamespace;

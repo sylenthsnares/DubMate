@@ -1,4 +1,4 @@
-﻿use std::sync::Mutex;
+use std::sync::Mutex;
 
 #[derive(Default, Debug)]
 pub struct DubMateState {

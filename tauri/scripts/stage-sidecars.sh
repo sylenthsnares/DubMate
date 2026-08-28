@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # stage-sidecars.sh - Stages Python, FFmpeg, and cloudflared sidecars for macOS Universal build
 set -e
 
@@ -30,10 +30,14 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
   # 2. FFmpeg Static Binary
   FFMPEG_TARGET="$SIDECAR_DIR/ffmpeg-$TRIPLE"
   if [ ! -f "$FFMPEG_TARGET" ]; then
-    echo "[2/3] Downloading FFmpeg static binary for macOS..."
-    curl -fsSL "https://evermeet.cx/ffmpeg/ffmpeg-7.0.zip" -o "/tmp/ffmpeg-mac.zip"
-    unzip -q -o "/tmp/ffmpeg-mac.zip" -d "/tmp/ffmpeg-mac"
-    cp "/tmp/ffmpeg-mac/ffmpeg" "$FFMPEG_TARGET"
+    ARCH=$(echo "$TRIPLE" | cut -d'-' -f1)
+    if [ "$ARCH" = "aarch64" ]; then
+      FF_ARCH="darwin-arm64"
+    else
+      FF_ARCH="darwin-x64"
+    fi
+    echo "[2/3] Downloading FFmpeg static binary for $FF_ARCH..."
+    curl -fsSL "https://github.com/eugeneware/ffmpeg-static/releases/download/b7.0/$FF_ARCH" -o "$FFMPEG_TARGET"
     chmod +x "$FFMPEG_TARGET"
   fi
 
