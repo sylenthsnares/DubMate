@@ -30,6 +30,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "resources/**/*"
+    ],
     "externalBin": [
       "sidecar/python-runtime/python",
       "sidecar/cloudflared",

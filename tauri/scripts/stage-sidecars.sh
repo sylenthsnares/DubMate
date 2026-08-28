@@ -56,6 +56,19 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
   fi
 done
 
+# 4. Application Resources (app.py, audio_processor, pack_loader, static, VERSION)
+RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"
+mkdir -p "$RESOURCE_DIR"
+echo "[4/4] Staging application Python files and static assets into resources..."
+for file in app.py audio_processor.py pack_loader.py pack_builder.py VERSION requirements.txt; do
+  if [ -f "$PROJECT_ROOT/$file" ]; then
+    cp "$PROJECT_ROOT/$file" "$RESOURCE_DIR/$file"
+  fi
+done
+if [ -d "$PROJECT_ROOT/static" ]; then
+  cp -r "$PROJECT_ROOT/static" "$RESOURCE_DIR/"
+fi
+
 echo "========================================================="
-echo "  ✅ macOS Universal Sidecars Staged Successfully!"
+echo "  ✅ macOS Sidecars & Resources Staged Successfully!"
 echo "========================================================="

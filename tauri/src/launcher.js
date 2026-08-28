@@ -105,16 +105,32 @@ async function init() {
       checkEngineReadiness();
     });
   } else {
-    // Browser fallback / mock mode for local debugging
-    setTimeout(() => {
-      isServerReady = true;
-      isTunnelReady = true;
-      currentTunnelUrl = "http://127.0.0.1:8000";
-      footerEngineStatus.innerText = "Online (local web)";
-      loadConfigInfo();
-      loadPacksList();
-      checkEngineReadiness();
-    }, 1000);
+    // Browser fallback / local web mode
+    isTunnelReady = true;
+    currentTunnelUrl = window.location.origin.includes(":8000") ? window.location.origin : "http://127.0.0.1:8000";
+  }
+
+  // Active polling to auto-connect as soon as port 8000 is online
+  pollBackendHealth();
+  setInterval(pollBackendHealth, 1500);
+}
+
+async function pollBackendHealth() {
+  try {
+    const resp = await fetch("http://127.0.0.1:8000/health");
+    if (resp.ok) {
+      if (!isServerReady) {
+        isServerReady = true;
+        if (footerEngineStatus) footerEngineStatus.innerText = isTauri ? "Online (port 8000)" : "Online (local web)";
+        loadConfigInfo();
+        loadPacksList();
+        checkEngineReadiness();
+      }
+    } else {
+      if (footerEngineStatus && !isServerReady) footerEngineStatus.innerText = "Engine Initializing...";
+    }
+  } catch (_) {
+    if (footerEngineStatus && !isServerReady) footerEngineStatus.innerText = "Engine Offline (port 8000)";
   }
 }
 

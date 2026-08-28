@@ -74,13 +74,29 @@ if (Test-Path $LocalFfmpeg) {
 $CfTarget = Join-Path $SidecarDir "cloudflared-$Triple.exe"
 $LocalCf = Join-Path $ProjectRoot "tools\cloudflared.exe"
 if (Test-Path $LocalCf) {
-    Write-Host "[4/4] Copying local cloudflared from tools\..."
+    Write-Host "[4/5] Copying local cloudflared from tools\..."
     Copy-Item $LocalCf $CfTarget -Force
 } else {
-    Write-Host "[4/4] Downloading cloudflared binary..."
+    Write-Host "[4/5] Downloading cloudflared binary..."
     Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $CfTarget -UseBasicParsing
 }
 
+# 5. Application Resources (app.py, audio_processor, pack_loader, static, VERSION)
+$ResourceDir = Join-Path $ScriptDir "..\src-tauri\resources"
+New-Item -ItemType Directory -Force $ResourceDir | Out-Null
+Write-Host "[5/5] Staging application Python files and static assets into resources..."
+$FilesToCopy = @("app.py", "audio_processor.py", "pack_loader.py", "pack_builder.py", "VERSION", "requirements.txt")
+foreach ($file in $FilesToCopy) {
+    $src = Join-Path $ProjectRoot $file
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $ResourceDir $file) -Force
+    }
+}
+$StaticSrc = Join-Path $ProjectRoot "static"
+if (Test-Path $StaticSrc) {
+    Copy-Item $StaticSrc (Join-Path $ResourceDir "static") -Recurse -Force
+}
+
 Write-Host "========================================================="
-Write-Host "  ✅ ALL SIDECARS STAGED SUCCESSFULLY FOR $Triple"
+Write-Host "  ✅ ALL SIDECARS & RESOURCES STAGED SUCCESSFULLY FOR $Triple"
 Write-Host "========================================================="

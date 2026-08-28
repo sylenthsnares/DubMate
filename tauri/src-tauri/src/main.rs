@@ -7,10 +7,99 @@ use state::{DubMateState, SharedState};
 use updater::UpdateCheckResult;
 
 use regex::Regex;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+
+pub fn find_app_py(app: &tauri::AppHandle) -> Option<PathBuf> {
+    // 1. Check current executable directory & resources
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let direct = exe_dir.join("app.py");
+            if direct.is_file() {
+                return Some(direct);
+            }
+            let res = exe_dir.join("resources").join("app.py");
+            if res.is_file() {
+                return Some(res);
+            }
+        }
+    }
+
+    // 2. Check Tauri resource directory
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let res_app = res_dir.join("app.py");
+        if res_app.is_file() {
+            return Some(res_app);
+        }
+        let nested_res = res_dir.join("resources").join("app.py");
+        if nested_res.is_file() {
+            return Some(nested_res);
+        }
+    }
+
+    // 3. Check current working directory and parent paths (development mode)
+    if let Ok(cwd) = std::env::current_dir() {
+        let direct = cwd.join("app.py");
+        if direct.is_file() {
+            return Some(direct);
+        }
+        if let Some(parent) = cwd.parent() {
+            let p_app = parent.join("app.py");
+            if p_app.is_file() {
+                return Some(p_app);
+            }
+            if let Some(gp) = parent.parent() {
+                let gp_app = gp.join("app.py");
+                if gp_app.is_file() {
+                    return Some(gp_app);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub fn get_app_install_dir(app: &tauri::AppHandle) -> PathBuf {
+    if let Some(app_py) = find_app_py(app) {
+        if let Some(parent) = app_py.parent() {
+            return parent.to_path_buf();
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let p_str = parent.to_string_lossy();
+            if !p_str.contains("target") {
+                return parent.to_path_buf();
+            }
+        }
+    }
+
+    if let Ok(res_dir) = app.path().resource_dir() {
+        if res_dir.exists() {
+            return res_dir;
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if cwd.ends_with("src-tauri") {
+            if let Some(p) = cwd.parent().and_then(|p| p.parent()) {
+                return p.to_path_buf();
+            }
+        } else if cwd.ends_with("tauri") {
+            if let Some(p) = cwd.parent() {
+                return p.to_path_buf();
+            }
+        }
+        return cwd;
+    }
+
+    PathBuf::from(".")
+}
 
 fn main() {
     tauri::Builder::default()
@@ -24,13 +113,13 @@ fn main() {
                 let current_version = "1.0.2";
                 
                 // 1. Mandatory Update Check
-                let update_res = updater::check_for_update(current_version).await;
+                let update_res = updater::check_for_update(current_version, &handle).await;
                 let _ = handle.emit("update-status", &update_res);
 
                 match &update_res {
                     UpdateCheckResult::UpdateAvailable { .. } => {
                         // Wait for user to trigger update from the UI
-                        println!("[Updater] Update available. Holding sidecar startup.");
+                        println!("[Updater] Update available or initial bundle required. Holding sidecar startup.");
                     }
                     _ => {
                         // Start Python and Cloudflare sidecars immediately
@@ -75,9 +164,22 @@ fn main() {
 }
 
 async fn start_sidecars(app: tauri::AppHandle) {
+    let app_py_path = match find_app_py(&app) {
+        Some(p) => p,
+        None => {
+            eprintln!("[Sidecar Error] app.py not found in working directory or resources!");
+            return;
+        }
+    };
+    let app_dir = app_py_path.parent().unwrap_or(&app_py_path);
+
     // 1. Spawn Python FastAPI sidecar
     if let Ok(sidecar_cmd) = app.shell().sidecar("sidecar/python-runtime/python") {
-        if let Ok((mut rx, child)) = sidecar_cmd.args(["app.py"]).spawn() {
+        let cmd = sidecar_cmd
+            .current_dir(app_dir)
+            .args([app_py_path.to_str().unwrap()]);
+
+        if let Ok((mut rx, child)) = cmd.spawn() {
             {
                 let state = app.state::<SharedState>();
                 let mut data = state.0.lock().unwrap();
@@ -174,7 +276,7 @@ async fn trigger_start_sidecars(app: tauri::AppHandle) {
 
 #[tauri::command]
 async fn apply_update(download_url: String, app: tauri::AppHandle) -> Result<(), String> {
-    let app_dir = std::env::current_dir().map_err(|e| e.to_string())?;
+    let app_dir = get_app_install_dir(&app);
     updater::download_and_extract_bundle(&download_url, &app_dir, app.clone()).await?;
     let _ = app.emit("update-complete", ());
     Ok(())

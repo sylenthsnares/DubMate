@@ -39,7 +39,7 @@ pub struct UpdateProgressPayload {
     pub percentage: u8,
 }
 
-pub async fn check_for_update(current_version: &str) -> UpdateCheckResult {
+pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> UpdateCheckResult {
     let client = match reqwest::Client::builder()
         .user_agent("DubMate-Studio-Desktop/1.0")
         .timeout(std::time::Duration::from_secs(10))
@@ -80,8 +80,9 @@ pub async fn check_for_update(current_version: &str) -> UpdateCheckResult {
 
     let latest_clean = release.tag_name.trim().trim_start_matches('v');
     let current_clean = current_version.trim().trim_start_matches('v');
+    let app_py_exists = crate::find_app_py(app).is_some();
 
-    if latest_clean == current_clean {
+    if latest_clean == current_clean && app_py_exists {
         return UpdateCheckResult::UpToDate;
     }
 
@@ -95,7 +96,11 @@ pub async fn check_for_update(current_version: &str) -> UpdateCheckResult {
         Some(asset) => UpdateCheckResult::UpdateAvailable {
             current_version: current_clean.to_string(),
             latest_version: latest_clean.to_string(),
-            changelog: release.body.unwrap_or_else(|| "General improvements and fixes.".to_string()),
+            changelog: if !app_py_exists {
+                "Initial Setup: Downloading DubMate core application bundle...".to_string()
+            } else {
+                release.body.unwrap_or_else(|| "General improvements and fixes.".to_string())
+            },
             download_url: asset.browser_download_url.clone(),
         },
         None => UpdateCheckResult::UpToDate,
