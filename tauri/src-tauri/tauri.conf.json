@@ -5,7 +5,7 @@
   "identifier": "com.dubmate.studio",
   "build": {
     "beforeDevCommand": "",
-    "devUrl": "../src",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "",
     "frontendDist": "../src"
   },

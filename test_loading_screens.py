@@ -163,7 +163,7 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         with open(tauri_conf_path, "r", encoding="utf-8") as f:
             conf = json.load(f)
         self.assertTrue(conf.get("app", {}).get("withGlobalTauri", False), "withGlobalTauri must be enabled")
-        self.assertEqual(conf.get("build", {}).get("devUrl"), "../src", "devUrl should point to ../src")
+        self.assertEqual(conf.get("build", {}).get("frontendDist"), "../src", "frontendDist should point to ../src")
 
         with open(main_rs_path, "r", encoding="utf-8") as f:
             rs = f.read()
