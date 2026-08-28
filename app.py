@@ -411,6 +411,42 @@ def get_packs_registry(force_rescan: bool = False) -> Dict[str, pack_loader.Pack
     return PACKS_CACHE
 
 
+@app.get("/api/config")
+async def get_config():
+    """Returns the current persistent configuration and pack paths."""
+    config_info = pack_loader.get_current_packs_config()
+    registry = get_packs_registry()
+    return {
+        "status": "ok",
+        **config_info,
+        "packs": [p.to_dict() for p in registry.values()],
+    }
+
+
+@app.post("/api/config")
+async def update_config(payload: Dict[str, Any]):
+    """Updates and persists the scene packs folder path, immediately rescanning the folder."""
+    global PACKS_CACHE
+    packs_dir = payload.get("packs_dir", "")
+    if not packs_dir:
+        raise HTTPException(status_code=400, detail="packs_dir is required")
+
+    success, message, count = pack_loader.set_custom_packs_dir(packs_dir)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=True)
+    config_info = pack_loader.get_current_packs_config()
+
+    return {
+        "status": "ok",
+        "message": message,
+        "pack_count": count,
+        **config_info,
+        "packs": [p.to_dict() for p in PACKS_CACHE.values()],
+    }
+
+
 @app.get("/api/packs")
 async def list_packs(rescan: bool = False):
     """Returns list of available dub packs, using fast memory registry or on-demand rescan."""

@@ -1479,11 +1479,46 @@ class DubMateApp {
       if (this.packGrid) {
         this.packGrid.innerHTML = `
           <div style="color: var(--foreground-muted); padding: 24px; text-align: center; grid-column: 1 / -1;">
-            <p style="margin-bottom: 10px;">⚠️ Could not load scene packs from backend.</p>
-            <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Retry / Rescan Packs</button>
+            <p style="margin-bottom: 12px;">⚠️ Could not load scene packs from backend.</p>
+            <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Retry / Rescan</button>
+              <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.promptSetPackFolder()">📁 Set Pack Folder</button>
+            </div>
           </div>
         `;
       }
+    }
+  }
+
+  async promptSetPackFolder() {
+    let currentDir = "";
+    try {
+      const cRes = await fetch('/api/config');
+      if (cRes.ok) {
+        const cData = await cRes.json();
+        currentDir = cData.packs_dir || "";
+      }
+    } catch (_) {}
+
+    const newPath = window.prompt("Enter scene packs directory path on disk (saved for future launches):", currentDir);
+    if (!newPath || !newPath.trim()) return;
+
+    try {
+      this.showToast("⚙️ Updating pack directory and scanning...");
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packs_dir: newPath.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Failed to update directory");
+      }
+      this.packs = data.packs || [];
+      this.renderPacks();
+      this.showToast(`✨ ${data.message || `Loaded ${data.pack_count} scene packs!`}`);
+    } catch (err) {
+      this.showToast(`❌ Error: ${err.message}`);
     }
   }
 

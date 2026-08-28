@@ -22,6 +22,162 @@ PACKS_DIRS = [
 CACHE_DIR = os.path.join(BASE_DIR, ".cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+def get_config_path() -> str:
+    """Returns the persistent config file path in user home or project base dir."""
+    user_home = os.path.expanduser("~")
+    dubmate_home = os.path.join(user_home, ".dubmate")
+    try:
+        os.makedirs(dubmate_home, exist_ok=True)
+        return os.path.join(dubmate_home, "config.json")
+    except Exception:
+        return os.path.join(BASE_DIR, "dubmate_config.json")
+
+
+def load_config() -> Dict[str, Any]:
+    """Loads configuration from persistent disk storage."""
+    config_file = get_config_path()
+    if os.path.isfile(config_file):
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as ex:
+            print(f"[pack_loader] Error reading config file {config_file}: {ex}")
+    return {}
+
+
+def save_config(config_data: Dict[str, Any]) -> bool:
+    """Saves configuration to persistent disk storage."""
+    config_file = get_config_path()
+    try:
+        os.makedirs(os.path.dirname(config_file), exist_ok=True)
+        tmp_file = config_file + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+        if os.path.exists(config_file):
+            os.replace(tmp_file, config_file)
+        else:
+            os.rename(tmp_file, config_file)
+        return True
+    except Exception as ex:
+        print(f"[pack_loader] Error saving config file {config_file}: {ex}")
+        return False
+
+
+def get_default_packs_dir() -> str:
+    """Returns default project packs directory."""
+    return os.path.join(BASE_DIR, "Packs")
+
+
+def init_pack_dirs():
+    """Initializes PACKS_DIRS from saved config and defaults."""
+    global PACKS_DIRS
+    dirs = []
+    cfg = load_config()
+    custom_dir = cfg.get("packs_dir")
+    if custom_dir and os.path.isdir(custom_dir):
+        norm = os.path.abspath(custom_dir)
+        if norm not in dirs:
+            dirs.append(norm)
+
+    extra_dirs = cfg.get("extra_packs_dirs", [])
+    if isinstance(extra_dirs, list):
+        for ed in extra_dirs:
+            if ed and os.path.isdir(ed):
+                norm = os.path.abspath(ed)
+                if norm not in dirs:
+                    dirs.append(norm)
+
+    # Always ensure default project Packs/ is included
+    default_p = os.path.abspath(get_default_packs_dir())
+    if default_p not in dirs and os.path.exists(default_p):
+        dirs.append(default_p)
+
+    # Also fallback to relative Packs/ if running in another CWD
+    cwd_packs = os.path.abspath(os.path.join(os.getcwd(), "Packs"))
+    if cwd_packs not in dirs and os.path.exists(cwd_packs):
+        dirs.append(cwd_packs)
+
+    if not dirs:
+        dirs.append(default_p)
+
+    PACKS_DIRS = dirs
+
+
+def set_custom_packs_dir(path_str: str) -> Tuple[bool, str, int]:
+    """
+    Sets and persists a custom pack directory.
+    Validates folder existence, handles single-pack folders by indexing their parent,
+    persists to config.json, refreshes PACKS_DIRS, and clears cache for a fresh scan.
+    Returns: (success, message, pack_count)
+    """
+    if not path_str or not str(path_str).strip():
+        return False, "Pack folder path cannot be empty.", 0
+
+    clean_path = str(path_str).strip().strip('"').strip("'")
+    resolved_path = os.path.abspath(os.path.expanduser(clean_path))
+
+    if not os.path.exists(resolved_path):
+        return False, f"Directory does not exist: {resolved_path}", 0
+
+    if not os.path.isdir(resolved_path):
+        return False, f"Path is not a valid directory: {resolved_path}", 0
+
+    # Check if the user pointed directly to a single scene pack folder (e.g. contains dub_video.* or clips)
+    is_single_pack = False
+    try:
+        entries = os.listdir(resolved_path)
+        has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in entries)
+        has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in entries)
+        if has_video or has_clips:
+            is_single_pack = True
+    except Exception:
+        pass
+
+    target_dir = resolved_path
+    if is_single_pack:
+        parent_dir = os.path.dirname(resolved_path)
+        if parent_dir and os.path.isdir(parent_dir):
+            target_dir = parent_dir
+
+    # Save to config
+    cfg = load_config()
+    cfg["packs_dir"] = target_dir
+    save_config(cfg)
+
+    # Re-initialize PACKS_DIRS
+    init_pack_dirs()
+
+    # Clear memory cache
+    PACK_OBJECT_CACHE.clear()
+
+    # Scan and count
+    all_packs = get_all_packs(force_disk_scan=True)
+    count = len(all_packs)
+
+    if count == 0:
+        return True, f"Configured '{target_dir}', but 0 valid scene packs were found in that folder.", count
+
+    return True, f"Successfully loaded {count} scene pack(s) from '{target_dir}'.", count
+
+
+def get_current_packs_config() -> Dict[str, Any]:
+    """Returns information about active packs directory and configuration."""
+    cfg = load_config()
+    active_primary = PACKS_DIRS[0] if PACKS_DIRS else get_default_packs_dir()
+    all_packs = get_all_packs()
+    return {
+        "packs_dir": cfg.get("packs_dir") or active_primary,
+        "default_packs_dir": get_default_packs_dir(),
+        "scanned_paths": [os.path.abspath(d) for d in PACKS_DIRS if os.path.exists(d)],
+        "config_file": get_config_path(),
+        "pack_count": len(all_packs),
+    }
+
+# Initialize PACKS_DIRS on startup
+init_pack_dirs()
+
 AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
 VIDEO_EXTS = (".mp4", ".ogv", ".mkv", ".webm", ".mov", ".avi")
 SAFE_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")

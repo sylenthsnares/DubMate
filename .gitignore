@@ -73,3 +73,10 @@ test_executables/*
 *.msi
 *.dmg
 !tools/*.exe
+
+# PyInstaller & Build Outputs
+build/
+dist/
+*.spec
+scratch/
+

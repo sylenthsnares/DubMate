@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -17,9 +17,15 @@
         <div class="brand-badge">PRO</div>
         <div class="brand-title">DubMate <span>Studio</span></div>
       </div>
-      <div class="status-indicator">
-        <span id="status-dot" class="dot dot-amber"></span>
-        <span id="status-text">Booting audio engine...</span>
+      <div class="header-actions">
+        <button id="btn-open-config" class="btn-header-config" title="Configure Scene Packs Folder">
+          <span class="btn-icon">📁</span>
+          <span class="btn-text">Pack Folder</span>
+        </button>
+        <div class="status-indicator">
+          <span id="status-dot" class="dot dot-amber"></span>
+          <span id="status-text">Booting audio engine...</span>
+        </div>
       </div>
     </header>
 
@@ -41,10 +47,17 @@
 
             <div class="card-form">
               <div class="form-group">
-                <label for="select-pack">Choose Scene Pack</label>
+                <div class="form-label-row">
+                  <label for="select-pack">Choose Scene Pack</label>
+                  <button type="button" id="btn-quick-config" class="btn-link-action" title="Change scene pack folder location">📁 Set Folder</button>
+                </div>
                 <select id="select-pack" class="form-control">
                   <option value="">Loading scene packs...</option>
                 </select>
+                <div id="box-pack-warning" class="pack-warning-box" style="display: none;">
+                  <span class="warning-text">⚠️ No scene packs detected in active folder.</span>
+                  <button type="button" id="btn-fix-pack-path" class="btn btn-secondary btn-sm">📁 Set Folder Location</button>
+                </div>
               </div>
 
               <div class="form-group">
@@ -135,6 +148,46 @@
       <span class="footer-left">DubMate Studio Pro &bull; v1.0.0</span>
       <span class="footer-right">Local Engine: <strong id="footer-engine-status">Offline</strong></span>
     </footer>
+
+    <!-- 3. Pack Configuration Modal Dialog -->
+    <div id="modal-config" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">📁</span>
+            <h3 class="modal-title">Scene Packs Folder Location</h3>
+          </div>
+          <button id="btn-close-config" class="btn-modal-close" title="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">
+            Specify the folder on your computer where your DubMate scene packs or downloaded <code>.zip</code> packs are located. This path is saved permanently for all future launches.
+          </p>
+
+          <div class="form-group">
+            <label for="input-pack-path">Packs Directory Path</label>
+            <div class="input-with-action">
+              <input type="text" id="input-pack-path" class="form-control mono-input" placeholder="e.g. C:\DubMate\Packs or D:\MyScenePacks" autocomplete="off" spellcheck="false">
+              <label class="btn-browse-folder" title="Browse local directory">
+                <span>Browse...</span>
+                <input type="file" id="file-folder-picker" webkitdirectory directory multiple style="display: none;">
+              </label>
+            </div>
+            <span class="field-hint" id="current-active-path-label">Active: <code id="active-path-text">Loading...</code></span>
+          </div>
+
+          <div id="config-feedback" class="config-feedback-box" style="display: none;"></div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-cancel-config" class="btn btn-ghost">Cancel</button>
+          <button id="btn-save-config" class="btn btn-primary">
+            <span id="save-config-spinner" class="spinner" style="display: none;">⚙️</span>
+            <span id="save-config-text">Scan & Save Location</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="launcher.js"></script>

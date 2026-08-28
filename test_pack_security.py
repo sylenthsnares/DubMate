@@ -14,6 +14,7 @@ import os
 import io
 import json
 import time
+import shutil
 import zipfile
 import tempfile
 import unittest

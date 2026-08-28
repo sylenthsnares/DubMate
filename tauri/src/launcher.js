@@ -33,6 +33,22 @@ const updateChangelogText = document.getElementById("update-changelog-text");
 const btnStartUpdate = document.getElementById("btn-start-update");
 const footerEngineStatus = document.getElementById("footer-engine-status");
 
+// Pack Configuration DOM Elements
+const btnOpenConfig = document.getElementById("btn-open-config");
+const btnQuickConfig = document.getElementById("btn-quick-config");
+const btnFixPackPath = document.getElementById("btn-fix-pack-path");
+const modalConfig = document.getElementById("modal-config");
+const btnCloseConfig = document.getElementById("btn-close-config");
+const btnCancelConfig = document.getElementById("btn-cancel-config");
+const btnSaveConfig = document.getElementById("btn-save-config");
+const inputPackPath = document.getElementById("input-pack-path");
+const fileFolderPicker = document.getElementById("file-folder-picker");
+const activePathText = document.getElementById("active-path-text");
+const configFeedback = document.getElementById("config-feedback");
+const boxPackWarning = document.getElementById("box-pack-warning");
+const saveConfigSpinner = document.getElementById("save-config-spinner");
+const saveConfigText = document.getElementById("save-config-text");
+
 // Load stored preferences
 const savedName = localStorage.getItem("dubmate_actor_name");
 if (savedName) {
@@ -77,6 +93,7 @@ async function init() {
     listen("server-ready", () => {
       isServerReady = true;
       footerEngineStatus.innerText = "Online (port 8000)";
+      loadConfigInfo();
       loadPacksList();
       checkEngineReadiness();
     });
@@ -94,6 +111,7 @@ async function init() {
       isTunnelReady = true;
       currentTunnelUrl = "http://127.0.0.1:8000";
       footerEngineStatus.innerText = "Online (local web)";
+      loadConfigInfo();
       loadPacksList();
       checkEngineReadiness();
     }, 1000);
@@ -104,10 +122,25 @@ function checkEngineReadiness() {
   if (isServerReady && isTunnelReady) {
     statusDot.className = "dot dot-green";
     statusText.innerText = "Studio Engine & Tunnel Active";
-    if (btnCreateRoom) btnCreateRoom.disabled = false;
+    if (btnCreateRoom && selectPack.value) btnCreateRoom.disabled = false;
   } else if (isServerReady) {
     statusDot.className = "dot dot-amber";
     statusText.innerText = "Local Server Ready (Activating Tunnel...)";
+  }
+}
+
+async function loadConfigInfo() {
+  try {
+    const resp = await fetch("http://127.0.0.1:8000/api/config");
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.packs_dir) {
+        if (activePathText) activePathText.innerText = data.packs_dir;
+        if (inputPackPath && !inputPackPath.value) inputPackPath.value = data.packs_dir;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch active config:", err);
   }
 }
 
@@ -115,20 +148,139 @@ async function loadPacksList() {
   try {
     const resp = await fetch("http://127.0.0.1:8000/api/packs");
     const data = await resp.json();
-    const packs = Object.values(data.packs || data);
+    const packs = Array.isArray(data) ? data : Object.values(data.packs || data);
 
     if (packs && packs.length > 0) {
       selectPack.innerHTML = packs.map(p => `
-        <option value="${p.id || p.pack_id}">${p.name} (${p.line_count || p.lines?.length || 0} lines)</option>
+        <option value="${p.id || p.pack_id}">${p.name || p.title} (${p.line_count || p.lines?.length || 0} lines)</option>
       `).join("");
-      btnCreateRoom.disabled = !isTunnelReady;
+      if (boxPackWarning) boxPackWarning.style.display = "none";
+      if (btnCreateRoom) btnCreateRoom.disabled = !isTunnelReady;
     } else {
-      selectPack.innerHTML = `<option value="">No scene packs found in Packs/</option>`;
+      selectPack.innerHTML = `<option value="">No scene packs found in active folder</option>`;
+      if (boxPackWarning) boxPackWarning.style.display = "flex";
+      if (btnCreateRoom) btnCreateRoom.disabled = true;
     }
   } catch (err) {
     console.error("Error fetching packs registry:", err);
     selectPack.innerHTML = `<option value="">Error loading scene packs</option>`;
+    if (boxPackWarning) boxPackWarning.style.display = "flex";
+    if (btnCreateRoom) btnCreateRoom.disabled = true;
   }
+}
+
+// --- Pack Configuration Modal Controls ---
+function openConfigModal() {
+  if (configFeedback) configFeedback.style.display = "none";
+  if (modalConfig) modalConfig.style.display = "flex";
+  loadConfigInfo();
+  if (inputPackPath) {
+    setTimeout(() => inputPackPath.focus(), 50);
+  }
+}
+
+function closeConfigModal() {
+  if (modalConfig) modalConfig.style.display = "none";
+}
+
+if (btnOpenConfig) btnOpenConfig.addEventListener("click", openConfigModal);
+if (btnQuickConfig) btnQuickConfig.addEventListener("click", openConfigModal);
+if (btnFixPackPath) btnFixPackPath.addEventListener("click", openConfigModal);
+if (btnCloseConfig) btnCloseConfig.addEventListener("click", closeConfigModal);
+if (btnCancelConfig) btnCancelConfig.addEventListener("click", closeConfigModal);
+
+// Close on backdrop click
+if (modalConfig) {
+  modalConfig.addEventListener("click", (e) => {
+    if (e.target === modalConfig) closeConfigModal();
+  });
+}
+
+// Close on Escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && modalConfig && modalConfig.style.display !== "none") {
+    closeConfigModal();
+  }
+});
+
+// File / Folder picker change event
+if (fileFolderPicker) {
+  fileFolderPicker.addEventListener("change", (e) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      // In Chromium / WebView2, files[0].path or webkitRelativePath gives insight
+      const firstFile = files[0];
+      if (firstFile.path) {
+        // Full filesystem path available in desktop WebViews
+        const dir = firstFile.path.substring(0, Math.max(firstFile.path.lastIndexOf('\\'), firstFile.path.lastIndexOf('/')));
+        if (inputPackPath) inputPackPath.value = dir;
+      } else if (firstFile.webkitRelativePath) {
+        const rootDirName = firstFile.webkitRelativePath.split('/')[0];
+        if (inputPackPath) {
+          // If input has existing path, update root folder, otherwise suggest folder name
+          inputPackPath.value = rootDirName;
+        }
+      }
+    }
+  });
+}
+
+// Save & Scan Packs Button Handler
+if (btnSaveConfig) {
+  btnSaveConfig.addEventListener("click", async () => {
+    const rawPath = (inputPackPath.value || "").trim();
+    if (!rawPath) {
+      showConfigFeedback("Please enter or browse to a valid scene packs folder path.", false);
+      return;
+    }
+
+    btnSaveConfig.disabled = true;
+    if (saveConfigSpinner) saveConfigSpinner.style.display = "inline-block";
+    if (saveConfigText) saveConfigText.innerText = "Scanning Folder...";
+
+    try {
+      const resp = await fetch("http://127.0.0.1:8000/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packs_dir: rawPath })
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        throw new Error(data.detail || data.message || "Failed to update packs directory.");
+      }
+
+      // Update UI state
+      if (activePathText) activePathText.innerText = data.packs_dir;
+      localStorage.setItem("dubmate_custom_packs_dir", data.packs_dir);
+
+      showConfigFeedback(`✅ ${data.message || `Successfully loaded ${data.pack_count} scene pack(s)! Saved for future launches.`}`, true);
+
+      // Refresh pack list
+      await loadPacksList();
+
+      setTimeout(() => {
+        closeConfigModal();
+        btnSaveConfig.disabled = false;
+        if (saveConfigSpinner) saveConfigSpinner.style.display = "none";
+        if (saveConfigText) saveConfigText.innerText = "Scan & Save Location";
+      }, 1400);
+
+    } catch (err) {
+      showConfigFeedback(`❌ ${err.message}`, false);
+      btnSaveConfig.disabled = false;
+      if (saveConfigSpinner) saveConfigSpinner.style.display = "none";
+      if (saveConfigText) saveConfigText.innerText = "Scan & Save Location";
+    }
+  });
+}
+
+function showConfigFeedback(msg, isSuccess) {
+  if (!configFeedback) return;
+  configFeedback.className = `config-feedback-box ${isSuccess ? "success" : "error"}`;
+  configFeedback.innerText = msg;
+  configFeedback.style.display = "block";
 }
 
 // --- Create Room Handler ---
