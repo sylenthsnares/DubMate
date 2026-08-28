@@ -1,4 +1,4 @@
-﻿name: Build Desktop Installers
+name: Build Desktop Installers
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Frontend Dependencies
         run: npm install
