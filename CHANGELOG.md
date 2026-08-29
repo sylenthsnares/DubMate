@@ -1,5 +1,16 @@
 # DubMate Studio Changelog
 
+## [1.0.8] - 2026-08-29
+
+### Fixed Pack Builder YouTube Extraction (yt-dlp) & Speech-to-Text (Whisper)
+- **YouTube Anti-Bot & Signature Decryption**: Removed `'player_skip': ['js', 'configs']` in `pack_builder.py` that caused HTTP 403 Forbidden errors by preventing `yt-dlp` from parsing player JavaScript deciphering functions.
+- **Enabled YouTube Subtitle Track Ingestion**: Enabled automatic caption and subtitle downloading (`writesubtitles: True`, `writeautomaticsub: True`, `subtitleslangs: ['all', '-live_chat']`) for YouTube imports.
+- **Video Container Detection Safeguard**: Fixed download scanner to only match valid video container extensions (`.mp4`, `.webm`, `.mkv`, `.mov`), preventing thumbnail `.webp`/`.jpg` or metadata `.info.json` from being selected.
+- **FFmpeg PATH Injection for Whisper & Demucs**: Automatically prepended project `tools/` directory to `os.environ["PATH"]` upon startup, eliminating `FileNotFoundError: ffmpeg` on machines without global system FFmpeg.
+- **In-Memory Whisper Model Caching**: Implemented a thread-safe global cache for loaded Whisper PyTorch model instances (`get_whisper_model()`), eliminating multi-second reload latency and VRAM/RAM churn on timeline slice transcription.
+- **Anti-Hallucination Tuning**: Added `condition_on_previous_text=False`, `fp16=(device == "cuda")`, and compression ratio thresholds to eliminate repetition loops on music/silence.
+- **Subtitle Preservation in Pipeline**: Preserved user-uploaded `.srt`/`.vtt` and YouTube imported subtitles in `_run_builder_pipeline_sync`, preventing Whisper from wiping existing cues.
+
 ## [1.0.7] - 2026-08-29
 
 ### Fixed Cloudflare Registry Room Resolution & Isolated Preview KV

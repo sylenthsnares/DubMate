@@ -1788,9 +1788,14 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         progress.update("separating_stems", 0.60, "Audio stem separation complete.", stage="stem_separation")
 
         # Step 3: Speech-to-Text Transcription via Whisper (60% -> 90%)
-        progress.update("transcribing", 0.70, "Transcribing dialogue lines & timestamps (Whisper AI)...", stage="transcription")
-        is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
-        segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
+        existing_subtitles = session.get("subtitle_segments") or progress.segments
+        if existing_subtitles and len(existing_subtitles) > 0:
+            progress.update("transcribing", 0.85, f"Loaded {len(existing_subtitles)} timestamped subtitle cues...", stage="transcription")
+            segments = existing_subtitles
+        else:
+            progress.update("transcribing", 0.70, "Transcribing dialogue lines & timestamps (Whisper AI)...", stage="transcription")
+            is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
+            segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
         
         # Step 4: Speaker Turn Heuristics (90% -> 100%)
         if segments:

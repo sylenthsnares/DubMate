@@ -27,6 +27,30 @@ try:
 except Exception:
     pass
 
+def ensure_tools_in_path():
+    """Prepends project tools directory to PATH so external libraries (Whisper, Demucs) find ffmpeg."""
+    tools_dir = os.path.join(BASE_DIR, "tools")
+    if os.path.isdir(tools_dir):
+        current_path = os.environ.get("PATH", "")
+        if tools_dir not in current_path:
+            os.environ["PATH"] = tools_dir + os.pathsep + current_path
+
+ensure_tools_in_path()
+
+_WHISPER_MODELS: Dict[Tuple[str, str], Any] = {}
+_WHISPER_LOCK = threading.Lock()
+
+def get_whisper_model(model_size: str, device: str) -> Any:
+    """Returns a cached loaded Whisper model to prevent multi-second disk/RAM reload stalls."""
+    import whisper
+    key = (model_size, device)
+    with _WHISPER_LOCK:
+        if key not in _WHISPER_MODELS:
+            print(f"[PackBuilder] Loading Whisper ({model_size}) onto {device.upper()} (cached)...")
+            _WHISPER_MODELS[key] = whisper.load_model(model_size, device=device)
+        return _WHISPER_MODELS[key]
+
+
 # Default character color palette (Warm Analog Studio & Pro DAW palette)
 DEFAULT_CHARACTER_COLORS = [
     "#d97706",  # Vintage Amber
@@ -182,19 +206,22 @@ def download_video_from_url(
     video_out_tmpl = os.path.join(output_dir, "source_video.%(ext)s")
     thumb_out_tmpl = os.path.join(output_dir, "cover.%(ext)s")
     ffmpeg_bin = pack_loader.get_ffmpeg_path()
+    ffmpeg_dir = os.path.dirname(ffmpeg_bin) if os.path.isfile(ffmpeg_bin) else ffmpeg_bin
 
-    # Options for yt-dlp optimized against YouTube 403/429 / throttling
+    # Options for yt-dlp optimized for reliability, anti-throttling & signature decryption
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4][height<=1080]/best[height<=1080]/best',
+        'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
         'outtmpl': {
             'default': video_out_tmpl,
             'thumbnail': thumb_out_tmpl,
         },
         'merge_output_format': 'mp4',
-        'ffmpeg_location': ffmpeg_bin,
+        'ffmpeg_location': ffmpeg_dir,
         'writethumbnail': True,
-        'writesubtitles': False,
-        'writeautomaticsub': False,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': ['all', '-live_chat'],
+        'subtitlesformat': 'srt/vtt/best',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
@@ -204,8 +231,7 @@ def download_video_from_url(
         'fragment_retries': 5,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android', 'web', 'mweb', 'tv_embedded'],
-                'player_skip': ['js', 'configs'],
+                'player_client': ['android', 'web', 'mweb'],
             }
         },
         'http_headers': {
@@ -232,10 +258,12 @@ def download_video_from_url(
             raise ValueError(f"Invalid or unsupported video URL: {clean_url}")
         raise RuntimeError(f"Failed to download video with yt-dlp: {err_msg}")
 
-    # Find the downloaded source_video file
+    # Find the downloaded source_video file (must be a valid video container, not info.json or image)
+    VIDEO_CONTAINER_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".ts", ".m4v"}
     raw_video_path = None
     for f in os.listdir(output_dir):
-        if f.startswith("source_video.") and not f.endswith(".part"):
+        ext = os.path.splitext(f)[1].lower()
+        if f.startswith("source_video.") and not f.endswith(".part") and ext in VIDEO_CONTAINER_EXTS:
             raw_video_path = os.path.join(output_dir, f)
             break
 
@@ -444,8 +472,14 @@ def transcribe_segment(audio_wav: str, start: float, end: float, model_size: str
     try:
         import whisper
         print(f"[PackBuilder] Transcribing segment [{start:.2f}s - {end:.2f}s] with Whisper on {device.upper()}...")
-        model = whisper.load_model(model_size, device=device)
-        transcribe_opts = {"verbose": False}
+        model = get_whisper_model(model_size, device=device)
+        transcribe_opts = {
+            "verbose": False,
+            "fp16": (device == "cuda"),
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "no_speech_threshold": 0.6,
+        }
         
         is_romaji_req = romanize or (language and "romaji" in language.lower())
         whisper_lang = "ja" if (language and "ja" in language.lower()) else language
@@ -487,9 +521,15 @@ def transcribe_audio(audio_wav: str, model_size: str = "base", language: Optiona
         import whisper
         print(f"[PackBuilder] Running Whisper ({model_size}) transcription on {device.upper()}...")
         
-        model = whisper.load_model(model_size, device=device)
+        model = get_whisper_model(model_size, device=device)
         
-        transcribe_opts = {"verbose": False}
+        transcribe_opts = {
+            "verbose": False,
+            "fp16": (device == "cuda"),
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "no_speech_threshold": 0.6,
+        }
         is_romaji_req = romanize or (language and "romaji" in language.lower())
         whisper_lang = "ja" if (language and "ja" in language.lower()) else language
         if whisper_lang and whisper_lang.strip().lower() not in ("auto", "none"):

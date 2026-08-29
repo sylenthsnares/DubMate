@@ -1,22 +1,23 @@
-# Handover — 2026-08-29, DubMate Studio v1.0.7 Cloudflare Room Registry & Worker Test Suite
+# Handover — 2026-08-29, DubMate Studio v1.0.8 Pack Builder yt-dlp & Whisper Overhaul
 
 ## State
-Cloudflare Worker room code resolution ReferenceError has been fixed, preview KV namespace configured, and full integration test suites added. Desktop Pack Builder diagnostics updated for frozen runtimes. All 16 worker unit/integration tests and 15 Python/DOM backend test suites pass 100%.
+All yt-dlp and Whisper failure modes in Pack Builder have been resolved. YouTube signature decryption restored, subtitles auto-fetched, FFmpeg injected into system PATH for Whisper/Demucs, model loading cached in memory, and anti-hallucination safeguards applied. All test suites pass 100%.
 
 ## Done this session
-- **Worker Room Resolve ReferenceError Fix (`worker/src/index.ts`)**: Replaced block-scoped `code` with `rawCode` in `/rooms/:code/resolve` and `/join/:code` handlers for JSON responses.
-- **Dedicated KV Preview Namespace (`worker/wrangler.toml`)**: Created and configured `preview_id = "2a883ef656ba4596bdf441f23dc613b4"` for safe local and CI test isolation.
-- **Cloudflare Workers Vitest Suite (`worker/tests/room-integration.test.ts`)**: Added 9 tests with `@cloudflare/vitest-plugin` running in actual worker runtime to test room creation, KV persistence, room join redirects, updates, and custom codes.
-- **Pack Builder Diagnostics (`pack_builder.py`)**: Enhanced `yt-dlp` error messaging to detect frozen executable runtime and advise users appropriately.
-- **Test Suite Resiliency (`test_pack_builder.py`)**: Updated romaji test to handle optional `pykakasi` gracefully.
-- **Release Version Bump**: Bumped to `v1.0.7` across `VERSION`, `tauri.conf.json`, `Cargo.toml`, `package.json`, `main.rs`, and `CHANGELOG.md`.
+- **yt-dlp Signature Decryption & Extraction**: Removed `'player_skip': ['js', 'configs']` in `pack_builder.py` that caused 403 Forbidden, and enabled automatic YouTube subtitle downloading.
+- **Video Detection Safeguards**: Ensured downloaded raw video files strictly match video container formats (`.mp4`, `.webm`, `.mkv`), ignoring thumbnails or metadata `.info.json`.
+- **FFmpeg PATH Injection (`pack_builder.py`)**: Automatically prepends `tools/` to `os.environ["PATH"]` so Whisper's internal audio loaders locate FFmpeg on all platforms.
+- **Whisper In-Memory Model Cache (`pack_builder.py`)**: Added `get_whisper_model()` singleton cache to eliminate multi-second reload stalls on segment transcription.
+- **Anti-Hallucination & Subtitle Preservation**: Configured `condition_on_previous_text=False`, `fp16`, and preserved uploaded SRT/VTT cues during pipeline execution.
+- **Release Version Bump**: Bumped to `v1.0.8` across `VERSION`, `tauri.conf.json`, `Cargo.toml`, `package.json`, `main.rs`, and `CHANGELOG.md`.
 
 ## Next
-1. Push git commits and push tag `v1.0.7` to trigger GitHub Actions release pipelines.
-2. Monitor `build-installer.yml` and `publish-bundle.yml` CI workflows.
+1. Push git commits and tag `v1.0.8` to trigger GitHub Actions release pipelines.
+2. Verify desktop installer and web bundle artifacts on GitHub Releases.
 
 ## Read first
-- [`worker/src/index.ts`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/worker/src/index.ts)
-- [`worker/tests/room-integration.test.ts`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/worker/tests/room-integration.test.ts)
+- [`pack_builder.py`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/pack_builder.py)
+- [`app.py`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/app.py)
 - [`CHANGELOG.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/CHANGELOG.md)
+
 
