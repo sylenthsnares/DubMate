@@ -789,6 +789,7 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
                 "https://dubmate.bkaproductions.com/rooms/create",
                 headers={
                     "Content-Type": "application/json",
+                    "User-Agent": f"DubMate Studio Pro/{app_version}",
                     "X-DubMate-Key": "dubmate_sec_99f3810a4c28f14b67e0e7a12b",
                 },
                 json={
