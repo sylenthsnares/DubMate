@@ -1,0 +1,186 @@
+name: Release
+
+# Bundle and installers are ONE workflow on purpose.
+#
+# They used to be two: publish-bundle.yml (on push to main) created the GitHub
+# release, and build-installer.yml (on push of a v* tag) attached the desktop
+# installers. That only ever worked because a human happened to push an annotated
+# tag at the same moment the merge landed. When v1.0.9 was merged without one,
+# softprops/action-gh-release created the tag itself via the API using
+# GITHUB_TOKEN -- and GitHub does not trigger workflows from refs created with the
+# default GITHUB_TOKEN. So the installer build silently never ran, and the release
+# shipped with only the app bundle. Nothing failed; there was no run to look at.
+#
+# A job dependency cannot be suppressed that way, so the installers now always
+# follow the bundle within the same run.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.VERSION }}
+      is_new: ${{ steps.check.outputs.is_new }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read VERSION
+        id: ver
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      # Gates the installer matrix. Without this, every push to main would spend
+      # ~40 minutes of Windows + macOS runner time rebuilding installers for a
+      # version that is already published.
+      - name: Check whether this version is already released
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v${{ steps.ver.outputs.VERSION }}" \
+               --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "is_new=false" >> $GITHUB_OUTPUT
+            echo "v${{ steps.ver.outputs.VERSION }} already exists; installers will be skipped unless dispatched manually."
+          else
+            echo "is_new=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies (ffmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg -qq
+
+      - name: Run tests
+        run: |
+          pip install -r requirements.txt -q
+          pip install httpx fastapi pytest -q
+          python tests/test_host_transfer.py
+
+      - name: Create app bundle zip
+        run: |
+          zip -r app-bundle-v${{ steps.ver.outputs.VERSION }}.zip \
+            app.py \
+            audio_processor.py \
+            pack_loader.py \
+            pack_builder.py \
+            static/ \
+            VERSION \
+            requirements.txt \
+            requirements_builder.txt
+
+      - name: Extract release notes for this version
+        run: |
+          awk -v hdr="## [${{ steps.ver.outputs.VERSION }}]" '
+            index($0, hdr) == 1 { found=1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::No CHANGELOG.md section found for version ${{ steps.ver.outputs.VERSION }}"
+            exit 1
+          fi
+          echo "--- Release notes ---"
+          cat RELEASE_NOTES.md
+
+      # The installer job needs the same text. tauri-action calls updateRelease
+      # with whatever releaseBody it is given, so if it is given the wrong thing
+      # it overwrites these notes on the published release.
+      - name: Upload release notes for the installer job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+          retention-days: 1
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.ver.outputs.VERSION }}
+          name: "DubMate v${{ steps.ver.outputs.VERSION }}"
+          body_path: RELEASE_NOTES.md
+          files: app-bundle-v${{ steps.ver.outputs.VERSION }}.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  installers:
+    needs: bundle
+    if: needs.bundle.outputs.is_new == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            tauri-args: ""
+          - platform: macos-latest
+            tauri-args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Frontend Dependencies
+        run: npm install
+        working-directory: tauri
+
+      - name: Stage Sidecars (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: pwsh -File tauri/scripts/stage-sidecars.ps1
+
+      - name: Stage Sidecars (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: bash tauri/scripts/stage-sidecars.sh
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      # Passed explicitly below. tauri-action updates the name and body of an
+      # existing published release, so omitting these would replace the real
+      # changelog with a placeholder (or blank it).
+      - name: Load release notes into the environment
+        shell: bash
+        run: |
+          {
+            echo 'RELEASE_NOTES<<DUBMATE_NOTES_EOF'
+            cat RELEASE_NOTES.md
+            echo 'DUBMATE_NOTES_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Build Tauri Desktop Installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Baked into the binary by option_env! in main.rs and forwarded to the
+          # Python engine at runtime.
+          DUBMATE_WORKER_KEY: ${{ secrets.DUBMATE_SECRET_KEY }}
+        with:
+          projectPath: tauri
+          args: ${{ matrix.tauri-args }}
+          tagName: v${{ needs.bundle.outputs.version }}
+          releaseName: "DubMate v${{ needs.bundle.outputs.version }}"
+          releaseBody: ${{ env.RELEASE_NOTES }}
+          releaseDraft: false
+          prerelease: false
