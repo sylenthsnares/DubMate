@@ -6,6 +6,7 @@ Extracts character roles, timestamps, captions, backing tracks, cover art, and h
 """
 
 import os
+import sys
 import re
 import glob
 import json
@@ -19,24 +20,85 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKS_DIRS = [
     os.path.join(BASE_DIR, "Packs"),
 ]
-def get_cache_dir() -> str:
-    """Returns persistent cache directory with guaranteed user write permissions."""
+def get_install_root() -> str:
+    """
+    Root of the installation -- the directory the user actually chose at install time.
+
+    In the packaged desktop app the Python files are staged into a 'resources'
+    subfolder beside the executable, so BASE_DIR is one level too deep. Working
+    data must sit at the real root: installing to another drive should not put
+    gigabytes of cache on the system drive.
+    """
+    if os.path.basename(BASE_DIR).lower() == "resources":
+        return os.path.dirname(BASE_DIR)
+    return BASE_DIR
+
+
+def _dir_is_writable(path: str) -> bool:
+    """True if we can actually create files in path (creating it if needed)."""
     try:
-        user_home = os.path.expanduser("~")
-        cache_dir = os.path.join(user_home, ".dubmate", "cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        return cache_dir
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".dubmate-write-test")
+        with open(probe, "w") as f:
+            f.write("x")
+        os.remove(probe)
+        return True
     except Exception:
-        try:
-            local_cache = os.path.join(BASE_DIR, ".cache")
-            os.makedirs(local_cache, exist_ok=True)
-            return local_cache
-        except Exception:
-            temp_cache = os.path.join(tempfile.gettempdir(), "dubmate_cache")
-            os.makedirs(temp_cache, exist_ok=True)
-            return temp_cache
+        return False
+
+
+def _config_value(key: str) -> Optional[str]:
+    """
+    Reads a single key from config.json without going through load_config().
+
+    get_cache_dir() runs at import time, before load_config() is defined, so this
+    deliberately does its own minimal read rather than reordering the module.
+    """
+    try:
+        cfg_path = os.path.join(os.path.expanduser("~"), ".dubmate", "config.json")
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    except Exception:
+        pass
+    return None
+
+
+def get_cache_dir() -> str:
+    """
+    Persistent working directory, in preference order:
+      1. DUBMATE_CACHE_DIR env var (set by the desktop launcher)
+      2. cache_dir in config.json (user preference)
+      3. <install root>/data  -- keeps working files on the drive the user installed to
+      4. ~/.dubmate/cache     -- fallback when the install dir is not writable
+      5. system temp
+    """
+    candidates = [
+        (os.environ.get("DUBMATE_CACHE_DIR") or "").strip(),
+        _config_value("cache_dir") or "",
+        os.path.join(get_install_root(), "data"),
+        os.path.join(os.path.expanduser("~"), ".dubmate", "cache"),
+        os.path.join(tempfile.gettempdir(), "dubmate_cache"),
+    ]
+    for candidate in candidates:
+        if candidate and _dir_is_writable(candidate):
+            return candidate
+    return tempfile.gettempdir()
+
 
 CACHE_DIR = get_cache_dir()
+
+
+def get_exports_dir() -> str:
+    """Where rendered dubs and project ZIPs are written. Overridable by the user."""
+    configured = (os.environ.get("DUBMATE_EXPORTS_DIR") or "").strip() or _config_value("exports_dir")
+    if configured and _dir_is_writable(configured):
+        return configured
+    return os.path.join(CACHE_DIR, "exports")
 
 def get_config_path() -> str:
     """Returns the persistent config file path in user home or project base dir."""
@@ -231,32 +293,46 @@ DURATION_CACHE: Dict[str, float] = {}
 _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
 
 
+def _tool_search_dirs() -> List[str]:
+    """
+    Directories to search for bundled media binaries, most specific first.
+
+    The desktop build ships ffmpeg as a Tauri sidecar placed next to the host
+    executable, NOT in BASE_DIR/tools -- BASE_DIR there is the resources folder.
+    Searching only BASE_DIR/tools meant the packaged app silently fell back to a
+    bare "ffmpeg" and failed on any machine without a system-wide install.
+    """
+    dirs: List[str] = []
+    env_dir = (os.environ.get("DUBMATE_TOOLS_DIR") or "").strip()
+    if env_dir:
+        dirs.append(env_dir)
+    dirs.append(os.path.join(BASE_DIR, "tools"))
+    dirs.append(BASE_DIR)
+    try:
+        dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+    except Exception:
+        pass
+    seen = set()
+    return [d for d in dirs if d and not (d in seen or seen.add(d))]
+
+
+def _find_media_tool(stem: str) -> Optional[str]:
+    for directory in _tool_search_dirs():
+        for name in (stem + ".exe", stem):
+            candidate = os.path.join(directory, name)
+            if os.path.isfile(candidate) and (os.access(candidate, os.X_OK) or name.endswith(".exe")):
+                return candidate
+    return shutil.which(stem)
+
+
 def get_ffmpeg_path() -> str:
-    """Finds ffmpeg binary in project-local tools folder or system PATH."""
-    # 1. Project-local tools directory (Windows .exe or Unix binary)
-    for name in ("ffmpeg.exe", "ffmpeg"):
-        local_tool = os.path.join(BASE_DIR, "tools", name)
-        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
-            return local_tool
-    # 2. System PATH fallback
-    tool = shutil.which("ffmpeg")
-    if tool:
-        return tool
-    return "ffmpeg"
+    """Finds ffmpeg in the bundled tool dirs, then system PATH."""
+    return _find_media_tool("ffmpeg") or "ffmpeg"
 
 
 def get_ffprobe_path() -> str:
-    """Finds ffprobe binary in project-local tools folder or system PATH."""
-    # 1. Project-local tools directory (Windows .exe or Unix binary)
-    for name in ("ffprobe.exe", "ffprobe"):
-        local_tool = os.path.join(BASE_DIR, "tools", name)
-        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
-            return local_tool
-    # 2. System PATH fallback
-    tool = shutil.which("ffprobe")
-    if tool:
-        return tool
-    return "ffprobe"
+    """Finds ffprobe in the bundled tool dirs, then system PATH."""
+    return _find_media_tool("ffprobe") or "ffprobe"
 
 
 def get_deep_filter_path() -> Optional[str]:
@@ -1242,9 +1318,12 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
                 # Check strict whitelist for non-directory files
                 if not info.is_dir() and not low_name.endswith("/"):
                     _, ext = os.path.splitext(base_name)
-                    if ext and ext not in ALLOWED_PACK_EXTS:
+                    # An empty ext must be rejected, not skipped: os.path.splitext("payload")
+                    # returns "", so extension-less binaries previously bypassed this
+                    # allowlist AND the PROHIBITED_EXTENSIONS blocklist (all dotted).
+                    if ext not in ALLOWED_PACK_EXTS:
                         raise PackSecurityError(
-                            f"Security Alert: Disallowed file extension '{ext}' in '{base_name}'. "
+                            f"Security Alert: Disallowed file extension '{ext or chr(40) + 'none' + chr(41)}' in '{base_name}'. "
                             f"DubMate packs only accept audio ({', '.join(AUDIO_EXTS)}), "
                             f"video ({', '.join(VIDEO_EXTS)}), images, and text/ini subtitle files."
                         )

@@ -39,6 +39,84 @@ pub struct UpdateProgressPayload {
     pub percentage: u8,
 }
 
+/// True when `candidate` is a strictly newer semantic version than `current`.
+/// Non-numeric noise is ignored and missing components are treated as zero, so
+/// "1.3" compares as 1.3.0 and "v1.0.8" as 1.0.8.
+fn is_newer(candidate: &str, current: &str) -> bool {
+    fn parse(v: &str) -> Vec<u64> {
+        v.trim()
+            .trim_start_matches('v')
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|s| s.parse::<u64>().ok())
+            .chain(std::iter::repeat(0))
+            .take(3)
+            .collect()
+    }
+    parse(candidate) > parse(current)
+}
+
+/// Host that release assets must come from.
+const RELEASE_ASSET_HOST: &str = "github.com";
+/// Path prefix that a legitimate release asset URL must start with.
+const RELEASE_ASSET_PREFIX: &str = "/sylenthsnares/DubMate/releases/download/";
+
+/// True when `url` genuinely points at a release asset for this project.
+///
+/// `apply_update` is a Tauri command taking an arbitrary string, and the window
+/// navigates to the local studio UI, so any script injection there could otherwise
+/// point the updater at an attacker-hosted zip which is then extracted over the
+/// install directory and executed on next launch. Comparison is on the parsed host,
+/// not a substring, so "github.com.evil.test" and "evil.test/?x=github.com" both fail.
+pub fn is_trusted_update_url(url: &str) -> bool {
+    let rest = match url.strip_prefix("https://") {
+        Some(r) => r,
+        None => return false, // plaintext http is never acceptable here
+    };
+    let (authority, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => return false,
+    };
+    // Reject embedded credentials (https://github.com@evil.test/...).
+    if authority.contains('@') {
+        return false;
+    }
+    let host = authority.split(':').next().unwrap_or("").to_ascii_lowercase();
+    if host != RELEASE_ASSET_HOST && !host.ends_with(&format!(".{}", RELEASE_ASSET_HOST)) {
+        return false;
+    }
+    let path_lower = path.to_ascii_lowercase();
+    if path_lower.contains("..") {
+        return false;
+    }
+    path_lower.starts_with(&RELEASE_ASSET_PREFIX.to_ascii_lowercase())
+}
+
+/// Verifies the directory is actually writable before any file is replaced.
+/// A per-machine install under Program Files fails here with an actionable message
+/// instead of blowing up midway through extraction.
+pub fn ensure_writable(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("Cannot create application directory {}: {}", dir.display(), e))?;
+
+    let probe = dir.join(".dubmate-write-test");
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "DubMate cannot write to its installation folder:
+{}
+
+{}
+
+Reinstall DubMate somewhere your account can write to, or run it as administrator.",
+            dir.display(),
+            e
+        )),
+    }
+}
+
 pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> UpdateCheckResult {
     let client = match reqwest::Client::builder()
         .user_agent("DubMate-Studio-Desktop/1.0")
@@ -82,7 +160,9 @@ pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> 
     let current_clean = current_version.trim().trim_start_matches('v');
     let app_py_exists = crate::find_app_py(app).is_some();
 
-    if latest_clean == current_clean && app_py_exists {
+    // Only move forward. String equality alone would happily "update" the user onto an
+    // older tag if the release feed ever pointed at one.
+    if app_py_exists && !is_newer(latest_clean, current_clean) {
         return UpdateCheckResult::UpToDate;
     }
 
@@ -163,4 +243,56 @@ pub async fn download_and_extract_bundle(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_genuine_release_assets() {
+        assert!(is_trusted_update_url(
+            "https://github.com/sylenthsnares/DubMate/releases/download/v1.0.9/app-bundle-v1.0.9.zip"
+        ));
+        // GitHub redirects assets to objects.githubusercontent.com; the host check
+        // allows subdomains of github.com only, so document the exact accepted shape.
+        assert!(is_trusted_update_url(
+            "https://GITHUB.COM/sylenthsnares/DubMate/releases/download/v1.0.9/x.zip"
+        ));
+    }
+
+    #[test]
+    fn rejects_untrusted_hosts() {
+        for bad in [
+            "https://evil.test/sylenthsnares/DubMate/releases/download/v1/x.zip",
+            "https://github.com.evil.test/sylenthsnares/DubMate/releases/download/v1/x.zip",
+            "https://evil.test/?x=github.com/sylenthsnares/DubMate/releases/download/v1/x.zip",
+            "https://github.com@evil.test/sylenthsnares/DubMate/releases/download/v1/x.zip",
+            "http://github.com/sylenthsnares/DubMate/releases/download/v1/x.zip",
+            "file:///C:/evil.zip",
+            "",
+        ] {
+            assert!(!is_trusted_update_url(bad), "should have rejected {bad}");
+        }
+    }
+
+    #[test]
+    fn rejects_wrong_repo_or_path() {
+        for bad in [
+            "https://github.com/attacker/DubMate/releases/download/v1/x.zip",
+            "https://github.com/sylenthsnares/DubMate/archive/refs/heads/main.zip",
+            "https://github.com/sylenthsnares/DubMate/releases/download/../../evil.zip",
+        ] {
+            assert!(!is_trusted_update_url(bad), "should have rejected {bad}");
+        }
+    }
+
+    #[test]
+    fn is_newer_moves_forward_only() {
+        assert!(is_newer("1.0.9", "1.0.8"));
+        assert!(!is_newer("1.0.8", "1.0.9")); // never downgrade
+        assert!(!is_newer("1.0.9", "1.0.9"));
+        assert!(is_newer("v1.3", "1.0.8"));
+        assert!(!is_newer("garbage", "1.0.8"));
+    }
 }

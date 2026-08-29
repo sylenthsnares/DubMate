@@ -4,6 +4,57 @@ import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
+}
+
+// --- Audio Device Setup persistence keys & meter constants ---
+const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
+const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
+const AUDIO_OUTPUT_DEVICE_KEY = 'dubmate_audio_output_device';
+const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
+
+// Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale).
+const METER_FLOOR_DB = -60;
+const METER_AMBER_DB = -12; // Hot but usable
+const METER_RED_DB = -3;    // Near clipping
+const METER_PEAK_HOLD_MS = 1100;
+const METER_PEAK_DECAY_DB_PER_FRAME = 0.45;
+
+// localStorage/sessionStorage throw in some locked-down webviews and in
+// private-mode Safari, so every access goes through these guards.
+function safeStorageGet(store, key) {
+  try {
+    return store ? store.getItem(key) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeStorageSet(store, key, value) {
+  try {
+    if (store) store.setItem(key, value);
+  } catch (e) { }
+}
+
+function safeStorageRemove(store, key) {
+  try {
+    if (store) store.removeItem(key);
+  } catch (e) { }
+}
+
+function formatDbFS(db) {
+  if (typeof db !== 'number' || !isFinite(db)) return '-∞';
+  if (db <= METER_FLOOR_DB) return '-∞';
+  return (db > 0 ? '+' : '') + db.toFixed(1);
+}
+
 class DubMateApp {
   constructor() {
     this.audio = new AudioEngine();
@@ -40,6 +91,29 @@ class DubMateApp {
     this.isCalibratingMic = false;
     this.hasCustomNoiseProfile = false;
     this.pendingJoinRoomId = null;
+
+    // --- Audio Device Setup / First-Run Onboarding State ---
+    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+    this.audioSetup = {
+      open: false,
+      firstRunMode: false,
+      requesting: false,
+      permission: 'unknown', // 'unknown' | 'granted' | 'denied' | 'error'
+      setupComplete: safeStorageGet(ls, AUDIO_SETUP_DONE_KEY) === '1',
+      inputId: safeStorageGet(ls, AUDIO_INPUT_DEVICE_KEY) || '',
+      outputId: safeStorageGet(ls, AUDIO_OUTPUT_DEVICE_KEY) || '',
+      devices: { inputs: [], outputs: [], labelled: false, supported: false },
+      meterRaf: null,
+      peakDb: -Infinity,
+      peakHoldUntil: 0,
+      // Guards against two overlapping openAudioSettings() calls landing their
+      // post-await UI updates out of order.
+      openToken: 0,
+    };
+    // Hand the remembered device preferences to the engine before anything can
+    // open a capture stream or play back audio.
+    this.audio.preferredInputId = this.audioSetup.inputId || null;
+    this.audio.preferredOutputId = this.audioSetup.outputId || null;
 
     this.initDOM();
     this.initEvents();
@@ -102,6 +176,8 @@ class DubMateApp {
     this.headerUserAvatar = document.getElementById('header-user-avatar');
     this.headerUserName = document.getElementById('header-user-name');
     this.btnLeaveRoom = document.getElementById('btn-leave-room');
+    this.btnAudioSettings = document.getElementById('btn-audio-settings');
+    this.audioSettingsAlertDot = document.getElementById('audio-settings-alert-dot');
     this.studioBreadcrumbs = document.getElementById('studio-breadcrumbs');
     this.navStepLobby = document.getElementById('nav-step-lobby');
     this.navStepBooth = document.getElementById('nav-step-booth');
@@ -226,6 +302,42 @@ class DubMateApp {
     this.calibModalIcon = document.getElementById('calib-modal-icon');
     this.calibRadarRing = document.getElementById('calib-radar-ring');
     this.btnCancelCalibration = document.getElementById('btn-cancel-calibration');
+
+    // Audio Device Setup Panel Elements
+    this.modalAudioSettings = document.getElementById('modal-audio-settings');
+    this.btnCloseAudioSettings = document.getElementById('btn-close-audio-settings');
+    this.audioSetupStatusPill = document.getElementById('audio-setup-status-pill');
+    this.audioSetupSubtitle = document.getElementById('audio-setup-subtitle');
+    this.audioStepIntro = document.getElementById('audio-setup-step-intro');
+    this.audioStepDenied = document.getElementById('audio-setup-step-denied');
+    this.audioStepDevices = document.getElementById('audio-setup-step-devices');
+    this.btnGrantMic = document.getElementById('btn-grant-mic');
+    this.btnGrantMicText = document.getElementById('btn-grant-mic-text');
+    this.btnSkipAudioSetup = document.getElementById('btn-skip-audio-setup');
+    this.btnRetryMic = document.getElementById('btn-retry-mic');
+    this.btnDismissAudioDenied = document.getElementById('btn-dismiss-audio-denied');
+    this.audioDeniedHeading = document.getElementById('audio-denied-heading');
+    this.audioDeniedDetail = document.getElementById('audio-denied-detail');
+    this.selectAudioInput = document.getElementById('select-audio-input');
+    this.selectAudioOutput = document.getElementById('select-audio-output');
+    this.audioInputNote = document.getElementById('audio-input-note');
+    this.audioOutputNote = document.getElementById('audio-output-note');
+    this.audioOutputRow = document.getElementById('audio-output-row');
+    this.audioOutputUnsupported = document.getElementById('audio-output-unsupported');
+    this.btnRefreshAudioDevices = document.getElementById('btn-refresh-audio-devices');
+    this.btnAudioSettingsDone = document.getElementById('btn-audio-settings-done');
+    this.levelMeterMask = document.getElementById('level-meter-mask');
+    this.levelMeterPeakTick = document.getElementById('level-meter-peak-tick');
+    this.levelMeterTrack = document.getElementById('level-meter-track');
+    this.levelMeterRms = document.getElementById('level-meter-rms');
+    this.levelMeterPeakReadout = document.getElementById('level-meter-peak-readout');
+    this.levelMeterLamp = document.getElementById('level-meter-lamp');
+    this.levelMeterHint = document.getElementById('level-meter-hint');
+    this.audioExportsRow = document.getElementById('audio-exports-row');
+    this.inputExportsDir = document.getElementById('input-exports-dir');
+    this.btnSaveExportsDir = document.getElementById('btn-save-exports-dir');
+    this.btnSaveExportsDirText = document.getElementById('btn-save-exports-dir-text');
+    this.exportsDirFeedback = document.getElementById('exports-dir-feedback');
 
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
@@ -766,12 +878,18 @@ class DubMateApp {
       this.btnCancelCalibration.addEventListener('click', () => this.cancelMicNoiseCalibration());
     }
 
+    this.initAudioSettingsEvents();
+
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
     // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
     window.addEventListener('keydown', (e) => {
       // Escape key closes modals if they are open and not actively rendering
       if (e.key === 'Escape') {
+        if (this.isAudioSettingsOpen()) {
+          this.closeAudioSettings();
+          return;
+        }
         if (this.modalMicCalibration && this.modalMicCalibration.style.display !== 'none') {
           this.cancelMicNoiseCalibration();
           return;
@@ -784,6 +902,12 @@ class DubMateApp {
 
       // Ignore shortcut triggers when locked or when user is focused in text/input fields
       if (this.isProcessingTake || this.isRenderingExport) {
+        return;
+      }
+
+      // Never let booth/screening transport shortcuts fire behind the modal
+      // audio settings panel (Space would otherwise start a recording).
+      if (this.isAudioSettingsOpen()) {
         return;
       }
 
@@ -1303,6 +1427,12 @@ class DubMateApp {
   async initRouter() {
     await this.fetchPacks();
 
+    // First-run audio setup / remembered device routing. Deliberately not
+    // awaited so a slow permissions query cannot stall the router.
+    this.initAudioSetupOnBoot().catch((err) => {
+      console.warn('[DubMate] Audio setup bootstrap failed:', err);
+    });
+
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     const selectPackParam = params.get('select_pack');
@@ -1618,6 +1748,701 @@ class DubMateApp {
     this.openPackConfigModal();
   }
 
+  // ==============================================================
+  // AUDIO DEVICE SETUP / FIRST-RUN ONBOARDING
+  // ==============================================================
+
+  initAudioSettingsEvents() {
+    if (this.btnAudioSettings) {
+      this.btnAudioSettings.addEventListener('click', () => this.openAudioSettings());
+    }
+    if (this.btnCloseAudioSettings) {
+      this.btnCloseAudioSettings.addEventListener('click', () => this.closeAudioSettings());
+    }
+    if (this.btnAudioSettingsDone) {
+      this.btnAudioSettingsDone.addEventListener('click', () => this.closeAudioSettings());
+    }
+    if (this.modalAudioSettings) {
+      this.modalAudioSettings.addEventListener('click', (e) => {
+        if (e.target === this.modalAudioSettings) this.closeAudioSettings();
+      });
+    }
+    if (this.btnGrantMic) {
+      this.btnGrantMic.addEventListener('click', () => this.requestMicAccessFromPanel());
+    }
+    if (this.btnRetryMic) {
+      this.btnRetryMic.addEventListener('click', () => this.requestMicAccessFromPanel());
+    }
+    if (this.btnSkipAudioSetup) {
+      this.btnSkipAudioSetup.addEventListener('click', () => this.skipAudioSetup());
+    }
+    if (this.btnDismissAudioDenied) {
+      this.btnDismissAudioDenied.addEventListener('click', () => this.skipAudioSetup());
+    }
+    if (this.btnRefreshAudioDevices) {
+      this.btnRefreshAudioDevices.addEventListener('click', () => this.rescanAudioDevices());
+    }
+    if (this.selectAudioInput) {
+      this.selectAudioInput.addEventListener('change', (e) => this.applyInputDevice(e.target.value));
+    }
+    if (this.selectAudioOutput) {
+      this.selectAudioOutput.addEventListener('change', (e) => this.applyOutputDevice(e.target.value));
+    }
+    if (this.btnSaveExportsDir) {
+      this.btnSaveExportsDir.addEventListener('click', () => this.saveExportsDir());
+    }
+    if (this.inputExportsDir) {
+      this.inputExportsDir.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this.saveExportsDir();
+      });
+    }
+
+    // Devices can be hot-plugged while the panel is open.
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices
+      && typeof navigator.mediaDevices.addEventListener === 'function') {
+      try {
+        navigator.mediaDevices.addEventListener('devicechange', () => {
+          if (this.isAudioSettingsOpen() && this.audioSetup.permission === 'granted') {
+            this.refreshAudioDevices().catch(() => { });
+          }
+        });
+      } catch (e) { }
+    }
+
+    // A meter must never keep a requestAnimationFrame loop alive in a hidden
+    // tab; pause it on blur and resume when the panel comes back into view.
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', () => {
+        if (this.isDocumentHidden()) {
+          this.stopInputMeter();
+        } else if (this.isAudioSettingsOpen() && this.audioSetup.permission === 'granted'
+          && this.audioStepDevices && this.audioStepDevices.style.display !== 'none') {
+          this.startInputMeter().catch(() => { });
+        }
+      });
+    }
+  }
+
+  isAudioSettingsOpen() {
+    return !!(this.modalAudioSettings && this.modalAudioSettings.style.display !== 'none');
+  }
+
+  // Checks visibilityState rather than document.hidden: some embedded webviews
+  // (and JSDOM) report the legacy 'prerender' state, which would otherwise
+  // wedge the meter permanently off.
+  isDocumentHidden() {
+    if (typeof document === 'undefined') return false;
+    return document.visibilityState === 'hidden';
+  }
+
+  // Runs once on boot, before anything can trigger a bare permission prompt.
+  async initAudioSetupOnBoot() {
+    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+    const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
+
+    // Re-apply the remembered output device to the <video> elements that
+    // already exist in the document.
+    if (this.audioSetup.outputId && this.audio.supportsOutputRouting()) {
+      try {
+        const routed = await this.audio.applyOutputRouting();
+        if (!routed.ok) {
+          // Remembered sink is gone (headphones unplugged) - drop back to default.
+          console.warn('[DubMate] Remembered output device unavailable, using system default.');
+          this.audio.preferredOutputId = null;
+        }
+      } catch (e) { }
+    }
+
+    let state = 'unknown';
+    try {
+      state = await this.audio.getMicPermissionState();
+    } catch (e) { }
+
+    if (state === 'granted') {
+      this.audioSetup.permission = 'granted';
+      this.audioSetup.setupComplete = true;
+      safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
+      this.updateAudioSettingsAffordance();
+      return;
+    }
+    if (state === 'denied') {
+      this.audioSetup.permission = 'denied';
+    }
+
+    this.updateAudioSettingsAffordance();
+
+    const skippedThisSession = safeStorageGet(ss, AUDIO_SETUP_SKIP_KEY) === '1';
+    if (!this.audioSetup.setupComplete && !skippedThisSession) {
+      this.openAudioSettings({ firstRun: true });
+    }
+  }
+
+  updateAudioSettingsAffordance() {
+    if (!this.audioSettingsAlertDot) return;
+    const needsAttention = this.audioSetup.permission !== 'granted' && !this.audioSetup.setupComplete;
+    this.audioSettingsAlertDot.style.display = needsAttention ? 'block' : 'none';
+  }
+
+  showAudioSetupStep(step) {
+    const steps = {
+      intro: this.audioStepIntro,
+      denied: this.audioStepDenied,
+      devices: this.audioStepDevices,
+    };
+    Object.keys(steps).forEach((key) => {
+      if (steps[key]) steps[key].style.display = (key === step) ? 'block' : 'none';
+    });
+
+    if (this.audioSetupStatusPill) {
+      if (step === 'devices') {
+        this.audioSetupStatusPill.innerText = 'MIC CONNECTED';
+      } else if (step === 'denied') {
+        this.audioSetupStatusPill.innerText = 'MIC BLOCKED';
+      } else {
+        this.audioSetupStatusPill.innerText = 'MIC NOT CONNECTED';
+      }
+    }
+    if (this.audioSetupSubtitle) {
+      if (step === 'devices') {
+        this.audioSetupSubtitle.innerText =
+          'Pick the microphone you record with and the headphones you monitor on.';
+      } else if (step === 'denied') {
+        this.audioSetupSubtitle.innerText =
+          'Recording stays disabled until microphone access is restored.';
+      } else {
+        this.audioSetupSubtitle.innerText =
+          'A one-time setup so your first take does not get ambushed by a permission popup.';
+      }
+    }
+  }
+
+  async openAudioSettings(options = {}) {
+    if (!this.modalAudioSettings) return;
+
+    const token = ++this.audioSetup.openToken;
+    this.audioSetup.firstRunMode = !!options.firstRun;
+    this.modalAudioSettings.style.display = 'flex';
+    this.audioSetup.open = true;
+
+    if (this.btnCloseAudioSettings) {
+      // On a genuine first run the close button is redundant with "Skip for now".
+      this.btnCloseAudioSettings.style.display = this.audioSetup.firstRunMode ? 'none' : 'flex';
+    }
+
+    let state = this.audioSetup.permission;
+    if (state !== 'granted') {
+      try {
+        const queried = await this.audio.getMicPermissionState();
+        if (queried === 'granted' || queried === 'denied') state = queried;
+      } catch (e) { }
+    }
+    // A newer open (or a close) superseded this call while it was awaiting.
+    if (token !== this.audioSetup.openToken) return;
+    this.audioSetup.permission = state;
+
+    // Fire and forget: hidden entirely if the backend has no exports_dir yet.
+    this.loadExportsDirSetting();
+
+    if (state === 'granted') {
+      this.showAudioSetupStep('devices');
+      await this.refreshAudioDevices();
+      await this.startInputMeter();
+    } else if (state === 'denied') {
+      this.renderMicDenial(null);
+      this.showAudioSetupStep('denied');
+    } else {
+      this.showAudioSetupStep('intro');
+    }
+
+    this.updateAudioSettingsAffordance();
+  }
+
+  closeAudioSettings() {
+    // Invalidate any in-flight openAudioSettings() so it cannot repaint the
+    // panel after the user has dismissed it.
+    this.audioSetup.openToken++;
+    this.stopInputMeter();
+    if (this.modalAudioSettings) {
+      this.modalAudioSettings.style.display = 'none';
+    }
+    this.audioSetup.open = false;
+    this.audioSetup.firstRunMode = false;
+    this.setExportsFeedback('', null);
+    this.updateAudioSettingsAffordance();
+  }
+
+  skipAudioSetup() {
+    const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
+    safeStorageSet(ss, AUDIO_SETUP_SKIP_KEY, '1');
+    this.closeAudioSettings();
+    this.showToast('Audio setup skipped — reopen it any time from “Audio” in the header.');
+  }
+
+  // The one place in the app that is allowed to trigger getUserMedia cold,
+  // and it only ever runs from an explicit click on the explainer screen.
+  async requestMicAccessFromPanel() {
+    if (this.audioSetup.requesting) return;
+    this.audioSetup.requesting = true;
+
+    const restoreGrantBtn = () => {
+      if (this.btnGrantMic) this.btnGrantMic.disabled = false;
+      if (this.btnRetryMic) this.btnRetryMic.disabled = false;
+      if (this.btnGrantMicText) this.btnGrantMicText.innerText = '🎙️ Allow Microphone Access';
+    };
+
+    if (this.btnGrantMic) this.btnGrantMic.disabled = true;
+    if (this.btnRetryMic) this.btnRetryMic.disabled = true;
+    if (this.btnGrantMicText) this.btnGrantMicText.innerText = 'Waiting for permission…';
+
+    try {
+      await this.audio.requestMicrophone();
+      // Hand the capture device straight back; the meter opens its own stream
+      // and recording re-acquires on demand.
+      this.audio.releaseMicrophone();
+
+      const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+      this.audioSetup.permission = 'granted';
+      this.audioSetup.setupComplete = true;
+      safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
+
+      this.showAudioSetupStep('devices');
+      await this.refreshAudioDevices();
+      await this.startInputMeter();
+      this.showToast('🎙️ Microphone connected. Pick your devices and check your level.');
+    } catch (err) {
+      const name = (err && err.name) || '';
+      this.audioSetup.permission = (name === 'NotAllowedError' || name === 'SecurityError') ? 'denied' : 'error';
+      this.renderMicDenial(err);
+      this.showAudioSetupStep('denied');
+    } finally {
+      this.audioSetup.requesting = false;
+      restoreGrantBtn();
+      this.updateAudioSettingsAffordance();
+    }
+  }
+
+  renderMicDenial(err) {
+    const name = (err && err.name) || '';
+    let heading = 'Microphone access was blocked';
+    let detail = 'The browser refused the request, so recording is disabled until access is restored.';
+
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      heading = 'No microphone was found';
+      detail = 'Windows reported no capture device. Plug in a microphone or headset, then press Try Again.';
+    } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+      heading = 'The microphone is in use by another app';
+      detail = 'Close Discord, OBS, Teams or any other app holding the microphone, then press Try Again.';
+    } else if (name === 'OverconstrainedError') {
+      heading = 'The saved microphone is no longer available';
+      detail = 'The device DubMate remembered has been unplugged. Press Try Again to fall back to the system default.';
+    } else if (name && name !== 'NotAllowedError' && name !== 'SecurityError') {
+      detail = `The browser reported ${name}. Recording is disabled until microphone access works.`;
+    }
+
+    if (this.audioDeniedHeading) this.audioDeniedHeading.innerText = heading;
+    if (this.audioDeniedDetail) this.audioDeniedDetail.innerText = detail;
+  }
+
+  async rescanAudioDevices() {
+    if (this.audioSetup.permission !== 'granted') return;
+    await this.refreshAudioDevices();
+    this.showToast('Re-scanned connected audio devices.');
+  }
+
+  // Labels only come back populated once permission has been granted, which is
+  // why this is never called before requestMicAccessFromPanel() succeeds.
+  async refreshAudioDevices() {
+    let devices = { inputs: [], outputs: [], labelled: false, supported: false };
+    try {
+      devices = await this.audio.enumerateAudioDevices();
+    } catch (e) { }
+    this.audioSetup.devices = devices;
+
+    const inputResult = this.populateDeviceSelect(
+      this.selectAudioInput, devices.inputs, this.audioSetup.inputId,
+      'System Default Microphone', 'Microphone'
+    );
+    this.renderDeviceNote(this.audioInputNote, inputResult, devices, 'microphone');
+
+    const outputSupported = this.audio.supportsOutputRouting();
+    if (this.audioOutputRow) this.audioOutputRow.style.display = outputSupported ? 'block' : 'none';
+    if (this.audioOutputUnsupported) this.audioOutputUnsupported.style.display = outputSupported ? 'none' : 'block';
+
+    if (outputSupported) {
+      const outputResult = this.populateDeviceSelect(
+        this.selectAudioOutput, devices.outputs, this.audioSetup.outputId,
+        'System Default Output', 'Output'
+      );
+      this.renderDeviceNote(this.audioOutputNote, outputResult, devices, 'output device');
+    }
+
+    return devices;
+  }
+
+  // Builds options with createElement/textContent so attacker-influenceable
+  // device labels can never be parsed as markup.
+  populateDeviceSelect(select, list, savedId, defaultLabel, fallbackPrefix) {
+    const result = { missing: false, count: 0, savedLabel: '' };
+    if (!select) return result;
+
+    while (select.firstChild) select.removeChild(select.firstChild);
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = defaultLabel;
+    select.appendChild(defaultOpt);
+
+    const devices = Array.isArray(list) ? list : [];
+    result.count = devices.length;
+
+    let found = false;
+    devices.forEach((device, index) => {
+      const opt = document.createElement('option');
+      opt.value = device.deviceId || '';
+      // Labels are blank until permission is granted; index fallback keeps the
+      // list usable rather than rendering a column of empty rows.
+      opt.textContent = device.label || `${fallbackPrefix} ${index + 1}`;
+      opt.title = opt.textContent;
+      select.appendChild(opt);
+      if (savedId && device.deviceId === savedId) {
+        found = true;
+        result.savedLabel = device.label || '';
+      }
+    });
+
+    select.value = found ? savedId : '';
+    result.missing = !!savedId && !found;
+    return result;
+  }
+
+  renderDeviceNote(noteEl, result, devices, kindLabel) {
+    if (!noteEl) return;
+    noteEl.className = 'audio-device-note';
+
+    if (!devices.supported) {
+      noteEl.style.display = 'block';
+      noteEl.classList.add('is-error');
+      noteEl.innerText = 'This browser does not expose device enumeration.';
+      return;
+    }
+    if (result.count === 0) {
+      noteEl.style.display = 'block';
+      noteEl.classList.add('is-warning');
+      noteEl.innerText = `No ${kindLabel} was detected. Plug one in and press Rescan.`;
+      return;
+    }
+    if (result.missing) {
+      noteEl.style.display = 'block';
+      noteEl.classList.add('is-warning');
+      // escapeHtml() because the remembered label is device-supplied text.
+      noteEl.innerHTML =
+        `⚠️ Your saved ${escapeHtml(kindLabel)} isn’t connected right now — falling back to the system default.`;
+      return;
+    }
+    if (!devices.labelled) {
+      noteEl.style.display = 'block';
+      noteEl.innerText = 'Device names appear once microphone permission has been granted.';
+      return;
+    }
+    noteEl.style.display = 'none';
+    noteEl.innerText = '';
+  }
+
+  async applyInputDevice(deviceId) {
+    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+    const next = deviceId || '';
+    this.audioSetup.inputId = next;
+    if (next) {
+      safeStorageSet(ls, AUDIO_INPUT_DEVICE_KEY, next);
+    } else {
+      safeStorageRemove(ls, AUDIO_INPUT_DEVICE_KEY);
+    }
+    this.audio.setPreferredInputDevice(next || null);
+
+    // Re-point the meter at the newly selected capture device.
+    if (this.isAudioSettingsOpen()) {
+      await this.startInputMeter();
+    }
+  }
+
+  async applyOutputDevice(deviceId) {
+    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+    const next = deviceId || '';
+    this.audioSetup.outputId = next;
+    if (next) {
+      safeStorageSet(ls, AUDIO_OUTPUT_DEVICE_KEY, next);
+    } else {
+      safeStorageRemove(ls, AUDIO_OUTPUT_DEVICE_KEY);
+    }
+
+    let routed = { ok: false, reason: 'unsupported' };
+    try {
+      routed = await this.audio.setPreferredOutputDevice(next || null);
+    } catch (err) {
+      routed = { ok: false, reason: (err && err.name) || 'error' };
+    }
+
+    if (this.audioOutputNote) {
+      this.audioOutputNote.className = 'audio-device-note';
+      if (routed.ok) {
+        this.audioOutputNote.style.display = 'block';
+        this.audioOutputNote.innerText = next
+          ? '✓ Playback routed to the selected output device.'
+          : '✓ Playback follows the system default output.';
+      } else if (routed.reason === 'unsupported') {
+        this.audioOutputNote.style.display = 'none';
+      } else {
+        this.audioOutputNote.style.display = 'block';
+        this.audioOutputNote.classList.add('is-error');
+        this.audioOutputNote.innerText =
+          'Could not switch playback to that device. It may have been unplugged — falling back to the system default.';
+      }
+    }
+  }
+
+  // --- Live Input Level Meter (dBFS) ---
+
+  async startInputMeter() {
+    this.stopInputMeter();
+    if (!this.isAudioSettingsOpen()) return;
+    if (this.isDocumentHidden()) return;
+    if (typeof requestAnimationFrame !== 'function') return;
+
+    try {
+      const info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
+      if (info && info.didFallBack) {
+        this.setMeterHint('Saved microphone unavailable — monitoring the system default instead.', true);
+      } else {
+        this.setMeterHint('Speak your loudest line — aim for peaks around -12 to -6 dBFS.', false);
+      }
+    } catch (err) {
+      const name = (err && err.name) || '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        this.audioSetup.permission = 'denied';
+        this.renderMicDenial(err);
+        this.showAudioSetupStep('denied');
+        return;
+      }
+      this.setMeterHint('Could not open this input for monitoring. Try another device or press Rescan.', true);
+      return;
+    }
+
+    // Between the await above and here the user may already have closed the panel.
+    if (!this.isAudioSettingsOpen()) {
+      this.audio.stopInputMonitor();
+      return;
+    }
+
+    if (this.levelMeterLamp) this.levelMeterLamp.classList.add('is-live');
+    this.audioSetup.peakDb = -Infinity;
+    this.audioSetup.peakHoldUntil = 0;
+
+    const tick = () => {
+      // Hard stop: the loop must not outlive the visible panel.
+      if (!this.isAudioSettingsOpen() || this.isDocumentHidden()) {
+        this.stopInputMeter();
+        return;
+      }
+      this.renderInputMeterFrame();
+      this.audioSetup.meterRaf = requestAnimationFrame(tick);
+    };
+    this.audioSetup.meterRaf = requestAnimationFrame(tick);
+  }
+
+  stopInputMeter() {
+    if (this.audioSetup && this.audioSetup.meterRaf !== null && this.audioSetup.meterRaf !== undefined) {
+      try { cancelAnimationFrame(this.audioSetup.meterRaf); } catch (e) { }
+      this.audioSetup.meterRaf = null;
+    }
+    if (this.audio && typeof this.audio.stopInputMonitor === 'function') {
+      this.audio.stopInputMonitor();
+    }
+    this.resetInputMeterUI();
+  }
+
+  resetInputMeterUI() {
+    if (this.levelMeterMask) this.levelMeterMask.style.width = '100%';
+    if (this.levelMeterPeakTick) {
+      this.levelMeterPeakTick.style.display = 'none';
+      this.levelMeterPeakTick.classList.remove('is-clipping');
+    }
+    if (this.levelMeterRms) this.levelMeterRms.innerText = '-∞ dBFS';
+    if (this.levelMeterPeakReadout) {
+      this.levelMeterPeakReadout.innerText = 'PK -∞';
+      this.levelMeterPeakReadout.classList.remove('is-clipping');
+    }
+    if (this.levelMeterLamp) this.levelMeterLamp.classList.remove('is-live', 'is-clipping');
+    if (this.levelMeterTrack) {
+      this.levelMeterTrack.setAttribute('aria-valuenow', String(METER_FLOOR_DB));
+      this.levelMeterTrack.setAttribute('aria-valuetext', '-infinity dBFS');
+    }
+    if (this.audioSetup) {
+      this.audioSetup.peakDb = -Infinity;
+      this.audioSetup.peakHoldUntil = 0;
+    }
+  }
+
+  setMeterHint(message, isError) {
+    if (!this.levelMeterHint) return;
+    this.levelMeterHint.className = isError ? 'level-meter-hint is-error' : 'level-meter-hint';
+    this.levelMeterHint.innerText = message;
+  }
+
+  renderInputMeterFrame() {
+    const level = this.audio.readInputLevel();
+    if (!level) return;
+
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const rmsDb = level.rmsDb;
+    const peakDb = level.peakDb;
+
+    // Peak hold, then a slow ballistic decay (classic PPM behaviour).
+    if (!(this.audioSetup.peakDb > peakDb)) {
+      this.audioSetup.peakDb = peakDb;
+      this.audioSetup.peakHoldUntil = now + METER_PEAK_HOLD_MS;
+    } else if (now > this.audioSetup.peakHoldUntil) {
+      this.audioSetup.peakDb = Math.max(peakDb, this.audioSetup.peakDb - METER_PEAK_DECAY_DB_PER_FRAME);
+    }
+
+    const rmsPct = AudioEngine.dbToMeterPercent(rmsDb, METER_FLOOR_DB);
+    const peakPct = AudioEngine.dbToMeterPercent(this.audioSetup.peakDb, METER_FLOOR_DB);
+    const isClipping = this.audioSetup.peakDb >= METER_RED_DB;
+
+    if (this.levelMeterMask) {
+      this.levelMeterMask.style.width = `${(100 - rmsPct).toFixed(1)}%`;
+    }
+    if (this.levelMeterPeakTick) {
+      if (peakPct > 0.1) {
+        this.levelMeterPeakTick.style.display = 'block';
+        this.levelMeterPeakTick.style.left = `${peakPct.toFixed(1)}%`;
+      } else {
+        this.levelMeterPeakTick.style.display = 'none';
+      }
+      this.levelMeterPeakTick.classList.toggle('is-clipping', isClipping);
+    }
+    if (this.levelMeterRms) {
+      this.levelMeterRms.innerText = `${formatDbFS(rmsDb)} dBFS`;
+    }
+    if (this.levelMeterPeakReadout) {
+      this.levelMeterPeakReadout.innerText = `PK ${formatDbFS(this.audioSetup.peakDb)}`;
+      this.levelMeterPeakReadout.classList.toggle('is-clipping', isClipping);
+    }
+    if (this.levelMeterLamp) {
+      this.levelMeterLamp.classList.toggle('is-clipping', isClipping);
+      this.levelMeterLamp.classList.toggle('is-live', !isClipping);
+    }
+    if (this.levelMeterTrack) {
+      const shown = Math.max(METER_FLOOR_DB, Math.min(0, isFinite(rmsDb) ? rmsDb : METER_FLOOR_DB));
+      this.levelMeterTrack.setAttribute('aria-valuenow', shown.toFixed(1));
+      this.levelMeterTrack.setAttribute('aria-valuetext', `${formatDbFS(rmsDb)} dBFS`);
+    }
+
+    if (isClipping) {
+      this.setMeterHint('Too hot — back off the mic or lower your input gain to keep peaks under -3 dBFS.', true);
+    } else if (this.audioSetup.peakDb > METER_AMBER_DB) {
+      this.setMeterHint('Good, strong level. Peaks are sitting in the hot amber zone.', false);
+    }
+  }
+
+  // --- Export Folder Setting (GET/POST /api/config -> exports_dir) ---
+
+  async loadExportsDirSetting() {
+    if (!this.audioExportsRow) return;
+    // Stay hidden unless the running backend actually reports the key; the
+    // server-side half of this feature may ship after this UI does.
+    this.audioExportsRow.style.display = 'none';
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || typeof data !== 'object') return;
+      if (!Object.prototype.hasOwnProperty.call(data, 'exports_dir')) return;
+
+      this.audioExportsRow.style.display = 'block';
+      if (this.inputExportsDir) {
+        this.inputExportsDir.value = typeof data.exports_dir === 'string' ? data.exports_dir : '';
+      }
+    } catch (err) {
+      console.warn('[DubMate] Could not read exports_dir from /api/config:', err);
+    }
+  }
+
+  async saveExportsDir() {
+    const raw = this.inputExportsDir ? this.inputExportsDir.value.trim() : '';
+    if (!raw) {
+      this.setExportsFeedback('Enter a folder path first.', false);
+      return;
+    }
+
+    if (this.btnSaveExportsDir) this.btnSaveExportsDir.disabled = true;
+    if (this.btnSaveExportsDirText) this.btnSaveExportsDirText.innerText = 'Saving…';
+
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exports_dir: raw }),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) { data = {}; }
+
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+      }
+      if (typeof data.exports_dir === 'string' && this.inputExportsDir) {
+        this.inputExportsDir.value = data.exports_dir;
+      }
+      this.setExportsFeedback('✅ Export folder saved.', true);
+      this.showToast('📁 Export folder updated.');
+    } catch (err) {
+      let msg = (err && err.message) || 'Unknown error';
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        msg = 'Could not reach the local DubMate engine. Make sure the server is running.';
+      }
+      this.setExportsFeedback(`❌ ${msg}`, false);
+    } finally {
+      if (this.btnSaveExportsDir) this.btnSaveExportsDir.disabled = false;
+      if (this.btnSaveExportsDirText) this.btnSaveExportsDirText.innerText = 'Save';
+    }
+  }
+
+  setExportsFeedback(message, isSuccess) {
+    if (!this.exportsDirFeedback) return;
+    if (!message) {
+      this.exportsDirFeedback.style.display = 'none';
+      this.exportsDirFeedback.innerText = '';
+      return;
+    }
+    this.exportsDirFeedback.style.display = 'block';
+    this.exportsDirFeedback.className =
+      isSuccess ? 'audio-inline-feedback is-success' : 'audio-inline-feedback is-error';
+    this.exportsDirFeedback.innerText = message;
+  }
+
+  // Guard used by the record and calibration paths so the browser permission
+  // prompt is never the first thing a user sees.
+  async ensureMicReady() {
+    if (this.audioSetup.permission === 'granted' || this.audioSetup.setupComplete) return true;
+
+    let state = 'unknown';
+    try {
+      state = await this.audio.getMicPermissionState();
+    } catch (e) { }
+
+    if (state === 'granted') {
+      const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+      this.audioSetup.permission = 'granted';
+      this.audioSetup.setupComplete = true;
+      safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
+      this.updateAudioSettingsAffordance();
+      return true;
+    }
+
+    this.showToast('Set up your microphone before recording.');
+    this.openAudioSettings({ firstRun: true });
+    return false;
+  }
+
   async rescanPacksDirectory(silent = false) {
     if (this.isRescanningPacks) return;
     this.isRescanningPacks = true;
@@ -1765,9 +2590,11 @@ class DubMateApp {
   }
 
   highlightMatch(text, query) {
-    if (!text || !query) return text || '';
-    const safeText = String(text);
-    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const safeText = escapeHtml(text ?? '');
+    if (!query) return safeText;
+    const safeQuery = escapeHtml(query);
+    const escapedQuery = safeQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!escapedQuery) return safeText;
     const regex = new RegExp(`(${escapedQuery})`, 'gi');
     return safeText.replace(regex, '<span class="search-highlight">$1</span>');
   }
@@ -1847,20 +2674,20 @@ class DubMateApp {
       card.dataset.packId = pack.id;
 
       const rawTitle = pack.title || pack.name || pack.id;
-      const displayTitle = query ? this.highlightMatch(rawTitle, query) : rawTitle;
+      const displayTitle = this.highlightMatch(rawTitle, query);
       const duration = Math.round(pack.duration || (pack.lines && pack.lines.length ? pack.lines[pack.lines.length - 1].end : 0));
       const lineCount = pack.line_count || (pack.lines ? pack.lines.length : 0);
       const characters = pack.characters || [];
 
       const subtitleHtml = pack.subtitle ? `
-        <div class="pack-card-subtitle" title="${pack.subtitle}">
-          ${query ? this.highlightMatch(pack.subtitle, query) : pack.subtitle}
+        <div class="pack-card-subtitle" title="${escapeHtml(pack.subtitle)}">
+          ${this.highlightMatch(pack.subtitle, query)}
         </div>
       ` : '';
 
       const authorsHtml = (pack.authors && pack.authors.length) ? `
-        <span class="badge-author" title="Author: ${pack.authors.join(', ')}">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${pack.authors.map(a => query ? this.highlightMatch(a, query) : a).join(', ')}
+        <span class="badge-author" title="Author: ${escapeHtml(pack.authors.join(', '))}">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${pack.authors.map(a => this.highlightMatch(a, query)).join(', ')}
         </span>
       ` : '';
 
@@ -1870,7 +2697,7 @@ class DubMateApp {
         : `<span class="badge-format dubmate" title="DubMate Standard Format">DubMate</span>`;
 
       const thumbImg = (pack.has_icon && pack.icon_url)
-        ? `<div class="pack-card-thumb"><img src="${pack.icon_url}" alt="${rawTitle} cover" loading="lazy"></div>`
+        ? `<div class="pack-card-thumb"><img src="${escapeHtml(pack.icon_url)}" alt="${escapeHtml(rawTitle)} cover" loading="lazy"></div>`
         : `<div class="pack-card-thumb placeholder"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/></svg></div>`;
 
       // Check if a dialogue line matched query
@@ -1878,7 +2705,7 @@ class DubMateApp {
       if (query && pack.lines) {
         const foundLine = pack.lines.find(l => ((l.caption || '') + ' ' + (l.raw_caption || '') + ' ' + (l.text || '')).toLowerCase().includes(query));
         if (foundLine) {
-          const charPrefix = foundLine.character ? `<strong>${foundLine.character}:</strong> ` : '';
+          const charPrefix = foundLine.character ? `<strong>${escapeHtml(foundLine.character)}:</strong> ` : '';
           const cap = foundLine.caption || foundLine.raw_caption || foundLine.text || '';
           matchedLineSnippet = `
             <div style="font-size: 11px; color: var(--accent-brass); margin-top: 6px; font-style: italic; background: var(--input); padding: 4px 8px; border-radius: var(--radius-sm); border-left: 2px solid var(--primary);">
@@ -1901,7 +2728,7 @@ class DubMateApp {
               ${formatBadge}
               ${authorsHtml}
               <span class="pack-line-badge">${lineCount} lines</span>
-              <a href="${pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`}" class="btn-pack-download-icon" title="Download ${rawTitle} (.zip)" download onclick="event.stopPropagation()">
+              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" title="Download ${escapeHtml(rawTitle)} (.zip)" download onclick="event.stopPropagation()">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 <span>ZIP</span>
               </a>
@@ -1910,7 +2737,7 @@ class DubMateApp {
         </div>
         ${matchedLineSnippet}
         <div class="pack-card-characters">
-          ${characters.map(c => `<span class="char-tag">${query ? this.highlightMatch(c, query) : c}</span>`).join('')}
+          ${characters.map(c => `<span class="char-tag">${this.highlightMatch(c, query)}</span>`).join('')}
         </div>
       `;
 
@@ -1945,31 +2772,12 @@ class DubMateApp {
       this.user.id = data.user_id;
       this.saveUser();
 
-      // If running over public Cloudflare tunnel, auto-register room code on dubmate.bkaproductions.com
-      const origin = window.location.origin;
-      if (origin.includes('.trycloudflare.com') || origin.includes('bkaproductions.com')) {
-        try {
-          const regResp = await fetch('https://dubmate.bkaproductions.com/rooms/create', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-DubMate-Key': 'dubmate_sec_99f3810a4c28f14b67e0e7a12b',
-            },
-            body: JSON.stringify({
-              tunnel_url: origin,
-              app_version: '1.0.0',
-            }),
-          });
-          if (regResp.ok) {
-            const regData = await regResp.json();
-            window.__dubmate_room_code = regData.code;
-            window.__dubmate_room_token = regData.room_token;
-            console.log(`[Registry] Registered room ${regData.code} on dubmate.bkaproductions.com`);
-          }
-        } catch (rErr) {
-          console.warn('[Registry] Registration note:', rErr);
-        }
-      }
+      // Room registration with the public registry is performed server-side by
+      // app.py's register_room_with_worker(), which uses the room's real 6-char
+      // code and holds the per-room ownership token. The browser-side copy that
+      // used to live here sent no code (minting a second, weak 4-char room in the
+      // registry), embedded the shared API key in page source, and wrote
+      // window.__dubmate_room_code/_token which nothing ever read.
 
       this.joinRoom(data.room_id);
     } catch (err) {
@@ -2414,9 +3222,9 @@ class DubMateApp {
       const loc = u.location === 'screening' ? 'Screening' : (u.location === 'lobby' ? 'Lobby' : `Line ${(u.current_line || 0) + 1}`);
 
       chip.innerHTML = `
-        <div class="actor-hud-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-        <span class="actor-hud-name" title="${u.name}">${u.name}${u.id === this.user.id ? ' (You)' : ''}</span>
-        <span class="actor-hud-char" title="${charFullTooltip}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${charDisplayText}</span>
+        <div class="actor-hud-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
+        <span class="actor-hud-name" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}${u.id === this.user.id ? ' (You)' : ''}</span>
+        <span class="actor-hud-char" title="${escapeHtml(charFullTooltip)}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(charDisplayText)}</span>
         <span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>
         <span class="actor-hud-status-badge ${u.is_ready ? 'badge-ready' : (u.location === 'screening' ? 'badge-screening' : 'badge-recording')}">
           ${u.is_ready ? '✓ Ready' : loc}
@@ -2461,12 +3269,12 @@ class DubMateApp {
         this.lobbyCastList.innerHTML = users.map(u => `
           <div class="user-pill lobby-user-item" style="justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <div class="user-avatar" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-              <span class="lobby-user-name">${u.name} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''} ${u.id === this.roomState.host_id ? '<span class="user-you-tag" style="color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.1);">Host</span>' : ''}</span>
+              <div class="user-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
+              <span class="lobby-user-name">${escapeHtml(u.name)} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''} ${u.id === this.roomState.host_id ? '<span class="user-you-tag" style="color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.1);">Host</span>' : ''}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
               ${(amIHost && u.id !== this.user.id && u.is_online) ? `
-                <button class="btn btn-xs btn-outline-amber btn-hand-off-host" data-user-id="${u.id}" data-user-name="${u.name.replace(/"/g, '&quot;')}" title="Hand off host designation to ${u.name}" style="font-size: 10.5px; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; background: rgba(245, 158, 11, 0.08); cursor: pointer;">
+                <button class="btn btn-xs btn-outline-amber btn-hand-off-host" data-user-id="${escapeHtml(u.id)}" data-user-name="${escapeHtml(u.name)}" title="Hand off host designation to ${escapeHtml(u.name)}" style="font-size: 10.5px; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; background: rgba(245, 158, 11, 0.08); cursor: pointer;">
                   👑 Make Host
                 </button>
               ` : ''}
@@ -2488,7 +3296,7 @@ class DubMateApp {
     });
 
     const userOptionsHtml = `<option value="">-- Unassigned (Original Voice) --</option>` +
-      users.map(u => `<option value="${u.id}">${u.name} ${u.id === this.user.id ? '(You)' : ''}</option>`).join('');
+      users.map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.name)} ${u.id === this.user.id ? '(You)' : ''}</option>`).join('');
 
     const usersChanged = (this._lastUserOptionsSummary !== userSummary);
     this._lastUserOptionsSummary = userSummary;
@@ -2553,7 +3361,7 @@ class DubMateApp {
       tr.innerHTML = `
         <td>
           <div class="char-badge-cell">
-            <span class="char-badge">🎭 ${char}</span>
+            <span class="char-badge">🎭 ${escapeHtml(char)}</span>
             ${isAssignedToMe ? '<span class="your-role-badge">YOUR ROLE</span>' : ''}
           </div>
         </td>
@@ -2561,17 +3369,17 @@ class DubMateApp {
         <td>
           <div class="cast-assign-cell">
             <span class="actor-color-dot ${assignedUser ? 'active' : 'unassigned'}" 
-                  style="background-color: ${assignedUser ? assignedUser.color : 'transparent'};" 
-                  title="${assignedUser ? assignedUser.name : 'Unassigned'}" 
+                  style="background-color: ${assignedUser ? escapeHtml(assignedUser.color) : 'transparent'};" 
+                  title="${assignedUser ? escapeHtml(assignedUser.name) : 'Unassigned'}" 
                   aria-hidden="true"></span>
             <select class="cast-select" 
-                    id="cast-select-${safeCharId}" 
-                    data-char="${char}" 
-                    aria-label="Assign actor for ${char}">
+                    id="cast-select-${escapeHtml(safeCharId)}" 
+                    data-char="${escapeHtml(char)}" 
+                    aria-label="Assign actor for ${escapeHtml(char)}">
               <option value="">-- Unassigned (Original Voice) --</option>
               ${users.map(u => `
-                <option value="${u.id}" ${assignedIds.includes(u.id) ? 'selected' : ''}>
-                  ${u.name} ${u.id === this.user.id ? '(You)' : ''}
+                <option value="${escapeHtml(u.id)}" ${assignedIds.includes(u.id) ? 'selected' : ''}>
+                  ${escapeHtml(u.name)} ${u.id === this.user.id ? '(You)' : ''}
                 </option>
               `).join('')}
             </select>
@@ -3206,6 +4014,7 @@ class DubMateApp {
       this.showToast("Please join or create a session before calibrating.");
       return;
     }
+    if (!(await this.ensureMicReady())) return;
 
     this.isCalibratingMic = true;
     const btn = this.btnCalibrateMic;
@@ -3453,6 +4262,10 @@ class DubMateApp {
   }
 
   async startCountdownAndRecord() {
+    // Show the styled explainer instead of letting a bare browser permission
+    // prompt ambush the user mid-countdown.
+    if (!(await this.ensureMicReady())) return;
+
     const line = this.roomState.pack.lines[this.currentLineIndex];
     const sessionId = ++this.countdownSessionId;
 

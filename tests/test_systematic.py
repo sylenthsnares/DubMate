@@ -17,6 +17,12 @@ import unittest
 import numpy as np
 from starlette.testclient import TestClient
 
+# Ensure the project root is importable when this suite is run from tests/
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+PROJECT_ROOT = _sys.path[0]
+
 import pack_loader
 import audio_processor
 import app
@@ -25,14 +31,14 @@ class TestSystematicDualEngine(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        test_pack_dir = os.path.join(os.path.dirname(__file__), "Packs", "test_pack")
+        test_pack_dir = os.path.join(PROJECT_ROOT, "Packs", "test_pack")
         if os.path.isdir(test_pack_dir):
             shutil.rmtree(test_pack_dir, ignore_errors=True)
         cls.client = TestClient(app.app)
 
     @classmethod
     def tearDownClass(cls):
-        test_pack_dir = os.path.join(os.path.dirname(__file__), "Packs", "test_pack")
+        test_pack_dir = os.path.join(PROJECT_ROOT, "Packs", "test_pack")
         if os.path.isdir(test_pack_dir):
             shutil.rmtree(test_pack_dir, ignore_errors=True)
 
@@ -231,7 +237,7 @@ class TestSystematicDualEngine(unittest.TestCase):
             res_import = pack_loader.import_pack_archive(zip_bytes, "test_pack.zip")
             self.assertTrue(res_import is None or isinstance(res_import, pack_loader.PackInfo))
         finally:
-            test_pack_dir = os.path.join(os.path.dirname(__file__), "Packs", "test_pack")
+            test_pack_dir = os.path.join(PROJECT_ROOT, "Packs", "test_pack")
             if os.path.isdir(test_pack_dir):
                 shutil.rmtree(test_pack_dir, ignore_errors=True)
             pack_loader.get_all_packs()  # Refresh registry cache

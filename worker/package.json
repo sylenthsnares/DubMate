@@ -5,12 +5,19 @@
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "types": "wrangler types",
+    "dev": "node scripts/wrangler.mjs dev",
+    "deploy": "node scripts/wrangler.mjs deploy",
+    "types": "node scripts/wrangler.mjs types",
     "test": "node --experimental-strip-types tests/worker.test.mjs",
     "test:integration": "vitest run --config vitest.config.ts",
-    "test:all": "node --experimental-strip-types tests/worker.test.mjs && vitest run --config vitest.config.ts"
+    "test:all": "node --experimental-strip-types tests/worker.test.mjs && vitest run --config vitest.config.ts",
+    "cf": "node scripts/wrangler.mjs",
+    "cf:login": "node scripts/wrangler.mjs login",
+    "cf:logout": "node scripts/wrangler.mjs logout",
+    "cf:whoami": "node scripts/wrangler.mjs whoami",
+    "cf:deploy": "node scripts/wrangler.mjs deploy",
+    "cf:secret": "node scripts/wrangler.mjs secret put DUBMATE_SECRET_KEY",
+    "cf:secret:list": "node scripts/wrangler.mjs secret list"
   },
   "keywords": [
     "dubmate",
@@ -21,10 +28,9 @@
   "license": "MIT",
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.2",
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "@cloudflare/workers-types": "^4.20250214.0",
+    "@cloudflare/workers-types": "^5.20260829.1",
     "typescript": "^5.7.3",
     "vitest": "^4.1.11",
-    "wrangler": "^3.109.2"
+    "wrangler": "^4.127.1"
   }
 }

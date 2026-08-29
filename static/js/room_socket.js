@@ -1,5 +1,17 @@
 // room_socket.js - Real-time WebSocket connection to room session
 
+// Heartbeat: server round-trip and liveness tuning.
+// The backend's /ws handler replies to {type:'ping'} with {type:'pong'},
+// but liveness is tracked from *any* inbound message (pong included) so a
+// stalled ping/pong pair alone can't mask other traffic still flowing.
+const PING_INTERVAL_MS = 20000;
+const PING_TIMEOUT_MS = PING_INTERVAL_MS * 2.5; // 50s of total silence => assume half-open socket
+
+// Reconnect: exponential backoff with jitter to avoid thundering-herd
+// reconnect storms against the server during an outage.
+const RECONNECT_BASE_DELAY_MS = 2000;
+const RECONNECT_MAX_DELAY_MS = 30000;
+
 export class RoomSocket {
   constructor() {
     this.ws = null;
@@ -10,6 +22,17 @@ export class RoomSocket {
     this.userColor = null;
     this.pingInterval = null;
     this.reconnectTimeout = null;
+
+    // Heartbeat liveness tracking
+    this.lastMessageAt = null;
+
+    // Reconnect backoff state
+    this.reconnectAttempts = 0;
+
+    // Publicly readable connection state so the UI layer (app.js) can
+    // surface a persistent-disconnect condition if it chooses to.
+    // One of: 'disconnected' | 'connecting' | 'open' | 'reconnecting'
+    this.connectionState = 'disconnected';
   }
 
   connect(roomId, userId, userName, userColor) {
@@ -32,18 +55,26 @@ export class RoomSocket {
       this.ws = null;
     }
 
+    this.connectionState = 'connecting';
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/${roomId}/${userId}`;
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       console.log(`[Socket] Connected to room ${roomId} as ${userName}`);
+      this.connectionState = 'open';
+      this.reconnectAttempts = 0; // Reset backoff on a successful connection
+      this.lastMessageAt = Date.now();
       const appVersion = window.__dubmate_app_version || "1.0.0";
       this.send('join', { name: userName, color: userColor, app_version: appVersion });
       this.startPing();
     };
 
     this.ws.onmessage = (event) => {
+      // Any inbound traffic counts as liveness, not just an explicit pong,
+      // since that's the only signal guaranteed to exist against this backend.
+      this.lastMessageAt = Date.now();
       try {
         const data = JSON.parse(event.data);
         this.emit(data.type, data);
@@ -60,13 +91,17 @@ export class RoomSocket {
         this.reconnectTimeout = null;
       }
       if (this.roomId && this.userId) {
-        console.warn("[Socket] Connection closed unexpectedly. Reconnecting in 2s...");
+        this.connectionState = 'reconnecting';
+        const delay = this._nextReconnectDelay();
+        console.warn(`[Socket] Connection closed unexpectedly. Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})...`);
         this.reconnectTimeout = setTimeout(() => {
+          this.reconnectTimeout = null;
           if (this.roomId && this.userId) {
             this.connect(this.roomId, this.userId, this.userName, this.userColor);
           }
-        }, 2000);
+        }, delay);
       } else {
+        this.connectionState = 'disconnected';
         console.log("[Socket] Disconnected from room.");
       }
     };
@@ -76,10 +111,22 @@ export class RoomSocket {
     };
   }
 
+  // Computes the next exponential-backoff delay (with jitter) and advances
+  // the attempt counter. Delay grows 2s, 4s, 8s, ... capped at 30s, and is
+  // "equal jittered" (delay in [cap/2, cap]) so many clients reconnecting
+  // after an outage don't all retry at the exact same instant.
+  _nextReconnectDelay() {
+    const cap = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * Math.pow(2, this.reconnectAttempts));
+    const delay = Math.round(cap / 2 + Math.random() * (cap / 2));
+    this.reconnectAttempts += 1;
+    return delay;
+  }
+
   disconnect() {
     this.roomId = null;
     this.userId = null;
     this.stopPing();
+    this.reconnectAttempts = 0;
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -92,16 +139,28 @@ export class RoomSocket {
       } catch (e) {}
       this.ws = null;
     }
+    this.connectionState = 'disconnected';
     console.log("[Socket] Session cleanly closed.");
   }
 
   startPing() {
     this.stopPing();
+    this.lastMessageAt = Date.now();
     this.pingInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'ping' }));
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+      const silentFor = Date.now() - this.lastMessageAt;
+      if (silentFor > PING_TIMEOUT_MS) {
+        // Half-open connection: readyState is still OPEN but nothing has
+        // arrived (no pong, no other message) within the liveness window.
+        // Force-close so the existing onclose -> reconnect path takes over.
+        console.warn(`[Socket] No inbound traffic for ${silentFor}ms; assuming dead connection. Forcing reconnect.`);
+        try { this.ws.close(); } catch (e) {}
+        return;
       }
-    }, 20000);
+
+      this.ws.send(JSON.stringify({ type: 'ping' }));
+    }, PING_INTERVAL_MS);
   }
 
   stopPing() {

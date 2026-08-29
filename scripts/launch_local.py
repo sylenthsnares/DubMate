@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-test_launcher.py
+launch_local.py
 DubMate Studio - Local Desktop Standalone Test Launcher
 Spawns the local FastAPI studio server, opens the browser to the studio/launcher,
 and handles clean shutdown on exit.
@@ -21,7 +21,7 @@ if getattr(sys, 'frozen', False):
     sys.path.insert(0, EXE_DIR)
     os.chdir(EXE_DIR)
 else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if BASE_DIR not in sys.path:
         sys.path.insert(0, BASE_DIR)
 
@@ -52,11 +52,12 @@ def main():
     print("-" * 60)
 
     # Launch browser to studio
-    server_url = "http://127.0.0.1:8000"
+    port = app.get_engine_port()
+    server_url = f"http://127.0.0.1:{port}"
     open_browser_delayed(server_url)
 
     print(f"[DubMate Engine] Starting FastAPI server on {server_url}...")
-    uvicorn.run(app.app, host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run(app.app, host="127.0.0.1", port=port, log_level="info")
 
 
 if __name__ == "__main__":

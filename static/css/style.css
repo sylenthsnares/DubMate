@@ -5710,3 +5710,499 @@ body.resizing-timeline * {
     min-width: 0;
   }
 }
+
+/* ------------------------------------------------------------- */
+/* AUDIO DEVICE SETUP & FIRST-RUN STUDIO SETTINGS PANEL          */
+/* ------------------------------------------------------------- */
+
+/* Header affordance that re-opens the panel at any time */
+.btn-audio-settings {
+  position: relative;
+}
+
+.btn-audio-settings:hover {
+  color: var(--accent-brass);
+}
+
+.audio-settings-alert-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-amber);
+  box-shadow: 0 0 8px var(--accent-amber-glow);
+  animation: audioAlertPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes audioAlertPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+.audio-setup-card {
+  max-width: 620px;
+  text-align: left;
+  padding: 30px 28px 26px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.audio-setup-step {
+  display: none;
+}
+
+/* --- Step 1: First-run explainer --- */
+.audio-intro-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-wood);
+}
+
+.audio-intro-mic {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  background: radial-gradient(circle, #2a2016 0%, #15110d 100%);
+  border: 1px solid var(--border-gold);
+  box-shadow: 0 0 16px var(--border-gold-glow);
+}
+
+.audio-intro-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--foreground);
+  margin-bottom: 5px;
+}
+
+.audio-intro-desc {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--foreground-muted);
+}
+
+.audio-fact-list {
+  list-style: none;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.audio-fact-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--foreground-muted);
+}
+
+.audio-fact-list strong {
+  color: var(--foreground);
+}
+
+.audio-fact-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* --- Step 2: Denial & recovery --- */
+.audio-denied-box {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.28);
+}
+
+.audio-denied-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #fca5a5;
+}
+
+.audio-denied-detail {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground-muted);
+}
+
+.audio-recovery-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.audio-recovery-card {
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-wood);
+}
+
+.audio-recovery-head {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-brass);
+  margin-bottom: 8px;
+}
+
+.audio-recovery-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
+.audio-recovery-list strong {
+  color: var(--foreground);
+}
+
+.audio-recovery-note {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--foreground-dim);
+}
+
+/* --- Step 3: Device pickers --- */
+.audio-device-row {
+  margin-bottom: 16px;
+}
+
+.audio-device-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.device-select {
+  width: 100%;
+  height: 40px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a89f95' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+.device-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.device-select option {
+  background: var(--popover);
+  color: var(--popover-foreground);
+}
+
+.audio-device-note {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--accent-brass);
+}
+
+.audio-device-note.is-warning {
+  color: #fbbf24;
+}
+
+.audio-device-note.is-error {
+  color: #fca5a5;
+}
+
+.audio-unsupported-box {
+  padding: 13px 15px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px dashed var(--border-wood);
+}
+
+.audio-unsupported-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+}
+
+.audio-unsupported-desc {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--foreground-dim);
+}
+
+.audio-unsupported-desc code {
+  font-family: var(--font-mono);
+  color: var(--accent-brass);
+}
+
+/* --- Live dBFS Input Level Meter --- */
+.level-meter-panel {
+  margin-bottom: 18px;
+  padding: 14px 15px 12px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #14110e 0%, #0e0c0a 100%);
+  border: 1px solid var(--border-wood);
+  box-shadow: inset 0 1px 0 rgba(204, 164, 88, 0.08), var(--shadow-sm);
+}
+
+.level-meter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.level-meter-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--foreground-muted);
+}
+
+.level-meter-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3a2f24;
+  box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.8);
+  transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.level-meter-lamp.is-live {
+  background: var(--accent-teal);
+  box-shadow: 0 0 8px var(--accent-teal-glow);
+}
+
+.level-meter-lamp.is-clipping {
+  background: var(--accent-red);
+  box-shadow: 0 0 10px var(--accent-red-glow);
+}
+
+.level-meter-readouts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.level-meter-readout {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--foreground);
+  min-width: 74px;
+  text-align: right;
+}
+
+.level-meter-readout-peak {
+  min-width: 62px;
+  color: var(--accent-brass);
+}
+
+.level-meter-readout-peak.is-clipping {
+  color: #fca5a5;
+}
+
+.level-meter-track {
+  position: relative;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--input-border);
+  /* Static zone gradient: green up to -12 dBFS (80%), amber to -3 (95%), red above */
+  background-image: linear-gradient(90deg,
+      #15803d 0%,
+      #16a34a 62%,
+      #22c55e 78%,
+      #d97706 80.5%,
+      #f59e0b 93%,
+      #dc2626 95%,
+      #ef4444 100%);
+}
+
+/* Right-hand shutter hiding the gradient above the current level; its width is
+   100 - level%. Cheaper than repainting a gradient on every animation frame. */
+.level-meter-mask {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  background: linear-gradient(180deg, #16120f 0%, #0d0b09 100%);
+  box-shadow: inset 1px 0 3px rgba(0, 0, 0, 0.8);
+  transition: width 60ms linear;
+}
+
+.level-meter-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(12, 10, 9, 0.65);
+  pointer-events: none;
+}
+
+.level-meter-peak-tick {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: #fff8eb;
+  box-shadow: 0 0 6px rgba(255, 248, 235, 0.75);
+  pointer-events: none;
+}
+
+.level-meter-peak-tick.is-clipping {
+  background: #ef4444;
+  box-shadow: 0 0 8px var(--accent-red-glow);
+}
+
+.level-meter-scale {
+  position: relative;
+  height: 14px;
+  margin-top: 4px;
+}
+
+.level-meter-scale span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--foreground-dim);
+  white-space: nowrap;
+}
+
+.level-meter-scale span:first-child {
+  transform: translateX(0);
+}
+
+.level-meter-scale span:last-child {
+  transform: translateX(-100%);
+}
+
+.level-meter-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.level-zone-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--foreground-dim);
+}
+
+.zone-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.zone-green { background: #22c55e; }
+.zone-amber { background: var(--accent-amber); }
+.zone-red { background: var(--accent-red); }
+
+.level-meter-hint {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
+.level-meter-hint.is-error {
+  color: #fca5a5;
+}
+
+/* --- Export folder path field --- */
+.audio-path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.audio-path-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.audio-inline-feedback {
+  margin-top: 9px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.audio-inline-feedback.is-success {
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.34);
+  color: #6ee7b7;
+}
+
+.audio-inline-feedback.is-error {
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.34);
+  color: #fca5a5;
+}
+
+@media (max-width: 640px) {
+  .audio-recovery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .audio-settings-btn-text {
+    display: none;
+  }
+
+  .audio-path-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

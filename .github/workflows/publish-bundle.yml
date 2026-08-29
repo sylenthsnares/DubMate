@@ -32,7 +32,7 @@ jobs:
         run: |
           pip install -r requirements.txt -q
           pip install httpx fastapi pytest -q
-          python test_host_transfer.py
+          python tests/test_host_transfer.py
 
       - name: Create app bundle zip
         run: |
@@ -43,13 +43,30 @@ jobs:
             pack_builder.py \
             static/ \
             VERSION \
-            requirements.txt
+            requirements.txt \
+            requirements_builder.txt
+
+      - name: Extract release notes for this version
+        run: |
+          # body_path previously pointed at the whole CHANGELOG.md, so every release
+          # republished the full history. Take only this version's section.
+          awk -v hdr="## [${{ steps.ver.outputs.VERSION }}]" '
+            index($0, hdr) == 1 { found=1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::No CHANGELOG.md section found for version ${{ steps.ver.outputs.VERSION }}"
+            exit 1
+          fi
+          echo "--- Release notes ---"
+          cat RELEASE_NOTES.md
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.ver.outputs.VERSION }}
           name: "DubMate v${{ steps.ver.outputs.VERSION }}"
-          body_path: CHANGELOG.md
+          body_path: RELEASE_NOTES.md
           files: app-bundle-v${{ steps.ver.outputs.VERSION }}.zip
           token: ${{ secrets.GITHUB_TOKEN }}

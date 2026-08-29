@@ -17,6 +17,7 @@ export class AudioEngine {
     this.currentPlayingNodes = [];
     this.activeTakeGain = null;
     this.activeOrigGain = null;
+    this.activeDSPNodes = null;
     this.abState = 'A'; // 'A' = Dub Take, 'B' = Original Reference
 
     // Metronome & Monitoring Settings
@@ -27,6 +28,40 @@ export class AudioEngine {
     // Shared Reverb Impulse Buffer
     this.reverbBuffer = null;
     this.masterConvolver = null;
+
+    // --- Device Routing (see setPreferredInputDevice / setPreferredOutputDevice) ---
+    // preferredInputId is fed into the getUserMedia deviceId constraint.
+    // preferredOutputId is applied to <audio>/<video> elements via setSinkId().
+    // Both are `null` for "system default", which is also the safe fallback
+    // whenever a remembered device has been unplugged.
+    this.preferredInputId = null;
+    this.preferredOutputId = null;
+    this.activeInputDeviceId = null;
+    this.lastInputFallbackReason = null;
+
+    // Live Input Level Monitor (settings meter only, never routed to speakers)
+    this.monitorStream = null;
+    this.monitorSource = null;
+    this.monitorAnalyser = null;
+    this.monitorFloatData = null;
+    this.monitorByteData = null;
+    this.monitorDeviceId = null;
+    this.monitorDidFallBack = false;
+  }
+
+  // --- dBFS helpers (shared with the settings level meter UI) ---
+  static amplitudeToDbFS(amplitude) {
+    if (!(amplitude > 0)) return -Infinity;
+    return 20 * Math.log10(amplitude);
+  }
+
+  // Maps a dBFS reading onto 0..100 for a linear-in-dB meter bar.
+  static dbToMeterPercent(db, floorDb = -60) {
+    if (typeof db !== 'number' || !isFinite(db)) return 0;
+    const span = 0 - floorDb;
+    if (span <= 0) return 0;
+    const clamped = Math.max(floorDb, Math.min(0, db));
+    return ((clamped - floorDb) / span) * 100;
   }
 
   initContext() {
@@ -195,22 +230,319 @@ export class AudioEngine {
     osc.stop(now + 0.09);
   }
 
-  // --- 4. Recording Stream Handler ---
-  async requestMicrophone() {
-    if (this.stream) return this.stream;
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        }
-      });
-      return this.stream;
-    } catch (err) {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      return this.stream;
+  // --- 4. Device Enumeration & Routing ---
+
+  _hasMediaDevices() {
+    return typeof navigator !== 'undefined'
+      && !!navigator.mediaDevices
+      && typeof navigator.mediaDevices.getUserMedia === 'function';
+  }
+
+  // Device labels are empty strings until microphone permission has been
+  // granted, so callers should only enumerate *after* a successful
+  // getUserMedia(). `labelled` reports whether real names came back.
+  async enumerateAudioDevices() {
+    const result = { inputs: [], outputs: [], labelled: false, supported: false };
+    if (typeof navigator === 'undefined'
+      || !navigator.mediaDevices
+      || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+      return result;
     }
+    result.supported = true;
+
+    let devices = [];
+    try {
+      devices = await navigator.mediaDevices.enumerateDevices();
+    } catch (err) {
+      console.warn('[AudioEngine] enumerateDevices failed:', err);
+      return result;
+    }
+
+    for (const d of (devices || [])) {
+      if (!d) continue;
+      const entry = {
+        deviceId: d.deviceId || '',
+        label: d.label || '',
+        groupId: d.groupId || '',
+      };
+      if (d.kind === 'audioinput') result.inputs.push(entry);
+      else if (d.kind === 'audiooutput') result.outputs.push(entry);
+    }
+    result.labelled = result.inputs.concat(result.outputs).some((d) => !!d.label);
+    return result;
+  }
+
+  async getMicPermissionState() {
+    if (typeof navigator === 'undefined'
+      || !navigator.permissions
+      || typeof navigator.permissions.query !== 'function') {
+      return 'unknown';
+    }
+    try {
+      const status = await navigator.permissions.query({ name: 'microphone' });
+      return (status && status.state) ? status.state : 'unknown';
+    } catch (err) {
+      // Safari and several embedded webviews reject the 'microphone' name.
+      return 'unknown';
+    }
+  }
+
+  // Selecting the capture device. Returns true when the preference changed.
+  setPreferredInputDevice(deviceId) {
+    const next = deviceId || null;
+    if (next === this.preferredInputId) return false;
+    this.preferredInputId = next;
+    // Drop any cached capture stream so the next recording opens the new
+    // device. Never yank the stream out from under a live MediaRecorder.
+    if (!this.isRecording) this.releaseMicrophone();
+    return true;
+  }
+
+  // setSinkId() is Chromium-only at time of writing; Firefox and Safari have
+  // no output routing at all, so the UI must hide the picker when this is false.
+  supportsOutputRouting() {
+    if (typeof window === 'undefined' || !window.HTMLMediaElement) return false;
+    return typeof window.HTMLMediaElement.prototype.setSinkId === 'function';
+  }
+
+  async setPreferredOutputDevice(deviceId) {
+    this.preferredOutputId = deviceId || null;
+    return this.applyOutputRouting();
+  }
+
+  // Applies the remembered output device to every media element on the page
+  // (plus the WebAudio graph where the browser supports it). Passing '' to
+  // setSinkId resets an element back to the system default.
+  async applyOutputRouting(elements = null) {
+    if (!this.supportsOutputRouting()) {
+      return { ok: false, reason: 'unsupported' };
+    }
+    const sinkId = this.preferredOutputId || '';
+    const targets = elements
+      || (typeof document !== 'undefined' ? Array.from(document.querySelectorAll('audio, video')) : []);
+
+    let failure = null;
+    for (const el of targets) {
+      if (!el || typeof el.setSinkId !== 'function') continue;
+      try {
+        await el.setSinkId(sinkId);
+      } catch (err) {
+        failure = failure || err;
+      }
+    }
+
+    // Chrome 110+ can also re-point the AudioContext itself, which is what
+    // carries take previews, the metronome and the backing track.
+    if (this.ctx && typeof this.ctx.setSinkId === 'function') {
+      try {
+        await this.ctx.setSinkId(sinkId);
+      } catch (err) {
+        failure = failure || err;
+      }
+    }
+
+    if (failure) {
+      return { ok: false, reason: failure.name || 'error', error: failure };
+    }
+    return { ok: true, deviceId: sinkId };
+  }
+
+  _buildAudioConstraints(deviceId) {
+    const constraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    if (deviceId) {
+      constraints.deviceId = { exact: deviceId };
+    }
+    return constraints;
+  }
+
+  _streamIsLive(stream) {
+    if (!stream) return false;
+    if (typeof stream.getAudioTracks !== 'function') return true;
+    const tracks = stream.getAudioTracks();
+    if (!tracks || tracks.length === 0) return false;
+    return tracks.some((t) => !t.readyState || t.readyState === 'live');
+  }
+
+  // --- 4a. Recording Stream Handler ---
+  // Tries the user's chosen device first, then degrades to the system default
+  // (remembered device unplugged), then to a bare `{ audio: true }`.
+  async requestMicrophone() {
+    if (this.stream) {
+      if (this.activeInputDeviceId === (this.preferredInputId || null) && this._streamIsLive(this.stream)) {
+        return this.stream;
+      }
+      this.releaseMicrophone();
+    }
+    if (!this._hasMediaDevices()) {
+      throw new Error('This browser does not expose microphone capture (navigator.mediaDevices).');
+    }
+
+    const wanted = this.preferredInputId || null;
+    const attempts = [];
+    if (wanted) attempts.push({ audio: this._buildAudioConstraints(wanted), id: wanted });
+    attempts.push({ audio: this._buildAudioConstraints(null), id: null });
+    attempts.push({ audio: true, id: null });
+
+    let lastErr = null;
+    for (const attempt of attempts) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: attempt.audio });
+        this.stream = stream;
+        this.activeInputDeviceId = attempt.id;
+        this.lastInputFallbackReason = (wanted && attempt.id === null)
+          ? ((lastErr && lastErr.name) || 'unavailable')
+          : null;
+        return this.stream;
+      } catch (err) {
+        lastErr = err;
+        // A hard permission refusal will never be fixed by retrying with a
+        // looser constraint, so stop immediately and surface it to the UI.
+        if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) break;
+      }
+    }
+
+    this.stream = null;
+    this.activeInputDeviceId = null;
+    throw lastErr || new Error('Microphone unavailable');
+  }
+
+  // --- 4b. Live Input Level Monitor (dBFS meter source) ---
+  // Opens its own short-lived stream so it never collides with, or gets torn
+  // down by, the recording stream that releaseMicrophone()/stopAllPlayback()
+  // manage. The analyser is deliberately NOT connected to ctx.destination:
+  // monitoring must not feed the mic back into the speakers.
+  async startInputMonitor(deviceId = undefined) {
+    this.stopInputMonitor();
+    this.initContext();
+    if (!this.ctx) throw new Error('Web Audio is unavailable in this browser.');
+    if (typeof this.ctx.createMediaStreamSource !== 'function' || typeof this.ctx.createAnalyser !== 'function') {
+      throw new Error('Web Audio analyser nodes are unavailable in this browser.');
+    }
+    if (!this._hasMediaDevices()) {
+      throw new Error('This browser does not expose microphone capture (navigator.mediaDevices).');
+    }
+
+    const wanted = (deviceId === undefined) ? (this.preferredInputId || null) : (deviceId || null);
+    let stream = null;
+    let didFallBack = false;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: this._buildAudioConstraints(wanted) });
+    } catch (err) {
+      if (!wanted || (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError'))) throw err;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: this._buildAudioConstraints(null) });
+      didFallBack = true;
+    }
+
+    let source = null;
+    let analyser = null;
+    try {
+      source = this.ctx.createMediaStreamSource(stream);
+      analyser = this.ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.15;
+      source.connect(analyser);
+    } catch (err) {
+      try { stream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} }); } catch (e) {}
+      throw err;
+    }
+
+    const size = analyser.fftSize || 2048;
+    this.monitorStream = stream;
+    this.monitorSource = source;
+    this.monitorAnalyser = analyser;
+    this.monitorFloatData = new Float32Array(size);
+    this.monitorByteData = new Uint8Array(size);
+    this.monitorDidFallBack = didFallBack;
+
+    let actualId = didFallBack ? null : wanted;
+    let actualLabel = '';
+    try {
+      const track = stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
+      if (track) {
+        actualLabel = track.label || '';
+        const settings = typeof track.getSettings === 'function' ? track.getSettings() : null;
+        if (settings && settings.deviceId) actualId = settings.deviceId;
+      }
+    } catch (e) {}
+    this.monitorDeviceId = actualId;
+
+    return { deviceId: actualId, label: actualLabel, didFallBack };
+  }
+
+  isMonitoringInput() {
+    return !!this.monitorAnalyser;
+  }
+
+  // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame,
+  // or null when no monitor is running.
+  readInputLevel() {
+    const analyser = this.monitorAnalyser;
+    if (!analyser) return null;
+
+    let peak = 0;
+    let sumSq = 0;
+    let count = 0;
+
+    if (typeof analyser.getFloatTimeDomainData === 'function' && this.monitorFloatData) {
+      analyser.getFloatTimeDomainData(this.monitorFloatData);
+      const data = this.monitorFloatData;
+      count = data.length;
+      for (let i = 0; i < count; i++) {
+        const v = data[i];
+        sumSq += v * v;
+        const abs = v < 0 ? -v : v;
+        if (abs > peak) peak = abs;
+      }
+    } else if (typeof analyser.getByteTimeDomainData === 'function' && this.monitorByteData) {
+      // Older WebKit builds only ship the 8-bit variant.
+      analyser.getByteTimeDomainData(this.monitorByteData);
+      const data = this.monitorByteData;
+      count = data.length;
+      for (let i = 0; i < count; i++) {
+        const v = (data[i] - 128) / 128;
+        sumSq += v * v;
+        const abs = v < 0 ? -v : v;
+        if (abs > peak) peak = abs;
+      }
+    } else {
+      return null;
+    }
+
+    if (!count) return null;
+    const rms = Math.sqrt(sumSq / count);
+    return {
+      rms,
+      peak,
+      rmsDb: AudioEngine.amplitudeToDbFS(rms),
+      peakDb: AudioEngine.amplitudeToDbFS(peak),
+    };
+  }
+
+  stopInputMonitor() {
+    if (this.monitorSource) {
+      try { this.monitorSource.disconnect(); } catch (e) {}
+    }
+    if (this.monitorAnalyser) {
+      try { this.monitorAnalyser.disconnect(); } catch (e) {}
+    }
+    if (this.monitorStream) {
+      try {
+        this.monitorStream.getTracks().forEach((track) => {
+          try { track.stop(); } catch (e) {}
+        });
+      } catch (e) {}
+    }
+    this.monitorStream = null;
+    this.monitorSource = null;
+    this.monitorAnalyser = null;
+    this.monitorFloatData = null;
+    this.monitorByteData = null;
+    this.monitorDeviceId = null;
+    this.monitorDidFallBack = false;
   }
 
   async startRecording() {
@@ -251,6 +583,7 @@ export class AudioEngine {
       } catch (e) {}
       this.stream = null;
     }
+    this.activeInputDeviceId = null;
   }
 
   stopRecording() {
@@ -288,7 +621,7 @@ export class AudioEngine {
     });
   }
 
-  // --- 4b. Calibrate Idle Room Noise Profile (1s Pre-Roll + 3s Sampling) ---
+  // --- 4c. Calibrate Idle Room Noise Profile (1s Pre-Roll + 3s Sampling) ---
   async recordNoiseProfile(durationMs = 3000, delayMs = 1000, onProgress = null) {
     this.initContext();
     await this.requestMicrophone();
@@ -475,6 +808,29 @@ export class AudioEngine {
       } catch (e) {}
     }
     this.currentPlayingNodes = [];
+
+    // Fully tear down the previous per-preview DSP chain (high-pass filter,
+    // compressor, gain trim, reverb convolver + dry/wet sends, sub-mix)
+    // rather than just dropping references. buildVocalDSPChain() now returns
+    // every node it creates so all of them can be disconnected here, not just
+    // the 3 (input/gainNode/output) that used to be tracked. This runs before
+    // previewTakeIsolated()/playOriginalReference() build a fresh chain, since
+    // both call stopAllPlayback() first.
+    if (this.activeDSPNodes) {
+      for (const key of Object.keys(this.activeDSPNodes)) {
+        const node = this.activeDSPNodes[key];
+        if (node && typeof node.disconnect === 'function') {
+          try { node.disconnect(); } catch (e) {}
+        }
+      }
+    }
+    if (this.activeTakeGain && typeof this.activeTakeGain.disconnect === 'function') {
+      try { this.activeTakeGain.disconnect(); } catch (e) {}
+    }
+    if (this.activeOrigGain && typeof this.activeOrigGain.disconnect === 'function') {
+      try { this.activeOrigGain.disconnect(); } catch (e) {}
+    }
+
     this.activeTakeGain = null;
     this.activeOrigGain = null;
     this.activeDSPNodes = null;
@@ -511,11 +867,13 @@ export class AudioEngine {
       compressor.threshold.value = 0;
     }
     highPass.connect(compressor);
+    nodes.compressor = compressor;
 
     // 3. Volume Trim Gain Node
     const gainNode = this.ctx.createGain();
     gainNode.gain.value = Math.pow(10, gainDb / 20);
     compressor.connect(gainNode);
+    nodes.gainNode = gainNode;
 
     // 4. Reverb Sub-Mix
     const submixGain = this.ctx.createGain();
@@ -535,11 +893,16 @@ export class AudioEngine {
 
       dryGain.connect(submixGain);
       wetGain.connect(submixGain);
+
+      // Tracked so stopAllPlayback() can fully tear down the reverb send/
+      // return chain instead of leaking it once the preview ends.
+      nodes.convolver = convolver;
+      nodes.dryGain = dryGain;
+      nodes.wetGain = wetGain;
     } else {
       gainNode.connect(submixGain);
     }
 
-    nodes.gainNode = gainNode;
     nodes.output = submixGain;
     return nodes;
   }

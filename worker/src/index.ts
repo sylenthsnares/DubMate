@@ -11,6 +11,23 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-DubMate-Key",
 };
 
+// ---------------------------------------------------------------------------
+// SECURITY: Allowlist of hostnames/domains permitted for tunnel_url.
+// Any host listed here (or a subdomain of it) can receive a 302 redirect from
+// this registry, so extend this list carefully and only with trusted domains.
+// Matching is exact-host or dot-suffix (e.g. "trycloudflare.com" also allows
+// "abcd.trycloudflare.com" but NOT "eviltrycloudflare.com").
+// ---------------------------------------------------------------------------
+export const ALLOWED_TUNNEL_URL_DOMAINS: readonly string[] = [
+  "trycloudflare.com",
+  "bkaproductions.com",
+];
+
+// Input size limits enforced before any KV write.
+const MAX_CODE_LENGTH = 64;
+const MAX_TUNNEL_URL_LENGTH = 512;
+const MAX_APP_VERSION_LENGTH = 32;
+
 export function generateRoomCode(): string {
   // Excludes I, O, 0, 1 to avoid character confusion when reading out loud
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -23,6 +40,44 @@ export function generateToken(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Constant-time string comparison, used for the master X-DubMate-Key and for
+// per-room bearer tokens, to avoid leaking secret content via timing.
+export function timingSafeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+  const length = Math.max(aBytes.length, bBytes.length, 1);
+
+  let diff = aBytes.length === bBytes.length ? 0 : 1;
+  for (let i = 0; i < length; i++) {
+    const x = i < aBytes.length ? aBytes[i] : 0;
+    const y = i < bBytes.length ? bBytes[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff === 0;
+}
+
+// Validates a tunnel_url is an https:// URL whose hostname is on the
+// ALLOWED_TUNNEL_URL_DOMAINS allowlist. Uses URL parsing (not substring
+// matching) so query strings/paths cannot be used to spoof a trusted host.
+export function isAllowedTunnelUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== "https:") {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  return ALLOWED_TUNNEL_URL_DOMAINS.some(
+    domain => hostname === domain || hostname.endsWith(`.${domain}`)
+  );
 }
 
 function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
@@ -124,8 +179,8 @@ export default {
     // 1. POST /rooms/create
     if (request.method === "POST" && path === "/rooms/create") {
       if (env.DUBMATE_SECRET_KEY) {
-        const clientKey = request.headers.get("X-DubMate-Key");
-        if (clientKey !== env.DUBMATE_SECRET_KEY) {
+        const clientKey = request.headers.get("X-DubMate-Key") ?? "";
+        if (!timingSafeEqual(clientKey, env.DUBMATE_SECRET_KEY)) {
           return jsonResponse({ error: "Unauthorized: Invalid or missing X-DubMate-Key" }, 401);
         }
       }
@@ -137,13 +192,74 @@ export default {
         return jsonResponse({ error: "Invalid JSON payload" }, 400);
       }
 
-      if (!body.tunnel_url || typeof body.tunnel_url !== "string" || !body.tunnel_url.startsWith("https://")) {
-        return jsonResponse({ error: "Missing or invalid tunnel_url (must start with https://)" }, 400);
+      if (!body.tunnel_url || typeof body.tunnel_url !== "string") {
+        return jsonResponse({ error: "Missing or invalid tunnel_url (must be a string)" }, 400);
+      }
+      if (body.tunnel_url.length > MAX_TUNNEL_URL_LENGTH) {
+        return jsonResponse({ error: `tunnel_url exceeds maximum length of ${MAX_TUNNEL_URL_LENGTH} characters` }, 400);
+      }
+      if (!isAllowedTunnelUrl(body.tunnel_url)) {
+        return jsonResponse({ error: "Invalid tunnel_url: must be an https:// URL on an allowed domain" }, 400);
       }
 
-      // Generate unique room code with collision check or use provided room code
-      let code = body.code ? body.code.trim().toUpperCase() : "";
-      if (!code) {
+      // Validate and normalize the optional explicit room code.
+      let explicitCode = "";
+      if (body.code) {
+        if (typeof body.code !== "string") {
+          return jsonResponse({ error: "Invalid code: must be a string" }, 400);
+        }
+        explicitCode = body.code.trim().toUpperCase();
+        if (explicitCode.length > MAX_CODE_LENGTH) {
+          return jsonResponse({ error: `code exceeds maximum length of ${MAX_CODE_LENGTH} characters` }, 400);
+        }
+      }
+
+      // Validate and normalize the optional app_version.
+      let appVersion = "1.0.0";
+      if (body.app_version) {
+        if (typeof body.app_version !== "string") {
+          return jsonResponse({ error: "Invalid app_version: must be a string" }, 400);
+        }
+        appVersion = body.app_version.trim();
+        if (appVersion.length > MAX_APP_VERSION_LENGTH) {
+          return jsonResponse({ error: `app_version exceeds maximum length of ${MAX_APP_VERSION_LENGTH} characters` }, 400);
+        }
+      }
+
+      let code = explicitCode;
+      let existingEntry: RoomEntry | null = null;
+      let statusCode = 201;
+
+      if (code) {
+        // Explicit code: if it already exists, only the holder of its
+        // room_token (proven via Bearer auth) may overwrite it. This
+        // prevents anyone holding just the shared X-DubMate-Key from
+        // hijacking a live room by re-registering its code with a
+        // different tunnel_url.
+        const existingRaw = await env.ROOMS.get(code);
+        if (existingRaw) {
+          let parsedExisting: RoomEntry;
+          try {
+            parsedExisting = JSON.parse(existingRaw);
+          } catch {
+            return jsonResponse({ error: "Corrupt room data in registry" }, 500);
+          }
+
+          const authHeader = request.headers.get("Authorization") || "";
+          const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
+          const tokenValid = bearerToken.length > 0 && timingSafeEqual(bearerToken, parsedExisting.room_token);
+
+          if (!tokenValid) {
+            // Deliberately generic: do not reveal whether the token was
+            // wrong versus absent.
+            return jsonResponse({ error: "Room code already registered" }, 409);
+          }
+
+          existingEntry = parsedExisting;
+          statusCode = 200;
+        }
+      } else {
+        // No code supplied: auto-generate with collision check (unchanged).
         let collision = true;
         for (let i = 0; i < 10; i++) {
           const candidate = generateRoomCode();
@@ -160,32 +276,33 @@ export default {
         }
       }
 
-      const roomToken = generateToken();
+      const roomToken = existingEntry ? existingEntry.room_token : generateToken();
       const entry: RoomEntry = {
         tunnel_url: body.tunnel_url.trim(),
         room_token: roomToken,
-        created_at: Math.floor(Date.now() / 1000),
-        app_version: (body.app_version || "1.0.0").trim(),
+        created_at: existingEntry ? existingEntry.created_at : Math.floor(Date.now() / 1000),
+        app_version: appVersion,
       };
 
-      // 12 hours TTL = 43200 seconds (store under primary code and alias)
+      // 12 hours TTL = 43200 seconds
       await env.ROOMS.put(code, JSON.stringify(entry), { expirationTtl: 43200 });
-      if (!code.startsWith("DUB-")) {
-        await env.ROOMS.put(`DUB-${code}`, JSON.stringify(entry), { expirationTtl: 43200 });
-      }
 
       const responsePayload: CreateRoomResponse = {
         code,
         room_token: roomToken,
       };
 
-      return jsonResponse(responsePayload, 201);
+      return jsonResponse(responsePayload, statusCode);
     }
 
     // 2. POST /rooms/:code/update
     const updateMatch = path.match(/^\/rooms\/([A-Za-z0-9-]+)\/update$/);
     if (request.method === "POST" && updateMatch) {
       const code = updateMatch[1].toUpperCase();
+      if (code.length > MAX_CODE_LENGTH) {
+        return jsonResponse({ error: `code exceeds maximum length of ${MAX_CODE_LENGTH} characters` }, 400);
+      }
+
       const rawEntry = await env.ROOMS.get(code);
       if (!rawEntry) {
         return jsonResponse({ error: "Room not found or expired" }, 404);
@@ -201,10 +318,10 @@ export default {
       // Validate room token or global admin secret
       const authHeader = request.headers.get("Authorization") || "";
       const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
-      const clientKey = request.headers.get("X-DubMate-Key");
+      const clientKey = request.headers.get("X-DubMate-Key") ?? "";
 
-      const isTokenValid = bearerToken && bearerToken === entry.room_token;
-      const isMasterKeyValid = env.DUBMATE_SECRET_KEY && clientKey === env.DUBMATE_SECRET_KEY;
+      const isTokenValid = bearerToken.length > 0 && timingSafeEqual(bearerToken, entry.room_token);
+      const isMasterKeyValid = !!env.DUBMATE_SECRET_KEY && timingSafeEqual(clientKey, env.DUBMATE_SECRET_KEY);
 
       if (!isTokenValid && !isMasterKeyValid) {
         return jsonResponse({ error: "Unauthorized: Invalid room token or authorization header" }, 401);
@@ -217,13 +334,26 @@ export default {
         return jsonResponse({ error: "Invalid JSON payload" }, 400);
       }
 
-      if (!body.tunnel_url || typeof body.tunnel_url !== "string" || !body.tunnel_url.startsWith("https://")) {
-        return jsonResponse({ error: "Missing or invalid tunnel_url (must start with https://)" }, 400);
+      if (!body.tunnel_url || typeof body.tunnel_url !== "string") {
+        return jsonResponse({ error: "Missing or invalid tunnel_url (must be a string)" }, 400);
+      }
+      if (body.tunnel_url.length > MAX_TUNNEL_URL_LENGTH) {
+        return jsonResponse({ error: `tunnel_url exceeds maximum length of ${MAX_TUNNEL_URL_LENGTH} characters` }, 400);
+      }
+      if (!isAllowedTunnelUrl(body.tunnel_url)) {
+        return jsonResponse({ error: "Invalid tunnel_url: must be an https:// URL on an allowed domain" }, 400);
       }
 
       entry.tunnel_url = body.tunnel_url.trim();
       if (body.app_version) {
-        entry.app_version = body.app_version.trim();
+        if (typeof body.app_version !== "string") {
+          return jsonResponse({ error: "Invalid app_version: must be a string" }, 400);
+        }
+        const trimmedVersion = body.app_version.trim();
+        if (trimmedVersion.length > MAX_APP_VERSION_LENGTH) {
+          return jsonResponse({ error: `app_version exceeds maximum length of ${MAX_APP_VERSION_LENGTH} characters` }, 400);
+        }
+        entry.app_version = trimmedVersion;
       }
 
       // Re-save with fresh 12 hours TTL
@@ -290,5 +420,3 @@ export default {
     return jsonResponse({ error: `Not Found: ${request.method} ${path}` }, 404);
   },
 };
-
-

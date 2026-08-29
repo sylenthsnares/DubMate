@@ -11,7 +11,8 @@ import time
 import py_compile
 import subprocess
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(TESTS_DIR)
 PYTHON_EXE = sys.executable
 
 def print_header(title: str):
@@ -21,11 +22,14 @@ def print_header(title: str):
 
 def test_python_syntax():
     print_header("Phase 1: Python Source File Compilation & Syntax Audit")
-    py_files = [f for f in os.listdir(PROJECT_ROOT) if f.endswith(".py")]
+    py_files = []
+    for d in (PROJECT_ROOT, TESTS_DIR, os.path.join(PROJECT_ROOT, "scripts")):
+        if os.path.isdir(d):
+            py_files += [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".py")]
     passed = 0
     failed = 0
-    for f in sorted(py_files):
-        path = os.path.join(PROJECT_ROOT, f)
+    for path in sorted(py_files):
+        f = os.path.relpath(path, PROJECT_ROOT)
         try:
             py_compile.compile(path, doraise=True)
             print(f"  [OK]  {f}")
@@ -69,7 +73,7 @@ def test_javascript_syntax():
 def test_frontend_suite():
     print_header("Phase 3: Frontend JSDOM Headless DOM & Audio Integration Suite")
     t0 = time.time()
-    res = subprocess.run(["node", os.path.join(PROJECT_ROOT, "test_frontend.js")], capture_output=True, text=True)
+    res = subprocess.run(["node", os.path.join(TESTS_DIR, "test_frontend.js")], capture_output=True, text=True)
     dur = time.time() - t0
     if res.returncode == 0:
         print(f"  [PASS] Frontend DOM & Audio Suite ({dur:.2f}s)")
@@ -93,11 +97,13 @@ def test_python_suites():
         ("test_pack_builder.py", "Scene Pack Creator, INI Parser & Video Transcoding"),
         ("test_pack_security.py", "Zip-Slip Defenses, Malware Quarantine & Tree Importer"),
         ("test_systematic.py", "Master Systematic Dual-Engine Suite & Full Project Zip"),
+        ("test_audio_safety.py", "DSP Numerical Safety, Gain Clamping & Path Sanitization"),
+        ("test_security_hardening.py", "Path Traversal, WebSocket Authorization & ZIP Allowlist"),
     ]
 
     results = []
     for script, desc in suites:
-        script_path = os.path.join(PROJECT_ROOT, script)
+        script_path = os.path.join(TESTS_DIR, script)
         t0 = time.time()
         res = subprocess.run([PYTHON_EXE, script_path], capture_output=True, text=True)
         dur = time.time() - t0

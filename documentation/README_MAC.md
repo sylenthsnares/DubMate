@@ -9,9 +9,9 @@ This guide will walk you through running **DubMate** locally or over the interne
 DubMate installs all Python packages and portable tools **strictly inside the project folder** (`.venv/` and `tools/`). Nothing is installed globally.
 
 ### 1. Run the 1-Click Setup Script
-Open Terminal in the DubMate folder:
+Open Terminal in the DubMate project root (the folder containing `app.py`):
 ```bash
-chmod +x setup_dubmate_mac.sh run_mac.sh update_mac.sh
+chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
 ./setup_dubmate_mac.sh
 ```
 
@@ -67,8 +67,8 @@ If the browser does not capture microphone audio:
 
 To update DubMate to the latest version from GitHub:
 ```bash
-chmod +x update_mac.sh
-./update_mac.sh
+chmod +x update.sh
+./update.sh
 ```
 
 ---

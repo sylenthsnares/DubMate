@@ -1,6 +1,6 @@
 # 🎙️ DubMate Studio Pro — Collaborative Multiplayer Voice Dubbing DAW
 
-[![Release: DubMate v1.3](https://img.shields.io/badge/Release-DubMate%20v1.3-gold.svg)](https://github.com/sylenthsnares/DubMate/releases/tag/v1.3)
+[![Release: DubMate v1.0.9](https://img.shields.io/badge/Release-DubMate%20v1.0.9-gold.svg)](https://github.com/sylenthsnares/DubMate/releases/tag/v1.0.9)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Modern%20Async%20Backend-009688.svg)](https://fastapi.tiangolo.com/)
@@ -124,17 +124,18 @@ DubMate Studio Pro
 │   ├── tools/                 # Project-local portable binaries (FFmpeg, FFprobe, Cloudflared)
 │   ├── .venv/                 # Project-local isolated Python virtual environment
 │   └── .cache/                # Automated lightweight transcode & single-session storage
-└── Launchers & Tooling
-    ├── setup_dubmate_win.bat  # Windows 1-click isolated dependency installer (with optional AI pipeline)
-    ├── setup_dubmate_mac.sh   # macOS/Linux 1-click isolated dependency installer (with optional AI pipeline)
-    ├── run_web_studio.bat     # Windows self-healing local launcher
-    ├── run_cloudflare.bat     # Windows self-healing internet multiplayer launcher
-    ├── update.bat             # Windows 1-click repository & dependencies updater
-    ├── update_dubmate.bat     # Windows 1-click repository & dependencies updater (alias)
-    ├── run_mac.sh             # macOS self-healing launcher script
-    ├── update.sh              # macOS/Linux 1-click repository & dependencies updater
-    ├── update_mac.sh          # macOS 1-click repository & dependencies updater (alias)
-    └── README_MAC.md          # Dedicated macOS setup guide
+├── Launchers & Tooling
+│   ├── setup_dubmate_win.bat  # Windows 1-click isolated dependency installer (with optional AI pipeline)
+│   ├── setup_dubmate_mac.sh   # macOS/Linux 1-click isolated dependency installer (with optional AI pipeline)
+│   ├── run_web_studio.bat     # Windows self-healing local launcher
+│   ├── run_cloudflare.bat     # Windows self-healing internet multiplayer launcher
+│   ├── run_desktop_app.bat    # Windows Tauri desktop shell launcher
+│   ├── run_mac.sh             # macOS self-healing launcher script
+│   ├── update.bat             # Windows 1-click repository & dependencies updater
+│   ├── update.sh              # macOS/Linux 1-click repository & dependencies updater
+│   └── scripts/               # Developer helpers (tool downloader, local server launcher)
+├── tests/                     # Backend, DSP, packaging & frontend JSDOM suites + run_all_tests.py
+└── documentation/             # Design notes, product brief, desktop checklist & macOS guide
 ```
 
 ---
@@ -177,8 +178,8 @@ Double-click **`run_cloudflare.bat`**.
 ### 🔄 Updating DubMate to the Latest Version
 
 Whenever a new version of DubMate is released on GitHub, update your system in one click:
-- **Windows**: Double-click **`update.bat`** (or **`update_dubmate.bat`**).
-- **macOS / Linux**: Run `./update.sh` (or `./update_mac.sh`).
+- **Windows**: Double-click **`update.bat`**.
+- **macOS / Linux**: Run `./update.sh`.
 
 *The updater automatically pulls the latest code, stashes any local conflicts, updates Python dependencies inside `.venv/`, verifies local `tools/` binaries, and prompts you to launch the studio immediately.*
 
@@ -186,11 +187,11 @@ Whenever a new version of DubMate is released on GitHub, update your system in o
 
 ### Launching the Studio (macOS / Linux)
 
-See the dedicated [macOS Setup & Quick Start Guide (README_MAC.md)](README_MAC.md) for full instructions:
+See the dedicated [macOS Setup & Quick Start Guide](documentation/README_MAC.md) for full instructions:
 
 ```bash
 # 1. 1-Click Setup
-chmod +x setup_dubmate_mac.sh run_mac.sh update.sh update_mac.sh
+chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
 ./setup_dubmate_mac.sh
 
 # 2. Launch
@@ -297,19 +298,19 @@ DubMate includes comprehensive automated backend and frontend test suites to ens
 
 ### Run Backend & Audio DSP Test Suite
 ```bash
-python test_systematic.py
+python tests/test_systematic.py
 ```
 *Validates pack loader parsing, character bracket extraction, time-invariant pitch shifting, convolution reverb, soft limiter dynamics, REST endpoints, room lifecycles, and project ZIP bundling.*
 
 ### Run Pack Builder AI & Ingestion Test Suite
 ```bash
-python -m unittest test_pack_builder.py
+python tests/test_pack_builder.py
 ```
 *Validates video extraction, Demucs stem isolation, Whisper transcription, Romaji romanization, SRT/VTT parser, and pack assembly.*
 
 ### Run Frontend & DOM Test Suite
 ```bash
-node test_frontend.js
+node tests/test_frontend.js
 ```
 *Validates DOM state machines, live pack search filtering, rotary knob ranges, WebSocket reconnection handlers, and project ZIP triggers via JSDOM.*
 

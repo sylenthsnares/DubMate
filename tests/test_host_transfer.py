@@ -1,6 +1,11 @@
 import asyncio
 import json
 from fastapi.testclient import TestClient
+# Ensure the project root is importable when this suite is run from tests/
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 from app import app, is_version_outdated, read_version, ROOMS, Room, get_packs_registry
 
 def test_version_helper():

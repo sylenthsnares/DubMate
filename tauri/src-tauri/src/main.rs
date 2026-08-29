@@ -7,7 +7,7 @@ use state::{DubMateState, SharedState};
 use updater::UpdateCheckResult;
 
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
@@ -224,6 +224,327 @@ pub fn get_app_install_dir(app: &tauri::AppHandle) -> PathBuf {
     PathBuf::from(".")
 }
 
+/// Name of the directory holding the optional Pack Builder AI dependencies. It sits inside
+/// the application directory on purpose: installing DubMate to X:\ must not push ~2 GB of
+/// PyTorch onto C:\.
+const AI_PACKAGES_DIR: &str = "ai-packages";
+/// Written by the NSIS installer when the user ticks the Pack Builder option.
+const PACKBUILDER_OPTIN_MARKER: &str = "packbuilder.optin";
+/// Written by us only after pip exits cleanly, so a half-finished download is not
+/// mistaken for a usable install.
+const AI_COMPLETE_MARKER: &str = ".install-complete";
+
+/// Directory holding the bundled ffmpeg/ffprobe binaries.
+///
+/// Tauri places `externalBin` sidecars next to the host executable, which is NOT
+/// where the Python engine looks (it checks its own BASE_DIR/tools and system PATH).
+/// Without bridging the two, a packaged install has no ffmpeg at all unless the user
+/// happens to have one installed system-wide.
+fn find_bundled_tools_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+            roots.push(dir.join("resources"));
+            roots.push(dir.join("sidecar"));
+        }
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        roots.push(res.join("sidecar"));
+        roots.push(res.join("tools"));
+        roots.push(res);
+    }
+
+    for root in roots {
+        for name in ["ffmpeg.exe", "ffmpeg"] {
+            if root.join(name).is_file() {
+                return Some(root);
+            }
+        }
+    }
+    None
+}
+
+/// Port the engine prefers. Anything already holding it used to make the app fail to
+/// start with an error that named the cause but offered no way out.
+const DEFAULT_ENGINE_PORT: u16 = 8000;
+
+/// Serialises sidecar startup. `start_sidecars` is reachable from app setup, the
+/// Retry button, apply_update and the Pack Builder install/remove commands; two
+/// overlapping runs would each spawn an engine while `python_pid` only remembers
+/// the last, leaving the other orphaned and holding the port.
+static SIDECAR_START_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+fn sidecar_start_lock() -> &'static tokio::sync::Mutex<()> {
+    SIDECAR_START_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// First bindable port at or after `preferred`, so a busy 8000 is no longer fatal.
+fn find_available_port(preferred: u16) -> u16 {
+    for candidate in preferred..preferred.saturating_add(50) {
+        if std::net::TcpListener::bind(("127.0.0.1", candidate)).is_ok() {
+            return candidate;
+        }
+    }
+    preferred
+}
+
+/// The directory the user actually chose at install time.
+///
+/// Tauri stages the Python files into a `resources` subfolder, so `get_app_install_dir()`
+/// (which follows app.py) points one level too deep. The NSIS installer writes its opt-in
+/// marker and the uninstaller cleans up at the real root, beside the executable -- reading
+/// the marker from the resources folder meant the Pack Builder opt-in was silently never
+/// detected.
+fn install_root_dir(app: &tauri::AppHandle) -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if !dir.to_string_lossy().contains("target") {
+                return dir.to_path_buf();
+            }
+        }
+    }
+    get_app_install_dir(app)
+}
+
+/// Resolves the AI package directory if it exists, for injection into PYTHONPATH.
+pub fn ai_packages_dir(app_dir: &Path) -> Option<PathBuf> {
+    let p = app_dir.join(AI_PACKAGES_DIR);
+    if p.is_dir() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+/// Version of the Python bundle currently on disk. OTA rewrites `app.py` and `VERSION`
+/// together, so this is the value the update check must compare against — a compiled-in
+/// constant goes stale the moment the first bundle lands and makes the app re-download
+/// the same update on every launch.
+fn read_installed_version(app: &tauri::AppHandle) -> String {
+    if let Some(app_py) = find_app_py(app) {
+        if let Some(dir) = app_py.parent() {
+            if let Ok(raw) = std::fs::read_to_string(dir.join("VERSION")) {
+                let v = raw.trim().to_string();
+                if !v.is_empty() {
+                    return v;
+                }
+            }
+        }
+    }
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Terminates the Python and cloudflared sidecars and clears the tracked state so a
+/// subsequent start is treated as a cold boot.
+fn kill_sidecars(app: &tauri::AppHandle) {
+    let targets: Vec<(u32, Option<String>)> = {
+        let state = app.state::<SharedState>();
+        let mut data = state.0.lock().unwrap();
+        let mut targets = Vec::new();
+        if let Some(pid) = data.python_pid {
+            targets.push((pid, data.python_image.clone()));
+        }
+        if let Some(pid) = data.cloudflared_pid {
+            targets.push((pid, data.cloudflared_image.clone()));
+        }
+        data.python_pid = None;
+        data.cloudflared_pid = None;
+        data.python_image = None;
+        data.cloudflared_image = None;
+        data.is_server_ready = false;
+        data.is_tunnel_ready = false;
+        targets
+    };
+
+    for (pid, image) in targets {
+        #[cfg(target_os = "windows")]
+        {
+            // Match on PID *and* image name. If the sidecar already exited and
+            // Windows recycled its PID, the filter simply matches nothing rather
+            // than terminating an unrelated process. /T also takes down children.
+            let mut args = vec![
+                "/F".to_string(),
+                "/T".to_string(),
+                "/FI".to_string(),
+                format!("PID eq {}", pid),
+            ];
+            if let Some(name) = image.as_deref() {
+                args.push("/FI".to_string());
+                args.push(format!("IMAGENAME eq {}", name));
+            }
+            let _ = std::process::Command::new("taskkill").args(&args).output();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Confirm the PID still belongs to the expected executable before signalling.
+            let matches = match image.as_deref() {
+                Some(name) => std::fs::read_to_string(format!("/proc/{}/comm", pid))
+                    .map(|c| c.trim() == name.trim_end_matches(".exe"))
+                    .unwrap_or(true),
+                None => true,
+            };
+            if matches {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct PackBuilderStatus {
+    /// User ticked the Pack Builder option during installation.
+    pub opted_in: bool,
+    /// A completed install is present and importable.
+    pub installed: bool,
+    /// Where the dependencies live, shown to the user before a ~2 GB download.
+    pub target_dir: String,
+}
+
+#[tauri::command]
+fn get_packbuilder_status(app: tauri::AppHandle) -> PackBuilderStatus {
+    let root = install_root_dir(&app);
+    PackBuilderStatus {
+        opted_in: root.join(PACKBUILDER_OPTIN_MARKER).is_file(),
+        installed: root
+            .join(AI_PACKAGES_DIR)
+            .join(AI_COMPLETE_MARKER)
+            .is_file(),
+        target_dir: root.join(AI_PACKAGES_DIR).to_string_lossy().to_string(),
+    }
+}
+
+/// Streams `pip install --target` output back to the launcher so a multi-gigabyte
+/// download is not a frozen window.
+fn run_pip_install(
+    py: &Path,
+    requirements: &Path,
+    target: &Path,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    use std::io::{BufRead, BufReader};
+
+    std::fs::create_dir_all(target)
+        .map_err(|e| format!("Cannot create {}: {}", target.display(), e))?;
+
+    let mut cmd = std::process::Command::new(py);
+    cmd.arg("-u")
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("--no-input")
+        .arg("--upgrade")
+        // Embedded Python ignores the isolated build env pip creates, so sdist
+        // packages fail to find their backend. The backends are staged into the
+        // runtime instead; see stage-sidecars.
+        .arg("--no-build-isolation")
+        .arg("--target")
+        .arg(target)
+        .arg("-r")
+        .arg(requirements)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to launch pip from {}: {}", py.display(), e))?;
+
+    if let Some(stdout) = child.stdout.take() {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let _ = app.emit("packbuilder-progress", line);
+            }
+        });
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = app.emit("packbuilder-progress", line.clone());
+            errors.push(line);
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("pip did not complete: {}", e))?;
+
+    if !status.success() {
+        let tail = errors[errors.len().saturating_sub(8)..].join("\n");
+        return Err(format!(
+            "Pack Builder install failed (exit {}).\n{}",
+            status.code().unwrap_or(-1),
+            tail
+        ));
+    }
+
+    std::fs::write(target.join(AI_COMPLETE_MARKER), env!("CARGO_PKG_VERSION"))
+        .map_err(|e| format!("Install finished but the completion marker failed: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
+    // Requirements ship beside app.py (resources), but the packages install at the
+    // install root so they land on the drive the user chose.
+    let app_dir = get_app_install_dir(&app);
+    let root = install_root_dir(&app);
+    updater::ensure_writable(&root)?;
+
+    let requirements = app_dir.join("requirements_builder.txt");
+    if !requirements.is_file() {
+        return Err(format!(
+            "requirements_builder.txt was not found in {}. Apply the core update first.",
+            app_dir.display()
+        ));
+    }
+
+    let py = find_python_exe(&app)
+        .ok_or_else(|| "Bundled Python runtime not found; cannot install the AI pipeline.".to_string())?;
+    let target = root.join(AI_PACKAGES_DIR);
+
+    let app_for_thread = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_pip_install(&py, &requirements, &target, &app_for_thread)
+    })
+    .await
+    .map_err(|e| format!("Install task failed: {}", e))??;
+
+    // The engine caches imports at startup, so it must restart before torch/whisper
+    // become importable — the same trap that made OTA updates look like no-ops.
+    let _ = app.emit("packbuilder-progress", "Restarting Studio Engine...");
+    kill_sidecars(&app);
+    start_sidecars(app.clone()).await;
+
+    let _ = app.emit("packbuilder-complete", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
+    let root = install_root_dir(&app);
+    let target = root.join(AI_PACKAGES_DIR);
+    if target.is_dir() {
+        std::fs::remove_dir_all(&target)
+            .map_err(|e| format!("Could not remove {}: {}", target.display(), e))?;
+    }
+    let _ = std::fs::remove_file(root.join(PACKBUILDER_OPTIN_MARKER));
+
+    kill_sidecars(&app);
+    start_sidecars(app.clone()).await;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -233,7 +554,7 @@ fn main() {
 
             // Background task: check for updates and start sidecars
             tauri::async_runtime::spawn(async move {
-                let current_version = "1.0.8";
+                let current_version = read_installed_version(&handle);
                 let app_py_exists = crate::find_app_py(&handle).is_some();
                 
                 if app_py_exists {
@@ -245,7 +566,7 @@ fn main() {
                 }
 
                 // Mandatory Update Check
-                let update_res = updater::check_for_update(current_version, &handle).await;
+                let update_res = updater::check_for_update(&current_version, &handle).await;
                 let _ = handle.emit("update-status", &update_res);
 
                 match &update_res {
@@ -253,7 +574,7 @@ fn main() {
                         if !app_py_exists {
                             println!("[Updater] Initial bundle required before starting sidecars.");
                         } else {
-                            println!("[Updater] Update available in background.");
+                            println!("[Updater] Update available; engine restarts once it is applied.");
                         }
                     }
                     _ => {
@@ -270,29 +591,17 @@ fn main() {
             get_tunnel_url,
             get_room_token,
             set_room_token,
+            get_engine_port,
             trigger_start_sidecars,
             apply_update,
+            get_packbuilder_status,
+            install_packbuilder,
+            remove_packbuilder,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let state = window.state::<SharedState>();
-                let data = state.0.lock().unwrap();
-
-                for pid in [data.python_pid, data.cloudflared_pid].into_iter().flatten() {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/F", "/PID", &pid.to_string()])
-                            .output();
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        let _ = std::process::Command::new("kill")
-                            .args(["-9", &pid.to_string()])
-                            .output();
-                    }
-                }
+                kill_sidecars(window.app_handle());
             }
         })
         .run(tauri::generate_context!())
@@ -300,6 +609,10 @@ fn main() {
 }
 
 async fn start_sidecars(app: tauri::AppHandle) {
+    // Held for the whole function, health poll included, so a second caller waits
+    // rather than racing a second engine onto the port.
+    let _startup_guard = sidecar_start_lock().lock().await;
+
     let app_py_path = match find_app_py(&app) {
         Some(p) => p,
         None => {
@@ -319,10 +632,20 @@ async fn start_sidecars(app: tauri::AppHandle) {
         println!("[DubMate] Launching Python from: {:?}", py_exe);
         let _ = app.emit("startup-progress", format!("Launching Python engine ({:?})...", py_exe.file_name().unwrap_or_default()));
 
+        let port = find_available_port(DEFAULT_ENGINE_PORT);
+        {
+            let state = app.state::<SharedState>();
+            state.0.lock().unwrap().engine_port = Some(port);
+        }
+        if port != DEFAULT_ENGINE_PORT {
+            println!("[DubMate] Port {} busy; engine will use {}", DEFAULT_ENGINE_PORT, port);
+        }
+
         let mut cmd = std::process::Command::new(&py_exe);
         cmd.current_dir(app_dir)
             .arg("-u")
-            .arg(&app_py_path);
+            .arg(&app_py_path)
+            .env("DUBMATE_PORT", port.to_string());
 
         // Add adjacent site-packages and app_dir to PYTHONPATH and set PYTHONHOME
         if let Some(py_dir) = py_exe.parent() {
@@ -332,9 +655,32 @@ async fn start_sidecars(app: tauri::AppHandle) {
             if site_pkgs.is_dir() {
                 pypath.push(site_pkgs);
             }
+            // Optional Pack Builder AI pipeline, installed inside the application
+            // directory so it stays on whichever drive the user installed to.
+            if let Some(ai) = ai_packages_dir(&install_root_dir(&app)) {
+                pypath.push(ai);
+            }
             if let Ok(joined) = std::env::join_paths(pypath) {
                 cmd.env("PYTHONPATH", joined);
             }
+        }
+
+        // Shared registry key, baked in at compile time from the CI secret so it is
+        // not in source control. Absent in local dev builds, which just disables
+        // public room registration -- local and LAN play are unaffected.
+        if let Some(worker_key) = option_env!("DUBMATE_WORKER_KEY") {
+            if !worker_key.trim().is_empty() {
+                cmd.env("DUBMATE_WORKER_KEY", worker_key.trim());
+            }
+        }
+
+        // Hand the engine an explicit pointer to the bundled media binaries, and put
+        // them on PATH too since Whisper/Demucs invoke ffmpeg by bare name.
+        if let Some(tools_dir) = find_bundled_tools_dir(&app) {
+            cmd.env("DUBMATE_TOOLS_DIR", &tools_dir);
+            let sep = if cfg!(windows) { ";" } else { ":" };
+            let existing = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{}{}{}", tools_dir.display(), sep, existing));
         }
 
         #[cfg(target_os = "windows")]
@@ -354,6 +700,9 @@ async fn start_sidecars(app: tauri::AppHandle) {
                     let state = app.state::<SharedState>();
                     let mut data = state.0.lock().unwrap();
                     data.python_pid = Some(pid);
+                    data.python_image = py_exe
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string());
                 }
                 spawned = true;
 
@@ -431,6 +780,8 @@ async fn start_sidecars(app: tauri::AppHandle) {
                     let state = app.state::<SharedState>();
                     let mut data = state.0.lock().unwrap();
                     data.python_pid = Some(child.pid());
+                    data.python_image = find_python_exe(&app)
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
                 }
 
                 let app_clone = app.clone();
@@ -459,7 +810,13 @@ async fn start_sidecars(app: tauri::AppHandle) {
         return;
     }
 
-    // 2. Poll localhost:8000/health until responsive (max 60 attempts x 500ms = 30s)
+    // 2. Poll the engine's health endpoint until responsive (max 60 attempts x 500ms = 30s)
+    let engine_port = {
+        let state = app.state::<SharedState>();
+        let p = state.0.lock().unwrap().engine_port;
+        p.unwrap_or(DEFAULT_ENGINE_PORT)
+    };
+    let health_url = format!("http://127.0.0.1:{}/health", engine_port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
@@ -468,13 +825,13 @@ async fn start_sidecars(app: tauri::AppHandle) {
     let mut is_ready = false;
     for i in 1..=60 {
         let _ = app.emit("startup-progress", format!("Connecting to Studio Engine... ({}/60)", i));
-        if let Ok(resp) = client.get("http://127.0.0.1:8000/health").send().await {
+        if let Ok(resp) = client.get(&health_url).send().await {
             if resp.status().is_success() {
                 let state = app.state::<SharedState>();
                 state.0.lock().unwrap().is_server_ready = true;
                 is_ready = true;
-                let _ = app.emit("server-ready", ());
-                println!("[DubMate] Server healthy on http://127.0.0.1:8000");
+                let _ = app.emit("server-ready", engine_port);
+                println!("[DubMate] Server healthy on http://127.0.0.1:{}", engine_port);
                 break;
             }
         }
@@ -482,8 +839,8 @@ async fn start_sidecars(app: tauri::AppHandle) {
     }
 
     if !is_ready {
-        eprintln!("[Sidecar Error] Studio engine did not respond on http://127.0.0.1:8000 within 30 seconds");
-        let _ = app.emit("server-error", "Studio engine did not respond on port 8000 in time. Please check if another application is using port 8000 or click Retry.");
+        eprintln!("[Sidecar Error] Studio engine did not respond on http://127.0.0.1:{} within 30 seconds", engine_port);
+        let _ = app.emit("server-error", format!("Studio engine did not respond on port {} in time. Click Retry to restart it.", engine_port));
         return;
     }
 
@@ -497,6 +854,9 @@ async fn start_sidecars(app: tauri::AppHandle) {
                 let state = app.state::<SharedState>();
                 let mut data = state.0.lock().unwrap();
                 data.cloudflared_pid = Some(child.pid());
+                data.cloudflared_image = Some(
+                    if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" }.to_string(),
+                );
             }
 
             let app_clone = app.clone();
@@ -533,6 +893,11 @@ async fn start_sidecars(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn get_engine_port(state: tauri::State<'_, SharedState>) -> u16 {
+    state.0.lock().unwrap().engine_port.unwrap_or(DEFAULT_ENGINE_PORT)
+}
+
+#[tauri::command]
 fn get_tunnel_url(state: tauri::State<'_, SharedState>) -> Option<String> {
     state.0.lock().unwrap().tunnel_url.clone()
 }
@@ -549,13 +914,36 @@ fn set_room_token(token: String, state: tauri::State<'_, SharedState>) {
 
 #[tauri::command]
 async fn trigger_start_sidecars(app: tauri::AppHandle) {
+    kill_sidecars(&app);
     start_sidecars(app).await;
 }
 
 #[tauri::command]
 async fn apply_update(download_url: String, app: tauri::AppHandle) -> Result<(), String> {
+    // Only ever fetch from this project's own release assets. Without this the
+    // command would extract whatever zip the caller names over the install dir.
+    if !updater::is_trusted_update_url(&download_url) {
+        return Err(format!(
+            "Refusing to apply an update from an untrusted location:
+{}",
+            download_url
+        ));
+    }
+
     let app_dir = get_app_install_dir(&app);
+
+    // Fail before touching anything if the install directory is read-only. Half-writing a
+    // bundle is worse than refusing, and the caller surfaces this message to the user.
+    updater::ensure_writable(&app_dir)?;
+
     updater::download_and_extract_bundle(&download_url, &app_dir, app.clone()).await?;
+
+    // The running engine still holds the previous Python modules in memory. Without this
+    // restart the freshly downloaded fixes stay inert until the next cold launch.
+    let _ = app.emit("startup-progress", "Restarting Studio Engine with the update...");
+    kill_sidecars(&app);
+    start_sidecars(app.clone()).await;
+
     let _ = app.emit("update-complete", ());
     Ok(())
 }

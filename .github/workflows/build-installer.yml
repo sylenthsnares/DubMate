@@ -52,7 +52,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_DUBMATE_SECRET_KEY: ${{ secrets.DUBMATE_SECRET_KEY }}
+          # Baked into the binary by option_env! in main.rs and forwarded to the
+          # Python engine at runtime. Replaces VITE_DUBMATE_SECRET_KEY, which was
+          # read by nothing -- this project has no Vite build step.
+          DUBMATE_WORKER_KEY: ${{ secrets.DUBMATE_SECRET_KEY }}
         with:
           projectPath: tauri
           args: ${{ matrix.tauri-args }}
