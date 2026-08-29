@@ -1,24 +1,20 @@
-# Handover — 2026-08-28, DubMate Desktop Packaging & Comprehensive In-Depth Verification
+# Handover — 2026-08-29, DubMate Studio v1.0.6 Desktop Root 404 Resolution
 
 ## State
-All desktop startup freezes, missing runtime packaging issues, and obsolete releases have been cleanly resolved. Full embedded Python runtime is bundled into installer resources, multi-source Python resolution is active, and a unified in-depth test runner (`run_all_tests.py`) audits the entire codebase (syntax, frontend DOM, backend DSP, multiplayer, packaging) in under 96 seconds with 100% test passing rate.
+FastAPI 404 `{"detail":"Not Found"}` upon entering the studio workspace in bundled desktop distributions has been permanently resolved. Explicit root, builder, css, and js endpoints are registered with `find_static_dir()` multi-path resolution and clean resource staging. All test suites continue to pass 100%.
 
 ## Done this session
-- **Bundled Full Python Runtime in Resources (`tauri/scripts/stage-sidecars.ps1`, `stage-sidecars.sh`)**: Staged complete Python runtime (`.dll`s, `.pyd`s, `python312.zip`, `Lib/site-packages`) to `tauri/src-tauri/resources/python-runtime` to prevent missing DLL crashes in installed desktop apps.
-- **Direct Multi-Source Python Resolver (`tauri/src-tauri/src/main.rs`)**: Implemented `find_python_exe()` with fallback to packaged resources, root install folder, project `.venv`, and system Python with piped logging and `CREATE_NO_WINDOW`.
-- **Live Status & Rapid Recovery UI (`tauri/src/launcher.js`)**: Real-time attempt tracking and Obsidian/Amber error recovery card after 15s with Retry and Browser options.
-- **Deleted Obsolete GitHub Releases (`v1.0.0`, `v1.0.1`, `v1.0.2`, `v1.0.3`)**: Cleaned up previous draft/broken releases from GitHub and remote tags.
-- **Unified In-Depth Test Suite Runner (`run_all_tests.py`)**:
-  - Python Bytecode & Syntax Audit: 15/15 files passed.
-  - JavaScript Syntax & Lint Audit: 7/7 files passed.
-  - Frontend JSDOM Headless Suite: 8/8 test categories passed.
-  - Deep Backend & DSP Test Suites: 9/9 suites (69 tests total) passed.
+- **Explicit Static & Root Route Handlers (`app.py`)**: Added `@app.get("/")`, `@app.get("/index.html")`, `@app.get("/builder")`, `/css/{file_path}`, and `/js/{file_path}` routes with `FileResponse` to guarantee the desktop webview renders the DAW interface instantly.
+- **Dynamic Multi-Directory Asset Discovery (`app.py`)**: Implemented `find_static_dir()` checking bundled resources, current executable directories, and working trees.
+- **Clean Staging Scripts (`tauri/scripts/stage-sidecars.ps1`, `stage-sidecars.sh`)**: Prevented nested `static/static/` directory structures during resource bundling.
+- **Automated Verification (`test_loading_screens.py`)**: Added `test_06_fastapi_root_and_static_routes` asserting 200 OK responses on `/`, `/index.html`, `/builder.html`, CSS, and JS routes (all 6/6 tests passing).
+- **Version Bump**: Bumped to `v1.0.6` across all configuration and changelog files.
 
 ## Next
-1. Verify the GitHub Actions release build for `v1.0.4` once completed.
-2. Test launching the newly compiled standalone installer.
+1. Commit, push tag `v1.0.6`, and monitor GitHub Actions desktop installer build.
+2. Verify that installed executable opens directly into DubMate Studio Pro DAW workspace.
 
 ## Read first
-- [`walkthrough.md`](file:///C:/Users/user/.gemini/antigravity-ide/brain/a097e950-200d-40fd-8de6-3f2e138d685f/walkthrough.md)
-- [`implementation_plan.md`](file:///C:/Users/user/.gemini/antigravity-ide/brain/a097e950-200d-40fd-8de6-3f2e138d685f/implementation_plan.md)
+- [`app.py`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/app.py)
+- [`CHANGELOG.md`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/CHANGELOG.md)
 - [`run_all_tests.py`](file:///c:/Coding%20SHoding/DubSmash%20AntiAliasing/run_all_tests.py)

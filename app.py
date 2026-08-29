@@ -34,7 +34,26 @@ import audio_processor
 import pack_builder
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+def find_static_dir() -> str:
+    """Finds the static assets folder across dev, bundled desktop, and installed directory structures."""
+    candidates = [
+        os.path.join(BASE_DIR, "static"),
+        os.path.join(BASE_DIR, "static", "static"),
+        BASE_DIR,
+        os.path.join(BASE_DIR, "resources", "static"),
+        os.path.join(os.path.dirname(BASE_DIR), "static"),
+        os.path.join(os.path.dirname(BASE_DIR), "static", "static"),
+        os.path.join(os.path.dirname(BASE_DIR), "resources", "static"),
+        os.path.join(os.getcwd(), "static"),
+        os.path.join(os.getcwd(), "resources", "static"),
+    ]
+    for c in candidates:
+        if os.path.isdir(c) and os.path.isfile(os.path.join(c, "index.html")):
+            return os.path.abspath(c)
+    return os.path.join(BASE_DIR, "static")
+
+STATIC_DIR = find_static_dir()
 EXPORTS_DIR = os.path.join(pack_loader.CACHE_DIR, "exports")
 try:
     os.makedirs(EXPORTS_DIR, exist_ok=True)
@@ -2219,8 +2238,48 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     }
 
 
-# Mount static assets
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+@app.get("/")
+@app.get("/index.html")
+async def serve_root_index():
+    static_dir = find_static_dir()
+    index_file = os.path.join(static_dir, "index.html")
+    if os.path.isfile(index_file):
+        return FileResponse(index_file, media_type="text/html")
+    raise HTTPException(status_code=404, detail=f"index.html not found in {static_dir}")
+
+
+@app.get("/builder")
+@app.get("/builder.html")
+async def serve_builder_index():
+    static_dir = find_static_dir()
+    builder_file = os.path.join(static_dir, "builder.html")
+    if os.path.isfile(builder_file):
+        return FileResponse(builder_file, media_type="text/html")
+    raise HTTPException(status_code=404, detail=f"builder.html not found in {static_dir}")
+
+
+@app.get("/css/{file_path:path}")
+async def serve_static_css(file_path: str):
+    static_dir = find_static_dir()
+    full_path = os.path.join(static_dir, "css", file_path)
+    if os.path.isfile(full_path):
+        return FileResponse(full_path, media_type="text/css")
+    raise HTTPException(status_code=404, detail="CSS file not found")
+
+
+@app.get("/js/{file_path:path}")
+async def serve_static_js(file_path: str):
+    static_dir = find_static_dir()
+    full_path = os.path.join(static_dir, "js", file_path)
+    if os.path.isfile(full_path):
+        return FileResponse(full_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="JS file not found")
+
+
+# Mount static assets as general fallback
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static_dir")
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static_root")
 
 
 if __name__ == "__main__":

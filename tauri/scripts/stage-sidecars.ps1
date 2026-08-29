@@ -100,11 +100,18 @@ foreach ($file in $FilesToCopy) {
     }
 }
 $StaticSrc = Join-Path $ProjectRoot "static"
+$StaticDest = Join-Path $ResourceDir "static"
+if (Test-Path $StaticDest) {
+    Remove-Item $StaticDest -Recurse -Force
+}
 if (Test-Path $StaticSrc) {
-    Copy-Item $StaticSrc (Join-Path $ResourceDir "static") -Recurse -Force
+    Copy-Item $StaticSrc $StaticDest -Recurse -Force
 }
 
 $PyTargetResource = Join-Path $ResourceDir "python-runtime"
+if (Test-Path $PyTargetResource) {
+    Remove-Item $PyTargetResource -Recurse -Force
+}
 Write-Host "[5/5] Staging full Python embedded runtime into resources..."
 Copy-Item $PyRuntimeDir $PyTargetResource -Recurse -Force
 

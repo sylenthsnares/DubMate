@@ -233,7 +233,7 @@ fn main() {
 
             // Background task: check for updates and start sidecars
             tauri::async_runtime::spawn(async move {
-                let current_version = "1.0.5";
+                let current_version = "1.0.6";
                 let app_py_exists = crate::find_app_py(&handle).is_some();
                 
                 if app_py_exists {

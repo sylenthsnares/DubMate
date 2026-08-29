@@ -172,6 +172,35 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         self.assertIn('emit("server-ready"', rs)
         self.assertIn('"-u"', rs)
 
+    def test_06_fastapi_root_and_static_routes(self):
+        """Verify that app.py serves root index.html, builder.html, css, and js assets with 200 OK."""
+        from fastapi.testclient import TestClient
+        import app
+
+        client = TestClient(app.app)
+        # Root index
+        resp = client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("DubMate Studio Pro", resp.text)
+
+        # /index.html
+        resp_idx = client.get("/index.html")
+        self.assertEqual(resp_idx.status_code, 200)
+        self.assertIn("DubMate Studio Pro", resp_idx.text)
+
+        # /builder.html
+        resp_bld = client.get("/builder.html")
+        self.assertEqual(resp_bld.status_code, 200)
+
+        # CSS asset
+        resp_css = client.get("/css/style.css")
+        self.assertEqual(resp_css.status_code, 200)
+        self.assertEqual(resp_css.headers.get("content-type"), "text/css; charset=utf-8")
+
+        # JS asset
+        resp_js = client.get("/js/app.js")
+        self.assertEqual(resp_js.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

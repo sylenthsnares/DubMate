@@ -75,7 +75,8 @@ for file in app.py audio_processor.py pack_loader.py pack_builder.py VERSION req
   fi
 done
 if [ -d "$PROJECT_ROOT/static" ]; then
-  cp -r "$PROJECT_ROOT/static" "$RESOURCE_DIR/"
+  rm -rf "$RESOURCE_DIR/static"
+  cp -r "$PROJECT_ROOT/static" "$RESOURCE_DIR/static"
 fi
 
 echo "========================================================="

@@ -1,5 +1,12 @@
 # DubMate Studio Changelog
 
+## [1.0.6] - 2026-08-29
+
+### Fixed Desktop Webview 404 Route & Static Asset Resolution
+- **Explicit Root & Asset Route Handlers**: Added direct `@app.get("/")`, `@app.get("/index.html")`, `@app.get("/builder")`, `/css`, and `/js` routes in `app.py` returning `FileResponse` directly to guarantee the DAW workspace UI loads instantly without relying solely on wildcard static mounting.
+- **Dynamic Multi-Path Static Directory Discovery**: Implemented `find_static_dir()` checking bundled resources, executable directory, and development trees.
+- **Clean Resource Staging**: Updated `stage-sidecars.ps1` and `stage-sidecars.sh` to remove existing destination folders before copying `static` assets, preventing nested folder structures (`static/static/`).
+
 ## [1.0.5] - 2026-08-28
 
 ### Desktop Packaging & Runtime Permissions
