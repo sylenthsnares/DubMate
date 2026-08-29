@@ -10,6 +10,7 @@ audio line slicing, and DubMate / Choicer Voicer pack folder assembly.
 import os
 import re
 import io
+import sys
 import json
 import time
 import shutil
@@ -21,6 +22,31 @@ from typing import Dict, List, Optional, Tuple, Any
 import pack_loader
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def ensure_ai_packages_on_path():
+    """
+    Adds the optional Pack Builder AI pipeline directory to sys.path.
+
+    The desktop build installs torch/demucs/whisper/yt-dlp into '<app dir>/ai-packages'
+    via 'pip install --target'. The launcher also passes that directory through
+    PYTHONPATH, but the Windows embeddable Python distribution ignores PYTHONPATH
+    whenever a '._pth' file is present, so relying on the environment variable alone
+    would leave the pipeline installed-but-unimportable. Adding it here works in both
+    the embedded desktop runtime and a normal virtualenv.
+    """
+    # The desktop installer puts these at the install root, which is one level above
+    # BASE_DIR in a packaged build (Python files are staged into 'resources').
+    candidates = [
+        os.path.join(pack_loader.get_install_root(), "ai-packages"),
+        os.path.join(BASE_DIR, "ai-packages"),
+    ]
+    for ai_dir in candidates:
+        if os.path.isdir(ai_dir) and ai_dir not in sys.path:
+            sys.path.insert(0, ai_dir)
+
+
+ensure_ai_packages_on_path()
 BUILDER_CACHE_DIR = os.path.join(pack_loader.CACHE_DIR, "builder")
 try:
     os.makedirs(BUILDER_CACHE_DIR, exist_ok=True)
@@ -196,9 +222,9 @@ def download_video_from_url(
         import sys
         if getattr(sys, "frozen", False):
             raise RuntimeError(
-                "YouTube / URL import is not available in this version of DubMate. "
-                "Use the web version (run_cloudflare.bat or run_web_studio.bat) and install the Pack Builder "
-                "AI pipeline (pip install -r requirements_builder.txt) to enable this feature."
+                "The Pack Builder AI pipeline is not installed. Reinstall DubMate Studio and tick "
+                "'Include the Pack Builder AI pipeline' during setup, or install it from within the app. "
+                "On the web version: pip install -r requirements_builder.txt"
             )
         raise RuntimeError("yt-dlp is not installed. Install it with: pip install -r requirements_builder.txt")
 

@@ -55,6 +55,9 @@ if (-not (Test-Path $GetPipPy)) {
     Invoke-WebRequest "https://bootstrap.pypa.io/get-pip.py" -OutFile $GetPipPy -UseBasicParsing
 }
 & $PyTargetExe $GetPipPy --no-warn-script-location --quiet
+# Build backends for sdist-only AI packages (openai-whisper, demucs).
+# Embedded Python ignores pip's isolated build env, so these must be resident.
+& $PyTargetExe -m pip install setuptools wheel --no-warn-script-location --quiet
 
 $ReqFile = Join-Path $ProjectRoot "requirements.txt"
 if (Test-Path $ReqFile) {
@@ -92,7 +95,7 @@ if (Test-Path $LocalCf) {
 $ResourceDir = Join-Path $ScriptDir "..\src-tauri\resources"
 New-Item -ItemType Directory -Force $ResourceDir | Out-Null
 Write-Host "[5/5] Staging application Python files and static assets into resources..."
-$FilesToCopy = @("app.py", "audio_processor.py", "pack_loader.py", "pack_builder.py", "VERSION", "requirements.txt")
+$FilesToCopy = @("app.py", "audio_processor.py", "pack_loader.py", "pack_builder.py", "VERSION", "requirements.txt", "requirements_builder.txt")
 foreach ($file in $FilesToCopy) {
     $src = Join-Path $ProjectRoot $file
     if (Test-Path $src) {

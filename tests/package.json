@@ -1,0 +1,12 @@
+{
+  "name": "dubmate-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend JSDOM test harness for DubMate Studio. Scoped here so the repo root stays clean.",
+  "scripts": {
+    "test": "node test_frontend.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

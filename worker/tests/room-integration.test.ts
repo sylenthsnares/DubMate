@@ -208,3 +208,192 @@ describe("Custom room code creation", () => {
     expect(raw).toBeTruthy();
   });
 });
+
+describe("Room hijack prevention (create with existing code)", () => {
+  it("Overwriting an existing code WITHOUT the room_token returns 409", async () => {
+    const { code, status: createStatus } = await createRoom({
+      tunnel_url: "https://hijack-victim.trycloudflare.com",
+      app_version: "1.0.6",
+    });
+    expect(createStatus).toBe(201);
+
+    // Attacker re-registers the same code without any Authorization header,
+    // trying to redirect joiners to a different tunnel_url.
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        tunnel_url: "https://attacker.trycloudflare.com",
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    const data = await res.json() as { error: string };
+    expect(data.error).toBe("Room code already registered");
+
+    // The original tunnel_url must be untouched.
+    const raw = await env.ROOMS.get(code);
+    const entry = JSON.parse(raw!) as { tunnel_url: string };
+    expect(entry.tunnel_url).toBe("https://hijack-victim.trycloudflare.com");
+  });
+
+  it("Overwriting an existing code WITH the correct room_token succeeds and preserves the token", async () => {
+    const { code, room_token } = await createRoom({
+      tunnel_url: "https://reregister-me.trycloudflare.com",
+      app_version: "1.0.6",
+    });
+
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${room_token}`,
+      },
+      body: JSON.stringify({
+        code,
+        tunnel_url: "https://reregistered.trycloudflare.com",
+        app_version: "1.0.7",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as { code: string; room_token: string };
+    expect(data.code).toBe(code);
+    expect(data.room_token).toBe(room_token);
+
+    const raw = await env.ROOMS.get(code);
+    const entry = JSON.parse(raw!) as { tunnel_url: string; room_token: string };
+    expect(entry.tunnel_url).toBe("https://reregistered.trycloudflare.com");
+    expect(entry.room_token).toBe(room_token);
+  });
+
+  it("Overwriting an existing code with the WRONG room_token also returns 409 (not 401)", async () => {
+    const { code } = await createRoom({
+      tunnel_url: "https://wrong-token-victim.trycloudflare.com",
+    });
+
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer 00000000000000000000000000000000",
+      },
+      body: JSON.stringify({
+        code,
+        tunnel_url: "https://attacker2.trycloudflare.com",
+      }),
+    });
+
+    expect(res.status).toBe(409);
+  });
+});
+
+describe("tunnel_url domain allowlist", () => {
+  it("Rejects a tunnel_url on a non-allowlisted domain", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://evil.example.com",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toMatch(/tunnel_url/i);
+  });
+
+  it("Rejects a tunnel_url that tries to spoof an allowed domain via path/query", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://evil.com/?x=trycloudflare.com",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("Rejects a tunnel_url with an allowed domain as a subdomain-suffix trick", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://eviltrycloudflare.com",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Type confusion and oversized input validation", () => {
+  it("Returns 400 (not a crash) when code is a non-string type", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://type-confusion.trycloudflare.com",
+        code: 12345,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toMatch(/code/i);
+  });
+
+  it("Returns 400 (not a crash) when app_version is a non-string type", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://type-confusion2.trycloudflare.com",
+        app_version: { bad: "shape" },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("Rejects an oversized code (> 64 chars)", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://oversized-code.trycloudflare.com",
+        code: "A".repeat(65),
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("Rejects an oversized tunnel_url (> 512 chars)", async () => {
+    const longHost = "a".repeat(500) + ".trycloudflare.com";
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: `https://${longHost}`,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("Rejects an oversized app_version (> 32 chars)", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tunnel_url: "https://oversized-version.trycloudflare.com",
+        app_version: "1".repeat(33),
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+});

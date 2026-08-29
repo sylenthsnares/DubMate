@@ -9,7 +9,10 @@ import os
 import json
 import unittest
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Ensure the project root is importable when this suite is run from tests/
+import sys as _sys
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_sys.path.insert(0, BASE_DIR)
 INDEX_HTML = os.path.join(BASE_DIR, "static", "index.html")
 STYLE_CSS = os.path.join(BASE_DIR, "static", "css", "style.css")
 APP_JS = os.path.join(BASE_DIR, "static", "js", "app.js")
@@ -201,6 +204,42 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         resp_js = client.get("/js/app.js")
         self.assertEqual(resp_js.status_code, 200)
 
+
+
+class TestEnginePortIsDynamic(unittest.TestCase):
+    """The engine port must not be hardcoded: a busy 8000 used to be fatal."""
+
+    def test_app_honours_dubmate_port_env(self):
+        import os as _os
+        import importlib
+        sys_path_app = importlib.import_module("app")
+        prev = _os.environ.get("DUBMATE_PORT")
+        try:
+            _os.environ["DUBMATE_PORT"] = "8321"
+            self.assertEqual(sys_path_app.get_engine_port(), 8321)
+            _os.environ["DUBMATE_PORT"] = "garbage"
+            self.assertEqual(sys_path_app.get_engine_port(), 8000)
+        finally:
+            if prev is None:
+                _os.environ.pop("DUBMATE_PORT", None)
+            else:
+                _os.environ["DUBMATE_PORT"] = prev
+
+    def test_launcher_js_has_no_hardcoded_engine_url(self):
+        path = os.path.join(BASE_DIR, "tauri", "src", "launcher.js")
+        with open(path, encoding="utf-8") as f:
+            body = f.read()
+        self.assertNotIn(
+            "127.0.0.1:8000", body,
+            "launcher.js must build the engine URL from the resolved port",
+        )
+
+    def test_rust_selects_a_free_port(self):
+        path = os.path.join(BASE_DIR, "tauri", "src-tauri", "src", "main.rs")
+        with open(path, encoding="utf-8") as f:
+            body = f.read()
+        self.assertIn("fn find_available_port", body)
+        self.assertIn('env("DUBMATE_PORT"', body)
 
 if __name__ == "__main__":
     unittest.main()

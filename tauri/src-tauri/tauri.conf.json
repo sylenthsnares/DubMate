@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/config.schema.json",
   "productName": "DubMate Studio",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "identifier": "com.dubmate.studio",
   "build": {
     "beforeDevCommand": "",
@@ -30,7 +30,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "app", "dmg"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "template": "installer.nsi",
+        "installerHooks": "installer-hooks.nsh"
+      }
+    },
     "resources": [
       "resources/**/*"
     ],

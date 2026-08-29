@@ -2,12 +2,14 @@ const jsdom = require("jsdom");
 const fs = require("fs");
 const path = require("path");
 
-const html = fs.readFileSync(path.join(__dirname, "static", "index.html"), "utf8");
-const appJsCode = fs.readFileSync(path.join(__dirname, "static", "js", "app.js"), "utf8");
-const knobJsCode = fs.readFileSync(path.join(__dirname, "static", "js", "knob.js"), "utf8");
-const audioJsCode = fs.readFileSync(path.join(__dirname, "static", "js", "audio_engine.js"), "utf8");
-const waveformJsCode = fs.readFileSync(path.join(__dirname, "static", "js", "waveform.js"), "utf8");
-const roomJsCode = fs.readFileSync(path.join(__dirname, "static", "js", "room_socket.js"), "utf8");
+const PROJECT_ROOT = path.join(__dirname, "..");
+
+const html = fs.readFileSync(path.join(PROJECT_ROOT, "static", "index.html"), "utf8");
+const appJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "app.js"), "utf8");
+const knobJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "knob.js"), "utf8");
+const audioJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "audio_engine.js"), "utf8");
+const waveformJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "waveform.js"), "utf8");
+const roomJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "room_socket.js"), "utf8");
 
 const { JSDOM } = jsdom;
 const dom = new JSDOM(html, {

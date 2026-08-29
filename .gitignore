@@ -63,6 +63,7 @@ docs/
 tauri/src-tauri/target/
 tauri/src-tauri/sidecar/
 tauri/src-tauri/resources/
+tauri/src-tauri/gen/
 worker/node_modules/
 tauri/node_modules/
 
@@ -81,3 +82,21 @@ dist/
 *.spec
 scratch/
 
+# Optional Pack Builder AI pipeline installed next to the app at runtime
+ai-packages/
+packbuilder.optin
+
+# Generated per-release notes (extracted from CHANGELOG.md by CI)
+RELEASE_NOTES.md
+
+# Working data (cache, exports, pack index) when running from the repo
+data/
+
+# Project-local Cloudflare credentials -- NEVER commit these
+worker/.wrangler-profile/
+worker/.cloudflare.env
+!worker/.cloudflare.env.example
+
+# Local worker-registry key for source checkouts (never commit)
+.dubmate.env
+!.dubmate.env.example

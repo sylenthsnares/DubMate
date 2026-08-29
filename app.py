@@ -13,6 +13,7 @@ import uuid
 import random
 import shutil
 import asyncio
+import functools
 import threading
 import urllib.parse
 from typing import Dict, List, Optional, Set, Any
@@ -54,7 +55,7 @@ def find_static_dir() -> str:
     return os.path.join(BASE_DIR, "static")
 
 STATIC_DIR = find_static_dir()
-EXPORTS_DIR = os.path.join(pack_loader.CACHE_DIR, "exports")
+EXPORTS_DIR = pack_loader.get_exports_dir()
 try:
     os.makedirs(EXPORTS_DIR, exist_ok=True)
 except Exception:
@@ -78,6 +79,64 @@ def read_version() -> str:
         return "1.0.0"
 
 
+_UNSAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def sanitize_identifier(value: str, max_len: int = 64) -> str:
+    """
+    Reduces a client-supplied identifier to a token that is safe to embed in a
+    filename. Windows normalises '..' lexically, so an unsanitised id like
+    '../../x' escapes its directory even when glued behind a filename prefix.
+    """
+    return _UNSAFE_ID_RE.sub("_", (value or "").strip())[:max_len]
+
+
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def sanitize_color(value: Any, fallback: str = "#7c5cff") -> str:
+    """
+    Constrains an actor colour to a hex literal. It is broadcast to every client
+    and interpolated into a style attribute, so an arbitrary string here is an
+    injection vector even though the frontend also escapes it.
+    """
+    if isinstance(value, str) and _HEX_COLOR_RE.match(value.strip()):
+        return value.strip()
+    return fallback
+
+
+def require_safe_identifier(value: str, field: str = "identifier") -> str:
+    """
+    Rejects a client-supplied id that is not a plain token. Rejecting rather than
+    rewriting matters: these ids are also compared against role assignments and
+    room.host_id, so silently transforming one would change authorization results.
+    """
+    if not value or _UNSAFE_ID_RE.search(value) or len(value) > 64:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+    return value
+
+
+def safe_join(base_dir: str, *user_parts: str) -> str:
+    """
+    Joins client-supplied path fragments under base_dir and verifies the result
+    cannot escape it, raising 400 rather than returning an outside path.
+
+    Containment is checked with realpath because component-level filtering is
+    not sufficient on Windows: a backslash is a path separator there but is
+    not a URL separator, so one URL segment can still traverse directories.
+    """
+    for part in user_parts:
+        if part is None or chr(0) in part:
+            raise HTTPException(status_code=400, detail="Invalid path")
+
+    candidate = os.path.join(base_dir, *user_parts)
+    base_real = os.path.realpath(base_dir)
+    cand_real = os.path.realpath(candidate)
+    if cand_real != base_real and not cand_real.startswith(base_real + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return cand_real
+
+
 def is_version_outdated(client_v: str, req_v: str) -> bool:
     """Returns True if client_v is strictly older than req_v."""
     try:
@@ -90,6 +149,22 @@ def is_version_outdated(client_v: str, req_v: str) -> bool:
         return parse_v(client_v) < parse_v(req_v)
     except Exception:
         return False
+
+
+DEFAULT_ENGINE_PORT = 8000
+
+
+def get_engine_port() -> int:
+    """
+    Port to serve on. The desktop launcher picks a free port and passes it in via
+    DUBMATE_PORT, so a busy 8000 no longer prevents the engine from starting.
+    """
+    raw = (os.environ.get("DUBMATE_PORT") or "").strip()
+    if raw.isdigit():
+        candidate = int(raw)
+        if 1 <= candidate <= 65535:
+            return candidate
+    return DEFAULT_ENGINE_PORT
 
 
 def generate_room_code() -> str:
@@ -272,9 +347,17 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     elif room_folders:
         retained_id = room_folders[0][0].upper()
 
+    # Never purge a room that still has connected actors. This previously deleted
+    # other live sessions' rooms and their recorded takes the moment anyone created
+    # a new room, breaking every REST call for that room's cast mid-session.
+    active_ids = {rid.upper() for rid, rm in ROOMS.items() if getattr(rm, "sockets", None)}
+
     # Delete all other room directories
     for r_id, full_path, _ in room_folders:
         if retained_id and r_id.upper() == retained_id:
+            continue
+        if r_id.upper() in active_ids:
+            print(f"[DubMate Cache Pruner] Keeping active session: {r_id}")
             continue
         try:
             shutil.rmtree(full_path, ignore_errors=True)
@@ -283,7 +366,10 @@ def prune_sessions(keep_room_id: Optional[str] = None):
             print(f"[DubMate Cache Pruner] Could not delete {r_id}: {ex}")
 
     # Prune in-memory ROOMS
-    to_delete = [r for r in list(ROOMS.keys()) if not retained_id or r.upper() != retained_id]
+    to_delete = [
+        r for r in list(ROOMS.keys())
+        if (not retained_id or r.upper() != retained_id) and r.upper() not in active_ids
+    ]
     for r in to_delete:
         ROOMS.pop(r, None)
 
@@ -292,6 +378,8 @@ def prune_sessions(keep_room_id: Optional[str] = None):
         for fname in os.listdir(EXPORTS_DIR):
             if fname.endswith((".mp4", ".zip")):
                 if retained_id and retained_id in fname.upper():
+                    continue
+                if any(a in fname.upper() for a in active_ids):
                     continue
                 try:
                     os.remove(os.path.join(EXPORTS_DIR, fname))
@@ -322,7 +410,7 @@ def load_persisted_rooms():
                     users = data.get("users", {})
                     host_user = users.get(host_id, {})
                     host_name = host_user.get("name", "Host")
-                    host_color = host_user.get("color", "#8a6eff")
+                    host_color = sanitize_color(host_user.get("color"), "#8a6eff")
                     room = Room(r_id, pack, host_id, host_name, host_color)
                     room.users = data.get("users", room.users)
                     room.role_assignments = data.get("role_assignments", room.role_assignments)
@@ -389,7 +477,9 @@ app = FastAPI(title="DubMate Multiplayer Studio", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # Must stay False while allow_origins is "*": with both set, Starlette echoes the
+    # request's own Origin back, which defeats the point of the wildcard restriction.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -416,6 +506,7 @@ async def health_check():
     return {
         "status": "ok",
         "version": read_version(),
+        "port": get_engine_port(),
         "timestamp": int(time.time()),
     }
 
@@ -445,31 +536,65 @@ async def get_config():
     return {
         "status": "ok",
         **config_info,
+        # Storage locations are user-configurable so an install on one drive does
+        # not scatter working files across the system drive.
+        "exports_dir": EXPORTS_DIR,
+        "cache_dir": pack_loader.CACHE_DIR,
+        "install_root": pack_loader.get_install_root(),
         "packs": [p.to_dict() for p in registry.values()],
     }
 
 
 @app.post("/api/config")
 async def update_config(payload: Dict[str, Any]):
-    """Updates and persists the scene packs folder path, immediately rescanning the folder."""
-    global PACKS_CACHE
-    packs_dir = payload.get("packs_dir", "")
-    if not packs_dir:
-        raise HTTPException(status_code=400, detail="packs_dir is required")
+    """
+    Updates persistent configuration. Accepts packs_dir and/or exports_dir; at least
+    one must be supplied. Previously packs_dir was mandatory, which made it
+    impossible to change the export location on its own.
+    """
+    global PACKS_CACHE, EXPORTS_DIR
 
-    success, message, count = pack_loader.set_custom_packs_dir(packs_dir)
-    if not success:
-        raise HTTPException(status_code=400, detail=message)
+    packs_dir = (payload.get("packs_dir") or "").strip()
+    exports_dir = (payload.get("exports_dir") or "").strip()
+    if not packs_dir and not exports_dir:
+        raise HTTPException(status_code=400, detail="packs_dir or exports_dir is required")
 
-    PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=True)
+    messages = []
+    count = None
+
+    if exports_dir:
+        if not pack_loader._dir_is_writable(exports_dir):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Export folder is not writable: {exports_dir}",
+            )
+        cfg = pack_loader.load_config()
+        cfg["exports_dir"] = exports_dir
+        if not pack_loader.save_config(cfg):
+            raise HTTPException(status_code=500, detail="Could not persist export folder setting")
+        EXPORTS_DIR = pack_loader.get_exports_dir()
+        os.makedirs(EXPORTS_DIR, exist_ok=True)
+        messages.append(f"Export folder set to {EXPORTS_DIR}")
+
+    if packs_dir:
+        success, message, count = pack_loader.set_custom_packs_dir(packs_dir)
+        if not success:
+            raise HTTPException(status_code=400, detail=message)
+        PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=True)
+        messages.append(message)
+
     config_info = pack_loader.get_current_packs_config()
+    registry = PACKS_CACHE or get_packs_registry()
 
     return {
         "status": "ok",
-        "message": message,
-        "pack_count": count,
+        "message": " | ".join(messages),
+        "pack_count": count if count is not None else len(registry),
         **config_info,
-        "packs": [p.to_dict() for p in PACKS_CACHE.values()],
+        "exports_dir": EXPORTS_DIR,
+        "cache_dir": pack_loader.CACHE_DIR,
+        "install_root": pack_loader.get_install_root(),
+        "packs": [p.to_dict() for p in registry.values()],
     }
 
 
@@ -725,8 +850,8 @@ async def get_pack_audio_line(pack_id: str, filename: str, request: Request):
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Pack not found")
-    file_path = os.path.join(pack.folder, filename)
-    if not os.path.exists(file_path):
+    file_path = safe_join(pack.folder, filename)
+    if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
     ext = os.path.splitext(filename)[1].lower()
     media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
@@ -746,7 +871,7 @@ async def export_pack_zip(pack_id: str):
 
     if not pack_folder or not os.path.isdir(pack_folder):
         for base in pack_loader.PACKS_DIRS:
-            candidate = os.path.join(base, pack_id)
+            candidate = safe_join(base, pack_id)
             if os.path.isdir(candidate):
                 pack_folder = candidate
                 break
@@ -779,19 +904,75 @@ async def export_pack_zip(pack_id: str):
 
 ACTIVE_TUNNEL_URL: Optional[str] = None
 
+# Per-room ownership tokens issued by the public worker registry, keyed by room code.
+# Presenting the token proves ownership when re-registering an existing code; without
+# it the worker refuses to overwrite a live room, which is what prevents a third party
+# repointing someone else's room at their own server.
+WORKER_ROOM_TOKENS: Dict[str, str] = {}
+
+def _load_worker_api_key() -> str:
+    """
+    Shared key sent to the public room registry as X-DubMate-Key.
+
+    Resolution order:
+      1. DUBMATE_WORKER_KEY environment variable. The desktop launcher sets this
+         from a value baked in at build time; CI supplies it from a repo secret.
+      2. .dubmate.env beside the app (git-ignored) -- convenient for running the
+         web version from a source checkout.
+
+    There is deliberately no hardcoded fallback. The previous literal shipped in
+    every public build and in git history, so it was never actually a secret.
+    Authorization for overwriting a room is the per-room token above; this key
+    only throttles casual writes, and an empty value simply means public room
+    registration is unavailable rather than insecure.
+    """
+    from_env = (os.environ.get("DUBMATE_WORKER_KEY") or "").strip()
+    if from_env:
+        return from_env
+
+    try:
+        env_file = os.path.join(pack_loader.get_install_root(), ".dubmate.env")
+        if os.path.isfile(env_file):
+            with open(env_file, "r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    if key.strip() == "DUBMATE_WORKER_KEY":
+                        return value.strip().strip('"').strip("'")
+    except Exception as ex:
+        print(f"[Worker Registry] Could not read .dubmate.env: {ex}")
+    return ""
+
+
+WORKER_API_KEY = _load_worker_api_key()
+if not WORKER_API_KEY:
+    print(
+        "[Worker Registry] No DUBMATE_WORKER_KEY configured. Local and LAN play are "
+        "unaffected; public room codes will not be registered with the registry."
+    )
+
 
 async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: str):
     """Registers the local room code with the public Cloudflare worker registry."""
     try:
         import httpx
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": f"DubMate Studio Pro/{app_version}",
+            "X-DubMate-Key": WORKER_API_KEY,
+        }
+        # Re-registering our own code (e.g. after a tunnel change) requires proving
+        # ownership with the token the worker issued when we first created it.
+        existing_token = WORKER_ROOM_TOKENS.get(room_id.upper())
+        if existing_token:
+            headers["Authorization"] = f"Bearer {existing_token}"
+
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
                 "https://dubmate.bkaproductions.com/rooms/create",
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": f"DubMate Studio Pro/{app_version}",
-                    "X-DubMate-Key": "dubmate_sec_99f3810a4c28f14b67e0e7a12b",
-                },
+                headers=headers,
                 json={
                     "code": room_id,
                     "tunnel_url": tunnel_url,
@@ -799,7 +980,17 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
                 },
             )
             if resp.status_code in (200, 201):
+                try:
+                    token = (resp.json() or {}).get("room_token")
+                    if token:
+                        WORKER_ROOM_TOKENS[room_id.upper()] = token
+                except Exception:
+                    pass
                 print(f"[Worker Registry] Unified room code {room_id} registered with {tunnel_url}")
+            elif resp.status_code == 409:
+                print(f"[Worker Registry] Room code {room_id} is already held by another host; not overwriting.")
+            else:
+                print(f"[Worker Registry] Registration rejected ({resp.status_code}): {resp.text[:200]}")
     except Exception as e:
         print(f"[Worker Registry] Note: Could not register with worker: {e}")
 
@@ -823,7 +1014,7 @@ async def set_tunnel_endpoint(payload: Dict[str, Any]):
 async def create_room(payload: Dict[str, Any]):
     pack_id = payload.get("pack_id")
     host_name = payload.get("host_name", "Host").strip() or "Host"
-    host_color = payload.get("host_color", "#7c5cff")
+    host_color = sanitize_color(payload.get("host_color"), "#7c5cff")
     app_version = payload.get("app_version", "1.0.0")
 
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
@@ -883,6 +1074,7 @@ async def upload_noise_profile(
     user_id: str = Form(...),
 ):
     """Calibrates and saves a 1-second room background noise profile for an actor."""
+    require_safe_identifier(user_id, "user_id")
     room = ROOMS.get(room_id.upper())
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -913,6 +1105,7 @@ async def upload_take(
     gain_db: float = Form(0.0),
     noise_reduction: bool = Form(False),
 ):
+    require_safe_identifier(user_id, "user_id")
     room = ROOMS.get(room_id.upper())
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -1230,7 +1423,13 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
 
     target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
     if not target_path or not os.path.exists(target_path):
-        audio_processor.export_dub_video(room.pack, room.takes, out_path, aspect_ratio="9:16" if is_9_16 else "16:9")
+        # ffmpeg render is fully synchronous; off-loading keeps it from stalling the
+        # event loop (and therefore every other room's websocket) for its whole duration.
+        await asyncio.to_thread(
+            audio_processor.export_dub_video,
+            room.pack, dict(room.takes), out_path,
+            aspect_ratio="9:16" if is_9_16 else "16:9",
+        )
         if is_9_16:
             room.exported_video_9_16_path = out_path
         else:
@@ -1263,14 +1462,17 @@ async def download_room_project_zip(room_id: str):
     zip_path = os.path.join(EXPORTS_DIR, zip_filename)
 
     try:
-        audio_processor.build_project_zip(
-            pack=room.pack,
-            takes_dict=room.takes,
-            role_assignments=room.role_assignments,
-            users=room.users,
-            output_zip_path=zip_path,
-            room_id=room.room_id,
-            bitrate="192k"
+        await asyncio.to_thread(
+            functools.partial(
+                audio_processor.build_project_zip,
+                pack=room.pack,
+                takes_dict=dict(room.takes),
+                role_assignments=room.role_assignments,
+                users=room.users,
+                output_zip_path=zip_path,
+                room_id=room.room_id,
+                bitrate="192k",
+            )
         )
     except Exception as ex:
         print(f"[ProjectZipError] Error generating project ZIP for {room_id}: {ex}")
@@ -1331,7 +1533,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     return
 
                 name = payload.get("name", "Actor").strip() or "Actor"
-                color = payload.get("color", "#25d3a4")
+                color = sanitize_color(payload.get("color"), "#25d3a4")
 
                 # Auto-promote user to host if previous host is dummy "host" or offline
                 active_host = room.users.get(room.host_id)
@@ -1352,12 +1554,27 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 await room.broadcast("user_joined", {"user_id": user_id})
 
             elif msg_type == "claim_host":
+                # Only allow claiming an unowned/vacated room. Previously any
+                # connected client could seize host at will.
+                current_host_present = room.host_id in room.users
+                if room.host_id not in ("", "host", None) and current_host_present and user_id != room.host_id:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"message": "This room already has an active host."},
+                    })
+                    continue
                 room.host_id = user_id
                 for uid, u in room.users.items():
                     u["is_host"] = (uid == room.host_id)
                 await room.broadcast("host_changed", {"host_id": user_id})
 
             elif msg_type == "assign_role":
+                if user_id != room.host_id and room.host_id != "host":
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"message": "Only the host can assign roles."},
+                    })
+                    continue
                 character = payload.get("character")
                 assigned_user_ids = payload.get("user_ids", [])
                 if character in room.role_assignments:
@@ -1461,7 +1678,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     try:
                         out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}.mp4"
                         out_path = os.path.join(EXPORTS_DIR, out_filename)
-                        audio_processor.export_dub_video(room.pack, room.takes, out_path)
+                        await asyncio.to_thread(
+                            audio_processor.export_dub_video,
+                            room.pack, dict(room.takes), out_path,
+                        )
                         room.exported_video_path = out_path
                         file_size_mb = round(os.path.getsize(out_path) / (1024 * 1024), 2) if os.path.exists(out_path) else 0.0
                         duration = round(room.pack.duration, 1)
@@ -2267,7 +2487,7 @@ async def serve_builder_index():
 @app.get("/css/{file_path:path}")
 async def serve_static_css(file_path: str):
     static_dir = find_static_dir()
-    full_path = os.path.join(static_dir, "css", file_path)
+    full_path = safe_join(static_dir, "css", file_path)
     if os.path.isfile(full_path):
         return FileResponse(full_path, media_type="text/css")
     raise HTTPException(status_code=404, detail="CSS file not found")
@@ -2276,7 +2496,7 @@ async def serve_static_css(file_path: str):
 @app.get("/js/{file_path:path}")
 async def serve_static_js(file_path: str):
     static_dir = find_static_dir()
-    full_path = os.path.join(static_dir, "js", file_path)
+    full_path = safe_join(static_dir, "js", file_path)
     if os.path.isfile(full_path):
         return FileResponse(full_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail="JS file not found")
@@ -2295,4 +2515,4 @@ if __name__ == "__main__":
         import asyncio
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     # High-performance production mode: eliminates file polling over pack assets
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False, access_log=False)
+    uvicorn.run("app:app", host="0.0.0.0", port=get_engine_port(), reload=False, access_log=False)

@@ -22,9 +22,73 @@ from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_
 
 SR = 44100  # Standard audio sample rate
 
+# Explicit subprocess timeouts (seconds) so a wedged ffmpeg/DeepFilterNet process can never
+# block a request thread forever. Tuned generously for slow media work while still bounded.
+SUBPROCESS_TIMEOUT_PROBE = 60      # tiny clips / 1s noise-profile samples
+SUBPROCESS_TIMEOUT_PROCESS = 180   # per-take transcodes, filter chains, denoise passes
+SUBPROCESS_TIMEOUT_RENDER = 300    # full mix renders, video export, project zip encoding
+
+# Safe bounds for client-supplied volume trim (dB). Prevents 10 ** (gain_db / 20) from overflowing.
+GAIN_DB_MIN = -60.0
+GAIN_DB_MAX = 24.0
+
+# Only these characters are allowed in filesystem-derived identifiers (room_id, user_id, ...).
+_SAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _sanitize_id_token(value, max_len: int = 96) -> str:
+    """Reduces a caller-supplied identifier (room_id, user_id, etc.) to a filesystem-safe
+    token containing only [A-Za-z0-9_-]. Strips path separators, traversal sequences,
+    and any other unsafe characters; caps length; raises ValueError if nothing safe remains."""
+    if value is None:
+        raise ValueError("Identifier must not be None.")
+    text = str(value).strip()
+    safe = _SAFE_ID_CHARS_RE.sub("_", text).strip("_")[:max_len]
+    if not safe:
+        raise ValueError("Identifier " + repr(value) + " contains no safe characters after sanitization.")
+    return safe
+
+
+def _ensure_within_directory(path: str, parent_dir: str) -> str:
+    """Resolves path and raises ValueError if it escapes parent_dir (path traversal guard)."""
+    real_path = os.path.realpath(path)
+    real_parent = os.path.realpath(parent_dir)
+    if real_path != real_parent and not real_path.startswith(real_parent + os.sep):
+        raise ValueError("Resolved path " + repr(real_path) + " escapes expected directory " + repr(real_parent))
+    return path
+
+
+def _sanitize_finite_audio(data, context: str = "") -> np.ndarray:
+    """Replaces non-finite samples (NaN / +-Inf) with 0.0 so they can never reach a WAV/MP3
+    writer or the limiter as raw bit patterns. Logs loudly (not silently) when triggered."""
+    arr = np.asarray(data, dtype=np.float32)
+    bad_mask = ~np.isfinite(arr)
+    if bad_mask.any():
+        n_bad = int(np.count_nonzero(bad_mask))
+        where = " in " + context if context else ""
+        print("[AudioProcessor] WARNING: " + str(n_bad) + " non-finite sample(s) (NaN/Inf) detected" + where + "; replacing with 0.0.")
+        arr = np.where(bad_mask, np.float32(0.0), arr).astype(np.float32)
+    return arr
+
+
+def _run_subprocess(cmd, timeout: float, context: str = "ffmpeg", **kwargs):
+    """Runs a subprocess (ffmpeg / DeepFilterNet / etc.) with an explicit timeout so a wedged
+    child process can never block the calling thread forever. Converts subprocess.TimeoutExpired
+    into a clear, loggable RuntimeError instead of leaving it as an opaque bare-except case."""
+    try:
+        return subprocess.run(cmd, check=True, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as ex:
+        msg = "[AudioProcessor] " + context + " timed out after " + str(timeout) + "s (cmd: " + str(cmd[0] if cmd else "?") + ")"
+        print(msg)
+        raise RuntimeError(msg) from ex
+
 
 def get_room_cache_dir(room_id: str) -> str:
-    path = os.path.join(CACHE_DIR, "rooms", room_id)
+    """Returns (and creates) the per-room cache directory, guarding against path traversal via room_id."""
+    rooms_root = os.path.join(CACHE_DIR, "rooms")
+    safe_room_id = _sanitize_id_token(room_id)
+    path = os.path.join(rooms_root, safe_room_id)
+    _ensure_within_directory(path, rooms_root)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -32,14 +96,15 @@ def get_room_cache_dir(room_id: str) -> str:
 def read_wav_mono(path: str, sr: int = SR) -> np.ndarray:
     """Reads audio as a mono float32 numpy array normalized between -1.0 and 1.0."""
     ffmpeg = get_ffmpeg_path()
-    tmp = tempfile.mktemp(suffix=".wav")
+    fd, tmp = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
     try:
         cmd = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
             "-i", path, "-ac", "1", "-ar", str(sr),
             "-c:a", "pcm_s16le", tmp
         ]
-        subprocess.run(cmd, check=True)
+        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="read_wav_mono transcode of " + repr(path))
         with wave.open(tmp, "rb") as w:
             raw = w.readframes(w.getnframes())
         return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
@@ -53,7 +118,8 @@ def read_wav_mono(path: str, sr: int = SR) -> np.ndarray:
 
 def write_wav_mono(path: str, data: np.ndarray, sr: int = SR) -> str:
     """Writes a float32 numpy array to a mono 16-bit PCM WAV."""
-    data = np.clip(np.asarray(data, dtype=np.float32), -1.0, 1.0)
+    data = _sanitize_finite_audio(data, context="write_wav_mono(" + repr(path) + ")")
+    data = np.clip(data, -1.0, 1.0)
     pcm = (data * 32767.0).astype("<i2").tobytes()
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with wave.open(path, "wb") as w:
@@ -84,8 +150,12 @@ def compute_waveform_peaks(data: np.ndarray, columns: int = 120) -> List[Tuple[f
 
 
 def get_user_noise_profile_path(room_id: str, user_id: str) -> str:
-    """Returns the persistent noise profile path for an actor in a room."""
-    return os.path.join(get_room_cache_dir(room_id), f"noise_profile_{user_id}.wav")
+    """Returns the persistent noise profile path for an actor in a room (path-traversal safe)."""
+    room_dir = get_room_cache_dir(room_id)
+    safe_user_id = _sanitize_id_token(user_id)
+    target = os.path.join(room_dir, "noise_profile_" + safe_user_id + ".wav")
+    _ensure_within_directory(target, room_dir)
+    return target
 
 
 def save_user_noise_profile(
@@ -106,7 +176,8 @@ def save_user_noise_profile(
     if ext not in (".webm", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".flac"):
         ext = ".webm"
 
-    raw_tmp = tempfile.mktemp(suffix=ext)
+    fd, raw_tmp = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
     with open(raw_tmp, "wb") as f:
         f.write(audio_bytes)
 
@@ -119,7 +190,7 @@ def save_user_noise_profile(
             "-c:a", "pcm_s16le",
             target_profile
         ]
-        subprocess.run(cmd, check=True)
+        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROBE, context="noise profile transcoding")
     except subprocess.CalledProcessError as err:
         print(f"[AudioProcessor] Noise profile calibration conversion failed: {err}")
         raise RuntimeError(f"Noise profile calibration failed: {err}")
@@ -253,7 +324,7 @@ def apply_noise_reduction(
                 "-c:a", "pcm_s16le",
                 tmp_48k_in
             ]
-            subprocess.run(cmd_resample, check=True)
+            _run_subprocess(cmd_resample, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="DeepFilterNet resample to 48k")
 
             # Run DeepFilterNet with delay compensation (-D)
             atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else 100.0
@@ -263,7 +334,7 @@ def apply_noise_reduction(
                 "-o", df_out_dir,
                 tmp_48k_in
             ]
-            subprocess.run(cmd_df, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            _run_subprocess(cmd_df, timeout=SUBPROCESS_TIMEOUT_RENDER, context="DeepFilterNet3 inference", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             enh_48k = os.path.join(df_out_dir, "take_48k.wav")
             if os.path.isfile(enh_48k) and os.path.getsize(enh_48k) > 100:
@@ -276,7 +347,7 @@ def apply_noise_reduction(
                     "-c:a", "pcm_s16le",
                     tmp_resampled
                 ]
-                subprocess.run(cmd_back, check=True)
+                _run_subprocess(cmd_back, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="DeepFilterNet resample back to target rate")
 
                 # Ensure exact length matching with zero-padding if needed
                 enhanced_audio = read_wav_mono(tmp_resampled, sr)
@@ -290,7 +361,7 @@ def apply_noise_reduction(
                 write_wav_mono(output_wav, enhanced_audio, sr)
                 return output_wav
         except Exception as ex:
-            print(f"[AudioProcessor] DeepFilterNet3 processing fallback triggered on {input_wav}: {ex}")
+            print(f"[AudioProcessor] WARNING: DeepFilterNet3 neural denoise FAILED for {input_wav!r} - falling back to spectral-gate denoiser. Reason: {ex}")
         finally:
             if os.path.exists(tmp_dir):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -302,7 +373,8 @@ def apply_noise_reduction(
             f"afftdn=nr={min(18.0, reduction_db):.1f}:nf=-35:tn=1",
             "agate=threshold=-34dB:ratio=2.0:range=-18dB:attack=15:release=120",
         ]
-        tmp_out = tempfile.mktemp(suffix=".wav")
+        fd, tmp_out = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
         cmd = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
             "-i", input_wav,
@@ -311,11 +383,11 @@ def apply_noise_reduction(
             "-c:a", "pcm_s16le",
             tmp_out
         ]
-        subprocess.run(cmd, check=True)
+        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="fallback spectral-gate denoise")
         shutil.move(tmp_out, output_wav)
         return output_wav
     except Exception as ex:
-        print(f"[AudioProcessor] Fallback noise reduction failed on {input_wav}: {ex}")
+        print(f"[AudioProcessor] WARNING: noise reduction NOT applied for {input_wav!r} (DeepFilterNet3 and fallback denoiser both failed); returning unprocessed copy. Reason: {ex}")
         shutil.copy2(input_wav, output_wav)
         return output_wav
 
@@ -344,7 +416,8 @@ def save_uploaded_take(
     if ext not in (".webm", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".flac"):
         ext = ".webm"
 
-    raw_tmp = tempfile.mktemp(suffix=ext)
+    fd, raw_tmp = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
     with open(raw_tmp, "wb") as f:
         f.write(audio_bytes)
 
@@ -361,7 +434,7 @@ def save_uploaded_take(
             "-c:a", "pcm_s16le",
             raw_wav
         ]
-        subprocess.run(cmd, check=True)
+        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="take upload transcoding")
     except subprocess.CalledProcessError as err:
         print(f"[AudioProcessor] ffmpeg conversion failed on {raw_tmp} ({len(audio_bytes)} bytes): {err}")
         raise RuntimeError(f"Audio transcoding failed: {err}")
@@ -372,7 +445,13 @@ def save_uploaded_take(
             except Exception:
                 pass
 
-    profile_path = get_user_noise_profile_path(room_id, user_id) if user_id else None
+    profile_path = None
+    if user_id:
+        try:
+            profile_path = get_user_noise_profile_path(room_id, user_id)
+        except ValueError as ex:
+            print(f"[AudioProcessor] WARNING: could not resolve noise profile path for user_id={user_id!r}: {ex}")
+            profile_path = None
     if not os.path.isfile(profile_path or ""):
         profile_path = None
 
@@ -426,7 +505,13 @@ def toggle_take_noise_reduction(
         else:
             raise FileNotFoundError(f"No take audio found for line {line_index}")
 
-    profile_path = get_user_noise_profile_path(room_id, user_id) if user_id else None
+    profile_path = None
+    if user_id:
+        try:
+            profile_path = get_user_noise_profile_path(room_id, user_id)
+        except ValueError as ex:
+            print(f"[AudioProcessor] WARNING: could not resolve noise profile path for user_id={user_id!r}: {ex}")
+            profile_path = None
     if not os.path.isfile(profile_path or ""):
         profile_path = None
 
@@ -466,8 +551,8 @@ def get_reverb_impulse(decay_sec: float = 1.5, sr: int = SR) -> np.ndarray:
     t = np.arange(length - pre_delay, dtype=np.float32) / float(sr)
     envelope = np.exp(-3.2 * t / max(0.1, decay_sec))
 
-    np.random.seed(42)  # Deterministic room reflection pattern
-    impulse[pre_delay:] = (np.random.rand(len(t)).astype(np.float32) * 2.0 - 1.0) * envelope
+    rng = np.random.default_rng(42)  # Deterministic room reflection pattern (local RNG, no global mutation)
+    impulse[pre_delay:] = (rng.random(len(t)).astype(np.float32) * 2.0 - 1.0) * envelope
     norm = np.sqrt(np.sum(impulse ** 2))
     if norm > 1e-6:
         impulse /= norm
@@ -481,6 +566,7 @@ def master_soft_limiter(audio: np.ndarray, ceiling_db: float = -0.3) -> np.ndarr
     Transparent studio soft-knee limiter that prevents digital clipping
     without crushing relative track dynamics or individual volume knob levels.
     """
+    audio = _sanitize_finite_audio(audio, context="master_soft_limiter input")
     ceiling = 10.0 ** (ceiling_db / 20.0)  # ~0.966
     peak = np.max(np.abs(audio)) if len(audio) else 0.0
     if peak <= ceiling:
@@ -513,6 +599,12 @@ def apply_audio_effects(
     4. Direct linear volume gain (dB trim)
     5. Acoustic room convolution reverb (maintains 100% dry vocal punch + lush room space)
     """
+    # Clamp client-supplied gain to a sane audio range so 10 ** (gain_db / 20) can never overflow.
+    clamped_gain_db = float(np.clip(gain_db, GAIN_DB_MIN, GAIN_DB_MAX))
+    if clamped_gain_db != gain_db:
+        print(f"[AudioProcessor] WARNING: gain_db={gain_db} out of safe range; clamped to {clamped_gain_db} dB.")
+    gain_db = clamped_gain_db
+
     filters = []
 
     # 1. 80Hz Low-cut filter
@@ -544,7 +636,8 @@ def apply_audio_effects(
     ffmpeg = get_ffmpeg_path()
     if filters:
         filter_chain = ",".join(filters)
-        tmp_out = tempfile.mktemp(suffix=".wav")
+        fd, tmp_out = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
         try:
             cmd = [
                 ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
@@ -554,10 +647,10 @@ def apply_audio_effects(
                 "-c:a", "pcm_s16le",
                 tmp_out
             ]
-            subprocess.run(cmd, check=True)
+            _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="apply_audio_effects filter chain for " + repr(audio_path))
             audio = read_wav_mono(tmp_out, sr)
         except Exception as ex:
-            print(f"Error applying filter chain: {ex}")
+            print(f"[AudioProcessor] WARNING: DSP filter chain FAILED for {audio_path!r} (pitch/low-cut/compressor NOT applied); returning unprocessed audio. Reason: {ex}")
             audio = read_wav_mono(audio_path, sr)
         finally:
             if os.path.exists(tmp_out):
@@ -626,13 +719,21 @@ def render_dub_mix(
             # Take gain plus master dialogue presence trim
             gain = float(take_info.get("gain_db", 0.0)) + float(master_dialogue_presence_db)
 
-            processed_audio = apply_audio_effects(
-                take_info["wav_path"],
-                pitch_semitones=pitch,
-                reverb_wet=reverb,
-                gain_db=gain,
-                sr=sr
-            )
+            try:
+                processed_audio = apply_audio_effects(
+                    take_info["wav_path"],
+                    pitch_semitones=pitch,
+                    reverb_wet=reverb,
+                    gain_db=gain,
+                    sr=sr
+                )
+            except Exception as ex:
+                print(f"[render_dub_mix] WARNING: apply_audio_effects failed for line {idx} ({take_info.get('wav_path')!r}): {ex}. Falling back to unprocessed take audio so the render can continue.")
+                try:
+                    processed_audio = read_wav_mono(take_info["wav_path"], sr)
+                except Exception as ex2:
+                    print(f"[render_dub_mix] ERROR: fallback read also failed for line {idx}: {ex2}. Skipping this line.")
+                    continue
 
             pos_sec = start_sec + offset_sec
             if pos_sec < 0:
@@ -680,7 +781,8 @@ def export_dub_video(
 ) -> str:
     """Combines final mixed audio with scene video into a high quality MP4 (16:9 or 9:16 letterboxed)."""
     pack.ensure_web_ready()
-    tmp_wav = tempfile.mktemp(suffix=".wav")
+    fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
     render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db)
 
     ffmpeg = get_ffmpeg_path()
@@ -707,7 +809,7 @@ def export_dub_video(
                 "-movflags", "+faststart",
                 output_mp4
             ]
-            subprocess.run(cmd, check=True)
+            _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="export_dub_video primary encoder")
         except Exception as ex:
             print(f"[export_dub_video] Primary encoder failed ({ex}), falling back to CPU libx264...")
             cpu_cores = os.cpu_count() or 4
@@ -726,7 +828,7 @@ def export_dub_video(
                 "-movflags", "+faststart",
                 output_mp4
             ]
-            subprocess.run(cmd, check=True)
+            _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="export_dub_video fallback CPU encoder")
     finally:
         if os.path.exists(tmp_wav):
             try:
@@ -756,7 +858,8 @@ def write_mp3_mono(path: str, data: np.ndarray, sr: int = SR, bitrate: str = "19
     """Encodes float32 numpy audio array directly to an MP3 file via ffmpeg."""
     if len(data) == 0:
         data = np.zeros(sr, dtype=np.float32)
-    data = np.clip(np.asarray(data, dtype=np.float32), -1.0, 1.0)
+    data = _sanitize_finite_audio(data, context="write_mp3_mono(" + repr(path) + ")")
+    data = np.clip(data, -1.0, 1.0)
     pcm = (data * 32767.0).astype("<i2").tobytes()
     ffmpeg = get_ffmpeg_path()
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -768,7 +871,12 @@ def write_mp3_mono(path: str, data: np.ndarray, sr: int = SR, bitrate: str = "19
         path
     ]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    _, stderr = proc.communicate(input=pcm)
+    try:
+        _, stderr = proc.communicate(input=pcm, timeout=SUBPROCESS_TIMEOUT_RENDER)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise RuntimeError("FFmpeg MP3 encoding timed out after " + str(SUBPROCESS_TIMEOUT_RENDER) + "s for " + repr(path))
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg MP3 encoding failed: {stderr.decode(errors='ignore')}")
     return path
@@ -784,7 +892,7 @@ def convert_file_to_mp3(src_path: str, dst_path: str, sr: int = SR, bitrate: str
         "-c:a", "libmp3lame", "-b:a", bitrate, "-ar", str(sr),
         "-vn", dst_path
     ]
-    subprocess.run(cmd, check=True)
+    _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="convert_file_to_mp3(" + repr(src_path) + ")")
     return dst_path
 
 
@@ -818,11 +926,17 @@ def build_project_zip(
         total_sec = max(total_sec, line["end"] + 2.0)
     total_samples = int(total_sec * sr) + sr
 
+    # Sanitize the caller-supplied room_id before it becomes part of any filesystem path.
+    try:
+        room_id_safe = _sanitize_id_token(room_id)
+    except ValueError:
+        room_id_safe = "SESSION"
+
     # Create temporary working directory for staging
-    temp_stage_dir = tempfile.mkdtemp(prefix=f"dubmate_proj_{room_id}_")
+    temp_stage_dir = tempfile.mkdtemp(prefix=f"dubmate_proj_{room_id_safe}_")
     try:
         pack_sanitized = sanitize_filename(pack.name)
-        root_folder_name = f"DubMate_Project_{pack_sanitized}_{room_id}"
+        root_folder_name = f"DubMate_Project_{pack_sanitized}_{room_id_safe}"
         proj_root = os.path.join(temp_stage_dir, root_folder_name)
         video_dir = os.path.join(proj_root, "Video")
         stems_dir = os.path.join(proj_root, "Audio_Stems")
@@ -913,13 +1027,21 @@ def build_project_zip(
                 reverb = float(take_info.get("reverb_wet", 0.0))
                 gain = float(take_info.get("gain_db", 0.0))
 
-                processed_audio = apply_audio_effects(
-                    take_info["wav_path"],
-                    pitch_semitones=pitch,
-                    reverb_wet=reverb,
-                    gain_db=gain,
-                    sr=sr
-                )
+                try:
+                    processed_audio = apply_audio_effects(
+                        take_info["wav_path"],
+                        pitch_semitones=pitch,
+                        reverb_wet=reverb,
+                        gain_db=gain,
+                        sr=sr
+                    )
+                except Exception as ex:
+                    print(f"[ProjectZip] WARNING: apply_audio_effects failed for line {idx} ({take_info.get('wav_path')!r}): {ex}. Falling back to unprocessed take audio so the export can continue.")
+                    try:
+                        processed_audio = read_wav_mono(take_info["wav_path"], sr)
+                    except Exception as ex2:
+                        print(f"[ProjectZip] ERROR: fallback read also failed for line {idx}: {ex2}. Using near-silent placeholder so the export and manifest still complete.")
+                        processed_audio = np.zeros(1, dtype=np.float32)
 
                 offset_sec = float(offset_ms) / 1000.0
                 pos_sec = start_sec + offset_sec
@@ -1050,7 +1172,7 @@ def build_project_zip(
 
         # 4. Create ZIP Archive
         if not output_zip_path:
-            output_zip_path = os.path.join(CACHE_DIR, "exports", f"DubMate_Project_{pack.pack_id}_{room_id}.zip")
+            output_zip_path = os.path.join(CACHE_DIR, "exports", f"DubMate_Project_{pack.pack_id}_{room_id_safe}.zip")
         os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
 
         with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:

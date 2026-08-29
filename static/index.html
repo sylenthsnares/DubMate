@@ -139,6 +139,24 @@
         <div id="header-user-avatar" class="user-avatar" aria-hidden="true">A</div>
         <span id="header-user-name" class="user-name">Actor</span>
       </div>
+      <button id="btn-audio-settings" class="btn btn-ghost btn-sm btn-audio-settings" type="button"
+        title="Audio Devices & Studio Settings" aria-label="Open Audio Device Settings" aria-haspopup="dialog">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" x2="4" y1="21" y2="14" />
+          <line x1="4" x2="4" y1="10" y2="3" />
+          <line x1="12" x2="12" y1="21" y2="12" />
+          <line x1="12" x2="12" y1="8" y2="3" />
+          <line x1="20" x2="20" y1="21" y2="16" />
+          <line x1="20" x2="20" y1="12" y2="3" />
+          <line x1="1" x2="7" y1="14" y2="14" />
+          <line x1="9" x2="15" y1="8" y2="8" />
+          <line x1="17" x2="23" y1="16" y2="16" />
+        </svg>
+        <span class="audio-settings-btn-text">Audio</span>
+        <span id="audio-settings-alert-dot" class="audio-settings-alert-dot" style="display: none;"
+          title="Microphone is not set up yet" aria-hidden="true"></span>
+      </button>
       <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;"
         title="Leave Room and Return to Scenes" aria-label="Leave Studio Session">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1593,6 +1611,214 @@
         <button id="btn-save-pack-config" class="btn btn-primary btn-md" type="button">
           <span id="web-save-config-text">📁 Scan & Save Location</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Device Setup & Studio Settings Panel -->
+  <!-- Shown once on first run (before any bare getUserMedia prompt fires) and
+       re-openable at any time from the "Audio" button in the studio header. -->
+  <div id="modal-audio-settings" class="studio-modal-overlay" style="display: none; z-index: 9998;" role="dialog"
+    aria-modal="true" aria-labelledby="audio-setup-title">
+    <div class="studio-modal-card audio-setup-card">
+      <button id="btn-close-audio-settings" class="modal-close-btn" type="button"
+        aria-label="Close Audio Settings">✕</button>
+
+      <div class="modal-header-content" style="text-align: left; margin-bottom: 18px;">
+        <div class="modal-badge-row" style="justify-content: flex-start;">
+          <span class="badge-studio">AUDIO SETUP</span>
+          <span id="audio-setup-status-pill" class="badge-render-live">MIC NOT CONNECTED</span>
+        </div>
+        <h3 id="audio-setup-title" class="modal-title" style="margin-top: 10px; font-size: 19px;">Studio Audio Devices
+        </h3>
+        <p id="audio-setup-subtitle" class="modal-status-text" style="margin-top: 4px;">
+          Pick the microphone you record with and the headphones you monitor on.
+        </p>
+      </div>
+
+      <!-- STEP 1: First-run explainer shown BEFORE the browser permission prompt -->
+      <div id="audio-setup-step-intro" class="audio-setup-step" style="display: none;">
+        <div class="audio-intro-hero">
+          <div class="audio-intro-mic">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" x2="12" y1="19" y2="22" />
+            </svg>
+          </div>
+          <div class="audio-intro-copy">
+            <h4 class="audio-intro-title">DubMate needs your microphone</h4>
+            <p class="audio-intro-desc">
+              Every dub take is recorded locally from your mic and mixed against the scene's backing track. Without
+              microphone access the recording booth cannot capture anything.
+            </p>
+          </div>
+        </div>
+
+        <ul class="audio-fact-list">
+          <li>
+            <span class="audio-fact-icon">🎙️</span>
+            <span>Your browser will now ask for permission. Choose <strong>Allow</strong>.</span>
+          </li>
+          <li>
+            <span class="audio-fact-icon">💾</span>
+            <span>Takes stay on this machine and are only shared with your room when you save them.</span>
+          </li>
+          <li>
+            <span class="audio-fact-icon">🎚️</span>
+            <span>Afterwards you can pick the exact input and output device and check your levels.</span>
+          </li>
+        </ul>
+
+        <div class="modal-actions" style="margin-top: 20px; justify-content: space-between; gap: 10px;">
+          <button id="btn-skip-audio-setup" class="btn btn-ghost btn-md" type="button">Skip for now</button>
+          <button id="btn-grant-mic" class="btn btn-primary btn-lg" type="button">
+            <span id="btn-grant-mic-text">🎙️ Allow Microphone Access</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Permission refused / unavailable, with recovery instructions -->
+      <div id="audio-setup-step-denied" class="audio-setup-step" style="display: none;">
+        <div class="audio-denied-box">
+          <div class="audio-denied-title">
+            <span aria-hidden="true">🚫</span>
+            <span id="audio-denied-heading">Microphone access was blocked</span>
+          </div>
+          <p id="audio-denied-detail" class="audio-denied-detail">
+            The browser refused the request, so recording is disabled until access is restored.
+          </p>
+        </div>
+
+        <div class="audio-recovery-grid">
+          <div class="audio-recovery-card">
+            <div class="audio-recovery-head">In the DubMate window</div>
+            <ol class="audio-recovery-list">
+              <li>Click the padlock / sliders icon in the address bar.</li>
+              <li>Set <strong>Microphone</strong> to <strong>Allow</strong>.</li>
+              <li>Reload the page, then press <strong>Try Again</strong> below.</li>
+            </ol>
+          </div>
+          <div class="audio-recovery-card">
+            <div class="audio-recovery-head">Windows privacy settings</div>
+            <ol class="audio-recovery-list">
+              <li>Open <strong>Settings → Privacy &amp; security → Microphone</strong>.</li>
+              <li>Turn on <strong>Microphone access</strong> and <strong>Let desktop apps access your
+                  microphone</strong>.</li>
+              <li>Restart DubMate Studio so the desktop window re-asks.</li>
+            </ol>
+            <p class="audio-recovery-note">
+              The DubMate desktop build runs inside a system webview, so Windows can block the mic even when the browser
+              permission looks fine. On macOS the equivalent is <strong>System Settings → Privacy &amp; Security →
+                Microphone</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 18px; justify-content: space-between; gap: 10px;">
+          <button id="btn-dismiss-audio-denied" class="btn btn-ghost btn-md" type="button">Continue without mic</button>
+          <button id="btn-retry-mic" class="btn btn-primary btn-md" type="button">
+            <span>↺ Try Again</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 3: Device selection, live meter and studio paths -->
+      <div id="audio-setup-step-devices" class="audio-setup-step" style="display: none;">
+
+        <div class="audio-device-row">
+          <div class="audio-device-label-row">
+            <label class="form-label" for="select-audio-input" style="margin-bottom: 0;">Input · Microphone</label>
+            <button id="btn-refresh-audio-devices" class="btn-link-sm" type="button"
+              title="Re-scan connected audio devices">↺ Rescan</button>
+          </div>
+          <select id="select-audio-input" class="form-input device-select" aria-describedby="audio-input-note">
+            <option value="">System Default Microphone</option>
+          </select>
+          <p id="audio-input-note" class="audio-device-note" style="display: none;"></p>
+        </div>
+
+        <!-- Live dBFS Input Level Meter -->
+        <div class="level-meter-panel">
+          <div class="level-meter-head">
+            <span class="level-meter-title">
+              <span class="level-meter-lamp" id="level-meter-lamp" aria-hidden="true"></span>
+              INPUT LEVEL
+            </span>
+            <span class="level-meter-readouts">
+              <span class="level-meter-readout" id="level-meter-rms" title="Current RMS level">-∞ dBFS</span>
+              <span class="level-meter-readout level-meter-readout-peak" id="level-meter-peak-readout"
+                title="Peak hold">PK -∞</span>
+            </span>
+          </div>
+
+          <div class="level-meter-track" id="level-meter-track" role="meter" aria-label="Microphone input level in dBFS"
+            aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-valuetext="-infinity dBFS">
+            <div class="level-meter-mask" id="level-meter-mask" style="width: 100%;"></div>
+            <div class="level-meter-gridline" style="left: 80%;" aria-hidden="true"></div>
+            <div class="level-meter-gridline" style="left: 95%;" aria-hidden="true"></div>
+            <div class="level-meter-peak-tick" id="level-meter-peak-tick" style="left: 0%; display: none;"
+              aria-hidden="true"></div>
+          </div>
+
+          <div class="level-meter-scale" aria-hidden="true">
+            <span style="left: 0%;">-60</span>
+            <span style="left: 33.33%;">-40</span>
+            <span style="left: 66.67%;">-20</span>
+            <span style="left: 80%;">-12</span>
+            <span style="left: 90%;">-6</span>
+            <span style="left: 100%;">0</span>
+          </div>
+
+          <div class="level-meter-legend">
+            <span class="level-zone-key"><i class="zone-swatch zone-green"></i>Healthy · below -12</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-amber"></i>Hot · -12 to -3</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-red"></i>Clipping · above -3</span>
+          </div>
+
+          <p class="level-meter-hint" id="level-meter-hint">Speak your loudest line — aim for peaks around -12 to -6
+            dBFS.</p>
+        </div>
+
+        <div class="audio-device-row" id="audio-output-row">
+          <label class="form-label" for="select-audio-output">Output · Monitoring</label>
+          <select id="select-audio-output" class="form-input device-select" aria-describedby="audio-output-note">
+            <option value="">System Default Output</option>
+          </select>
+          <p id="audio-output-note" class="audio-device-note" style="display: none;"></p>
+        </div>
+
+        <div class="audio-device-row audio-unsupported-box" id="audio-output-unsupported" style="display: none;">
+          <div class="audio-unsupported-title">
+            <span aria-hidden="true">🎧</span>
+            <span>Output device selection is unavailable</span>
+          </div>
+          <p class="audio-unsupported-desc">
+            This browser does not implement <code>setSinkId()</code>, so DubMate cannot re-route playback itself.
+            Choose your headphones as the default output device in your operating system's sound settings instead.
+          </p>
+        </div>
+
+        <!-- Export folder (backed by GET/POST /api/config -> exports_dir).
+             Hidden entirely when the running backend does not report the key. -->
+        <div class="audio-device-row" id="audio-exports-row" style="display: none;">
+          <label class="form-label" for="input-exports-dir">Render &amp; Export Folder</label>
+          <div class="audio-path-row">
+            <input type="text" id="input-exports-dir" class="form-input audio-path-input" spellcheck="false"
+              autocomplete="off" placeholder="e.g. C:\Users\You\Videos\DubMate Exports">
+            <button id="btn-save-exports-dir" class="btn btn-secondary btn-sm" type="button">
+              <span id="btn-save-exports-dir-text">Save</span>
+            </button>
+          </div>
+          <div id="exports-dir-feedback" class="audio-inline-feedback" style="display: none;"></div>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 20px; justify-content: flex-end; gap: 10px;">
+          <button id="btn-audio-settings-done" class="btn btn-primary btn-md" type="button">
+            <span>✓ Done</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

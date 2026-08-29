@@ -15,6 +15,11 @@ import tempfile
 import unittest
 from starlette.testclient import TestClient
 
+# Ensure the project root is importable when this suite is run from tests/
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import pack_loader
 import app
 

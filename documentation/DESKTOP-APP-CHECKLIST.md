@@ -1,9 +1,30 @@
 # DubMate Desktop App — Implementation Checklist
-<!-- last updated: 2026-08-28 -->
+<!-- last updated: 2026-08-29 -->
 
 > **Repo:** `github.com/sylenthsnares/DubMate`
 > **Worker domain:** `https://dubmate.bkaproductions.com` (Cloudflare zone: `bkaproductions.com`)
-> **Design spec:** `docs/superpowers/specs/2026-08-28-desktop-app-design.md`
+
+> ## Status: historical planning document
+>
+> This checklist is the original implementation plan for the desktop app, and **it was fully
+> executed** — all five sub-projects shipped. The unchecked boxes below are not outstanding work.
+> The document is kept for its design rationale (why Tauri, why embed Python, the sidecar and
+> tunnel notes), not as a description of current behaviour.
+>
+> **For what actually ships today, [`CHANGELOG.md`](../CHANGELOG.md) is the source of truth.**
+> The code has since moved past this plan in several places. As of v1.0.9:
+>
+> - OTA now restarts the Python engine after applying an update. Previously the new files landed
+>   on disk but the running engine kept the old modules in memory, which is why 1.0.6–1.0.8
+>   appeared to change nothing.
+> - Windows ships **NSIS only** — there is no `.msi` target.
+> - The Windows installer has a components page with an optional Pack Builder AI pipeline; those
+>   packages install to `<install dir>/ai-packages`.
+> - Working data (cache, exports, `pack_index.json`) defaults to `<install root>/data` rather than
+>   `~/.dubmate/cache`, and is user-configurable.
+> - The engine port is chosen dynamically (8000 unless taken) and passed to Python as
+>   `DUBMATE_PORT`, so the hardcoded `localhost:8000` in the snippets below is only the default.
+> - The worker registry key is no longer hardcoded anywhere; it comes from `DUBMATE_WORKER_KEY`.
 
 Complete sub-projects **in order**. Each depends on the previous being verified before starting the next.
 Do not skip the Verification steps — they are the completion gate for each sub-project.
@@ -390,6 +411,7 @@ Replace the default capabilities with:
   "identifier": "com.dubmate.studio",
   "bundle": {
     "active": true,
+    "targets": ["nsis", "app", "dmg"],
     "externalBin": [
       "sidecar/python-runtime/python",
       "sidecar/cloudflared",
@@ -446,6 +468,12 @@ def _read_version() -> str:
 Three files: `index.html`, `launcher.js`, `launcher.css`.
 
 **Create Room flow (launcher.js — pattern):**
+
+> **Superseded in v1.0.9:** the worker registration below no longer happens in the browser. This
+> project has no Vite build step, so `VITE_DUBMATE_SECRET_KEY` was never actually injected; `app.py`
+> registers the room server-side using `DUBMATE_WORKER_KEY`, and no registry key is present in any
+> client bundle.
+
 ```javascript
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -560,7 +588,7 @@ Inside the `elif msg_type == "join":` block (~line 1169), add at the very top be
 ```python
 # exact — paste at start of the "join" handler body
 client_version = payload.get("app_version", "0.0.0")
-if client_version < room.min_required_version:
+if room.min_required_version and is_version_outdated(client_version, room.min_required_version):
     await websocket.send_text(json.dumps({
         "type": "version_mismatch",
         "payload": {
@@ -572,9 +600,11 @@ if client_version < room.min_required_version:
     return
 ```
 
-> **Note:** String comparison of version numbers is lexicographically incorrect for versions
-> like "1.10" vs "1.9". Acceptable for v1 (keep patch versions single-digit). Add proper semver
-> compare (split on ".", compare each int part) before releasing v2.
+> **Superseded:** lexicographic string comparison is no longer used and is no longer an accepted
+> tradeoff. `app.py` defines `is_version_outdated()`, which parses each dot-separated segment to an
+> int and compares the resulting lists, so "1.9" correctly sorts before "1.10". `updater.rs` has the
+> equivalent `is_newer()` helper for the OTA check, which is what stops a client being "updated"
+> onto an older tag. Do not compare version strings directly.
 
 ---
 
@@ -784,6 +814,14 @@ If the local `VERSION` is behind the latest release, the app locks the UI and do
 `app-bundle-v{tag}.zip` release asset, extracts it over the current install, then restarts.
 Users cannot skip or defer the update. This prevents multiplayer version mismatch bugs entirely.
 
+> **As shipped (v1.0.9):** "restarts" specifically means the *Python engine* is killed and
+> relaunched — `apply_update` in `main.rs` calls `kill_sidecars()` then `start_sidecars()` after
+> extraction. Reloading only the webview, which is what 1.0.6 through 1.0.8 did, left the previous
+> modules resident in the running engine, so backend fixes stayed inert until the next cold launch.
+> `updater.rs` additionally verifies the install directory is writable before extracting anything,
+> and the version compared against is read from the `VERSION` file on disk beside `app.py`, not
+> compiled into the binary.
+
 **Two-tier update strategy:**
 - **Tier 1 (frequent):** Python + JS/CSS files bundled as `app-bundle-v{VERSION}.zip`.
   Published by pushing to `main`. No Rust rebuild needed.
@@ -855,7 +893,8 @@ pub async fn check_for_update(current_version: &str) -> UpdateCheckResult {
     //    On any network error or non-200 status: return NoInternet
     // 3. Deserialize into GithubRelease
     // 4. Strip "v" prefix from tag_name to get latest_version string
-    // 5. If latest_version == current_version: return UpToDate
+    // 5. If latest_version is not numerically newer than current_version: return UpToDate
+    //    (per-segment int compare via is_newer(); string equality would permit a downgrade)
     // 6. Find asset where name starts with "app-bundle-"
     //    If not found: return UpToDate (malformed release; do not crash)
     // 7. Return UpdateAvailable { release, download_url: asset.browser_download_url }
@@ -979,13 +1018,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
+
+      - name: Install system dependencies (ffmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg -qq
 
       - name: Run tests
         run: |
-          pip install pytest -q
           pip install -r requirements.txt -q
-          python -m pytest test_systematic.py test_pack_builder.py test_pack_security.py -q
+          pip install httpx fastapi pytest -q
+          python tests/test_host_transfer.py
 
       - name: Create app bundle zip
         run: |
@@ -996,17 +1040,38 @@ jobs:
             pack_builder.py \
             static/ \
             VERSION \
-            requirements.txt
+            requirements.txt \
+            requirements_builder.txt
+
+      - name: Extract release notes for this version
+        run: |
+          # body_path previously pointed at the whole CHANGELOG.md, so every release
+          # republished the full history. Take only this version's section, and fail
+          # the build if there is no section for it.
+          awk -v hdr="## [${{ steps.ver.outputs.VERSION }}]" '
+            index($0, hdr) == 1 { found=1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::No CHANGELOG.md section found for version ${{ steps.ver.outputs.VERSION }}"
+            exit 1
+          fi
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.ver.outputs.VERSION }}
           name: "DubMate v${{ steps.ver.outputs.VERSION }}"
-          body_path: CHANGELOG.md
+          body_path: RELEASE_NOTES.md
           files: app-bundle-v${{ steps.ver.outputs.VERSION }}.zip
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+> This block mirrors `.github/workflows/publish-bundle.yml` as it stands. Note
+> `requirements_builder.txt` in the zip — the Pack Builder AI requirements, which the OTA bundle
+> previously omitted — and the per-version release-notes extraction, which replaced passing the
+> entire `CHANGELOG.md` as the release body.
 
 ---
 
@@ -1026,14 +1091,24 @@ jobs:
 
 **What it does:** Packages Python runtime + FFmpeg + cloudflared inside the Tauri installer.
 Users download one file and double-click to install — no Python install, no PATH configuration,
-no manual dependency steps. GitHub Actions builds both `.msi` (Windows) and `.dmg` (macOS)
-and uploads them as release assets automatically on every version tag push.
+no manual dependency steps. GitHub Actions builds both an NSIS `.exe` setup (Windows) and a `.dmg`
+(macOS) and uploads them as release assets automatically on every version tag push.
 
 **Why embed Python instead of requiring it:** Users are non-technical creators. Requiring a
 Python installation is a hard friction point that causes drop-off. The CPython embeddable zip
 is a self-contained runtime built exactly for this bundled-app use case.
 
 **Requires:** All prior sub-projects working in `cargo tauri dev` mode first.
+
+> **As shipped (v1.0.9):** Windows bundles NSIS only — `tauri.conf.json` sets
+> `"targets": ["nsis", "app", "dmg"]` with no `msi` — installed per-user
+> (`installMode: "currentUser"`) so the application directory stays writable and OTA can apply
+> without elevation. The custom `installer.nsi` template adds a components page whose optional,
+> unchecked-by-default "Pack Builder AI pipeline" section (~2 GB: PyTorch, Demucs, Whisper) writes a
+> `packbuilder.optin` marker. The packages themselves download on first launch into
+> `<install dir>/ai-packages` rather than during install, so choosing a non-system drive keeps the
+> gigabytes off `C:`. `installer-hooks.nsh` removes both on uninstall, and the `install_packbuilder`
+> / `remove_packbuilder` commands manage the pipeline after installation.
 
 ---
 
@@ -1202,7 +1277,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_DUBMATE_SECRET_KEY: ${{ secrets.DUBMATE_SECRET_KEY }}
+          # Baked into the binary by option_env! in main.rs and forwarded to the Python
+          # engine at runtime. Replaces VITE_DUBMATE_SECRET_KEY, which was read by nothing
+          # -- this project has no Vite build step.
+          DUBMATE_WORKER_KEY: ${{ secrets.DUBMATE_SECRET_KEY }}
         with:
           projectPath: tauri
           args: ${{ matrix.tauri-args }}
@@ -1219,12 +1297,12 @@ jobs:
 
 - [ ] Run `tauri/scripts/stage-sidecars.ps1` locally → confirm all three binaries appear in `sidecar/` with triple-suffixed names
 - [ ] `cargo tauri build` (not `dev`) — build completes without "binary not found" errors
-- [ ] Install the `.msi` on a **fresh Windows VM** (no Python, no FFmpeg, no cloudflared in PATH)
+- [ ] Install the NSIS `.exe` setup on a **fresh Windows VM** (no Python, no FFmpeg, no cloudflared in PATH)
   - Launch DubMate Studio
   - Both sidecars start; tunnel URL appears in launcher status bar
   - Create Room → pack list loads → studio opens
   - Record a take → export works (proves FFmpeg is bundled correctly)
-- [ ] Push a `v1.0.0` tag → GitHub Actions matrix build runs → both `.msi` and `.dmg` appear as release assets on `github.com/sylenthsnares/DubMate/releases`
+- [ ] Push a `v1.0.0` tag → GitHub Actions matrix build runs → both the NSIS `.exe` setup and the `.dmg` appear as release assets on `github.com/sylenthsnares/DubMate/releases`
 
 ---
 
@@ -1249,9 +1327,9 @@ The checklist is complete when all five sub-projects pass their verification ste
 | Tauri sidecar binary missing target triple suffix | Rename: `cloudflared.exe` → `cloudflared-x86_64-pc-windows-msvc.exe` |
 | CPython embeddable zip has no pip | Bootstrap with `get-pip.py` before running `pip install` |
 | KV TTL in Cloudflare uses `expirationTtl` (seconds, not unix timestamp) | Use `expirationTtl: 43200` not `expiration: <unix>` |
-| Version string compare: `"1.10" < "1.9"` is wrong lexicographically | Acceptable for v1; add proper int-by-int semver compare before v2 |
+| Version string compare: `"1.10" < "1.9"` is wrong lexicographically | Fixed in v1.0.9 — `is_version_outdated()` in `app.py` and `is_newer()` in `updater.rs` both parse each segment to an int and compare numerically. Do not compare version strings |
 | `wrangler types` not re-run after KV binding added | Run `npx wrangler types` after every `wrangler.toml` change |
-| `DUBMATE_SECRET_KEY` visible in launcher JS bundle | Acceptable for v1; move Worker call to a Rust `#[tauri::command]` in v2 |
+| `DUBMATE_SECRET_KEY` visible in launcher JS bundle | Fixed in v1.0.9 — the key was removed from client JS entirely. `app.py` registers rooms server-side with `DUBMATE_WORKER_KEY` (compiled into the binary from a CI secret, or read from `.dubmate.env`), with no hardcoded fallback |
 | `complete_transfer` goes through the old host's WS | Correct — old server is still running; it broadcasts the redirect to all guests |
 | `taskkill` only works on Windows; `kill -9` on macOS | Use `cfg!(target_os = "windows")` in Rust to branch |
 | Stale Tauri build caches old sidecar binary | Run `cargo clean` between builds if a sidecar was updated |

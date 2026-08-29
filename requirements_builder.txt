@@ -7,4 +7,6 @@ torchaudio>=2.0.0
 demucs>=4.0.0
 openai-whisper>=20231117
 pykakasi>=2.3.0
-yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
+# Released wheel, not the master sdist: the embedded Python cannot run PEP 517
+# build backends, and a source install of yt-dlp fails with BackendUnavailable.
+yt-dlp>=2025.1.1

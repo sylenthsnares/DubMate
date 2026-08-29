@@ -14,6 +14,16 @@ const PALETTE = [
   '#f59e0b', // Amber Glow
 ];
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
+}
+
 export class PackBuilderApp {
   constructor() {
     this.sessionId = null;
@@ -572,7 +582,7 @@ export class PackBuilderApp {
 
       // Display thumbnail preview if available
       if (data.cover_url && this.videoThumbContainer) {
-        this.videoThumbContainer.innerHTML = `<img src="${data.cover_url}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;" alt="Cover Thumbnail">`;
+        this.videoThumbContainer.innerHTML = `<img src="${escapeHtml(data.cover_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;" alt="Cover Thumbnail">`;
       }
 
       if (data.device_info) {
@@ -895,7 +905,7 @@ export class PackBuilderApp {
       header.innerHTML = `
         <div class="channel-id-badge">A${idx + 1}</div>
         <div class="channel-info">
-          <input type="text" class="channel-title-input" value="${trackName}" data-channel="${idx}" title="Click to rename Track ${idx + 1}" aria-label="Track ${idx + 1} Name" maxlength="24">
+          <input type="text" class="channel-title-input" value="${escapeHtml(trackName)}" data-channel="${idx}" title="Click to rename Track ${idx + 1}" aria-label="Track ${idx + 1} Name" maxlength="24">
         </div>
         <div class="channel-header-actions">
           <div class="channel-indicator ${isActive ? 'active' : ''}" title="${isActive ? 'Active dialogue take' : 'Idle'}"></div>
@@ -1201,7 +1211,7 @@ export class PackBuilderApp {
 
       // Build options for character dropdown
       const charOptionsHtml = allCast.map(c =>
-        `<option value="${c}" ${c === seg.character ? 'selected' : ''}>${c}</option>`
+        `<option value="${escapeHtml(c)}" ${c === seg.character ? 'selected' : ''}>${escapeHtml(c)}</option>`
       ).join('') + '<option value="__ADD_NEW__">+ New Character...</option>';
 
       card.innerHTML = `
@@ -1238,7 +1248,7 @@ export class PackBuilderApp {
               <span>Play Take</span>
             </button>
           </div>
-          <textarea class="form-input cue-text-input" rows="2" placeholder="Dialogue subtitle text..." data-idx="${idx}">${seg.text || ''}</textarea>
+          <textarea class="form-input cue-text-input" rows="2" placeholder="Dialogue subtitle text..." data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
         </div>
       `;
 
@@ -1328,9 +1338,9 @@ export class PackBuilderApp {
       chip.className = 'char-color-chip';
       chip.innerHTML = `
         <span class="chip-color-dot" style="background: ${color};"></span>
-        <span class="chip-name" title="Click to rename role">${char}</span>
+        <span class="chip-name" title="Click to rename role">${escapeHtml(char)}</span>
         <span class="chip-count-badge" title="${count} line(s) assigned">(${count})</span>
-        <button class="chip-del-btn" title="Delete character role" data-char="${char}">
+        <button class="chip-del-btn" title="Delete character role" data-char="${escapeHtml(char)}">
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       `;

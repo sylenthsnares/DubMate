@@ -32,6 +32,8 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
 
     # Install dependencies into standalone Python runtime
     "/tmp/py-$TRIPLE/python/bin/python3" -m pip install -r "$PROJECT_ROOT/requirements.txt" --no-warn-script-location -q || true
+    # Build backends for sdist-only AI packages (openai-whisper, demucs).
+    "/tmp/py-$TRIPLE/python/bin/python3" -m pip install setuptools wheel --no-warn-script-location -q || true
 
     # Copy full standalone runtime into resources
     mkdir -p "$RESOURCE_DIR/python-runtime"
@@ -69,7 +71,7 @@ done
 RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"
 mkdir -p "$RESOURCE_DIR"
 echo "[4/4] Staging application Python files and static assets into resources..."
-for file in app.py audio_processor.py pack_loader.py pack_builder.py VERSION requirements.txt; do
+for file in app.py audio_processor.py pack_loader.py pack_builder.py VERSION requirements.txt requirements_builder.txt; do
   if [ -f "$PROJECT_ROOT/$file" ]; then
     cp "$PROJECT_ROOT/$file" "$RESOURCE_DIR/$file"
   fi
