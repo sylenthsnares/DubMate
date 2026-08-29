@@ -169,6 +169,13 @@ def download_video_from_url(
     try:
         import yt_dlp
     except ImportError:
+        import sys
+        if getattr(sys, "frozen", False):
+            raise RuntimeError(
+                "YouTube / URL import is not available in this version of DubMate. "
+                "Use the web version (run_cloudflare.bat or run_web_studio.bat) and install the Pack Builder "
+                "AI pipeline (pip install -r requirements_builder.txt) to enable this feature."
+            )
         raise RuntimeError("yt-dlp is not installed. Install it with: pip install -r requirements_builder.txt")
 
     os.makedirs(output_dir, exist_ok=True)

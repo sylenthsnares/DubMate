@@ -5,6 +5,7 @@ compatibility_date = "2025-02-04"
 [[kv_namespaces]]
 binding = "ROOMS"
 id = "e954cacd7b034f8ca646c2142034614b"
+preview_id = "2a883ef656ba4596bdf441f23dc613b4"
 
 [[routes]]
 pattern = "dubmate.bkaproductions.com"

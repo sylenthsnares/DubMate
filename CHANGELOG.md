@@ -1,5 +1,12 @@
 # DubMate Studio Changelog
 
+## [1.0.7] - 2026-08-29
+
+### Fixed Cloudflare Registry Room Resolution & Isolated Preview KV
+- **Worker Room Resolve Variable Fix (`worker/src/index.ts`)**: Resolved `ReferenceError: code is not defined` on `/rooms/:code/resolve` and `/join/:code` endpoints when clients request JSON responses by correctly referencing the local `rawCode` variable.
+- **Wrangler Preview Namespace & Vitest Integration Suite**: Configured isolated `preview_id` in `wrangler.toml` and introduced 9 deep integration tests (`tests/room-integration.test.ts`) using `@cloudflare/vitest-plugin` running in the Workers environment to verify room creation, KV persistence, resolve, joining, and room updates.
+- **Context-Aware Pack Builder Diagnostics (`pack_builder.py`)**: Enhanced `yt-dlp` import error handler to detect frozen executable runtime and provide clear, actionable instructions for web vs desktop distributions.
+
 ## [1.0.6] - 2026-08-29
 
 ### Fixed Desktop Webview 404 Route & Static Asset Resolution

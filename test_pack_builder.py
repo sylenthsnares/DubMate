@@ -311,13 +311,22 @@ NOTE This is a test subtitle file
         """Tests Japanese to Romaji romanization for dubbing subtitles."""
         japanese_text = "心臓を捧げよ！進め！"
         romaji = pack_builder.to_romaji(japanese_text)
-        self.assertIn("sasage", romaji.lower())
-        self.assertIn("susume", romaji.lower())
+        try:
+            import pykakasi
+            self.assertIn("sasage", romaji.lower())
+            self.assertIn("susume", romaji.lower())
+        except ImportError:
+            # When optional pykakasi is not installed, to_romaji gracefully returns original text
+            self.assertEqual(romaji, japanese_text)
 
         # Test API endpoint
         res = self.client.post("/api/builder/test_session/romanize", json={"text": "何をしている？"})
         self.assertEqual(res.status_code, 200)
-        self.assertIn("nani", res.json()["romaji"].lower())
+        try:
+            import pykakasi
+            self.assertIn("nani", res.json()["romaji"].lower())
+        except ImportError:
+            self.assertEqual(res.json()["romaji"], "何をしている？")
 
     def test_08_import_url_endpoint(self):
         """Tests the /api/builder/import_url endpoint for YouTube URL direct ingestion."""

@@ -8,7 +8,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
-    "test": "node --experimental-strip-types tests/worker.test.mjs"
+    "test": "node --experimental-strip-types tests/worker.test.mjs",
+    "test:integration": "vitest run --config vitest.config.ts",
+    "test:all": "node --experimental-strip-types tests/worker.test.mjs && vitest run --config vitest.config.ts"
   },
   "keywords": [
     "dubmate",
@@ -18,8 +20,11 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.2",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20250214.0",
     "typescript": "^5.7.3",
+    "vitest": "^4.1.11",
     "wrangler": "^3.109.2"
   }
 }

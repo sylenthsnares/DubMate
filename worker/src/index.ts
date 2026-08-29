@@ -270,7 +270,7 @@ export default {
       // If client explicitly asks for JSON, return entry metadata
       if (acceptsJson) {
         return jsonResponse({
-          code,
+          code: rawCode,
           tunnel_url: entry.tunnel_url,
           app_version: entry.app_version,
           created_at: entry.created_at,
