@@ -4,9 +4,14 @@
 const splash = document.getElementById("splash");
 const updaterBox = document.getElementById("updater-box");
 const errorBox = document.getElementById("error-box");
+const progressBar = document.getElementById("progress-bar");
 const progressFill = document.getElementById("progress-fill");
 const progressPercent = document.getElementById("progress-percent");
 const progressText = document.getElementById("progress-text");
+const progressHeadline = document.getElementById("progress-headline");
+const builderStages = document.getElementById("builder-stages");
+const techDetails = document.getElementById("tech-details");
+const techLog = document.getElementById("tech-log");
 const updaterMsg = document.getElementById("updater-msg");
 const statusText = document.getElementById("status-text");
 const detailText = document.getElementById("detail-text");
@@ -143,17 +148,21 @@ DubMate could not apply update ${payload.data.latest_version}. ` +
         }
       });
 
-      // Stream pip output during the Pack Builder download
+      // Structured install progress during the Pack Builder download
       listen("packbuilder-progress", (event) => {
-        if (progressText && event.payload) {
-          progressText.innerText = String(event.payload).slice(0, 120);
-        }
+        renderBuilderProgress(event.payload);
       });
 
       // Listen for download progress
       listen("update-progress", (event) => {
         const p = event.payload;
         if (p) {
+          // The updater shares this card with the Pack Builder install; keep the
+          // builder-only chrome out of the way.
+          if (builderStages) builderStages.style.display = "none";
+          if (techDetails) techDetails.style.display = "none";
+          if (progressBar) progressBar.classList.remove("is-idle");
+          if (progressHeadline) progressHeadline.innerText = "Downloading the update";
           if (progressFill) progressFill.style.width = `${p.percentage}%`;
           if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
           if (progressText) {
@@ -203,6 +212,45 @@ DubMate could not apply update ${payload.data.latest_version}. ` +
   pollAndEnterStudio();
 }
 
+const BUILDER_STAGE_ORDER = ["preparing", "downloading", "installing", "finalizing"];
+
+/**
+ * Renders a `PackBuilderProgress` from Rust: stage indicator, bar, plain-language
+ * headline, and the raw pip line tucked into a collapsed details pane.
+ *
+ * Tolerates a bare string payload so an older Rust build (or the engine-restart
+ * notice) still shows something sensible rather than "[object Object]".
+ */
+function renderBuilderProgress(payload) {
+  if (!payload) return;
+  const p = typeof payload === "string"
+    ? { phase: "", headline: payload.slice(0, 120), detail: "", percent: null, raw: payload }
+    : payload;
+
+  if (progressHeadline && p.headline) progressHeadline.innerText = p.headline;
+  if (progressText) progressText.innerText = p.detail || "";
+
+  if (typeof p.percent === "number" && Number.isFinite(p.percent)) {
+    const pct = Math.max(0, Math.min(100, p.percent));
+    if (progressFill) progressFill.style.width = `${pct}%`;
+    if (progressPercent) progressPercent.innerText = `${Math.round(pct)}%`;
+  }
+
+  // Highlight the current stage and mark earlier ones done.
+  if (builderStages && p.phase) {
+    const current = BUILDER_STAGE_ORDER.indexOf(p.phase);
+    builderStages.querySelectorAll(".stage").forEach((el) => {
+      const index = BUILDER_STAGE_ORDER.indexOf(el.dataset.stage);
+      el.classList.toggle("is-active", index === current);
+      el.classList.toggle("is-done", current >= 0 && index < current);
+    });
+  }
+
+  if (techLog && p.raw) {
+    techLog.innerText = p.raw;
+  }
+}
+
 /**
  * Runs the one-time Pack Builder AI download when the installer recorded an opt-in.
  * Returns false only when the install failed and an error card is now on screen,
@@ -226,13 +274,20 @@ async function maybeInstallPackBuilder(invoke) {
   showUpdater();
   if (updaterTitle) updaterTitle.innerText = "PACK BUILDER";
   if (updaterMsg) {
+    // Say what it does, not what it is called. Package names mean nothing to
+    // someone who just wants to turn a video into a dubbing scene.
     updaterMsg.innerText =
-      "Installing the Pack Builder AI pipeline (PyTorch + Demucs + Whisper). " +
-      "One-time download of roughly 2 GB into " + status.target_dir + ".";
+      "Setting up the tools that turn a video into a dub pack — separating vocals " +
+      "from background audio and transcribing the dialogue. This is a one-time " +
+      "download of about 2 GB. You can keep this window open and come back later.";
   }
-  if (progressFill) progressFill.style.width = "100%";
-  if (progressPercent) progressPercent.innerText = "";
-  if (progressText) progressText.innerText = "Resolving packages...";
+  if (builderStages) builderStages.style.display = "flex";
+  if (techDetails) techDetails.style.display = "block";
+  if (progressBar) progressBar.classList.remove("is-idle");
+  if (progressFill) progressFill.style.width = "2%";
+  if (progressPercent) progressPercent.innerText = "0%";
+  if (progressHeadline) progressHeadline.innerText = "Getting ready";
+  if (progressText) progressText.innerText = "";
 
   try {
     await invoke("install_packbuilder");

@@ -322,6 +322,66 @@ try {
       process.exit(1);
     }
 
+    // Test 8a: friendlyError keeps machine output out of the UI.
+    // Every one of these strings used to be shown to users verbatim.
+    if (typeof app.friendlyError === "function") {
+      const mustNotLeak = [
+        "Command '['C:\\Program Files\\ffmpeg.exe', '-y']' returned non-zero exit status 1.",
+        "HTTP 500",
+        "Traceback (most recent call last):",
+        "Unexpected token '<', \"<html>\" is not valid JSON",
+        "[Errno 2] No such file or directory: 'C:\\takes\\x.wav'",
+      ];
+      const leaked = mustNotLeak.filter((raw) => {
+        const shown = app.friendlyError(new Error(raw));
+        return shown.includes(raw) || /ffmpeg|Traceback|Errno|HTTP \d{3}|[A-Za-z]:\\/.test(shown);
+      });
+      if (leaked.length === 0) {
+        console.log("PASS: friendlyError() strips machine output from user-facing text!");
+      } else {
+        console.error("FAIL: friendlyError leaked technical text:", leaked);
+        process.exit(1);
+      }
+
+      // A message written for humans should survive untouched.
+      const humane = "Please pick a dub pack before starting.";
+      if (app.friendlyError(new Error(humane)) === humane) {
+        console.log("PASS: friendlyError() passes human-readable messages through!");
+      } else {
+        console.error("FAIL: friendlyError mangled a human-readable message");
+        process.exit(1);
+      }
+
+      // Known conditions get actionable copy rather than the fallback.
+      const offline = app.friendlyError(new Error("Failed to fetch"));
+      if (/connection/i.test(offline)) {
+        console.log("PASS: friendlyError() maps network failures to actionable copy!");
+      } else {
+        console.error("FAIL: network error not mapped, got:", offline);
+        process.exit(1);
+      }
+    } else {
+      console.error("FAIL: friendlyError() missing from the studio app!");
+      process.exit(1);
+    }
+
+    // Test 8b: the export modal must always be escapable.
+    // It used to seal the user in: close button hidden, Esc and backdrop disabled,
+    // Leave Room greyed out, with a page reload the only way out.
+    if (typeof app.releaseExportModal === "function" && typeof app.failExport === "function") {
+      app.isRenderingExport = true;
+      app.failExport(new Error("failed: ffmpeg returned non-zero exit status 1"));
+      if (app.isRenderingExport === false) {
+        console.log("PASS: a failed export releases the modal instead of trapping the user!");
+      } else {
+        console.error("FAIL: isRenderingExport stayed true after a failed export");
+        process.exit(1);
+      }
+    } else {
+      console.error("FAIL: releaseExportModal/failExport missing!");
+      process.exit(1);
+    }
+
     // Test 8: Sample-Accurate Video Seek & Playback Stop helpers
     if (typeof app.syncVideoSeek === "function" && typeof app.stopBoothPlayback === "function") {
       app.stopBoothPlayback();

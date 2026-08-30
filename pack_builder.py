@@ -24,6 +24,17 @@ import pack_loader
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+class MissingPipelineError(RuntimeError):
+    """
+    The optional Pack Builder AI pipeline is not installed.
+
+    Distinct from a generic RuntimeError so app.py can answer with a code the UI
+    acts on -- pointing at the installer that already exists in the app -- instead
+    of printing "pip install -r requirements_builder.txt" at someone who just
+    wants to dub a clip.
+    """
+
+
 def ensure_ai_packages_on_path():
     """
     Adds the optional Pack Builder AI pipeline directory to sys.path.
@@ -102,6 +113,12 @@ class BuildProgress:
         self.message = "Initializing builder session..."
         self.stage = "init"
         self.error: Optional[str] = None
+        # Machine-readable companion to `error`, so the wizard can route a missing
+        # pipeline to the installer instead of just printing the message.
+        self.error_code: Optional[str] = None
+        # Non-fatal notice, e.g. neural separation unavailable and a basic filter
+        # was used instead. Shown alongside a successful result.
+        self.warning: Optional[str] = None
         self.segments: List[Dict[str, Any]] = []
         self.characters: List[str] = []
         self.device_info: Dict[str, Any] = {}
@@ -131,6 +148,8 @@ class BuildProgress:
                 "message": self.message,
                 "stage": self.stage,
                 "error": self.error,
+                "error_code": self.error_code,
+                "warning": self.warning,
                 "segments": self.segments,
                 "characters": self.characters,
                 "device_info": self.device_info,
@@ -201,6 +220,91 @@ def extract_audio_from_video(video_path: str, output_wav: str) -> str:
     raise RuntimeError(f"FFmpeg audio extraction failed: {res.stderr.strip() or 'Unknown error'}")
 
 
+# Captions are written under their own prefix so the scan below cannot confuse them
+# with the media file, and so a stale caption from an earlier attempt is easy to spot.
+SUBTITLE_FILE_PREFIX = "caption"
+
+
+def preferred_subtitle_langs(info: Dict[str, Any]) -> List[str]:
+    """
+    The video's own language plus English, never 'all'.
+
+    Asking for 'all' expanded to ~157 machine-translated ASR tracks, which is both
+    what tripped YouTube's rate limiter and useless for dubbing -- a Bengali ASR
+    track auto-translated into Abkhaz is not a dialogue script. Only languages the
+    video actually publishes are requested, so we never ask for a track that cannot
+    exist.
+    """
+    available = set()
+    for key in ("subtitles", "automatic_captions"):
+        tracks = info.get(key) or {}
+        if isinstance(tracks, dict):
+            available.update(tracks.keys())
+
+    wanted: List[str] = []
+    for candidate in (info.get("language"), "en"):
+        base = (candidate or "").split("-")[0].strip().lower()
+        if not base or base in wanted:
+            continue
+        # Accept an exact match or a regional variant the video actually offers.
+        matches = [t for t in available if t.split("-")[0].lower() == base]
+        if matches:
+            wanted.append(sorted(matches, key=len)[0])
+    return wanted
+
+
+def fetch_subtitles_best_effort(
+    yt_dlp_module,
+    url: str,
+    info: Dict[str, Any],
+    output_dir: str,
+    base_opts: Dict[str, Any],
+) -> List[str]:
+    """
+    Downloads captions for an already-downloaded video, swallowing every failure.
+
+    Captions only pre-seed the dialogue timeline so Whisper can be skipped; when they
+    are missing, transcribe_audio() produces the same result from the isolated vocals
+    stem. Nothing here is allowed to fail the import.
+    """
+    langs = preferred_subtitle_langs(info)
+    if not langs:
+        return []
+
+    sub_opts = dict(base_opts)
+    sub_opts.update({
+        'skip_download': True,
+        'writethumbnail': False,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': langs,
+        'subtitlesformat': 'srt/vtt/best',
+        # Own template: yt-dlp otherwise names captions after the media file, and the
+        # scan that reads them skips source_video.* -- so they were downloaded and
+        # then silently ignored.
+        'outtmpl': {'default': os.path.join(output_dir, f"{SUBTITLE_FILE_PREFIX}.%(ext)s")},
+        # One quick attempt. A caption fetch is not worth making the user wait.
+        'retries': 1,
+        'socket_timeout': 10,
+        'ignoreerrors': True,
+    })
+
+    try:
+        with yt_dlp_module.YoutubeDL(sub_opts) as ydl:
+            ydl.download([url])
+    except Exception as ex:
+        print(f"[PackBuilder] Captions unavailable ({ex}); Whisper will transcribe instead.")
+        return []
+
+    found = sorted(
+        f for f in os.listdir(output_dir)
+        if f.startswith(f"{SUBTITLE_FILE_PREFIX}.") and (f.endswith(".srt") or f.endswith(".vtt"))
+    )
+    if not found:
+        print("[PackBuilder] No captions published for this video; Whisper will transcribe instead.")
+    return found
+
+
 def download_video_from_url(
     url: str,
     output_dir: str,
@@ -219,14 +323,9 @@ def download_video_from_url(
     try:
         import yt_dlp
     except ImportError:
-        import sys
-        if getattr(sys, "frozen", False):
-            raise RuntimeError(
-                "The Pack Builder AI pipeline is not installed. Reinstall DubMate Studio and tick "
-                "'Include the Pack Builder AI pipeline' during setup, or install it from within the app. "
-                "On the web version: pip install -r requirements_builder.txt"
-            )
-        raise RuntimeError("yt-dlp is not installed. Install it with: pip install -r requirements_builder.txt")
+        raise MissingPipelineError(
+            "Importing from a link needs the Pack Builder tools, which aren't installed yet."
+        )
 
     os.makedirs(output_dir, exist_ok=True)
     video_out_tmpl = os.path.join(output_dir, "source_video.%(ext)s")
@@ -234,7 +333,14 @@ def download_video_from_url(
     ffmpeg_bin = pack_loader.get_ffmpeg_path()
     ffmpeg_dir = os.path.dirname(ffmpeg_bin) if os.path.isfile(ffmpeg_bin) else ffmpeg_bin
 
-    # Options for yt-dlp optimized for reliability, anti-throttling & signature decryption
+    # Options for yt-dlp optimized for reliability, anti-throttling & signature decryption.
+    #
+    # Subtitles are deliberately NOT requested here. yt-dlp writes subtitles *before*
+    # it fetches the media stream, so a caption failure aborted the whole import with
+    # zero video bytes downloaded -- reported to the user as "Failed to download video",
+    # which pointed at the wrong thing entirely. Captions are only an optimization
+    # (see fetch_subtitles_best_effort), so they are fetched separately afterwards
+    # where a failure costs nothing.
     ydl_opts = {
         'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
         'outtmpl': {
@@ -244,22 +350,15 @@ def download_video_from_url(
         'merge_output_format': 'mp4',
         'ffmpeg_location': ffmpeg_dir,
         'writethumbnail': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': ['all', '-live_chat'],
-        'subtitlesformat': 'srt/vtt/best',
         'noplaylist': True,
         'quiet': True,
-        'no_warnings': True,
+        # Warnings stay on: YouTube silently drops adaptive formats when a PO token
+        # is missing, and swallowing that made a 360p fallback look like a 1080p
+        # download. These land in the engine log, not in the user's face.
         'nocheckcertificate': True,
         'socket_timeout': 30,
         'retries': 5,
         'fragment_retries': 5,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web', 'mweb'],
-            }
-        },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         },
@@ -283,6 +382,9 @@ def download_video_from_url(
         if "Unsupported URL" in err_msg or "is not a valid URL" in err_msg:
             raise ValueError(f"Invalid or unsupported video URL: {clean_url}")
         raise RuntimeError(f"Failed to download video with yt-dlp: {err_msg}")
+
+    # Best-effort captions, after the video is safely on disk.
+    fetch_subtitles_best_effort(yt_dlp, clean_url, info, output_dir, ydl_opts)
 
     # Find the downloaded source_video file (must be a valid video container, not info.json or image)
     VIDEO_CONTAINER_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".ts", ".m4v"}
@@ -332,10 +434,15 @@ def download_video_from_url(
             cover_path = os.path.join(output_dir, f)
             break
 
-    # Find and parse subtitles if available
+    # Find and parse subtitles if available. Prefer our own caption.* files; the
+    # broader scan is a fallback for captions supplied by other means.
     subtitle_segments = []
-    for f in os.listdir(output_dir):
-        if (f.endswith(".srt") or f.endswith(".vtt")) and not f.startswith("source_video.") and not f.startswith("scene_video."):
+    candidates = sorted(
+        (f for f in os.listdir(output_dir) if f.endswith(".srt") or f.endswith(".vtt")),
+        key=lambda f: (not f.startswith(f"{SUBTITLE_FILE_PREFIX}."), f),
+    )
+    for f in candidates:
+        if not f.startswith("source_video.") and not f.startswith("scene_video."):
             sub_file_path = os.path.join(output_dir, f)
             try:
                 with open(sub_file_path, "r", encoding="utf-8", errors="ignore") as sf:
@@ -413,17 +520,37 @@ def separate_audio_stems(audio_wav: str, output_dir: str, model_name: str = "htd
                 return {"vocals": vocals_out, "backing": backing_out, "separated": True, "device": device}
 
         except ImportError:
-            print("[PackBuilder] Demucs package not installed. Install requirements_builder.txt to enable AI vocal isolation.")
+            fallback_reason = "not_installed"
+            print("[PackBuilder] Demucs package not installed; using the basic filter instead.")
         except Exception as ex:
-            print(f"[PackBuilder] Demucs execution failed: {ex}. Falling back to clean audio duplicate.")
+            fallback_reason = "failed"
+            print(f"[PackBuilder] Demucs execution failed: {ex}. Falling back to the basic filter.")
+    else:
+        fallback_reason = "not_installed"
 
-    # Fallback: Apply DSP center-channel vocal attenuation for backing track
+    # Fallback: Apply DSP center-channel vocal attenuation for backing track.
+    # This is markedly worse than neural separation, so it is reported rather than
+    # quietly substituted -- the user was promised AI vocal isolation.
     print("[PackBuilder] Applying DSP center-channel vocal attenuation filter for backing track...")
     shutil.copyfile(audio_wav, vocals_out)
     success = attenuate_vocals_dsp(audio_wav, backing_out)
     if not success:
         shutil.copyfile(audio_wav, backing_out)
-    return {"vocals": vocals_out, "backing": backing_out, "separated": success, "device": "dsp_filter"}
+    return {
+        "vocals": vocals_out,
+        "backing": backing_out,
+        "separated": success,
+        "device": "dsp_filter",
+        "used_fallback": True,
+        "fallback_reason": fallback_reason,
+        "fallback_notice": (
+            "AI vocal separation isn't installed, so a basic filter was used. "
+            "Background audio may bleed into the dialogue track."
+            if fallback_reason == "not_installed" else
+            "AI vocal separation couldn't run, so a basic filter was used. "
+            "Background audio may bleed into the dialogue track."
+        ),
+    }
 
 
 def attenuate_vocals_dsp(input_wav: str, output_wav: str) -> bool:
@@ -586,12 +713,20 @@ def transcribe_audio(audio_wav: str, model_size: str = "base", language: Optiona
         print(f"[PackBuilder] Whisper detected {len(segments)} dialogue lines on {device.upper()}.")
         return segments
 
+    # Failures raise rather than returning []. Swallowing them produced a pack with
+    # an empty timeline that the pipeline reported as a success, so the only message
+    # the user ever got was "Please add at least 1 dialogue line before building" --
+    # blaming them for something that broke upstream.
     except ImportError:
-        print("[PackBuilder] Whisper package not installed. Install requirements_builder.txt to enable auto-transcription.")
-        return []
+        raise MissingPipelineError(
+            "Automatic transcription needs the Pack Builder tools, which aren't installed yet."
+        )
     except Exception as ex:
         print(f"[PackBuilder] Whisper transcription failed: {ex}")
-        return []
+        raise RuntimeError(
+            "We couldn't pick out any dialogue in this clip. "
+            "You can still add lines yourself, or try a clearer clip."
+        )
 
 
 def parse_timestamp_seconds(ts_str: str) -> float:

@@ -62,6 +62,10 @@ start "DubMate Backend Server" /min cmd /c "cd /d "%~dp0" && "%PY_RUNNER%" app.p
 timeout /t 3 /nobreak >nul
 
 :: 5. Start Cloudflare Tunnel and display public URL
+::    Routed through run_tunnel.py so the engine is told its own public URL. Running
+::    cloudflared directly leaves the engine unaware of the tunnel, and room codes
+::    then never reach the public registry -- guests get "room not found" for a code
+::    the host can see on screen.
 echo [2/2] Starting Cloudflare Public Tunnel...
 echo.
 echo ===================================================
@@ -70,7 +74,7 @@ echo   https://xxxx-xxxx-xxxx.trycloudflare.com
 echo ===================================================
 echo.
 
-"%CF_BIN%" tunnel --url http://127.0.0.1:8000
+"%PY_RUNNER%" "%~dp0scripts\run_tunnel.py" --cloudflared "%CF_BIN%" --port 8000
 
 echo.
 echo Tunnel closed. Stopping server...

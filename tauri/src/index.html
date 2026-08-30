@@ -162,7 +162,25 @@
       height: 100%;
       width: 0%;
       background: linear-gradient(90deg, #d97706, #f59e0b);
-      transition: width 0.2s;
+      transition: width 0.35s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    /* Faint travelling sheen so a long, slow download still reads as "alive"
+       even while the percentage sits on one number. */
+    .progress-fill::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+      transform: translateX(-100%);
+      animation: sheen 1.8s ease-in-out infinite;
+    }
+    .progress-bar.is-idle .progress-fill::after {
+      animation: none;
+    }
+    @keyframes sheen {
+      to { transform: translateX(100%); }
     }
     .progress-meta {
       display: flex;
@@ -170,6 +188,84 @@
       font-size: 12px;
       color: var(--text-muted);
       font-family: monospace;
+    }
+
+    /* --- Pack Builder install ------------------------------------------- */
+    .stages {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin: 18px 0 4px 0;
+    }
+    .stage {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--text-muted);
+      transition: color 0.3s ease;
+    }
+    .stage-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3b3b4a;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
+    }
+    .stage-sep {
+      width: 14px;
+      height: 1px;
+      background: #3b3b4a;
+    }
+    .stage.is-done { color: #6b6b80; }
+    .stage.is-done .stage-dot { background: var(--primary); }
+    .stage.is-active { color: var(--text); }
+    .stage.is-active .stage-dot {
+      background: var(--primary);
+      box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.25);
+    }
+    .progress-headline {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-top: 14px;
+      min-height: 18px;
+    }
+    .tech-details {
+      margin-top: 16px;
+      text-align: left;
+    }
+    .tech-details summary {
+      cursor: pointer;
+      font-size: 10px;
+      color: #5f5f74;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      font-weight: 700;
+      list-style: none;
+      text-align: center;
+      transition: color 0.15s ease;
+    }
+    .tech-details summary::-webkit-details-marker { display: none; }
+    .tech-details summary:hover { color: var(--text-muted); }
+    .tech-log {
+      margin-top: 8px;
+      font-family: monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      background: #0b0b0e;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      max-height: 96px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      user-select: text;
     }
   </style>
 </head>
@@ -184,13 +280,31 @@
   <div id="updater-box" class="updater-box">
     <div class="logo">🎙️ DUBMATE <span id="updater-title">UPDATE</span></div>
     <p id="updater-msg" style="font-size: 13px; color: #a1a1aa; margin-top: 8px;">Applying update...</p>
-    <div class="progress-bar">
+
+    <div id="builder-stages" class="stages" style="display: none;">
+      <div class="stage" data-stage="preparing"><span class="stage-dot"></span>Prepare</div>
+      <div class="stage-sep"></div>
+      <div class="stage" data-stage="downloading"><span class="stage-dot"></span>Download</div>
+      <div class="stage-sep"></div>
+      <div class="stage" data-stage="installing"><span class="stage-dot"></span>Install</div>
+      <div class="stage-sep"></div>
+      <div class="stage" data-stage="finalizing"><span class="stage-dot"></span>Finish</div>
+    </div>
+
+    <div id="progress-headline" class="progress-headline"></div>
+
+    <div id="progress-bar" class="progress-bar is-idle">
       <div id="progress-fill" class="progress-fill"></div>
     </div>
     <div class="progress-meta">
       <span id="progress-percent">0%</span>
       <span id="progress-text">Downloading bundle...</span>
     </div>
+
+    <details id="tech-details" class="tech-details" style="display: none;">
+      <summary>Technical details</summary>
+      <div id="tech-log" class="tech-log"></div>
+    </details>
   </div>
 
   <div id="error-box" class="error-box">

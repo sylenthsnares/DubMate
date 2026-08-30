@@ -73,6 +73,16 @@ def test_javascript_syntax():
 def test_frontend_suite():
     print_header("Phase 3: Frontend JSDOM Headless DOM & Audio Integration Suite")
     t0 = time.time()
+    launcher = subprocess.run(["node", os.path.join(TESTS_DIR, "test_launcher_ui.js")], capture_output=True, text=True)
+    if launcher.returncode == 0:
+        print("  [PASS] Desktop Launcher Install Card")
+        for line in launcher.stdout.strip().split("\n"):
+            if "PASS:" in line:
+                print(f"         {line.strip()}")
+    else:
+        print(f"  [FAIL] Desktop Launcher Install Card FAILED:\n{launcher.stderr}\n{launcher.stdout}")
+        return False, time.time() - t0
+
     res = subprocess.run(["node", os.path.join(TESTS_DIR, "test_frontend.js")], capture_output=True, text=True)
     dur = time.time() - t0
     if res.returncode == 0:
@@ -90,6 +100,8 @@ def test_python_suites():
     suites = [
         ("test_config_pack_path.py", "Scene Pack Configuration & Dynamic Path Resolver"),
         ("test_host_transfer.py", "Multiplayer Host Migration & Version Handshake"),
+        ("test_room_registry.py", "Public Room Code Publishing & Tunnel Handoff"),
+        ("test_performance_guards.py", "Cold Start, Audio I/O & Cache Policy Guards"),
         ("test_loading_screens.py", "Desktop Launcher Resilience & Modal States"),
         ("test_loudness_alignment.py", "Audio Loudness Normalization & True-Peak DSP"),
         ("test_noise_reduction.py", "Noise Profile Calibration & Dual-Take Generation"),

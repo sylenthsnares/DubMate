@@ -55,7 +55,7 @@ export class RoomSocket {
       this.ws = null;
     }
 
-    this.connectionState = 'connecting';
+    this._setConnectionState('connecting');
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/${roomId}/${userId}`;
@@ -63,7 +63,7 @@ export class RoomSocket {
 
     this.ws.onopen = () => {
       console.log(`[Socket] Connected to room ${roomId} as ${userName}`);
-      this.connectionState = 'open';
+      this._setConnectionState('open');
       this.reconnectAttempts = 0; // Reset backoff on a successful connection
       this.lastMessageAt = Date.now();
       const appVersion = window.__dubmate_app_version || "1.0.0";
@@ -91,8 +91,8 @@ export class RoomSocket {
         this.reconnectTimeout = null;
       }
       if (this.roomId && this.userId) {
-        this.connectionState = 'reconnecting';
         const delay = this._nextReconnectDelay();
+        this._setConnectionState('reconnecting', { retryInMs: delay, attempt: this.reconnectAttempts });
         console.warn(`[Socket] Connection closed unexpectedly. Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})...`);
         this.reconnectTimeout = setTimeout(() => {
           this.reconnectTimeout = null;
@@ -101,7 +101,7 @@ export class RoomSocket {
           }
         }, delay);
       } else {
-        this.connectionState = 'disconnected';
+        this._setConnectionState('disconnected');
         console.log("[Socket] Disconnected from room.");
       }
     };
@@ -170,10 +170,33 @@ export class RoomSocket {
     }
   }
 
+  /**
+   * Publishes a connection-state change so the UI can show it.
+   *
+   * The state was tracked but never emitted, so a dropped connection looked
+   * completely normal on screen: the room sat there frozen while recordings and
+   * role changes silently evaporated.
+   */
+  _setConnectionState(state, detail = {}) {
+    if (this.connectionState === state) return;
+    this.connectionState = state;
+    this.emit('connection_state', { type: 'connection_state', payload: { state, ...detail } });
+  }
+
+  /**
+   * Returns false when the message could not be sent.
+   *
+   * This used to no-op silently while offline, so a take, a role assignment or a
+   * take-clear would just never happen with nothing shown to the user.
+   */
   send(type, payload = {}) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type, payload }));
+      return true;
     }
+    console.warn(`[Socket] Dropped '${type}' -- connection is ${this.connectionState}.`);
+    this.emit('send_failed', { type: 'send_failed', payload: { messageType: type } });
+    return false;
   }
 
   on(event, callback) {
