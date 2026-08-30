@@ -13,6 +13,10 @@ const RECONNECT_BASE_DELAY_MS = 2000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 
 export class RoomSocket {
+  // Cap on messages held while the socket is opening or reconnecting, so a long
+  // outage cannot grow the queue without limit.
+  static MAX_PENDING_MESSAGES = 50;
+
   constructor() {
     this.ws = null;
     this.listeners = new Map();
@@ -33,6 +37,11 @@ export class RoomSocket {
     // surface a persistent-disconnect condition if it chooses to.
     // One of: 'disconnected' | 'connecting' | 'open' | 'reconnecting'
     this.connectionState = 'disconnected';
+
+    // Messages raised while the socket is still opening, or during a reconnect,
+    // flushed once it is live. joinRoom() calls connect() and then broadcasts the
+    // user's status in the same tick, so that first message always lands here.
+    this.pendingMessages = [];
   }
 
   connect(roomId, userId, userName, userColor) {
@@ -68,6 +77,7 @@ export class RoomSocket {
       this.lastMessageAt = Date.now();
       const appVersion = window.__dubmate_app_version || "1.0.0";
       this.send('join', { name: userName, color: userColor, app_version: appVersion });
+      this.flushPending();
       this.startPing();
     };
 
@@ -127,6 +137,9 @@ export class RoomSocket {
     this.userId = null;
     this.stopPing();
     this.reconnectAttempts = 0;
+    // Leaving deliberately: anything still queued belongs to a room we are no
+    // longer in, and must not be replayed into the next one.
+    this.pendingMessages = [];
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -184,16 +197,51 @@ export class RoomSocket {
   }
 
   /**
-   * Returns false when the message could not be sent.
+   * Sends the queued messages that piled up while the socket was opening.
+   */
+  flushPending() {
+    if (!this.pendingMessages.length) return;
+    const queued = this.pendingMessages;
+    this.pendingMessages = [];
+    for (const message of queued) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        // Went down again mid-flush; put the rest back for the next open.
+        this.pendingMessages = queued.slice(queued.indexOf(message));
+        return;
+      }
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
+  /**
+   * Returns false only when the message is genuinely undeliverable.
    *
-   * This used to no-op silently while offline, so a take, a role assignment or a
-   * take-clear would just never happen with nothing shown to the user.
+   * A send while the socket is still opening is normal, not a failure: connect()
+   * returns before the handshake completes, and joinRoom() broadcasts the user's
+   * status immediately afterwards. Those messages are queued and flushed on open.
+   * Reporting them as "you're offline" was wrong -- and dropping them silently,
+   * which is what happened before the queue existed, was the older bug underneath.
+   *
+   * A send while genuinely disconnected still returns false, because that one
+   * really is lost.
    */
   send(type, payload = {}) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type, payload }));
       return true;
     }
+
+    const isOpening = this.ws && this.ws.readyState === WebSocket.CONNECTING;
+    if (isOpening || this.connectionState === 'reconnecting') {
+      // Bounded: a long outage should not grow this without limit. The oldest
+      // status updates are the least worth replaying.
+      if (this.pendingMessages.length >= RoomSocket.MAX_PENDING_MESSAGES) {
+        this.pendingMessages.shift();
+      }
+      this.pendingMessages.push({ type, payload });
+      return true;
+    }
+
     console.warn(`[Socket] Dropped '${type}' -- connection is ${this.connectionState}.`);
     this.emit('send_failed', { type: 'send_failed', payload: { messageType: type } });
     return false;

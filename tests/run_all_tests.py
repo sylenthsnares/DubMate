@@ -73,15 +73,17 @@ def test_javascript_syntax():
 def test_frontend_suite():
     print_header("Phase 3: Frontend JSDOM Headless DOM & Audio Integration Suite")
     t0 = time.time()
-    launcher = subprocess.run(["node", os.path.join(TESTS_DIR, "test_launcher_ui.js")], capture_output=True, text=True)
-    if launcher.returncode == 0:
-        print("  [PASS] Desktop Launcher Install Card")
-        for line in launcher.stdout.strip().split("\n"):
-            if "PASS:" in line:
-                print(f"         {line.strip()}")
-    else:
-        print(f"  [FAIL] Desktop Launcher Install Card FAILED:\n{launcher.stderr}\n{launcher.stdout}")
-        return False, time.time() - t0
+    for filename, label in (("test_room_socket.js", "Room Socket Delivery"),
+                            ("test_launcher_ui.js", "Desktop Launcher Install Card")):
+        node_res = subprocess.run(["node", os.path.join(TESTS_DIR, filename)], capture_output=True, text=True)
+        if node_res.returncode == 0:
+            print(f"  [PASS] {label}")
+            for line in node_res.stdout.strip().split("\n"):
+                if "PASS:" in line:
+                    print(f"         {line.strip()}")
+        else:
+            print(f"  [FAIL] {label} FAILED:\n{node_res.stderr}\n{node_res.stdout}")
+            return False, time.time() - t0
 
     res = subprocess.run(["node", os.path.join(TESTS_DIR, "test_frontend.js")], capture_output=True, text=True)
     dur = time.time() - t0
