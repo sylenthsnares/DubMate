@@ -371,12 +371,21 @@ export default {
     const resolveMatch = path.match(/^\/(?:rooms\/([A-Za-z0-9-]+)\/resolve|join\/([A-Za-z0-9-]+))$/);
     if (request.method === "GET" && resolveMatch) {
       const rawCode = (resolveMatch[1] || resolveMatch[2]).toUpperCase();
+      // Track the key the entry was actually found under, which may differ from what
+      // was requested because of the DUB- prefix fallbacks. The host's studio only
+      // knows the room by its stored code, so that is what has to be handed back.
+      let matchedCode = rawCode;
       let rawEntry = await env.ROOMS.get(rawCode);
       if (!rawEntry && !rawCode.startsWith("DUB-")) {
-        rawEntry = await env.ROOMS.get(`DUB-${rawCode}`);
+        matchedCode = `DUB-${rawCode}`;
+        rawEntry = await env.ROOMS.get(matchedCode);
       }
       if (!rawEntry && rawCode.startsWith("DUB-")) {
-        rawEntry = await env.ROOMS.get(rawCode.replace(/^DUB-/, ""));
+        matchedCode = rawCode.replace(/^DUB-/, "");
+        rawEntry = await env.ROOMS.get(matchedCode);
+      }
+      if (!rawEntry) {
+        matchedCode = rawCode;
       }
       const acceptsJson = (request.headers.get("Accept") || "").includes("application/json");
 
@@ -400,18 +409,31 @@ export default {
       // If client explicitly asks for JSON, return entry metadata
       if (acceptsJson) {
         return jsonResponse({
-          code: rawCode,
+          code: matchedCode,
           tunnel_url: entry.tunnel_url,
           app_version: entry.app_version,
           created_at: entry.created_at,
         }, 200);
       }
 
-      // Otherwise, redirect client directly to the host's tunnel URL
+      // Otherwise, redirect the client to the host's tunnel, carrying the room code
+      // in the query string. Without it the guest lands on the host's scene picker
+      // with nothing indicating which room they were invited to, so a shared
+      // /join/CODE link did not actually join anything.
+      let location = entry.tunnel_url;
+      try {
+        const destination = new URL(entry.tunnel_url);
+        destination.searchParams.set("room", matchedCode);
+        location = destination.toString();
+      } catch {
+        // tunnel_url is validated on write, so this is unreachable in practice;
+        // redirect to the bare URL rather than failing an otherwise valid join.
+      }
+
       return new Response(null, {
         status: 302,
         headers: {
-          "Location": entry.tunnel_url,
+          "Location": location,
           ...CORS_HEADERS,
         },
       });
