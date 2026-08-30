@@ -46,9 +46,10 @@ jobs:
           if gh release view "v${{ steps.ver.outputs.VERSION }}" \
                --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "is_new=false" >> $GITHUB_OUTPUT
-            echo "v${{ steps.ver.outputs.VERSION }} already exists; installers will be skipped unless dispatched manually."
+            echo "::notice::v${{ steps.ver.outputs.VERSION }} is already published. Tests ran, but nothing will be released. Bump VERSION to cut a new release, or re-run this workflow manually to rebuild the existing one."
           else
             echo "is_new=true" >> $GITHUB_OUTPUT
+            echo "::notice::v${{ steps.ver.outputs.VERSION }} is new; the bundle and both installers will be published."
           fi
 
       - name: Set up Python
@@ -103,7 +104,16 @@ jobs:
           path: RELEASE_NOTES.md
           retention-days: 1
 
+      # Gated on the same condition as the installers, and for the same reason.
+      # Publishing was previously unconditional while the installers were gated,
+      # so any push to main with an unchanged VERSION overwrote the bundle on the
+      # already-published release without rebuilding its installers. That left
+      # v1.0.9 split: OTA clients pulled new Python and static assets while the
+      # .exe and .dmg on the same release still contained the previous build, and
+      # the release notes described neither. The two must move together or not
+      # at all.
       - name: Publish GitHub Release
+        if: steps.check.outputs.is_new == 'true' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.ver.outputs.VERSION }}

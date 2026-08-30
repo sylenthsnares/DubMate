@@ -1,5 +1,40 @@
 # DubMate Studio Changelog
 
+## [1.1.0] - 2026-08-30
+
+### Fixed Room Codes Never Reaching the Public Registry
+- **Publishing No Longer Depends on Startup Timing (`app.py`)**: registration was gated on `ACTIVE_TUNNEL_URL` at the moment a room was created. The desktop app opens the studio as soon as the engine answers `/health` and only *then* starts cloudflared, so a room created in the first few seconds had no tunnel to advertise — the condition was false, nothing was sent, and nothing ever retried. Codes are now queued at creation and published on room creation, on every tunnel change, and on a heartbeat. A new cloudflared hostname republishes every live code using its ownership token.
+- **Tunnel and Engine Now Agree on a Port (`tauri/src-tauri/src/main.rs`)**: the cloudflared target and the `/api/tunnel` callback were both hardcoded to port 8000 while the engine falls back to a free port when 8000 is taken. Both now use the port the engine actually bound. The callback retries instead of being fire-and-forget, and reads stdout as well as stderr.
+- **Source Checkouts Report Their Tunnel (`scripts/run_tunnel.py`, `run_cloudflare.bat`)**: the batch launcher ran cloudflared directly and never called `/api/tunnel`, so `ACTIVE_TUNNEL_URL` stayed unset for the whole process and no room was ever registered on that path.
+- **Invite Links Carry the Room Code (`worker/src/index.ts`)**: `/join/CODE` redirected to the bare tunnel URL with the code stripped, dropping guests on the scene picker with no indication which room they had been invited to.
+- **Room Code Status Is Visible (`app.py`, `static/js/app.js`)**: a new `/api/rooms/{code}/share` endpoint reports whether a code resolves and why not. The room badge shows an unpublished state, and Copy Code hands out a working direct link rather than a code nobody can redeem.
+
+### Fixed Pack Builder Link Imports
+- **Subtitle Failures Are No Longer Fatal (`pack_builder.py`)**: yt-dlp writes subtitles *before* it downloads the media, so a caption failure aborted the import with zero video bytes on disk — and reported it as "Failed to download video with yt-dlp", pointing at the wrong thing entirely. `subtitleslangs` was `['all']`, which expands to roughly 157 machine-translated caption tracks and trips YouTube's rate limiter on the first request. Video now downloads first with subtitles off; captions follow as best-effort in the video's own language plus English.
+- **Captions Are Actually Read**: even when they downloaded successfully, captions were written as `source_video.*.srt`, which the scan that reads them explicitly skipped. They now use their own filename prefix.
+- **Full-Resolution Video Restored**: the pinned `player_client` override was stale — `android` is SABR-blocked and `mweb` requires a PO token, so every adaptive format was silently dropped and imports fell back to a 360p progressive stream while the UI claimed "highest resolution". Warnings are no longer suppressed, so this cannot hide again.
+
+### Performance
+- **Engine Cold Start Cut From 3.84s to 1.30s (`audio_processor.py`)**: `import scipy.signal` sat at module scope to serve exactly one line in the codebase — a reverb convolution — costing every user roughly 1.6s of startup and 67 MB of resident memory whether or not they ever applied reverb. It is now imported inside the reverb path.
+- **Audio Reads 44x Faster (`audio_processor.py`)**: `read_wav_mono` spawned FFmpeg on every call (~100 ms flat, regardless of clip length) even for files already mono/44.1 kHz/16-bit — the exact format DubMate itself writes. A direct WAV read with fallback is byte-identical and runs in ~2 ms. This is called once per take inside `render_dub_mix`, where process spawns were 93% of wall time.
+- **Warm Pack Scans 28x Faster (`pack_loader.py`)**: `get_all_packs()` rewrote a 131 KB index on every call including calls that changed nothing, and `/api/config` did this on every request. The write is now conditional: 14.8 ms to 0.52 ms.
+- **Repeat Page Loads Transfer Nothing (`app.py`)**: static assets were sent with `no-store`, which forbids the browser from caching them at all, so the ETags the server already computed could never produce a `304`. Assets now revalidate, and the middleware honours `If-None-Match` — roughly 469 KB of JavaScript, CSS and HTML per repeat load becomes an empty `304`.
+- **Startup No Longer Blocks on Hardware Detection (`app.py`)**: the 389 ms encoder probe runs in the background; only `/api/system/encoder` needs its result.
+
+### Desktop and Studio Experience
+- **Pack Builder Install Shows Real Progress (`tauri/src-tauri/src/main.rs`, `tauri/src/`)**: a roughly 2 GB one-time download was presented as truncated pip output ("Collecting nvidia-cublas-cu12==12.4.5.8") against a bar pinned at 100%, which reads as either finished or frozen. Pip output is now parsed into staged progress with a real percentage and plain-language component names, with the raw log moved into a collapsed "Technical details" pane.
+- **The Export Modal Can Always Be Closed (`static/js/app.js`)**: a `throw` inside the status poll's own `try` was caught two lines below, so a failed render left `isRenderingExport` true — hiding the close button and disabling Esc, the backdrop, Leave Room and Back to Booth. A page reload was the only way out.
+- **Downloading a Project No Longer Ejects You From the Room (`static/js/app.js`)**: "Download Full Project" navigated to the endpoint, which answers errors as JSON, so any failure replaced the running studio with a raw JSON document and dropped the websocket. It now downloads via `fetch` and reports failures as a toast.
+- **Connection Loss Is Visible (`static/js/room_socket.js`, `static/js/app.js`)**: the socket tracked its state and reconnected with backoff but never surfaced either, and `send()` silently discarded messages while offline — so takes and role assignments evaporated with no indication. A persistent banner now shows the connection state, and dropped messages raise a toast.
+- **Failed Transcription No Longer Blames the User (`pack_builder.py`)**: Whisper failures were swallowed and the pipeline reported success, so the only message shown was "Please add at least 1 dialogue line before building."
+- **Degraded Audio Separation Is Disclosed (`pack_builder.py`)**: when Demucs is unavailable the pipeline falls back to a basic DSP filter. It previously did so silently while the interface promised AI vocal isolation.
+- **Hardware Acceleration Is Reported Honestly (`static/js/pack_builder.js`)**: `detectHardware()` was defined twice, and the second definition overwrote the real probe with a stub that hardcoded "CUDA GPU & CPU Ready" on every machine, including CPU-only laptops.
+- **Errors Are Written for People (`static/js/app.js`, `app.py`)**: FFmpeg command arrays, HTTP status codes, Python tracebacks and absolute filesystem paths were being shown verbatim in toasts. These now route through a single mapping layer and stay in the log. The missing-AI-pipeline path no longer prints a `pip install` command at users.
+- **Two Overstated Claims Corrected**: pack import said it was "scanning file signatures, verifying malware security" — it validates archive structure and does no malware scanning — and the builder claimed "highest resolution" for a download capped at 1080p.
+
+### Release Pipeline
+- **A Push Can No Longer Split a Published Release (`.github/workflows/release.yml`)**: the installer matrix was gated on the version being new, but publishing the app bundle was not. Any push to `main` with an unchanged `VERSION` therefore overwrote the bundle attached to the already-published release without rebuilding its installers. That is exactly what happened to v1.0.9: OTA clients received new Python and static assets while the `.exe` and `.dmg` on the same release still contained the previous build. Publishing is now gated on the same condition as the installers, so the two move together or not at all.
+
 ## [1.0.9] - 2026-08-29
 
 ### Fixed OTA Updates Never Taking Effect
