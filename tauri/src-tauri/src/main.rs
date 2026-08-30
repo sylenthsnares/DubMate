@@ -393,6 +393,300 @@ fn kill_sidecars(app: &tauri::AppHandle) {
     }
 }
 
+/// A human-readable snapshot of the Pack Builder install, sent to the launcher in
+/// place of raw pip output. Nobody installing a dubbing app should have to read
+/// "Collecting nvidia-cublas-cu12==12.4.5.8" to know whether anything is happening.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub struct PackBuilderProgress {
+    /// One of: preparing, downloading, installing, finalizing.
+    pub phase: String,
+    /// Short plain-language line, e.g. "Downloading the neural network engine".
+    pub headline: String,
+    /// Supporting figure, e.g. "412 MB of ~2.0 GB".
+    pub detail: String,
+    /// 0-100, monotonic. Never rewinds even when the size estimate grows.
+    pub percent: f64,
+    /// The original pip line, kept for the collapsible technical view.
+    pub raw: String,
+}
+
+/// Roughly what the AI pipeline weighs. Only used as the denominator until pip has
+/// announced enough real wheel sizes to beat it, so a wrong guess self-corrects
+/// instead of pinning the bar.
+const PACKBUILDER_EXPECTED_BYTES: f64 = 2.0 * 1024.0 * 1024.0 * 1024.0;
+
+/// Turns a pip distribution name into something a person recognises.
+fn friendly_component_name(package: &str) -> &'static str {
+    let p = package.to_ascii_lowercase();
+    if p.starts_with("nvidia-") || p.starts_with("triton") || p.starts_with("cuda") {
+        "GPU acceleration libraries"
+    } else if p.starts_with("torch") {
+        "the neural network engine"
+    } else if p.starts_with("demucs") || p.starts_with("julius") || p.starts_with("dora") {
+        "the vocal separation model"
+    } else if p.contains("whisper") || p.starts_with("tiktoken") {
+        "the speech recognition model"
+    } else if p.starts_with("yt-dlp") || p.starts_with("yt_dlp") {
+        "the video downloader"
+    } else if p.starts_with("numpy") || p.starts_with("scipy") || p.starts_with("numba")
+        || p.starts_with("llvmlite") || p.starts_with("sympy") || p.starts_with("mpmath")
+    {
+        "audio maths libraries"
+    } else if p.starts_with("pykakasi") {
+        "Japanese text support"
+    } else {
+        "supporting components"
+    }
+}
+
+/// Incrementally turns pip's line-by-line chatter into `PackBuilderProgress`.
+///
+/// pip does not render its byte-level progress bar when stdout is a pipe, so the
+/// only size signal available is the "Downloading x.whl (197.8 MB)" announcements.
+/// A file is treated as complete once the next one is announced, which is accurate
+/// enough for a bar and never overstates what has finished.
+#[derive(Default)]
+struct PipProgressParser {
+    completed_bytes: f64,
+    announced_total: f64,
+    current_bytes: f64,
+    current_component: String,
+    phase: String,
+    install_count: usize,
+    last_percent: f64,
+}
+
+impl PipProgressParser {
+    fn new() -> Self {
+        Self {
+            phase: "preparing".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Parses a trailing "(197.8 MB)" size annotation into bytes.
+    fn parse_size(line: &str) -> Option<f64> {
+        let open = line.rfind('(')?;
+        let close = line[open..].find(')')? + open;
+        let inner = line[open + 1..close].trim();
+        let mut parts = inner.split_whitespace();
+        let value: f64 = parts.next()?.parse().ok()?;
+        let unit = parts.next()?.to_ascii_lowercase();
+        let scale = match unit.as_str() {
+            "b" | "bytes" => 1.0,
+            "kb" => 1024.0,
+            "mb" => 1024.0 * 1024.0,
+            "gb" => 1024.0 * 1024.0 * 1024.0,
+            _ => return None,
+        };
+        Some(value * scale)
+    }
+
+    /// Pulls the distribution name out of "Collecting torch==2.4.0" or
+    /// "Downloading torch-2.4.0-cp311-win_amd64.whl (197.8 MB)".
+    fn package_from(line: &str, keyword: &str) -> String {
+        let rest = match line.find(keyword) {
+            Some(i) => line[i + keyword.len()..].trim(),
+            None => return String::new(),
+        };
+        let token = rest.split_whitespace().next().unwrap_or("");
+        // Wheel filenames are name-version-tags.whl; requirement specs are name==ver.
+        let name = token
+            .split(&['=', '<', '>', '!', '~', '['][..])
+            .next()
+            .unwrap_or(token);
+        match name.split_once('-') {
+            Some((head, _)) if name.ends_with(".whl") || name.ends_with(".tar.gz") => head.to_string(),
+            _ => name.to_string(),
+        }
+    }
+
+    fn format_bytes(bytes: f64) -> String {
+        if bytes >= 1024.0 * 1024.0 * 1024.0 {
+            format!("{:.1} GB", bytes / (1024.0 * 1024.0 * 1024.0))
+        } else {
+            format!("{:.0} MB", bytes / (1024.0 * 1024.0))
+        }
+    }
+
+    fn snapshot(&mut self, raw: &str) -> PackBuilderProgress {
+        let downloaded = self.completed_bytes;
+        let total = self.announced_total.max(PACKBUILDER_EXPECTED_BYTES);
+
+        // Downloading owns most of the bar because it owns most of the wall clock.
+        let raw_percent = match self.phase.as_str() {
+            "preparing" => 2.0,
+            "downloading" => 4.0 + (downloaded / total).min(1.0) * 81.0,
+            "installing" => 88.0,
+            _ => 97.0,
+        };
+        self.last_percent = raw_percent.max(self.last_percent).min(100.0);
+
+        let (headline, detail) = match self.phase.as_str() {
+            "preparing" => (
+                "Working out what to download".to_string(),
+                "This takes a moment".to_string(),
+            ),
+            "downloading" => (
+                format!("Downloading {}", self.current_component),
+                format!(
+                    "{} of ~{}",
+                    Self::format_bytes(downloaded),
+                    Self::format_bytes(total)
+                ),
+            ),
+            "installing" => (
+                "Unpacking and installing".to_string(),
+                if self.install_count > 0 {
+                    format!("{} components", self.install_count)
+                } else {
+                    "Almost there".to_string()
+                },
+            ),
+            _ => (
+                "Finishing up".to_string(),
+                "Restarting the studio engine".to_string(),
+            ),
+        };
+
+        PackBuilderProgress {
+            phase: self.phase.clone(),
+            headline,
+            detail,
+            percent: self.last_percent,
+            raw: raw.to_string(),
+        }
+    }
+
+    fn push(&mut self, line: &str) -> PackBuilderProgress {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("Downloading ") || trimmed.starts_with("Using cached ") {
+            let keyword = if trimmed.starts_with("Using cached ") {
+                "Using cached "
+            } else {
+                "Downloading "
+            };
+            // The previously announced file is finished the moment a new one starts.
+            self.completed_bytes += self.current_bytes;
+            self.current_bytes = Self::parse_size(trimmed).unwrap_or(0.0);
+            self.announced_total += self.current_bytes;
+            let package = Self::package_from(trimmed, keyword);
+            if !package.is_empty() {
+                self.current_component = friendly_component_name(&package).to_string();
+            }
+            self.phase = "downloading".to_string();
+        } else if trimmed.starts_with("Collecting ") || trimmed.starts_with("Requirement already satisfied") {
+            if self.phase == "preparing" {
+                let package = Self::package_from(trimmed, "Collecting ");
+                if !package.is_empty() {
+                    self.current_component = friendly_component_name(&package).to_string();
+                }
+            }
+        } else if trimmed.starts_with("Installing collected packages") {
+            // Everything announced has landed by this point.
+            self.completed_bytes += self.current_bytes;
+            self.current_bytes = 0.0;
+            self.install_count = trimmed
+                .split_once(':')
+                .map(|(_, list)| list.split(',').filter(|s| !s.trim().is_empty()).count())
+                .unwrap_or(0);
+            self.phase = "installing".to_string();
+        } else if trimmed.starts_with("Successfully installed") {
+            self.phase = "finalizing".to_string();
+        }
+
+        self.snapshot(trimmed)
+    }
+}
+
+#[cfg(test)]
+mod packbuilder_progress_tests {
+    use super::*;
+
+    #[test]
+    fn parses_wheel_sizes_in_several_units() {
+        assert_eq!(
+            PipProgressParser::parse_size("Downloading torch-2.4.0.whl (197.8 MB)"),
+            Some(197.8 * 1024.0 * 1024.0)
+        );
+        assert_eq!(
+            PipProgressParser::parse_size("Downloading tiny-1.0.whl (12.0 kB)"),
+            Some(12.0 * 1024.0)
+        );
+        assert_eq!(PipProgressParser::parse_size("Collecting torch"), None);
+    }
+
+    #[test]
+    fn extracts_package_names_from_specs_and_wheels() {
+        assert_eq!(PipProgressParser::package_from("Collecting torch==2.4.0", "Collecting "), "torch");
+        assert_eq!(
+            PipProgressParser::package_from("Downloading nvidia_cublas_cu12-12.4.5.8-py3.whl (363 MB)", "Downloading "),
+            "nvidia_cublas_cu12"
+        );
+    }
+
+    #[test]
+    fn maps_packages_to_language_a_person_understands() {
+        assert_eq!(friendly_component_name("torch"), "the neural network engine");
+        assert_eq!(friendly_component_name("nvidia-cublas-cu12"), "GPU acceleration libraries");
+        assert_eq!(friendly_component_name("openai-whisper"), "the speech recognition model");
+        assert_eq!(friendly_component_name("some-random-dep"), "supporting components");
+    }
+
+    #[test]
+    fn progress_advances_through_phases_and_never_rewinds() {
+        let mut p = PipProgressParser::new();
+        let lines = [
+            "Collecting torch>=2.0.0",
+            "Downloading torch-2.4.0-cp311-win_amd64.whl (197.8 MB)",
+            "Downloading nvidia_cublas_cu12-12.4.5.8.whl (363.4 MB)",
+            "Installing collected packages: torch, demucs, openai-whisper",
+            "Successfully installed torch-2.4.0 demucs-4.0.1",
+        ];
+
+        let mut last = 0.0;
+        let mut phases = Vec::new();
+        for line in lines {
+            let snap = p.push(line);
+            assert!(snap.percent >= last, "percent rewound at {line}: {} < {last}", snap.percent);
+            assert!(snap.percent <= 100.0);
+            assert!(!snap.headline.is_empty());
+            last = snap.percent;
+            phases.push(snap.phase);
+        }
+
+        assert_eq!(phases[0], "preparing");
+        assert_eq!(phases[1], "downloading");
+        assert_eq!(phases[3], "installing");
+        assert_eq!(phases[4], "finalizing");
+        assert!(last > 90.0, "should be near complete, got {last}");
+    }
+
+    #[test]
+    fn download_detail_reports_completed_bytes_not_announced_ones() {
+        let mut p = PipProgressParser::new();
+        // A single announced file is in flight, so nothing has completed yet.
+        let first = p.push("Downloading torch-2.4.0.whl (100.0 MB)");
+        assert!(first.detail.starts_with("0 MB of"), "got {}", first.detail);
+
+        // Announcing the next file means the first one landed.
+        let second = p.push("Downloading demucs-4.0.1.whl (50.0 MB)");
+        assert!(second.detail.starts_with("100 MB of"), "got {}", second.detail);
+        assert_eq!(second.headline, "Downloading the vocal separation model");
+    }
+
+    #[test]
+    fn oversized_installs_grow_the_estimate_instead_of_pinning_the_bar() {
+        let mut p = PipProgressParser::new();
+        // Announce well beyond the 2 GB guess.
+        p.push("Downloading a-1.0.whl (3000.0 MB)");
+        let snap = p.push("Downloading b-1.0.whl (1000.0 MB)");
+        assert!(snap.detail.contains("of ~3.9 GB"), "estimate should grow: {}", snap.detail);
+        assert!(snap.percent < 100.0);
+    }
+}
+
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct PackBuilderStatus {
     /// User ticked the Pack Builder option during installation.
@@ -458,11 +752,18 @@ fn run_pip_install(
         .spawn()
         .map_err(|e| format!("Failed to launch pip from {}: {}", py.display(), e))?;
 
+    // One parser shared by both streams, behind a mutex: pip interleaves them and the
+    // progress estimate has to see every line to stay accurate.
+    let parser = std::sync::Arc::new(std::sync::Mutex::new(PipProgressParser::new()));
+
     if let Some(stdout) = child.stdout.take() {
         let app = app.clone();
+        let parser = parser.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let _ = app.emit("packbuilder-progress", line);
+                if let Ok(mut p) = parser.lock() {
+                    let _ = app.emit("packbuilder-progress", p.push(&line));
+                }
             }
         });
     }
@@ -470,7 +771,9 @@ fn run_pip_install(
     let mut errors: Vec<String> = Vec::new();
     if let Some(stderr) = child.stderr.take() {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            let _ = app.emit("packbuilder-progress", line.clone());
+            if let Ok(mut p) = parser.lock() {
+                let _ = app.emit("packbuilder-progress", p.push(&line));
+            }
             errors.push(line);
         }
     }
@@ -522,7 +825,16 @@ async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
 
     // The engine caches imports at startup, so it must restart before torch/whisper
     // become importable — the same trap that made OTA updates look like no-ops.
-    let _ = app.emit("packbuilder-progress", "Restarting Studio Engine...");
+    let _ = app.emit(
+        "packbuilder-progress",
+        PackBuilderProgress {
+            phase: "finalizing".to_string(),
+            headline: "Finishing up".to_string(),
+            detail: "Restarting the studio engine".to_string(),
+            percent: 98.0,
+            raw: "Restarting Studio Engine...".to_string(),
+        },
+    );
     kill_sidecars(&app);
     start_sidecars(app.clone()).await;
 
@@ -845,9 +1157,15 @@ async fn start_sidecars(app: tauri::AppHandle) {
     }
 
     // 3. Spawn cloudflared tunnel sidecar
+    //
+    // Both the tunnel target and the callback below use `engine_port`, not a
+    // hardcoded 8000. The engine falls back to a free port when 8000 is taken, and
+    // pointing the tunnel at 8000 regardless meant guests reached nothing and the
+    // engine never learned its own public URL.
+    let tunnel_target = format!("http://127.0.0.1:{}", engine_port);
     if let Ok(cf_cmd) = app.shell().sidecar("sidecar/cloudflared") {
         if let Ok((mut rx, child)) = cf_cmd
-            .args(["tunnel", "--url", "http://127.0.0.1:8000"])
+            .args(["tunnel", "--url", &tunnel_target])
             .spawn()
         {
             {
@@ -862,30 +1180,72 @@ async fn start_sidecars(app: tauri::AppHandle) {
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
                 let re = Regex::new(r"https://[a-z0-9-]+\.trycloudflare\.com").unwrap();
+                let mut last_reported: Option<String> = None;
                 while let Some(event) = rx.recv().await {
-                    if let CommandEvent::Stderr(bytes) = event {
-                        let text = String::from_utf8_lossy(&bytes);
-                        if let Some(mat) = re.find(&text) {
-                            let tunnel_url = mat.as_str().to_string();
-                            {
-                                let state = app_clone.state::<SharedState>();
-                                let mut data = state.0.lock().unwrap();
-                                data.tunnel_url = Some(tunnel_url.clone());
-                                data.is_tunnel_ready = true;
-                            }
-                            let _ = app_clone.emit("tunnel-ready", tunnel_url.clone());
-
-                            // Notify local FastAPI server of active tunnel URL
-                            let url_clone = tunnel_url.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let c = reqwest::Client::new();
-                                let _ = c.post("http://127.0.0.1:8000/api/tunnel")
-                                    .json(&serde_json::json!({ "tunnel_url": url_clone }))
-                                    .send()
-                                    .await;
-                            });
+                    // cloudflared prints the quick-tunnel banner on stderr, but read
+                    // stdout too so a logging change upstream cannot silently break
+                    // public rooms.
+                    let text = match event {
+                        CommandEvent::Stderr(bytes) | CommandEvent::Stdout(bytes) => {
+                            String::from_utf8_lossy(&bytes).into_owned()
                         }
+                        _ => continue,
+                    };
+                    let Some(mat) = re.find(&text) else { continue };
+
+                    let tunnel_url = mat.as_str().to_string();
+                    if last_reported.as_deref() == Some(tunnel_url.as_str()) {
+                        continue;
                     }
+                    last_reported = Some(tunnel_url.clone());
+                    {
+                        let state = app_clone.state::<SharedState>();
+                        let mut data = state.0.lock().unwrap();
+                        data.tunnel_url = Some(tunnel_url.clone());
+                        data.is_tunnel_ready = true;
+                    }
+                    let _ = app_clone.emit("tunnel-ready", tunnel_url.clone());
+
+                    // Notify the local engine of the active tunnel URL. This is what
+                    // makes room codes resolvable, so it retries: dropping it on a
+                    // single transient failure leaves every room of the session
+                    // unjoinable with no way to recover.
+                    let url_clone = tunnel_url.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let c = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(5))
+                            .build()
+                            .unwrap_or_default();
+                        let endpoint = format!("http://127.0.0.1:{}/api/tunnel", engine_port);
+                        for attempt in 1..=10 {
+                            match c
+                                .post(&endpoint)
+                                .json(&serde_json::json!({ "tunnel_url": url_clone }))
+                                .send()
+                                .await
+                            {
+                                Ok(resp) if resp.status().is_success() => {
+                                    println!("[DubMate] Tunnel {} published to engine", url_clone);
+                                    return;
+                                }
+                                Ok(resp) => {
+                                    eprintln!(
+                                        "[DubMate] Engine rejected tunnel notice ({}), attempt {}/10",
+                                        resp.status(),
+                                        attempt
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "[DubMate] Could not notify engine of tunnel ({}), attempt {}/10",
+                                        e, attempt
+                                    );
+                                }
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                        eprintln!("[DubMate] Gave up notifying engine of tunnel {}", url_clone);
+                    });
                 }
             });
         }

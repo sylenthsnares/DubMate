@@ -167,13 +167,14 @@ test("GET /rooms/:code/resolve redirects to tunnel URL or returns JSON", async (
   const resolveReq = new Request(`http://localhost:8787/rooms/${code}/resolve`, { method: "GET" });
   const resolveRes = await worker.fetch(resolveReq, env);
   assert.equal(resolveRes.status, 302);
-  assert.equal(resolveRes.headers.get("Location"), "https://stream.trycloudflare.com");
+  // The room code rides along so the host's studio auto-joins on arrival.
+  assert.equal(resolveRes.headers.get("Location"), `https://stream.trycloudflare.com/?room=${code}`);
 
   // Test /join/:code alias
   const joinReq = new Request(`http://localhost:8787/join/${code.replace("DUB-", "")}`, { method: "GET" });
   const joinRes = await worker.fetch(joinReq, env);
   assert.equal(joinRes.status, 302);
-  assert.equal(joinRes.headers.get("Location"), "https://stream.trycloudflare.com");
+  assert.equal(joinRes.headers.get("Location"), `https://stream.trycloudflare.com/?room=${code}`);
 
   // Test JSON resolution
   const jsonReq = new Request(`http://localhost:8787/rooms/${code}/resolve`, {

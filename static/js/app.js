@@ -92,6 +92,10 @@ class DubMateApp {
     this.hasCustomNoiseProfile = false;
     this.pendingJoinRoomId = null;
 
+    // Public registry status for the current room, refreshed while it publishes.
+    this.roomShare = null;
+    this.shareWatchTimer = null;
+
     // --- Audio Device Setup / First-Run Onboarding State ---
     const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
     this.audioSetup = {
@@ -1044,6 +1048,18 @@ class DubMateApp {
       });
     }
 
+    this.socket.on('connection_state', (data) => {
+      this.renderConnectionState(data.payload || {});
+    });
+
+    // A message that could not be sent is a change the user thinks they made and
+    // nobody else will ever see. Say so rather than dropping it in silence.
+    this.socket.on('send_failed', () => {
+      if (this._sendFailureToastAt && Date.now() - this._sendFailureToastAt < 5000) return;
+      this._sendFailureToastAt = Date.now();
+      this.showToast("You're offline — that change wasn't saved to the room.");
+    });
+
     // Socket events
     this.socket.on('*', (data) => {
       if (data.state) {
@@ -1266,7 +1282,7 @@ class DubMateApp {
         } catch (err) {
           console.error('[HostTransfer] Failed to coordinate transfer:', err);
           this.hideHostTransferOverlay();
-          this.showToast('⚠️ Could not complete host migration: ' + err.message);
+          this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't hand over hosting. Please try again.")}`);
         }
       }
     });
@@ -1518,6 +1534,8 @@ class DubMateApp {
     if (this.socket) {
       this.socket.disconnect();
     }
+    this.stopShareWatch();
+    this.roomShare = null;
     this.roomState = null;
     this.selectedPackId = null;
     this.currentTakeBlob = null;
@@ -1542,6 +1560,47 @@ class DubMateApp {
     this.showToast('Left studio session room.');
   }
 
+  /**
+   * Turns anything thrown -- a backend `detail`, a DOMException, an ffmpeg command
+   * array, a bare HTTP status -- into a sentence a person can act on.
+   *
+   * The house style used to be `showToast(err.message)`, which put things like
+   * "Command '['C:\\...\\ffmpeg.exe', '-y', ...]' returned non-zero exit status 1"
+   * and "HTTP 500" in front of people who want to dub anime clips. The raw text is
+   * still logged, just not shown.
+   */
+  friendlyError(err, fallback = "Something went wrong. Please try again.") {
+    const raw = String(err?.message ?? err ?? '').trim();
+    if (raw) console.warn('[DubMate] Underlying error:', raw);
+    if (!raw) return fallback;
+
+    const known = [
+      [/failed to fetch|networkerror|load failed|err_connection/i,
+        "Couldn't reach DubMate. Check your connection and try again."],
+      [/timed out|timeout|etimedout/i,
+        "That took longer than expected. Please try again."],
+      [/room not found|no active session|session has ended/i,
+        "That session has ended. Start a new room to continue."],
+      [/not found|404/i,
+        "That file is no longer available. Try creating it again."],
+      [/no space|disk full|enospc/i,
+        "Your disk is full. Free up some space and try again."],
+      [/permission|denied|eacces|not allowed/i,
+        "DubMate doesn't have permission to do that."],
+      [/zip.?slip|path traversal|compression ratio|zip bomb/i,
+        "That pack file looks corrupted or unsafe, so it wasn't imported."],
+      [/yt-dlp|requirements_builder|pip install/i,
+        "The Pack Builder tools aren't installed yet. Install them from the app's start-up screen."],
+    ];
+    for (const [pattern, message] of known) {
+      if (pattern.test(raw)) return message;
+    }
+
+    // Machine output must never reach a toast verbatim.
+    const isTechnical = /traceback|errno|command '|non-zero exit|exit status|\bHTTP \d{3}\b|[A-Za-z]:\\|\/usr\/|is not valid JSON|<html|\[object |undefined|null/i.test(raw);
+    return isTechnical ? fallback : raw;
+  }
+
   showToast(message) {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -1563,11 +1622,148 @@ class DubMateApp {
     }, 3200);
   }
 
-  copyRoomLink() {
+  /**
+   * Shows the connection banner while the room is not live.
+   *
+   * The socket already tracked this state and already reconnected with backoff --
+   * it just never told anyone. To the user a dropped connection was a room that
+   * had quietly stopped working.
+   */
+  renderConnectionState({ state, retryInMs } = {}) {
+    const banner = document.getElementById('connection-banner');
+    const text = document.getElementById('connection-banner-text');
+    if (!banner || !text) return;
+
+    if (state === 'open') {
+      // Only announce recovery if the user actually saw a problem.
+      if (banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
+        banner.classList.add('is-recovered');
+        text.innerText = 'Back online';
+        clearTimeout(this._connectionBannerTimer);
+        this._connectionBannerTimer = setTimeout(() => {
+          banner.style.display = 'none';
+          banner.classList.remove('is-recovered');
+        }, 2500);
+      } else {
+        banner.style.display = 'none';
+        banner.classList.remove('is-recovered');
+      }
+      return;
+    }
+
+    clearTimeout(this._connectionBannerTimer);
+    banner.classList.remove('is-recovered');
+    banner.style.display = 'flex';
+    if (state === 'reconnecting') {
+      const seconds = Math.max(1, Math.round((retryInMs || 2000) / 1000));
+      text.innerText = `Reconnecting in ${seconds}s — changes aren't being saved`;
+    } else if (state === 'connecting') {
+      text.innerText = 'Connecting…';
+    } else {
+      text.innerText = "Disconnected — you're no longer in the room";
+    }
+  }
+
+  // --- Invite / Registry Status ---
+
+  /**
+   * Pulls the room's registry status from the host engine. A room code is only
+   * usable once the engine has published it to the public registry, which cannot
+   * happen until the cloudflared tunnel is up -- several seconds after the studio
+   * opens. Until then the direct tunnel link is the only working invite.
+   */
+  async refreshRoomShare() {
+    const code = this.roomState?.room_id || '';
+    if (!code) return null;
+    try {
+      const res = await fetch(`/api/rooms/${encodeURIComponent(code)}/share`);
+      if (!res.ok) return null;
+      this.roomShare = await res.json();
+      this.applyShareStatusToBadge();
+      return this.roomShare;
+    } catch (err) {
+      console.warn('[Registry] Could not read room share status:', err);
+      return null;
+    }
+  }
+
+  applyShareStatusToBadge() {
+    const share = this.roomShare;
+    if (!this.headerRoomBadge || !share) return;
+    this.headerRoomBadge.classList.toggle('room-badge-unpublished', !share.code_is_live);
+    this.headerRoomBadge.title = share.code_is_live
+      ? 'Room code is live — click to copy it'
+      : `${share.message || 'Room code is not published yet.'} Click to copy an invite link.`;
+  }
+
+  /**
+   * Polls the registry status after joining until the code goes live, so the host
+   * finds out that a code is unusable instead of handing out one that silently
+   * fails for everybody.
+   */
+  startShareWatch() {
+    this.stopShareWatch();
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      const share = await this.refreshRoomShare();
+      if (share?.code_is_live) {
+        this.stopShareWatch();
+        return;
+      }
+      if (attempts >= 12) {
+        this.stopShareWatch();
+        // Only the host hands the code out, so only the host needs telling that
+        // it does not work. Guests are already connected by this point.
+        const isHost = this.roomState?.host_id && this.roomState.host_id === this.user.id;
+        if (isHost && share && !share.code_is_live) {
+          this.showToast(share.direct_url
+            ? 'Room code is not public yet — use Copy Code for a direct invite link.'
+            : 'Room code is local only — guests on other networks cannot join yet.');
+        }
+      }
+    };
+    tick();
+    this.shareWatchTimer = setInterval(tick, 5000);
+  }
+
+  stopShareWatch() {
+    if (this.shareWatchTimer) {
+      clearInterval(this.shareWatchTimer);
+      this.shareWatchTimer = null;
+    }
+  }
+
+  async copyRoomLink() {
     const code = this.roomState?.room_id || '';
     if (!code) return;
-    navigator.clipboard.writeText(code);
-    this.showToast(`Room code ${code} copied! 📋`);
+
+    const share = (await this.refreshRoomShare()) || this.roomShare;
+
+    // Prefer the short code once it actually resolves. When it does not, fall back
+    // to the direct tunnel link so the session is still shareable rather than the
+    // host copying a code that nobody can redeem.
+    let text = code;
+    let message = `Room code ${code} copied! 📋`;
+    if (share && !share.code_is_live) {
+      if (share.direct_url) {
+        text = share.direct_url;
+        message = 'Room code is not public yet — direct invite link copied instead. 🔗';
+      } else {
+        message = `Room code ${code} copied — local network only for now.`;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      // Clipboard API needs a secure context and can be denied; a manual-copy
+      // prompt beats silently copying nothing.
+      console.warn('[Invite] Clipboard write failed:', err);
+      window.prompt('Copy this invite:', text);
+      return;
+    }
+    this.showToast(message);
   }
 
   // --- Packs & Landing Logic ---
@@ -1723,7 +1919,7 @@ class DubMateApp {
     } catch (err) {
       let errMsg = err.message || "Unknown error";
       if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
-        errMsg = "Could not reach local DubMate engine on port 8000. Please ensure the server is running.";
+        errMsg = "DubMate isn't responding. Try restarting the app.";
       }
       this.showWebConfigFeedback(`❌ ${errMsg}`, false);
     } finally {
@@ -2480,7 +2676,7 @@ class DubMateApp {
     } catch (err) {
       console.error("Error during pack rescan:", err);
       if (!silent) {
-        this.showToast(`⚠️ Rescan failed: ${err.message}`);
+        this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't rescan your packs folder.")}`);
       }
     } finally {
       this.isRescanningPacks = false;
@@ -2516,7 +2712,7 @@ class DubMateApp {
     if (this.modalImportLoading) {
       const statusText = document.getElementById('import-modal-status-text');
       if (statusText) {
-        statusText.innerText = "🛡️ Scanning file signatures, verifying malware security, and indexing audio stems...";
+        statusText.innerText = "Checking the pack file and loading its audio...";
       }
       this.modalImportLoading.style.display = 'flex';
     }
@@ -2552,7 +2748,7 @@ class DubMateApp {
       this.showToast(`✨ Pack "${importedPack?.name || file.name}" verified & imported successfully!`);
     } catch (err) {
       console.error("Pack import error:", err);
-      this.showToast(`⚠️ ${err.message}`);
+      this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't import that pack. Please check the file and try again.")}`);
     } finally {
       if (this.modalImportLoading) {
         this.modalImportLoading.style.display = 'none';
@@ -2781,7 +2977,7 @@ class DubMateApp {
 
       this.joinRoom(data.room_id);
     } catch (err) {
-      this.showToast("Error creating room: " + err.message);
+      this.showToast(this.friendlyError(err, "Couldn't create the room. Please try again."));
     }
   }
 
@@ -3111,6 +3307,10 @@ class DubMateApp {
       this.headerUserPill.style.display = 'inline-flex';
       if (this.btnLeaveRoom) this.btnLeaveRoom.style.display = 'inline-flex';
 
+      // The registry publish is asynchronous and may still be waiting on the
+      // tunnel, so watch it rather than assuming the code works.
+      this.startShareWatch();
+
       // Lazy load backing buffer when entering booth instead of blocking joinRoom
       if (this.roomState.status === 'screening') {
         this.showView('screening');
@@ -3130,7 +3330,7 @@ class DubMateApp {
       const url = new URL(window.location.href);
       url.searchParams.delete('room');
       window.history.pushState({}, '', url.pathname);
-      this.showToast("Error joining room: " + err.message);
+      this.showToast(this.friendlyError(err, "Couldn't join that room. Please try again."));
       this.showView('landing');
     }
   }
@@ -4129,7 +4329,7 @@ class DubMateApp {
         this.showToast("Mic calibration cancelled.");
       } else {
         console.warn("[App] Calibration failed:", err);
-        this.showToast(`⚠️ Mic calibration failed: ${err.message}`);
+        this.showToast(`⚠️ ${this.friendlyError(err, "Mic calibration didn't finish. Please try again.")}`);
       }
     } finally {
       this.isCalibratingMic = false;
@@ -4228,7 +4428,7 @@ class DubMateApp {
       this.showToast(enable ? "✨ Studio Noise Reduction applied to take!" : "Raw original take restored (Noise Reduction OFF)");
     } catch (err) {
       console.warn("[App] Error toggling take noise reduction:", err);
-      this.showToast(`⚠️ Could not toggle noise reduction: ${err.message}`);
+      this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't change the noise reduction setting.")}`);
     }
   }
 
@@ -4510,7 +4710,7 @@ class DubMateApp {
     } catch (err) {
       this.recordState = 'idle';
       this.updateRecordButtonUI();
-      this.showToast("Failed to upload take: " + err.message);
+      this.showToast(this.friendlyError(err, "That take didn't save. Please record it again."));
     } finally {
       this.setBoothProcessing(false);
     }
@@ -5209,6 +5409,31 @@ class DubMateApp {
     this.lockScreeningUI(false);
   }
 
+  /**
+   * Releases the export modal so the user can leave it.
+   *
+   * While `isRenderingExport` is true the close button is hidden and Esc, the
+   * backdrop, Leave Room and Back to Booth are all disabled. Any path that stops
+   * the render MUST come through here, or the user is sealed inside a modal with
+   * a page reload as their only way out.
+   */
+  releaseExportModal() {
+    this.isRenderingExport = false;
+    if (this.btnModalCloseX) this.btnModalCloseX.style.display = 'flex';
+    if (this.exportModalActions) this.exportModalActions.style.display = 'flex';
+    this.lockScreeningUI(false);
+  }
+
+  failExport(err) {
+    const message = this.friendlyError(err, "The export didn't finish. Please try again.");
+    this.releaseExportModal();
+    this.updateExportModalStep(1, 0, `❌ ${message}`);
+    if (this.exportModalBadge) {
+      this.exportModalBadge.innerText = 'FAILED';
+    }
+    this.showToast(message);
+  }
+
   lockScreeningUI(isLocked) {
     const controls = [
       this.btnScreeningPlayPause,
@@ -5260,6 +5485,10 @@ class DubMateApp {
 
       const pollInterval = setInterval(async () => {
         attempts++;
+        // Decided inside the try, acted on outside it. Throwing from in here used
+        // to be caught by this function's own catch two lines down, which left
+        // isRenderingExport true and sealed the user inside the modal forever.
+        let failure = null;
         try {
           const pollRes = await fetch(pollUrl);
           if (pollRes.ok) {
@@ -5270,42 +5499,38 @@ class DubMateApp {
               return;
             }
             if (String(pollData.status).startsWith('failed')) {
-              clearInterval(pollInterval);
-              throw new Error(pollData.status);
+              failure = pollData.status;
             }
           }
         } catch (e) {
+          // A single dropped poll is not a failure; the next tick retries.
           console.warn("[ExportPoll] Polling update:", e);
         }
 
-        if (attempts >= maxAttempts) {
+        if (failure !== null) {
           clearInterval(pollInterval);
-          this.isRenderingExport = false;
-          this.updateExportModalStep(2, 85, "⚠️ Rendering is taking longer than expected. Please check back shortly.");
-          if (this.btnModalCloseX) {
-            this.btnModalCloseX.style.display = 'flex';
+          this.failExport(failure);
+          return;
+        }
+
+        if (attempts >= maxAttempts) {
+          // Rendering a long scene legitimately takes minutes. Stop holding the
+          // user hostage, but keep watching so the video still appears if it
+          // lands -- the old code stopped polling and told them to "check back",
+          // which nothing in the app let them do.
+          this.releaseExportModal();
+          this.updateExportModalStep(2, 85,
+            "Still rendering — long scenes can take several minutes. " +
+            "You can close this and keep working; the video will appear here when it's done.");
+          if (attempts >= maxAttempts * 4) {
+            clearInterval(pollInterval);
+            this.failExport("timed out");
           }
-          if (this.exportModalActions) {
-            this.exportModalActions.style.display = 'flex';
-          }
-          this.lockScreeningUI(false);
         }
       }, 2000);
 
     } catch (err) {
-      this.isRenderingExport = false;
-      this.updateExportModalStep(1, 0, "❌ Export failed: " + err.message);
-      if (this.exportModalBadge) {
-        this.exportModalBadge.innerText = 'FAILED';
-      }
-      if (this.btnModalCloseX) {
-        this.btnModalCloseX.style.display = 'flex';
-      }
-      if (this.exportModalActions) {
-        this.exportModalActions.style.display = 'flex';
-      }
-      this.lockScreeningUI(false);
-      this.showToast("Export failed: " + err.message);
+      this.failExport(err);
     }
   }
 
@@ -5325,28 +5550,38 @@ class DubMateApp {
     if (labelToolbar) labelToolbar.innerText = "⏳ Generating ZIP...";
     if (labelContainer) labelContainer.innerText = "⏳ Generating ZIP...";
 
+    // Fetched rather than navigated to. The endpoint answers errors as JSON, so
+    // window.location.assign() rendered "{"detail":"Room not found"}" as a page --
+    // unloading the studio, dropping the websocket and throwing the host out of
+    // their own session over a failed download.
+    let objectUrl = null;
     try {
-      // Primary trigger: direct window navigation (browser preserves current tab and downloads attachment)
-      window.location.assign(zipUrl);
-    } catch (err) {
-      console.error("Project ZIP download error:", err);
-      // Fallback trigger via temporary link
-      try {
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = zipUrl;
-        a.setAttribute('download', `DubMate_Project_${packName}_${roomId}.zip`);
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          if (a.parentNode) {
-            a.parentNode.removeChild(a);
-          }
-        }, 1500);
-      } catch (fallbackErr) {
-        this.showToast("❌ Download failed: " + fallbackErr.message);
+      const res = await fetch(zipUrl);
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          detail = (await res.json())?.detail || detail;
+        } catch { /* not JSON; the status is all we have */ }
+        throw new Error(detail);
       }
+
+      const blob = await res.blob();
+      objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = objectUrl;
+      a.setAttribute('download', `DubMate_Project_${packName}_${roomId}.zip`);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      this.showToast("📦 Project ZIP downloaded.");
+    } catch (err) {
+      this.showToast(`❌ ${this.friendlyError(err, "Couldn't build the project ZIP. Please try again.")}`);
     } finally {
+      if (objectUrl) {
+        // Revoked late so the browser has definitely started the save.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+      }
       setTimeout(() => {
         if (labelToolbar) labelToolbar.innerText = "📦 Download Full Project (.zip)";
         if (labelContainer) labelContainer.innerText = "📦 Download Full Project (.zip)";

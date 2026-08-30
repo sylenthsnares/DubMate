@@ -444,15 +444,6 @@ export class PackBuilderApp {
     });
   }
 
-  async detectHardware() {
-    try {
-      const res = await fetch('/api/packs');
-      this.deviceLabel.innerText = 'CUDA GPU & CPU Ready';
-    } catch (e) {
-      this.deviceLabel.innerText = 'Standard DAW Engine';
-    }
-  }
-
   setStep(stepName) {
     this.currentStep = stepName;
     Object.keys(this.steps).forEach(k => {
@@ -536,7 +527,7 @@ export class PackBuilderApp {
     const timerInterval = setInterval(() => {
       elapsed++;
       if (timeDesc) {
-        timeDesc.innerText = `Downloading highest resolution video & audio... (${elapsed}s)`;
+        timeDesc.innerText = `Downloading video, up to 1080p... (${elapsed}s)`;
       }
       if (elapsed > 4 && stage1 && stage2 && stage1.classList.contains('active')) {
         stage1.className = 'fetch-step-row completed';

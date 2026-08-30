@@ -26,7 +26,7 @@ if sys.platform == "win32":
         pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -462,14 +462,36 @@ def load_persisted_rooms():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global PACKS_CACHE
-    try:
-        pack_loader.preflight_probe_hardware_encoder()
-    except Exception as ex:
-        print(f"[DubMate Acceleration] Startup probe warning: {ex}")
+
+    # Probed in the background. It costs ~0.39s and only /api/system/encoder needs
+    # the answer, so blocking startup on it just delayed the window opening. The
+    # probe caches its own result, so the first real caller either finds it ready
+    # or pays for it then.
+    def _probe_encoder():
+        try:
+            pack_loader.preflight_probe_hardware_encoder()
+        except Exception as ex:
+            print(f"[DubMate Acceleration] Startup probe warning: {ex}")
+
+    threading.Thread(target=_probe_encoder, name="encoder-probe", daemon=True).start()
+
     PACKS_CACHE = pack_loader.get_all_packs()
     print(f"[DubMate] Loaded {len(PACKS_CACHE)} packs into studio registry.")
     load_persisted_rooms()
-    yield
+
+    # Keeps retrying room codes that could not be published on the first attempt,
+    # so a slow tunnel or a network blip does not leave a room unjoinable forever.
+    heartbeat = asyncio.create_task(registry_heartbeat())
+    try:
+        yield
+    finally:
+        heartbeat.cancel()
+        try:
+            await heartbeat
+        except asyncio.CancelledError:
+            pass
+        except Exception as ex:
+            print(f"[Worker Registry] Heartbeat shutdown warning: {ex}")
 
 
 app = FastAPI(title="DubMate Multiplayer Studio", lifespan=lifespan)
@@ -485,18 +507,56 @@ app.add_middleware(
 )
 
 
+def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
+    """
+    RFC 9110 If-None-Match comparison: a comma-separated list, "*" matches anything,
+    and a weak validator (W/"...") compares equal to its strong form.
+    """
+    if not if_none_match:
+        return False
+    if if_none_match.strip() == "*":
+        return True
+
+    def normalize(value: str) -> str:
+        value = value.strip()
+        return value[2:] if value.startswith("W/") else value
+
+    target = normalize(etag)
+    return any(normalize(candidate) == target for candidate in if_none_match.split(","))
+
+
 @app.middleware("http")
 async def add_performance_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.lower()
     # Only set default fallback cache headers if the route handler did not explicitly set Cache-Control
     if "cache-control" not in response.headers:
-        if path.endswith((".html", ".js", ".css")) or path == "/" or path.startswith("/api/"):
+        if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
+        elif path.endswith((".html", ".js", ".css")) or path == "/":
+            # "no-cache" means revalidate before use, NOT "do not cache". The old
+            # "no-store" forbade the browser from keeping the response at all, so
+            # the ETag and Last-Modified this server already sends could never
+            # produce a 304 -- the full ~360 KB of JS and CSS re-transferred on
+            # every single load.
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
         elif path.endswith((".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico", ".mp4", ".wav", ".mp3", ".ogg")):
             response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+
+    # Answer 304 when the client already holds this exact version. FileResponse
+    # emits an ETag but Starlette never checks the request against it, so without
+    # this the revalidation above would always come back as a full 200 body.
+    if request.method in ("GET", "HEAD") and response.status_code == 200:
+        etag = response.headers.get("etag")
+        if etag and _etag_matches(request.headers.get("if-none-match"), etag):
+            not_modified = Response(status_code=304)
+            for header in ("Cache-Control", "ETag", "Last-Modified", "Vary", "Expires", "Pragma"):
+                if header.lower() in response.headers:
+                    not_modified.headers[header] = response.headers[header.lower()]
+            return not_modified
+
     return response
 
 
@@ -904,11 +964,50 @@ async def export_pack_zip(pack_id: str):
 
 ACTIVE_TUNNEL_URL: Optional[str] = None
 
+# Public room registry. A code registered here resolves to whichever tunnel the
+# host is currently reachable on, which is what lets a guest join with six
+# characters instead of a throwaway cloudflared hostname.
+WORKER_REGISTRY_BASE = "https://dubmate.bkaproductions.com"
+
+# How often the heartbeat retries rooms that have not been published yet, and how
+# stale a published entry may get before it is rewritten to refresh the registry
+# TTL (the worker expires entries after 12 hours).
+REGISTRY_HEARTBEAT_SECONDS = 20
+REGISTRY_REFRESH_SECONDS = 4 * 60 * 60
+
 # Per-room ownership tokens issued by the public worker registry, keyed by room code.
 # Presenting the token proves ownership when re-registering an existing code; without
 # it the worker refuses to overwrite a live room, which is what prevents a third party
 # repointing someone else's room at their own server.
 WORKER_ROOM_TOKENS: Dict[str, str] = {}
+
+# Codes created by *this* process, mapped to the app version they were created with.
+# Rooms restored from disk on startup are deliberately excluded: those sessions are
+# over, and republishing them would only collide with whoever holds the code now.
+WORKER_PENDING_ROOMS: Dict[str, str] = {}
+
+# Tunnel URL (and write time) each code is currently published under. Used to skip
+# redundant writes, to force a republish when cloudflared hands out a new hostname,
+# and to refresh the TTL on long sessions.
+WORKER_PUBLISHED_TUNNEL: Dict[str, str] = {}
+WORKER_PUBLISHED_AT: Dict[str, float] = {}
+
+# Last registration outcome per code, surfaced through /api/rooms/{code}/share so a
+# failure reaches the UI instead of only a console the desktop app keeps hidden.
+WORKER_ROOM_STATUS: Dict[str, Dict[str, Any]] = {}
+
+# Serializes registry writes so the tunnel callback and a concurrent room creation
+# cannot post the same code twice.
+_REGISTRY_LOCK: Optional[asyncio.Lock] = None
+
+
+def _registry_lock() -> asyncio.Lock:
+    """Lazily built so the lock binds to the running server loop, not import time."""
+    global _REGISTRY_LOCK
+    if _REGISTRY_LOCK is None:
+        _REGISTRY_LOCK = asyncio.Lock()
+    return _REGISTRY_LOCK
+
 
 def _load_worker_api_key() -> str:
     """
@@ -954,8 +1053,36 @@ if not WORKER_API_KEY:
     )
 
 
-async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: str):
-    """Registers the local room code with the public Cloudflare worker registry."""
+# Verdicts that will not change on their own, so the heartbeat stops retrying them
+# until the tunnel URL changes and makes the attempt meaningfully different.
+TERMINAL_REGISTRY_STATES = ("unauthorized", "conflict")
+
+
+def _set_room_status(room_id: str, state: str, message: str, tunnel_url: Optional[str] = None) -> None:
+    """
+    Records why a code is or is not joinable. States are:
+      waiting      - queued, the public tunnel has not come up yet
+      publishing   - queued, a registry write is in flight or about to be
+      registered   - the code resolves to our current tunnel
+      unauthorized - the registry rejected our key, so codes are unavailable
+      conflict     - somebody else already holds this code
+      error        - transient failure; the heartbeat will retry
+    """
+    WORKER_ROOM_STATUS[room_id.upper()] = {
+        "state": state,
+        "message": message,
+        "tunnel": tunnel_url,
+        "updated_at": int(time.time()),
+    }
+
+
+async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: str) -> bool:
+    """
+    Publishes one room code to the public registry, returning True once the code
+    resolves to `tunnel_url`. Callers use the result to decide whether the
+    heartbeat should keep retrying.
+    """
+    code = room_id.upper()
     try:
         import httpx
         headers = {
@@ -965,16 +1092,16 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
         }
         # Re-registering our own code (e.g. after a tunnel change) requires proving
         # ownership with the token the worker issued when we first created it.
-        existing_token = WORKER_ROOM_TOKENS.get(room_id.upper())
+        existing_token = WORKER_ROOM_TOKENS.get(code)
         if existing_token:
             headers["Authorization"] = f"Bearer {existing_token}"
 
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
-                "https://dubmate.bkaproductions.com/rooms/create",
+                f"{WORKER_REGISTRY_BASE}/rooms/create",
                 headers=headers,
                 json={
-                    "code": room_id,
+                    "code": code,
                     "tunnel_url": tunnel_url,
                     "app_version": app_version,
                 },
@@ -983,16 +1110,136 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
                 try:
                     token = (resp.json() or {}).get("room_token")
                     if token:
-                        WORKER_ROOM_TOKENS[room_id.upper()] = token
+                        WORKER_ROOM_TOKENS[code] = token
                 except Exception:
                     pass
-                print(f"[Worker Registry] Unified room code {room_id} registered with {tunnel_url}")
-            elif resp.status_code == 409:
-                print(f"[Worker Registry] Room code {room_id} is already held by another host; not overwriting.")
-            else:
-                print(f"[Worker Registry] Registration rejected ({resp.status_code}): {resp.text[:200]}")
+                WORKER_PUBLISHED_TUNNEL[code] = tunnel_url
+                WORKER_PUBLISHED_AT[code] = time.time()
+                _set_room_status(code, "registered", "Room code is live. Anyone can join with it.", tunnel_url)
+                print(f"[Worker Registry] Unified room code {code} registered with {tunnel_url}")
+                return True
+
+            if resp.status_code == 401:
+                _set_room_status(
+                    code,
+                    "unauthorized",
+                    "This build has no valid registry key, so public room codes are "
+                    "unavailable. Share the direct invite link instead.",
+                    tunnel_url,
+                )
+                print(f"[Worker Registry] Registry rejected our key; room {code} not published.")
+                return False
+
+            if resp.status_code == 409:
+                _set_room_status(
+                    code,
+                    "conflict",
+                    "That room code is already in use by another host. Create a new room.",
+                    tunnel_url,
+                )
+                print(f"[Worker Registry] Room code {code} is already held by another host; not overwriting.")
+                return False
+
+            _set_room_status(
+                code,
+                "error",
+                f"The room registry returned an error ({resp.status_code}). Retrying...",
+                tunnel_url,
+            )
+            print(f"[Worker Registry] Registration rejected ({resp.status_code}): {resp.text[:200]}")
+            return False
     except Exception as e:
+        _set_room_status(code, "error", "Could not reach the room registry. Retrying...", tunnel_url)
         print(f"[Worker Registry] Note: Could not register with worker: {e}")
+        return False
+
+
+def _needs_publish(code: str, tunnel_url: str) -> bool:
+    status = WORKER_ROOM_STATUS.get(code) or {}
+    # A rejected key or a code held by someone else will not resolve itself while the
+    # tunnel is unchanged, so stop re-asking the registry the same question.
+    if status.get("state") in TERMINAL_REGISTRY_STATES and status.get("tunnel") == tunnel_url:
+        return False
+    if WORKER_PUBLISHED_TUNNEL.get(code) != tunnel_url:
+        return True
+    # Same tunnel, but the registry entry expires; rewrite it well before it does.
+    return (time.time() - WORKER_PUBLISHED_AT.get(code, 0.0)) >= REGISTRY_REFRESH_SECONDS
+
+
+async def publish_pending_rooms(reason: str = "") -> None:
+    """
+    Publishes every room this process created that is not already live at the
+    current tunnel URL.
+
+    This runs on room creation, on every tunnel change, and on a heartbeat rather
+    than only at creation time. The desktop app opens the studio as soon as the
+    engine answers /health and only *then* starts cloudflared, so a room created in
+    the first few seconds has no tunnel to advertise yet; publishing from here is
+    what makes those rooms joinable at all.
+    """
+    async with _registry_lock():
+        tunnel = ACTIVE_TUNNEL_URL
+        if not tunnel or not tunnel.startswith("https://"):
+            for code in WORKER_PENDING_ROOMS:
+                if WORKER_ROOM_STATUS.get(code, {}).get("state") in (None, "publishing"):
+                    _set_room_status(code, "waiting", "Waiting for the public tunnel to come up...")
+            return
+
+        for code, app_version in list(WORKER_PENDING_ROOMS.items()):
+            if code not in ROOMS:
+                WORKER_PENDING_ROOMS.pop(code, None)
+                continue
+            if not _needs_publish(code, tunnel):
+                continue
+            await register_room_with_worker(code, tunnel, app_version)
+
+
+def schedule_registry_publish(reason: str = "") -> None:
+    """Fire-and-forget publish, safe to call from any request handler."""
+    try:
+        asyncio.get_running_loop().create_task(publish_pending_rooms(reason))
+    except RuntimeError:
+        # No running loop (e.g. imported by a script); the heartbeat will catch up.
+        pass
+
+
+async def registry_heartbeat() -> None:
+    """
+    Retries codes that have not been published yet and refreshes ones nearing the
+    registry TTL. Without this, a single failed publish -- a tunnel that was still
+    coming up, or a momentary network blip -- left the room permanently unjoinable
+    with nothing to recover it.
+    """
+    while True:
+        try:
+            await asyncio.sleep(REGISTRY_HEARTBEAT_SECONDS)
+            await publish_pending_rooms("heartbeat")
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            print(f"[Worker Registry] Heartbeat warning: {ex}")
+
+
+def build_room_share_payload(room_id: str) -> Dict[str, Any]:
+    """Everything the UI needs to hand out an invite, including a working fallback."""
+    code = room_id.upper()
+    status = WORKER_ROOM_STATUS.get(code) or {
+        "state": "waiting",
+        "message": "Waiting for the public tunnel to come up...",
+    }
+    is_live = (
+        status.get("state") == "registered"
+        and WORKER_PUBLISHED_TUNNEL.get(code) == ACTIVE_TUNNEL_URL
+    )
+    return {
+        "room_id": code,
+        "code_is_live": is_live,
+        "join_url": f"{WORKER_REGISTRY_BASE}/join/{code}" if is_live else "",
+        "direct_url": f"{ACTIVE_TUNNEL_URL}?room={code}" if ACTIVE_TUNNEL_URL else "",
+        "tunnel_url": ACTIVE_TUNNEL_URL,
+        "state": status.get("state"),
+        "message": status.get("message"),
+    }
 
 
 @app.get("/api/tunnel")
@@ -1005,8 +1252,13 @@ async def set_tunnel_endpoint(payload: Dict[str, Any]):
     global ACTIVE_TUNNEL_URL
     url = payload.get("tunnel_url")
     if url:
-        ACTIVE_TUNNEL_URL = str(url).strip()
-        print(f"[DubMate] Active public tunnel registered: {ACTIVE_TUNNEL_URL}")
+        new_url = str(url).strip()
+        if new_url != ACTIVE_TUNNEL_URL:
+            ACTIVE_TUNNEL_URL = new_url
+            print(f"[DubMate] Active public tunnel registered: {ACTIVE_TUNNEL_URL}")
+        # Drain the publish queue: rooms created before the tunnel existed become
+        # joinable here, and a changed hostname republishes every live code.
+        schedule_registry_publish("tunnel-ready")
     return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL}
 
 
@@ -1029,20 +1281,34 @@ async def create_room(payload: Dict[str, Any]):
     room = Room(room_id, pack, host_id, host_name, host_color, min_required_version=app_version)
     ROOMS[room_id] = room
 
-    # Auto-register unified room code on dubmate.bkaproductions.com if tunnel is active
-    if ACTIVE_TUNNEL_URL and ACTIVE_TUNNEL_URL.startswith("https://"):
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(register_room_with_worker(room_id, ACTIVE_TUNNEL_URL, app_version))
-        except Exception:
-            pass
+    # Queue the code for the public registry instead of gating on the tunnel already
+    # being up. publish_pending_rooms() sends it now if it can, and /api/tunnel or the
+    # heartbeat sends it the moment the tunnel becomes available.
+    WORKER_PENDING_ROOMS[room_id.upper()] = app_version
+    _set_room_status(
+        room_id,
+        "publishing" if ACTIVE_TUNNEL_URL else "waiting",
+        "Publishing room code to the registry..." if ACTIVE_TUNNEL_URL
+        else "Waiting for the public tunnel to come up...",
+    )
+    schedule_registry_publish("room-created")
 
     return {
         "room_id": room_id,
         "user_id": host_id,
         "tunnel_url": ACTIVE_TUNNEL_URL,
+        "share": build_room_share_payload(room_id),
         "state": room.to_state_dict(),
     }
+
+
+@app.get("/api/rooms/{room_id}/share")
+async def get_room_share(room_id: str):
+    """Invite details for a room hosted here, including why a code may not be live yet."""
+    code = (room_id or "").upper()
+    if code not in ROOMS:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return build_room_share_payload(code)
 
 
 @app.post("/api/admin/clean")
@@ -1969,15 +2235,31 @@ async def builder_import_url(payload: Dict[str, Any]):
             "video_url": f"/api/builder/{session_id}/video",
         }
 
+    except pack_builder.MissingPipelineError as missing:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        # 503 + a code the wizard recognises, so it can offer the in-app installer
+        # instead of quoting a pip command at the user.
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "pipeline_missing", "message": str(missing)},
+        )
     except ValueError as val_err:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(val_err))
     except RuntimeError as run_err:
         shutil.rmtree(session_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=str(run_err))
+        print(f"[Builder] URL import failed: {run_err}")
+        raise HTTPException(
+            status_code=500,
+            detail="We couldn't import that video. Check the link and try again.",
+        )
     except Exception as ex:
         shutil.rmtree(session_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Failed to import video from URL: {str(ex)}")
+        print(f"[Builder] Unexpected URL import failure: {ex}")
+        raise HTTPException(
+            status_code=500,
+            detail="We couldn't import that video. Check the link and try again.",
+        )
 
 
 def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, whisper_model: str = "base", payload: Optional[Dict[str, Any]] = None):
@@ -2005,7 +2287,14 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
         session["vocals_path"] = stem_results["vocals"]
         session["backing_path"] = stem_results["backing"]
-        progress.update("separating_stems", 0.60, "Audio stem separation complete.", stage="stem_separation")
+        # Say so when the neural model was unavailable. Silently substituting the
+        # crude filter meant the user was promised AI isolation and never told they
+        # did not get it.
+        if stem_results.get("used_fallback"):
+            progress.warning = stem_results.get("fallback_notice") or ""
+            progress.update("separating_stems", 0.60, stem_results.get("fallback_notice") or "Stems ready.", stage="stem_separation")
+        else:
+            progress.update("separating_stems", 0.60, "Audio stem separation complete.", stage="stem_separation")
 
         # Step 3: Speech-to-Text Transcription via Whisper (60% -> 90%)
         existing_subtitles = session.get("subtitle_segments") or progress.segments
@@ -2033,9 +2322,23 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         progress.characters = sorted(list({s["character"] for s in segments}))
         progress.update("transcribed", 1.0, f"Detected {len(segments)} dialogue cues.", stage="complete", segments=segments)
 
+    except pack_builder.MissingPipelineError as missing:
+        print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {missing}")
+        progress.error_code = "pipeline_missing"
+        progress.update("error", 0.0, str(missing), error=str(missing))
+    except RuntimeError as run_err:
+        # These carry copy written for the user (see transcribe_audio).
+        print(f"[PackBuilderPipeline] Error in session {session_id}: {run_err}")
+        progress.error_code = "processing_failed"
+        progress.update("error", 0.0, str(run_err), error=str(run_err))
     except Exception as ex:
         print(f"[PackBuilderPipeline] Error in session {session_id}: {ex}")
-        progress.update("error", 0.0, f"Processing failed: {str(ex)}", error=str(ex))
+        progress.error_code = "processing_failed"
+        progress.update(
+            "error", 0.0,
+            "Processing didn't finish. Please try again, or use a different clip.",
+            error="Processing didn't finish. Please try again, or use a different clip.",
+        )
 
 
 @app.post("/api/builder/{session_id}/process")

@@ -115,7 +115,8 @@ describe("Room joining workflow", () => {
     });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("https://join-test.trycloudflare.com");
+    // The code rides along so the host's studio auto-joins the room.
+    expect(res.headers.get("Location")).toBe(`https://join-test.trycloudflare.com/?room=${code}`);
   });
 
   it("GET /join/:code with full DUB-XXXX code also resolves correctly", async () => {
@@ -130,7 +131,7 @@ describe("Room joining workflow", () => {
     });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("https://join-full.trycloudflare.com");
+    expect(res.headers.get("Location")).toBe(`https://join-full.trycloudflare.com/?room=${code}`);
   });
 
   it("GET /join/:code for a missing room returns 404 HTML", async () => {
