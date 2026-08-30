@@ -802,7 +802,7 @@ checksum = "f678cf4a922c215c63e0de95eb1ff08a958a81d47e485cf9da1e27bf6305cfa5"
 
 [[package]]
 name = "dubmate-studio"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "regex",
  "reqwest 0.12.28",

@@ -1,5 +1,12 @@
 # DubMate Studio Changelog
 
+## [1.1.1] - 2026-08-30
+
+### Fixed
+- **False "You're offline" Alert on Every Room Creation (`static/js/room_socket.js`)**: creating or joining a room immediately showed *"You're offline. That change wasn't saved to the room."* on a connection that was about to succeed. `joinRoom()` opens the websocket and then broadcasts the user's status in the same tick, while the socket is still completing its handshake, so `send()` correctly found it unsendable and -- as of 1.1.0 -- said so.
+- **The Older Bug Underneath It**: that status broadcast had been silently discarded for as long as the code has existed; 1.1.0 only made it audible. Messages raised while the socket is opening, or during a reconnect, are now queued and flushed once it is live, so the first status broadcast of every session actually reaches the room. The queue is capped, and is discarded when the user deliberately leaves so nothing replays into the next room.
+- **Genuine disconnection is still reported**: a send with no connection at all continues to return `false` and raise `send_failed`, which is what the offline notice is for.
+
 ## [1.1.0] - 2026-08-30
 
 ### Fixed Room Codes Never Reaching the Public Registry
