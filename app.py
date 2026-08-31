@@ -964,6 +964,11 @@ async def export_pack_zip(pack_id: str):
 
 ACTIVE_TUNNEL_URL: Optional[str] = None
 
+# Why the public tunnel is unavailable, when the desktop shell has told us it
+# failed. Without this, a tunnel that never came up was indistinguishable from one
+# that is still starting, and the UI said "waiting" forever.
+TUNNEL_ERROR: Optional[str] = None
+
 # Public room registry. A code registered here resolves to whichever tunnel the
 # host is currently reachable on, which is what lets a guest join with six
 # characters instead of a throwaway cloudflared hostname.
@@ -1223,10 +1228,19 @@ async def registry_heartbeat() -> None:
 def build_room_share_payload(room_id: str) -> Dict[str, Any]:
     """Everything the UI needs to hand out an invite, including a working fallback."""
     code = room_id.upper()
+    default_state = "waiting"
+    default_message = "Waiting for the public tunnel to come up..."
+    if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL:
+        default_state = "tunnel_unavailable"
+        default_message = TUNNEL_ERROR
     status = WORKER_ROOM_STATUS.get(code) or {
-        "state": "waiting",
-        "message": "Waiting for the public tunnel to come up...",
+        "state": default_state,
+        "message": default_message,
     }
+    # A queued room whose tunnel has since failed should report the failure rather
+    # than the stale "waiting".
+    if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL and status.get("state") == "waiting":
+        status = {"state": "tunnel_unavailable", "message": TUNNEL_ERROR}
     is_live = (
         status.get("state") == "registered"
         and WORKER_PUBLISHED_TUNNEL.get(code) == ACTIVE_TUNNEL_URL
@@ -1244,22 +1258,32 @@ def build_room_share_payload(room_id: str) -> Dict[str, Any]:
 
 @app.get("/api/tunnel")
 async def get_tunnel_endpoint():
-    return {"tunnel_url": ACTIVE_TUNNEL_URL}
+    return {"tunnel_url": ACTIVE_TUNNEL_URL, "error": TUNNEL_ERROR}
 
 
 @app.post("/api/tunnel")
 async def set_tunnel_endpoint(payload: Dict[str, Any]):
-    global ACTIVE_TUNNEL_URL
+    global ACTIVE_TUNNEL_URL, TUNNEL_ERROR
     url = payload.get("tunnel_url")
     if url:
         new_url = str(url).strip()
         if new_url != ACTIVE_TUNNEL_URL:
             ACTIVE_TUNNEL_URL = new_url
             print(f"[DubMate] Active public tunnel registered: {ACTIVE_TUNNEL_URL}")
+        TUNNEL_ERROR = None
         # Drain the publish queue: rooms created before the tunnel existed become
         # joinable here, and a changed hostname republishes every live code.
         schedule_registry_publish("tunnel-ready")
-    return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL}
+        return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL}
+
+    # The desktop shell reports tunnel failures here too, so a room that can never
+    # be published says why instead of waiting indefinitely.
+    reported_error = payload.get("error")
+    if reported_error:
+        TUNNEL_ERROR = str(reported_error).strip()[:300]
+        print(f"[DubMate] Public tunnel unavailable: {TUNNEL_ERROR}")
+
+    return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL, "error": TUNNEL_ERROR}
 
 
 @app.post("/api/rooms")

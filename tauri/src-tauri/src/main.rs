@@ -1163,10 +1163,37 @@ async fn start_sidecars(app: tauri::AppHandle) {
     // pointing the tunnel at 8000 regardless meant guests reached nothing and the
     // engine never learned its own public URL.
     let tunnel_target = format!("http://127.0.0.1:{}", engine_port);
-    if let Ok(cf_cmd) = app.shell().sidecar("sidecar/cloudflared") {
-        if let Ok((mut rx, child)) = cf_cmd
-            .args(["tunnel", "--url", &tunnel_target])
-            .spawn()
+
+    // Every failure below is reported. All four used to be silent: a missing
+    // sidecar, a failed spawn, cloudflared exiting, and cloudflared running but
+    // never producing a URL all left the engine sitting on tunnel_url = None,
+    // and the studio told the host "Waiting for the public tunnel to come up..."
+    // forever with nothing anywhere explaining that it was never coming.
+    let cf_cmd = match app.shell().sidecar("sidecar/cloudflared") {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            report_tunnel_failure(
+                &app,
+                engine_port,
+                format!("The bundled cloudflared component could not be found ({e})."),
+            );
+            return;
+        }
+    };
+
+    {
+        let spawned = cf_cmd.args(["tunnel", "--url", &tunnel_target]).spawn();
+        let (mut rx, child) = match spawned {
+            Ok(pair) => pair,
+            Err(e) => {
+                report_tunnel_failure(
+                    &app,
+                    engine_port,
+                    format!("The public tunnel could not be started ({e})."),
+                );
+                return;
+            }
+        };
         {
             {
                 let state = app.state::<SharedState>();
@@ -1247,9 +1274,75 @@ async fn start_sidecars(app: tauri::AppHandle) {
                         eprintln!("[DubMate] Gave up notifying engine of tunnel {}", url_clone);
                     });
                 }
+
+                // The stream only ends when cloudflared exits. If it never gave us
+                // a URL, the tunnel is not coming and the host needs to know.
+                if last_reported.is_none() {
+                    report_tunnel_failure(
+                        &app_clone,
+                        engine_port,
+                        "The public tunnel stopped before it came up. Your network may be blocking Cloudflare tunnels.".to_string(),
+                    );
+                }
+            });
+
+            // Watchdog. A quick tunnel normally reports its URL within seconds;
+            // if it has not after a minute, something is wrong and saying nothing
+            // is the worst option.
+            let watchdog_app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(TUNNEL_READY_TIMEOUT_SECS)).await;
+                let ready = {
+                    let state = watchdog_app.state::<SharedState>();
+                    let data = state.0.lock().unwrap();
+                    data.is_tunnel_ready
+                };
+                if !ready {
+                    report_tunnel_failure(
+                        &watchdog_app,
+                        engine_port,
+                        format!(
+                            "The public tunnel did not come up within {TUNNEL_READY_TIMEOUT_SECS} seconds.                              Local and LAN play still work; friends on other networks cannot join yet."
+                        ),
+                    );
+                }
             });
         }
     }
+}
+
+/// Seconds to wait for cloudflared to publish a URL before declaring it failed.
+const TUNNEL_READY_TIMEOUT_SECS: u64 = 60;
+
+/// Tells the user, the log and the engine that the public tunnel is not coming.
+///
+/// The engine records it so `/api/rooms/{code}/share` can answer "the tunnel
+/// failed" instead of "waiting for the public tunnel", which is what it said
+/// indefinitely no matter what went wrong.
+fn report_tunnel_failure(app: &tauri::AppHandle, engine_port: u16, reason: String) {
+    eprintln!("[DubMate] Public tunnel unavailable: {reason}");
+    let _ = app.emit("tunnel-error", reason.clone());
+
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        let endpoint = format!("http://127.0.0.1:{}/api/tunnel", engine_port);
+        for _ in 1..=5 {
+            if let Ok(resp) = client
+                .post(&endpoint)
+                .json(&serde_json::json!({ "error": reason }))
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
 }
 
 #[tauri::command]

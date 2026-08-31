@@ -1,6 +1,6 @@
 [package]
 name = "dubmate-studio"
-version = "1.1.1"
+version = "1.1.2"
 description = "DubMate Studio Pro — Collaborative Voice Acting & Dubbing DAW"
 authors = ["DubMate Team"]
 edition = "2021"

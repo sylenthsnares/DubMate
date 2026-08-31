@@ -322,6 +322,50 @@ def test_rejected_key_is_not_retried_until_the_tunnel_changes():
         _reset_registry_state()
 
 
+def test_a_failed_tunnel_is_reported_instead_of_waiting_forever():
+    """
+    A tunnel that never comes up must not look like one that is still starting.
+
+    The desktop shell reports cloudflared failures to /api/tunnel; without this the
+    share endpoint answered "Waiting for the public tunnel to come up..." for the
+    rest of the session no matter what had gone wrong.
+    """
+    pack_id = _first_pack_id()
+    if not pack_id:
+        print("[SKIP] No packs in registry")
+        return
+
+    try:
+        _reset_registry_state()
+        dubmate.TUNNEL_ERROR = None
+
+        with TestClient(app) as client:
+            code = _create_room(client, pack_id)["room_id"]
+
+            waiting = client.get(f"/api/rooms/{code}/share").json()
+            assert waiting["state"] == "waiting", waiting
+
+            reason = "The public tunnel did not come up within 60 seconds."
+            resp = client.post("/api/tunnel", json={"error": reason})
+            assert resp.status_code == 200
+            assert resp.json()["error"] == reason
+
+            failed = client.get(f"/api/rooms/{code}/share").json()
+            assert failed["state"] == "tunnel_unavailable", failed
+            assert failed["message"] == reason
+            assert failed["code_is_live"] is False
+
+            # A tunnel arriving later must clear the failure.
+            client.post("/api/tunnel", json={"tunnel_url": "https://recovered.trycloudflare.com"})
+            assert dubmate.TUNNEL_ERROR is None
+            recovered = client.get(f"/api/rooms/{code}/share").json()
+            assert recovered["state"] != "tunnel_unavailable", recovered
+            print("[PASS] a failed tunnel is reported, and clears when one arrives")
+    finally:
+        dubmate.TUNNEL_ERROR = None
+        _reset_registry_state()
+
+
 def test_share_endpoint_rejects_unknown_room():
     with TestClient(app) as client:
         resp = client.get("/api/rooms/NOSUCH/share")
@@ -335,5 +379,6 @@ if __name__ == "__main__":
     test_new_tunnel_url_republishes_with_owner_token()
     test_rejected_key_is_reported_with_a_usable_fallback()
     test_rejected_key_is_not_retried_until_the_tunnel_changes()
+    test_a_failed_tunnel_is_reported_instead_of_waiting_forever()
     test_share_endpoint_rejects_unknown_room()
     print("\n[OK] Room registry suite passed")

@@ -1,5 +1,10 @@
 # DubMate Studio Changelog
 
+## [1.1.2] - 2026-08-31
+
+### Fixed
+- **A Failed Tunnel Now Says So (`tauri/src-tauri/src/main.rs`, `app.py`)**: when the public tunnel could not start, nothing reported it. Four separate paths failed silently -- a missing cloudflared component, a failed spawn, cloudflared exiting early, and cloudflared running but never publishing a URL -- and each left the engine on `tunnel_url = None`. The studio then told the host *"Waiting for the public tunnel to come up..."* for the rest of the session, with no indication anywhere that it was never coming. All four are now reported to the log, to the launcher, and to the engine, and a watchdog declares failure if no URL appears within 60 seconds. `/api/rooms/{code}/share` answers `tunnel_unavailable` with the reason, and the studio surfaces it instead of implying the tunnel is still on its way. Local and LAN play are unaffected either way.
+
 ## [1.1.1] - 2026-08-30
 
 ### Fixed
