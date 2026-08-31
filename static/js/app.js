@@ -1717,9 +1717,15 @@ class DubMateApp {
         // it does not work. Guests are already connected by this point.
         const isHost = this.roomState?.host_id && this.roomState.host_id === this.user.id;
         if (isHost && share && !share.code_is_live) {
-          this.showToast(share.direct_url
-            ? 'Room code is not public yet — use Copy Code for a direct invite link.'
-            : 'Room code is local only — guests on other networks cannot join yet.');
+          if (share.state === 'tunnel_unavailable') {
+            // The shell told the engine the tunnel failed, so say what went wrong
+            // rather than implying it is still on its way.
+            this.showToast(share.message || "Couldn't open a public connection — only people on your network can join.");
+          } else {
+            this.showToast(share.direct_url
+              ? 'Room code is not public yet — use Copy Code for a direct invite link.'
+              : 'Room code is local only — guests on other networks cannot join yet.');
+          }
         }
       }
     };
