@@ -1081,7 +1081,9 @@ async fn start_sidecars(app: tauri::AppHandle) {
 
     // Fallback: try Tauri shell sidecar API
     if !spawned {
-        if let Ok(sidecar_cmd) = app.shell().sidecar("sidecar/python-runtime/python") {
+        // Flattened name, for the same reason as cloudflared above. This branch only
+        // runs when the direct path failed, which is why the wrong name went unnoticed.
+        if let Ok(sidecar_cmd) = app.shell().sidecar("python") {
             let cmd = sidecar_cmd
                 .current_dir(app_dir)
                 .args(["-u", app_py_path.to_str().unwrap()]);
@@ -1169,13 +1171,13 @@ async fn start_sidecars(app: tauri::AppHandle) {
     // never producing a URL all left the engine sitting on tunnel_url = None,
     // and the studio told the host "Waiting for the public tunnel to come up..."
     // forever with nothing anywhere explaining that it was never coming.
-    let cf_cmd = match app.shell().sidecar("sidecar/cloudflared") {
-        Ok(cmd) => cmd,
-        Err(e) => {
+    let cf_cmd = match resolve_cloudflared(&app) {
+        Some(cmd) => cmd,
+        None => {
             report_tunnel_failure(
                 &app,
                 engine_port,
-                format!("The bundled cloudflared component could not be found ({e})."),
+                "The bundled cloudflared component could not be found.".to_string(),
             );
             return;
         }
@@ -1311,8 +1313,42 @@ async fn start_sidecars(app: tauri::AppHandle) {
     }
 }
 
+/// Names to try when locating the bundled cloudflared, most likely first.
+///
+/// The first entry is what the bundler actually ships; the second is the path as
+/// declared in tauri.conf.json, kept only so a future bundler change cannot break
+/// this again. Named rather than inlined so tests/test_sidecar_names.py can check
+/// it against tauri.conf.json.
+const CLOUDFLARED_SIDECAR_NAMES: [&str; 2] = ["cloudflared", "sidecar/cloudflared"];
+
 /// Seconds to wait for cloudflared to publish a URL before declaring it failed.
 const TUNNEL_READY_TIMEOUT_SECS: u64 = 60;
+
+/// Finds the bundled cloudflared, tolerating either sidecar layout.
+///
+/// tauri.conf.json declares the external binary as "sidecar/cloudflared", and it
+/// was being requested under that same string at runtime. The bundler does not
+/// keep that directory: it flattens external binaries next to the executable, so
+/// the shipped file is `<app dir>/cloudflared.exe` while the lookup asked for
+/// `<app dir>/sidecar/cloudflared.exe`, which never existed. The call therefore
+/// failed on every launch of every install, and because it sat inside an
+/// `if let Ok(..)` with no else, nothing said so -- the tunnel simply never
+/// started, room codes were never published, and no guest could ever join.
+///
+/// Both names are tried so this keeps working whichever layout a future bundler
+/// produces, and so it does not silently break again if the config changes.
+fn resolve_cloudflared(app: &tauri::AppHandle) -> Option<tauri_plugin_shell::process::Command> {
+    for name in CLOUDFLARED_SIDECAR_NAMES {
+        match app.shell().sidecar(name) {
+            Ok(cmd) => {
+                println!("[DubMate] Using cloudflared sidecar '{name}'");
+                return Some(cmd);
+            }
+            Err(e) => eprintln!("[DubMate] cloudflared sidecar '{name}' unavailable: {e}"),
+        }
+    }
+    None
+}
 
 /// Tells the user, the log and the engine that the public tunnel is not coming.
 ///
