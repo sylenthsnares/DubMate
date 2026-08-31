@@ -1,5 +1,12 @@
 # DubMate Studio Changelog
 
+## [1.1.3] - 2026-08-31
+
+### Fixed
+- **The Public Tunnel Never Started, On Any Install (`tauri/src-tauri/src/main.rs`)**: `tauri.conf.json` declares the bundled tunnel binary as `sidecar/cloudflared`, and the app asked for it at runtime under that same name. The bundler does not keep that directory -- it places external binaries next to the executable -- so the shipped file was `<app dir>/cloudflared.exe` while the lookup asked for `<app dir>/sidecar/cloudflared.exe`, which has never existed. The call failed on every launch of every install, inside an `if let Ok(..)` with no `else`, so nothing anywhere reported it. cloudflared never ran, no room code was ever published to the registry, and no guest could ever join a room. Confirmed on a real install: creating that missing path by hand made cloudflared start within ten seconds and the entire join path work end to end. The lookup now uses the name the bundler actually ships, and tries the declared path as a fallback so a future bundler change cannot reintroduce this. The same mistake in the Python sidecar fallback is fixed too -- it was masked because the direct path runs first and succeeds.
+- **Downloads Report What They Are Doing (`static/js/app.js`, `static/index.html`)**: the export download buttons were bare `<a download>` links with no JavaScript, so there was no indication a download had started or finished, and any server-side error replaced the studio with a raw error page. They now fetch the file, show progress and completion, and report failures as a message. Double-clicks no longer start two downloads.
+- **Where Renders Are Saved Is Now Visible**: finished videos were always written to the configured Render & Export Folder, but nothing said so, which made the setting look ignored. The export screen now shows the path it saved to, and the setting explains that a downloaded copy goes wherever the browser puts downloads.
+
 ## [1.1.2] - 2026-08-31
 
 ### Fixed
