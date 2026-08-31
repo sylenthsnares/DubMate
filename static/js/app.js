@@ -414,6 +414,7 @@ class DubMateApp {
     this.btnModalDismiss = document.getElementById('btn-modal-dismiss');
     this.btnModalDownload169 = document.getElementById('btn-modal-download-169');
     this.btnModalDownload916 = document.getElementById('btn-modal-download-916');
+    this.exportSavedPath = document.getElementById('export-saved-path');
 
     // Booth & Import Loading Overlays
     this.boothProcessingOverlay = document.getElementById('booth-processing-overlay');
@@ -1007,6 +1008,23 @@ class DubMateApp {
     }
     if (this.btnToolbarProjectZip) {
       this.btnToolbarProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
+    }
+
+    // These four were bare `<a download href="/api/...">`. The webview followed the
+    // href, so a backend error answered as JSON replaced the studio with
+    // `{"detail":"..."}`, and a working download gave no sign it had started or
+    // finished. Same fetch/blob route as downloadFullProjectZip().
+    for (const [anchor, aspectRatio] of [
+      [this.btnDownloadLink, '16:9'],
+      [this.btnDownloadLink916, '9:16'],
+      [this.btnModalDownload169, '16:9'],
+      [this.btnModalDownload916, '9:16'],
+    ]) {
+      if (!anchor) continue;
+      anchor.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.downloadExportVideo(aspectRatio, anchor);
+      });
     }
 
     // Screening Video State Listeners
@@ -2548,6 +2566,46 @@ class DubMateApp {
 
   // --- Export Folder Setting (GET/POST /api/config -> exports_dir) ---
 
+  /**
+   * Reads (and remembers) the folder the backend renders into.
+   *
+   * The render always went to the "Render & Export Folder" from settings, but no
+   * screen ever named it, so the setting looked like it was being ignored.
+   * Cached because the export modal asks for it on every successful render;
+   * saveExportsDir() refreshes the cache when the user changes it.
+   */
+  async fetchExportsDir() {
+    if (typeof this.exportsDirCache === 'string') return this.exportsDirCache;
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data || typeof data.exports_dir !== 'string' || !data.exports_dir) return null;
+      this.exportsDirCache = data.exports_dir;
+      return this.exportsDirCache;
+    } catch (err) {
+      console.warn('[DubMate] Could not read exports_dir from /api/config:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Names the folder the finished render was written to, in the export modal.
+   * Stays hidden rather than guessing if the backend does not report a folder.
+   */
+  async showExportSavedPath() {
+    if (!this.exportSavedPath) return;
+    const dir = await this.fetchExportsDir();
+    if (!dir) {
+      this.exportSavedPath.classList.remove('is-visible');
+      return;
+    }
+    this.exportSavedPath.innerText = `Saved to ${dir}`;
+    // The line is clamped to two lines, so hover/screen readers get the whole path.
+    this.exportSavedPath.title = dir;
+    this.exportSavedPath.classList.add('is-visible');
+  }
+
   async loadExportsDirSetting() {
     if (!this.audioExportsRow) return;
     // Stay hidden unless the running backend actually reports the key; the
@@ -2561,6 +2619,9 @@ class DubMateApp {
       if (!Object.prototype.hasOwnProperty.call(data, 'exports_dir')) return;
 
       this.audioExportsRow.style.display = 'block';
+      if (typeof data.exports_dir === 'string' && data.exports_dir) {
+        this.exportsDirCache = data.exports_dir;
+      }
       if (this.inputExportsDir) {
         this.inputExportsDir.value = typeof data.exports_dir === 'string' ? data.exports_dir : '';
       }
@@ -2591,8 +2652,10 @@ class DubMateApp {
       if (!res.ok) {
         throw new Error(data.detail || data.message || `HTTP ${res.status}`);
       }
-      if (typeof data.exports_dir === 'string' && this.inputExportsDir) {
-        this.inputExportsDir.value = data.exports_dir;
+      if (typeof data.exports_dir === 'string' && data.exports_dir) {
+        // The backend may normalise the path it was given, so trust its answer.
+        this.exportsDirCache = data.exports_dir;
+        if (this.inputExportsDir) this.inputExportsDir.value = data.exports_dir;
       }
       this.setExportsFeedback('✅ Export folder saved.', true);
       this.showToast('📁 Export folder updated.');
@@ -2930,7 +2993,7 @@ class DubMateApp {
               ${formatBadge}
               ${authorsHtml}
               <span class="pack-line-badge">${lineCount} lines</span>
-              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" title="Download ${escapeHtml(rawTitle)} (.zip)" download onclick="event.stopPropagation()">
+              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" title="Download ${escapeHtml(rawTitle)} (.zip)" download>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 <span>ZIP</span>
               </a>
@@ -2942,6 +3005,24 @@ class DubMateApp {
           ${characters.map(c => `<span class="char-tag">${this.highlightMatch(c, query)}</span>`).join('')}
         </div>
       `;
+
+      // Same bare-anchor problem as the export buttons: the webview navigated to
+      // the export route, so a missing pack showed a JSON page instead of a toast.
+      const packZipLink = card.querySelector('.btn-pack-download-icon');
+      if (packZipLink) {
+        packZipLink.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation(); // the card behind it is the "select this pack" target
+          const safeName = (pack.name || pack.id || 'pack').replace(/[^a-zA-Z0-9_-]/g, '_');
+          this.saveRemoteFile(packZipLink.getAttribute('href'), `${safeName}.zip`, {
+            control: packZipLink,
+            busyText: '…', // the button is a 10px icon; anything longer reflows the row
+            startMessage: `⏳ Packaging "${rawTitle}"…`,
+            doneMessage: `✅ "${rawTitle}" downloaded.`,
+            errorText: "Couldn't download that pack. Please try again.",
+          });
+        });
+      }
 
       card.addEventListener('click', () => {
         this.packGrid.querySelectorAll('.pack-card').forEach(c => c.classList.remove('selected'));
@@ -5311,6 +5392,11 @@ class DubMateApp {
     if (this.exportModalActions) {
       this.exportModalActions.style.display = 'none';
     }
+    // Hidden until this render finishes, so a re-render never leaves the previous
+    // "Saved to ..." line sitting under a progress bar.
+    if (this.exportSavedPath) {
+      this.exportSavedPath.classList.remove('is-visible');
+    }
     this.updateExportModalStep(1, 25, "Applying vocal EQ, studio compression & acoustic room reverb...");
     this.pauseScreeningPlayback();
     this.lockScreeningUI(true);
@@ -5379,6 +5465,9 @@ class DubMateApp {
     if (this.exportModalActions) {
       this.exportModalActions.style.display = 'flex';
     }
+
+    // Fire and forget: the render is already on disk, this only names where.
+    this.showExportSavedPath();
 
     // Also update legacy inline panel if displayed
     if (this.exportProgressBox) {
@@ -5538,6 +5627,114 @@ class DubMateApp {
     } catch (err) {
       this.failExport(err);
     }
+  }
+
+  /**
+   * Pulls a file from the backend and hands the finished blob to the browser.
+   *
+   * Everything that used to be an `<a download href>` goes through here: an anchor
+   * navigates on click, so an endpoint that answers errors as JSON tore down the
+   * studio (and its websocket) to render `{"detail":"..."}` as a page, and a
+   * successful save was completely silent. Mirrors downloadFullProjectZip():
+   * check res.ok, blob, click a throwaway anchor, revoke late.
+   *
+   * Returns true only if the file actually reached the browser.
+   */
+  async saveRemoteFile(url, filename, options = {}) {
+    const {
+      control = null,
+      busyText = 'Preparing…',
+      startMessage = '',
+      doneMessage = '✅ Download saved.',
+      errorText = "Couldn't download that file. Please try again.",
+    } = options;
+
+    if (!url) {
+      this.showToast(errorText);
+      return false;
+    }
+    // A second click mid-transfer would render and save the file twice.
+    if (control && control.dataset.downloading === '1') return false;
+
+    const label = control ? control.querySelector('span') : null;
+    const originalText = label ? label.innerText : '';
+    if (control) {
+      control.dataset.downloading = '1';
+      control.setAttribute('aria-busy', 'true');
+      // Anchors ignore `disabled`, so keyboard users need aria-disabled instead.
+      if (control.tagName === 'A') control.setAttribute('aria-disabled', 'true');
+      else control.disabled = true;
+      if (label) label.innerText = busyText;
+    }
+    if (startMessage) this.showToast(startMessage);
+
+    let objectUrl = null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          detail = (await res.json())?.detail || detail;
+        } catch { /* not JSON; the status is all we have */ }
+        throw new Error(detail);
+      }
+
+      const blob = await res.blob();
+      objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = objectUrl;
+      a.setAttribute('download', filename);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      this.showToast(doneMessage);
+      return true;
+    } catch (err) {
+      this.showToast(`❌ ${this.friendlyError(err, errorText)}`);
+      return false;
+    } finally {
+      if (objectUrl) {
+        // Revoked late so the browser has definitely started the save.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+      }
+      if (control) {
+        delete control.dataset.downloading;
+        control.removeAttribute('aria-busy');
+        if (control.tagName === 'A') control.removeAttribute('aria-disabled');
+        else control.disabled = false;
+        if (label) label.innerText = originalText;
+      }
+    }
+  }
+
+  /**
+   * Saves a second copy of the rendered master wherever the browser puts downloads.
+   * The render itself already sits in the user's Render & Export folder; only the
+   * webview decides where this copy lands, which is why the settings copy says so.
+   */
+  async downloadExportVideo(aspectRatio, control) {
+    const href = control ? control.getAttribute('href') : '';
+    const roomId = this.roomState?.room_id;
+    // handleExportSuccess fills the href; fall back to the canonical route so a
+    // reconnect that never replayed the export event still downloads.
+    const url = (href && href !== '#')
+      ? href
+      : (roomId ? `/api/rooms/${roomId}/export/download?aspect_ratio=${encodeURIComponent(aspectRatio)}` : '');
+    if (!url) {
+      this.showToast('Render the dubbed video first, then download it.');
+      return false;
+    }
+
+    const packName = (this.roomState?.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const suffix = aspectRatio === '9:16' ? '9x16' : '16x9';
+    return this.saveRemoteFile(url, `DubMate_${packName}_${suffix}.mp4`, {
+      control,
+      busyText: '⏳ Preparing…',
+      startMessage: '⏳ Preparing your download…',
+      doneMessage: '✅ Video downloaded.',
+      errorText: "Couldn't download that video. Please try again.",
+    });
   }
 
   async downloadFullProjectZip() {

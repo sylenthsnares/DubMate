@@ -1359,6 +1359,10 @@
           ensure rendering integrity.</span>
       </div>
 
+      <!-- Where the render landed on disk. Filled from GET /api/config -> exports_dir
+           after a successful export; stays hidden if the backend does not report it. -->
+      <p id="export-saved-path" class="export-saved-path"></p>
+
       <!-- Modal Actions on Completion -->
       <div id="export-modal-actions" class="modal-actions" style="display: none;">
         <button id="btn-modal-close-view" class="btn btn-primary btn-lg" type="button">
@@ -1819,6 +1823,10 @@
             </button>
           </div>
           <div id="exports-dir-feedback" class="audio-inline-feedback" style="display: none;"></div>
+          <p class="audio-device-note">
+            Finished videos are saved here. If you press a Download button, that extra copy goes wherever
+            your browser normally puts downloads.
+          </p>
         </div>
 
         <div class="modal-actions" style="margin-top: 20px; justify-content: flex-end; gap: 10px;">

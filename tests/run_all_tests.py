@@ -74,7 +74,8 @@ def test_frontend_suite():
     print_header("Phase 3: Frontend JSDOM Headless DOM & Audio Integration Suite")
     t0 = time.time()
     for filename, label in (("test_room_socket.js", "Room Socket Delivery"),
-                            ("test_launcher_ui.js", "Desktop Launcher Install Card")):
+                            ("test_launcher_ui.js", "Desktop Launcher Install Card"),
+                            ("test_export_downloads.js", "Export & Download Feedback")):
         node_res = subprocess.run(["node", os.path.join(TESTS_DIR, filename)], capture_output=True, text=True)
         if node_res.returncode == 0:
             print(f"  [PASS] {label}")
@@ -104,6 +105,7 @@ def test_python_suites():
         ("test_host_transfer.py", "Multiplayer Host Migration & Version Handshake"),
         ("test_room_registry.py", "Public Room Code Publishing & Tunnel Handoff"),
         ("test_performance_guards.py", "Cold Start, Audio I/O & Cache Policy Guards"),
+        ("test_sidecar_names.py", "Bundled Sidecar Name Resolution"),
         ("test_loading_screens.py", "Desktop Launcher Resilience & Modal States"),
         ("test_loudness_alignment.py", "Audio Loudness Normalization & True-Peak DSP"),
         ("test_noise_reduction.py", "Noise Profile Calibration & Dual-Take Generation"),
