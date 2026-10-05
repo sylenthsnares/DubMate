@@ -2,18 +2,27 @@
 """
 run_all_tests.py
 Comprehensive in-depth test runner for DubMate Studio.
-Runs syntax checks across all files, executes frontend JSDOM tests,
-and runs all 9 deep unit/integration test suites with timing metrics.
+Runs syntax checks across all files, executes every frontend JSDOM test,
+the worker unit tests, and every tests/test_*.py suite with timing metrics.
+
+Every subprocess runs with an isolated HOME/USERPROFILE and DUBMATE_CACHE_DIR
+inside a per-run temp dir, so the suites never read or write the user's real
+~/.dubmate/config.json or cache.
 """
 import os
 import sys
+import glob
 import time
+import shutil
+import tempfile
 import py_compile
 import subprocess
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(TESTS_DIR)
 PYTHON_EXE = sys.executable
+FIXTURE_PREFIX = "ZZ_Fixture_"
+FIXTURE_COUNT = 15
 
 def print_header(title: str):
     print("\n" + "=" * 70)
@@ -26,6 +35,11 @@ def test_python_syntax():
     for d in (PROJECT_ROOT, TESTS_DIR, os.path.join(PROJECT_ROOT, "scripts")):
         if os.path.isdir(d):
             py_files += [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".py")]
+    pkg_dir = os.path.join(PROJECT_ROOT, "dubmate")
+    if os.path.isdir(pkg_dir):
+        for root, dirs, files in os.walk(pkg_dir):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            py_files += [os.path.join(root, f) for f in files if f.endswith(".py")]
     passed = 0
     failed = 0
     for path in sorted(py_files):
@@ -39,12 +53,11 @@ def test_python_syntax():
             failed += 1
     return passed, failed
 
-def test_javascript_syntax():
+def test_javascript_syntax(env):
     print_header("Phase 2: JavaScript Syntax & Static Lint Audit")
     js_dirs = [
         os.path.join(PROJECT_ROOT, "static", "js"),
         os.path.join(PROJECT_ROOT, "tauri", "src"),
-        os.path.join(PROJECT_ROOT, "worker"),
     ]
     js_files = []
     for d in js_dirs:
@@ -59,7 +72,7 @@ def test_javascript_syntax():
     for path in sorted(js_files):
         rel = os.path.relpath(path, PROJECT_ROOT)
         try:
-            res = subprocess.run(["node", "--check", path], capture_output=True, text=True)
+            res = subprocess.run(["node", "--check", path], capture_output=True, text=True, env=env)
             if res.returncode == 0:
                 print(f"  [OK]  {rel}")
                 passed += 1
@@ -70,63 +83,64 @@ def test_javascript_syntax():
             print(f"  [SKIP] {rel}: {e}")
     return passed, failed
 
-def test_frontend_suite():
-    print_header("Phase 3: Frontend JSDOM Headless DOM & Audio Integration Suite")
+def test_frontend_suite(env):
+    print_header("Phase 3: Frontend JSDOM Headless DOM & Audio Integration Suites")
     t0 = time.time()
-    for filename, label in (("test_room_socket.js", "Room Socket Delivery"),
-                            ("test_launcher_ui.js", "Desktop Launcher Install Card"),
-                            ("test_export_downloads.js", "Export & Download Feedback")):
-        node_res = subprocess.run(["node", os.path.join(TESTS_DIR, filename)], capture_output=True, text=True)
-        if node_res.returncode == 0:
-            print(f"  [PASS] {label}")
-            for line in node_res.stdout.strip().split("\n"):
-                if "PASS:" in line:
+    all_passed = True
+    for path in sorted(glob.glob(os.path.join(TESTS_DIR, "test_*.js"))):
+        filename = os.path.basename(path)
+        t1 = time.time()
+        res = subprocess.run(["node", path], capture_output=True, text=True, env=env)
+        dur = time.time() - t1
+        if res.returncode == 0:
+            print(f"  [PASS] [{dur:5.2f}s] {filename}")
+            for line in res.stdout.strip().split("\n"):
+                if "PASS:" in line or "ALL " in line:
                     print(f"         {line.strip()}")
         else:
-            print(f"  [FAIL] {label} FAILED:\n{node_res.stderr}\n{node_res.stdout}")
-            return False, time.time() - t0
+            all_passed = False
+            print(f"  [FAIL] [{dur:5.2f}s] {filename}:\n{res.stderr}\n{res.stdout}")
+    return all_passed, time.time() - t0
 
-    res = subprocess.run(["node", os.path.join(TESTS_DIR, "test_frontend.js")], capture_output=True, text=True)
+def test_worker_suite(env):
+    print_header("Phase 4: Cloudflare Worker Unit Tests")
+    t0 = time.time()
+    res = subprocess.run(["node", "--experimental-strip-types", "tests/worker.test.mjs"],
+                         cwd=os.path.join(PROJECT_ROOT, "worker"),
+                         capture_output=True, text=True, env=env)
     dur = time.time() - t0
     if res.returncode == 0:
-        print(f"  [PASS] Frontend DOM & Audio Suite ({dur:.2f}s)")
-        for line in res.stdout.strip().split("\n"):
-            if "PASS:" in line or "ALL " in line:
-                print(f"         {line.strip()}")
+        print(f"  [PASS] [{dur:5.2f}s] worker/tests/worker.test.mjs")
         return True, dur
-    else:
-        print(f"  [FAIL] Frontend DOM Suite FAILED ({dur:.2f}s):\n{res.stderr}\n{res.stdout}")
-        return False, dur
+    print(f"  [FAIL] [{dur:5.2f}s] worker/tests/worker.test.mjs:\n{res.stderr}\n{res.stdout}")
+    return False, dur
 
-def test_python_suites():
-    print_header("Phase 4: Deep Backend, DSP, Packaging & Multiplayer Test Suites")
-    suites = [
-        ("test_config_pack_path.py", "Scene Pack Configuration & Dynamic Path Resolver"),
-        ("test_host_transfer.py", "Multiplayer Host Migration & Version Handshake"),
-        ("test_room_registry.py", "Public Room Code Publishing & Tunnel Handoff"),
-        ("test_performance_guards.py", "Cold Start, Audio I/O & Cache Policy Guards"),
-        ("test_sidecar_names.py", "Bundled Sidecar Name Resolution"),
-        ("test_loading_screens.py", "Desktop Launcher Resilience & Modal States"),
-        ("test_loudness_alignment.py", "Audio Loudness Normalization & True-Peak DSP"),
-        ("test_noise_reduction.py", "Noise Profile Calibration & Dual-Take Generation"),
-        ("test_noise_reduction_deep.py", "Spectral Subtraction & Audio Stem Export Stress Test"),
-        ("test_pack_builder.py", "Scene Pack Creator, INI Parser & Video Transcoding"),
-        ("test_pack_security.py", "Zip-Slip Defenses, Malware Quarantine & Tree Importer"),
-        ("test_systematic.py", "Master Systematic Dual-Engine Suite & Full Project Zip"),
-        ("test_audio_safety.py", "DSP Numerical Safety, Gain Clamping & Path Sanitization"),
-        ("test_security_hardening.py", "Path Traversal, WebSocket Authorization & ZIP Allowlist"),
-    ]
+def ensure_fixture_packs(env):
+    """Generates the synthetic fixture packs the suites rely on if any are missing."""
+    found = glob.glob(os.path.join(PROJECT_ROOT, "Packs", FIXTURE_PREFIX + "*"))
+    if sum(1 for p in found if os.path.isdir(p)) >= FIXTURE_COUNT:
+        return True
+    print(f"\n  [..] Fewer than {FIXTURE_COUNT} fixture packs in Packs/; running scripts/make_test_packs.py")
+    res = subprocess.run([PYTHON_EXE, os.path.join("scripts", "make_test_packs.py")],
+                         cwd=PROJECT_ROOT, capture_output=True, text=True, env=env)
+    if res.returncode != 0:
+        print(f"  [FAIL] make_test_packs.py failed:\n{res.stderr}\n{res.stdout}")
+        return False
+    print("  [OK]  Fixture packs generated")
+    return True
 
+def test_python_suites(env):
+    print_header("Phase 5: Deep Backend, DSP, Packaging & Multiplayer Test Suites")
     results = []
-    for script, desc in suites:
-        script_path = os.path.join(TESTS_DIR, script)
+    for script_path in sorted(glob.glob(os.path.join(TESTS_DIR, "test_*.py"))):
+        script = os.path.basename(script_path)
         t0 = time.time()
-        res = subprocess.run([PYTHON_EXE, script_path], capture_output=True, text=True)
+        res = subprocess.run([PYTHON_EXE, script_path], capture_output=True, text=True, env=env)
         dur = time.time() - t0
         passed = (res.returncode == 0)
-        results.append((script, desc, passed, dur, res.stdout, res.stderr))
+        results.append((script, passed, dur, res.stdout, res.stderr))
         status_icon = "[PASS]" if passed else "[FAIL]"
-        print(f"  {status_icon} [{dur:5.2f}s] {script} - {desc}")
+        print(f"  {status_icon} [{dur:5.2f}s] {script}")
         if not passed:
             print(f"     Error Output:\n{res.stderr}\n{res.stdout}")
 
@@ -140,10 +154,26 @@ def main():
     print(f"  Workspace: {PROJECT_ROOT}")
     print("=" * 70)
 
-    py_pass, py_fail = test_python_syntax()
-    js_pass, js_fail = test_javascript_syntax()
-    fe_pass, fe_dur = test_frontend_suite()
-    py_results = test_python_suites()
+    tmp = tempfile.mkdtemp(prefix="dubmate_tests_")
+    try:
+        home = os.path.join(tmp, "home")
+        cache = os.path.join(tmp, "cache")
+        os.makedirs(home)
+        os.makedirs(cache)
+        # DUBMATE_EXPORTS_DIR is deliberately not set: it overrides the configured
+        # export folder and would make that setting untestable. Exports default to
+        # <cache>/exports, which is already isolated.
+        env = dict(os.environ, USERPROFILE=home, HOME=home, DUBMATE_CACHE_DIR=cache)
+        env.pop("DUBMATE_EXPORTS_DIR", None)
+
+        py_pass, py_fail = test_python_syntax()
+        js_pass, js_fail = test_javascript_syntax(env)
+        fe_pass, fe_dur = test_frontend_suite(env)
+        wk_pass, wk_dur = test_worker_suite(env)
+        fixtures_ok = ensure_fixture_packs(env)
+        py_results = test_python_suites(env) if fixtures_ok else []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
     total_time = time.time() - total_start
 
@@ -152,15 +182,18 @@ def main():
     print("=" * 70)
     print(f"  * Python Syntax Checks:     {py_pass}/{py_pass + py_fail} files OK")
     print(f"  * JavaScript Syntax Checks: {js_pass}/{js_pass + js_fail} files OK")
-    print(f"  * Frontend JSDOM Suite:     {'PASSED' if fe_pass else 'FAILED'} in {fe_dur:.2f}s")
+    print(f"  * Frontend JSDOM Suites:    {'PASSED' if fe_pass else 'FAILED'} in {fe_dur:.2f}s")
+    print(f"  * Worker Unit Tests:        {'PASSED' if wk_pass else 'FAILED'} in {wk_dur:.2f}s")
+    if not fixtures_ok:
+        print("  * Fixture Packs:            FAILED to generate; backend suites not run")
 
-    all_py_passed = all(r[2] for r in py_results)
-    passed_count = sum(1 for r in py_results if r[2])
+    all_py_passed = fixtures_ok and all(r[1] for r in py_results)
+    passed_count = sum(1 for r in py_results if r[1])
     print(f"  * Backend Test Suites:      {passed_count}/{len(py_results)} suites PASSED")
     print(f"  * Total Execution Time:     {total_time:.2f} seconds")
     print("=" * 70)
 
-    if py_fail == 0 and js_fail == 0 and fe_pass and all_py_passed:
+    if py_fail == 0 and js_fail == 0 and fe_pass and wk_pass and all_py_passed:
         print("  >>> ALL TESTS & CODEBASE AUDITS PASSED WITH ZERO ERRORS! <<<")
         print("=" * 70 + "\n")
         sys.exit(0)

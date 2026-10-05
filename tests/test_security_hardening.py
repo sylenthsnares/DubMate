@@ -90,8 +90,7 @@ class TestPackAudioEndpointTraversal(unittest.TestCase):
     def test_traversal_filename_is_rejected(self):
         client = TestClient(app)
         packs = get_packs_registry()
-        if not packs:
-            self.skipTest("no packs in registry")
+        self.assertTrue(packs, 'fixture packs missing: run scripts/make_test_packs.py')
         pack_id = list(packs.keys())[0]
         for payload in ("..%5C..%5Capp.py", "..%2F..%2Fapp.py"):
             resp = client.get(f"/api/packs/{pack_id}/audio/{payload}")
@@ -145,8 +144,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
 
     def _make_room(self, client):
         packs = get_packs_registry()
-        if not packs:
-            self.skipTest("no packs in registry")
+        self.assertTrue(packs, 'fixture packs missing: run scripts/make_test_packs.py')
         pack_id = list(packs.keys())[0]
         resp = client.post("/api/rooms", json={
             "pack_id": pack_id,

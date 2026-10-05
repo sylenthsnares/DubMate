@@ -23,7 +23,8 @@ import wave
 import numpy as np
 from fastapi.testclient import TestClient
 
-_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+PROJECT_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, PROJECT_ROOT)
 
 import audio_processor
 import pack_loader
@@ -37,7 +38,8 @@ def test_scipy_is_not_imported_at_startup():
         "import sys, app; "
         "print('SCIPY_LOADED', any(m.split('.')[0] == 'scipy' for m in sys.modules))"
     )
-    res = subprocess.run([_sys.executable, "-c", probe], capture_output=True, text=True)
+    res = subprocess.run([_sys.executable, "-c", probe], capture_output=True, text=True, cwd=PROJECT_ROOT)
+    assert res.returncode == 0, f"probe failed to import app:\n{res.stderr[-400:]}"
     assert "SCIPY_LOADED False" in res.stdout, (
         "scipy is being imported at startup again; keep it inside the reverb path.\n"
         f"stdout={res.stdout[-400:]}\nstderr={res.stderr[-400:]}"
@@ -162,8 +164,9 @@ def test_engine_imports_stay_fast():
     timings = []
     for _ in range(2):
         started = time.perf_counter()
-        subprocess.run([_sys.executable, "-c", "import app"], capture_output=True)
+        res = subprocess.run([_sys.executable, "-c", "import app"], capture_output=True, text=True, cwd=PROJECT_ROOT)
         timings.append(time.perf_counter() - started)
+        assert res.returncode == 0, f"`import app` failed:\n{res.stderr[-400:]}"
     best = min(timings)
     assert best < 1.5, f"importing app took {best:.2f}s; something heavy is back at module scope"
     print(f"[PASS] cold `import app` in {best:.2f}s")

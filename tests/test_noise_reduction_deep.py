@@ -40,30 +40,18 @@ def generate_audio_signal(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Returns (mixed_audio, pure_speech, pure_noise) as float32 numpy arrays.
-    Uses real pack vocal sample if available, or synthetic glottal-modulated speech.
+    Speech is synthetic glottal-modulated voice.
     """
     n_samples = int(sr * duration_sec)
     t = np.linspace(0, duration_sec, n_samples, endpoint=False, dtype=np.float32)
 
-    sample_vocal_path = os.path.join(os.path.dirname(__file__), "Packs", "Jane Doe", "001_Makima.wav")
-    if os.path.isfile(sample_vocal_path):
-        raw_vocal = audio_processor.read_wav_mono(sample_vocal_path, sr)
-        if len(raw_vocal) >= n_samples:
-            speech = raw_vocal[:n_samples]
-        else:
-            speech = np.pad(raw_vocal, (0, n_samples - len(raw_vocal)))
-        # Normalize to target speech level
-        vocal_max = np.max(np.abs(speech))
-        if vocal_max > 1e-4:
-            speech = (speech / vocal_max) * speech_level
-    else:
-        # Synthetic glottal-pulse voiced speech simulation with formants
-        f0 = 140.0 + 8.0 * np.sin(2 * np.pi * 3.0 * t)
-        phase = 2 * np.pi * np.cumsum(f0) / sr
-        harmonics = sum(np.sin(k * phase) / (k**0.7) for k in range(1, 16))
-        speech_mask = np.zeros(n_samples, dtype=np.float32)
-        speech_mask[int(0.3 * sr):int(1.7 * sr)] = 1.0
-        speech = (harmonics * 0.10 * speech_mask * speech_level).astype(np.float32)
+    # Synthetic glottal-pulse voiced speech simulation with formants
+    f0 = 140.0 + 8.0 * np.sin(2 * np.pi * 3.0 * t)
+    phase = 2 * np.pi * np.cumsum(f0) / sr
+    harmonics = sum(np.sin(k * phase) / (k**0.7) for k in range(1, 16))
+    speech_mask = np.zeros(n_samples, dtype=np.float32)
+    speech_mask[int(0.3 * sr):int(1.7 * sr)] = 1.0
+    speech = (harmonics * 0.10 * speech_mask * speech_level).astype(np.float32)
 
     # 2. Noise types
     np.random.seed(123)

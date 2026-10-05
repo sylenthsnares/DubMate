@@ -151,9 +151,7 @@ def _create_room(client, pack_id):
 def test_room_created_before_tunnel_is_published_when_tunnel_arrives():
     """The core regression: room first, tunnel second, code still ends up live."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
     original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
@@ -190,9 +188,7 @@ def test_room_created_before_tunnel_is_published_when_tunnel_arrives():
 
 def test_room_created_after_tunnel_publishes_immediately():
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
     original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
@@ -219,9 +215,7 @@ def test_room_created_after_tunnel_publishes_immediately():
 def test_new_tunnel_url_republishes_with_owner_token():
     """cloudflared quick tunnels change hostname on reconnect; the code must follow."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
     original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
@@ -254,9 +248,7 @@ def test_new_tunnel_url_republishes_with_owner_token():
 def test_rejected_key_is_reported_with_a_usable_fallback():
     """A bad registry key must be visible in the UI, not swallowed into a console."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
     original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
@@ -286,9 +278,7 @@ def test_rejected_key_is_reported_with_a_usable_fallback():
 def test_rejected_key_is_not_retried_until_the_tunnel_changes():
     """The heartbeat runs every 20s; a verdict that cannot change must not be re-asked."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
     original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
@@ -331,9 +321,7 @@ def test_a_failed_tunnel_is_reported_instead_of_waiting_forever():
     rest of the session no matter what had gone wrong.
     """
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     try:
         _reset_registry_state()

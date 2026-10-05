@@ -28,9 +28,7 @@ def test_health_endpoint():
 def test_create_room_with_version():
     client = TestClient(app)
     packs = get_packs_registry()
-    if not packs:
-        print("[SKIP] No packs in registry")
-        return
+    assert packs, 'fixture packs missing: run scripts/make_test_packs.py'
     pack_id = list(packs.keys())[0]
 
     resp = client.post("/api/rooms", json={

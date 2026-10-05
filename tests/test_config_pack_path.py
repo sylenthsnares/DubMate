@@ -137,13 +137,6 @@ class TestConfigPackPath(unittest.TestCase):
         finally:
             shutil.rmtree(temp_single_base, ignore_errors=True)
 
-    @classmethod
-    def tearDownClass(cls):
-        # Restore configuration to standard workspace Packs folder
-        default_packs = os.path.abspath(os.path.join(pack_loader.BASE_DIR, "Packs"))
-        pack_loader.save_config({"packs_dir": default_packs})
-        pack_loader.init_pack_dirs()
-
 
 if __name__ == "__main__":
     unittest.main()

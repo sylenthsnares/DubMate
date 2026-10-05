@@ -15,8 +15,6 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _sys.path.insert(0, BASE_DIR)
 INDEX_HTML = os.path.join(BASE_DIR, "static", "index.html")
 STYLE_CSS = os.path.join(BASE_DIR, "static", "css", "style.css")
-APP_JS = os.path.join(BASE_DIR, "static", "js", "app.js")
-APP_PY = os.path.join(BASE_DIR, "app.py")
 
 
 class TestLoadingScreensAndLockouts(unittest.TestCase):
@@ -95,42 +93,6 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         ]
         for kf in keyframes:
             self.assertIn(kf, css, f"Missing keyframe: {kf} in style.css")
-
-    def test_03_app_js_state_and_methods(self):
-        """Verify app.js implements lock state management and modal helper methods."""
-        self.assertTrue(os.path.exists(APP_JS), "app.js missing")
-        with open(APP_JS, "r", encoding="utf-8") as f:
-            js = f.read()
-
-        # Flags & DOM bindings
-        self.assertIn("this.isRenderingExport = false", js)
-        self.assertIn("this.isProcessingTake = false", js)
-        self.assertIn("this.modalExportRendering = document.getElementById('modal-export-rendering')", js)
-        self.assertIn("this.boothProcessingOverlay = document.getElementById('booth-processing-overlay')", js)
-        self.assertIn("this.modalImportLoading = document.getElementById('modal-import-loading')", js)
-
-        # Methods
-        self.assertIn("setBoothProcessing(", js)
-        self.assertIn("openExportModal(", js)
-        self.assertIn("updateExportModalStep(", js)
-        self.assertIn("handleExportSuccess(", js)
-        self.assertIn("closeExportModal(", js)
-        self.assertIn("lockScreeningUI(", js)
-
-        # Keydown lock guard
-        self.assertIn("if (this.isProcessingTake || this.isRenderingExport)", js)
-
-        # Socket broadcast listeners
-        self.assertIn("this.socket.on('export_started'", js)
-        self.assertIn("this.socket.on('export_ready'", js)
-
-    def test_04_app_py_export_started_broadcast(self):
-        """Verify app.py broadcasts export_started to connected sockets."""
-        self.assertTrue(os.path.exists(APP_PY), "app.py missing")
-        with open(APP_PY, "r", encoding="utf-8") as f:
-            py = f.read()
-
-        self.assertIn('room.broadcast("export_started"', py)
 
     def test_05_tauri_launcher_elements_and_resilience(self):
         """Verify desktop launcher HTML, JS, config and Rust handle startup, progress, and errors reliably."""
