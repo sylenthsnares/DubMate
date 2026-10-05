@@ -423,6 +423,8 @@ class DubMateApp {
     // Global Interaction Lock Flags
     this.isRenderingExport = false;
     this.isProcessingTake = false;
+    // setInterval id of exportFinalVideo's status poll, so export_failed can stop it.
+    this.exportPollInterval = null;
 
     // Waveform canvas with real-time drag callbacks
     const canvas = document.getElementById('waveform-canvas');
@@ -1206,8 +1208,12 @@ class DubMateApp {
     });
 
     this.socket.on('export_started', (data) => {
+      // The client that pressed Export already has the modal open and locked, and
+      // its own POST/poll drives the progress; re-opening here would rewind it.
+      if (this.isRenderingExport) return;
       if (this.views.screening.classList.contains('active')) {
-        this.openExportModal();
+        // Someone else started this render: show it, but leave the modal closable.
+        this.openExportModal({ locked: false });
         this.updateExportModalStep(1, 30, "Applying vocal EQ, studio compression & acoustic room reverb...");
       }
     });
@@ -1218,6 +1224,19 @@ class DubMateApp {
         this.handleExportSuccess(payload);
         this.showToast("🎬 Master Dubbed Video is ready for the Cast!");
       }
+    });
+
+    this.socket.on('export_failed', (data) => {
+      const payload = data.payload || data;
+      const modalOpen = this.modalExportRendering && this.modalExportRendering.style.display !== 'none';
+      if (!modalOpen) return;
+      // The initiator's poll would report the same failure a tick later; stop it so
+      // the failure is shown once.
+      if (this.exportPollInterval) {
+        clearInterval(this.exportPollInterval);
+        this.exportPollInterval = null;
+      }
+      this.failExport(new Error(payload?.error || 'failed'));
     });
 
     this.socket.on('dialogue_presence_sync', (data) => {
@@ -1495,6 +1514,8 @@ class DubMateApp {
     if (!raw) return fallback;
 
     const known = [
+      [/still rendering|409/i,
+        "The video is still rendering. Try again when it's ready."],
       [/failed to fetch|networkerror|load failed|err_connection/i,
         "Couldn't reach DubMate. Check your connection and try again."],
       [/timed out|timeout|etimedout/i,
@@ -5181,13 +5202,18 @@ class DubMateApp {
     }
   }
 
-  openExportModal() {
-    this.isRenderingExport = true;
+  /**
+   * `locked: false` is for watching a render another client started: the close
+   * button stays and nothing is locked, because this client has no request of
+   * its own that could release the modal later.
+   */
+  openExportModal({ locked = true } = {}) {
+    this.isRenderingExport = locked;
     if (this.modalExportRendering) {
       this.modalExportRendering.style.display = 'flex';
     }
     if (this.btnModalCloseX) {
-      this.btnModalCloseX.style.display = 'none';
+      this.btnModalCloseX.style.display = locked ? 'none' : 'flex';
     }
     if (this.exportModalBadge) {
       this.exportModalBadge.className = 'badge-render-live';
@@ -5209,7 +5235,7 @@ class DubMateApp {
     }
     this.updateExportModalStep(1, 25, "Applying vocal EQ, studio compression & acoustic room reverb...");
     this.pauseScreeningPlayback();
-    this.lockScreeningUI(true);
+    if (locked) this.lockScreeningUI(true);
   }
 
   updateExportModalStep(step, percent, statusText) {
@@ -5388,6 +5414,7 @@ class DubMateApp {
       let attempts = 0;
       const maxAttempts = 90; // up to 3 minutes
 
+      if (this.exportPollInterval) clearInterval(this.exportPollInterval);
       const pollInterval = setInterval(async () => {
         attempts++;
         // Decided inside the try, acted on outside it. Throwing from in here used
@@ -5433,6 +5460,7 @@ class DubMateApp {
           }
         }
       }, 2000);
+      this.exportPollInterval = pollInterval;
 
     } catch (err) {
       this.failExport(err);

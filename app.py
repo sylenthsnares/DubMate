@@ -201,6 +201,44 @@ class Room:
         self._save_dirty: bool = False
         self._save_task: Optional[asyncio.Task] = None
 
+    def invalidate_exports(self):
+        """Drops renders made from takes or mix settings that just changed.
+
+        An in-flight render keeps its "processing" entry so a second ffmpeg cannot
+        start writing the same output file underneath it.
+        """
+        self.exported_video_path = None
+        self.exported_video_9_16_path = None
+        self.export_status = {k: v for k, v in self.export_status.items() if v == "processing"}
+
+    def export_out_path(self, aspect_ratio: str) -> str:
+        """Where a render for this aspect goes. Reads EXPORTS_DIR at call time so a
+        changed Render & Export Folder applies to the next export."""
+        suffix = "_9_16" if aspect_ratio == "9:16" else ""
+        return os.path.join(EXPORTS_DIR, f"Dub_{self.pack.pack_id}_{self.room_id}{suffix}.mp4")
+
+    def ready_export_path(self, aspect_ratio: str) -> Optional[str]:
+        """The finished render for this aspect, or None if there is no usable file."""
+        path = self.exported_video_9_16_path if aspect_ratio == "9:16" else self.exported_video_path
+        if path and os.path.exists(path) and os.path.getsize(path) > 1000:
+            return path
+        return None
+
+    def export_ready_payload(self, aspect_ratio: str) -> Dict[str, Any]:
+        """URLs and stats the clients need once a render for this aspect is on disk."""
+        path = self.exported_video_9_16_path if aspect_ratio == "9:16" else self.exported_video_path
+        file_size_mb = round(os.path.getsize(path) / (1024 * 1024), 2) if path and os.path.exists(path) else 0.0
+        timestamp_ms = int(time.time() * 1000)
+        return {
+            "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio={aspect_ratio}",
+            "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}",
+            "download_url_16_9": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9",
+            "download_url_9_16": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=9:16",
+            "file_size_mb": file_size_mb,
+            "duration": round(self.pack.duration, 1),
+            "aspect_ratio": aspect_ratio,
+        }
+
     def mark_dirty(self):
         self._save_dirty = True
         if self._save_task is None or self._save_task.done():
@@ -1390,7 +1428,7 @@ async def upload_take(
         "recorded_at": time.time(),
     }
 
-    room.exported_video_path = None
+    room.invalidate_exports()
     await room.broadcast("take_recorded", {
         "line_index": line_index,
         "url": versioned_url,
@@ -1431,7 +1469,7 @@ async def toggle_take_noise_reduction_endpoint(
         room.takes[line_index]["url"] = versioned_url
         room.takes[line_index]["peaks"] = toggled["peaks"]
         room.takes[line_index]["duration"] = toggled["duration"]
-        room.exported_video_path = None
+        room.invalidate_exports()
         await room.broadcast("take_params_updated", {
             "line_index": line_index,
             "url": versioned_url,
@@ -1492,28 +1530,11 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
     room.master_dialogue_presence_db = presence_val
 
     is_9_16 = (aspect_ratio == "9:16")
-    suffix = "_9_16" if is_9_16 else ""
-    out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}{suffix}.mp4"
-    out_path = os.path.join(EXPORTS_DIR, out_filename)
+    out_path = room.export_out_path(aspect_ratio)
 
     # Check if existing rendered file is already ready
-    target_path = room.exported_video_9_16_path if is_9_16 else room.exported_video_path
-    if target_path and os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
-        file_size_mb = round(os.path.getsize(target_path) / (1024 * 1024), 2)
-        duration = round(room.pack.duration, 1)
-        timestamp_ms = int(time.time() * 1000)
-        export_video_url = f"/api/rooms/{room.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}"
-        download_url = f"/api/rooms/{room.room_id}/export/download?aspect_ratio={aspect_ratio}"
-        return {
-            "status": "ok",
-            "download_url": download_url,
-            "export_video_url": export_video_url,
-            "download_url_16_9": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=16:9",
-            "download_url_9_16": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=9:16",
-            "file_size_mb": file_size_mb,
-            "duration": duration,
-            "aspect_ratio": aspect_ratio,
-        }
+    if room.ready_export_path(aspect_ratio):
+        return {"status": "ok", **room.export_ready_payload(aspect_ratio)}
 
     current_status = room.export_status.get(aspect_ratio)
     if current_status == "processing":
@@ -1526,6 +1547,16 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
 
     room.export_status[aspect_ratio] = "processing"
     await room.broadcast("export_started", {"aspect_ratio": aspect_ratio})
+
+    # Captured here, on the event loop thread: the worker thread has no running loop
+    # of its own, so asyncio.get_event_loop() there cannot reach the clients.
+    loop = asyncio.get_running_loop()
+
+    def notify_clients(message_type: str, payload: Dict[str, Any]):
+        try:
+            asyncio.run_coroutine_threadsafe(room.broadcast(message_type, payload), loop)
+        except Exception as ex:
+            print(f"[ExportWorkerWarning] Could not broadcast {message_type} for {room.room_id} ({aspect_ratio}): {ex}")
 
     def render_worker():
         try:
@@ -1542,32 +1573,11 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
                 room.exported_video_path = out_path
 
             room.export_status[aspect_ratio] = "ready"
-            file_size_mb = round(os.path.getsize(out_path) / (1024 * 1024), 2) if os.path.exists(out_path) else 0.0
-            duration = round(room.pack.duration, 1)
-            timestamp_ms = int(time.time() * 1000)
-            export_video_url = f"/api/rooms/{room.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}"
-            download_url = f"/api/rooms/{room.room_id}/export/download?aspect_ratio={aspect_ratio}"
-
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        room.broadcast("export_ready", {
-                            "download_url": download_url,
-                            "export_video_url": export_video_url,
-                            "download_url_16_9": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=16:9",
-                            "download_url_9_16": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=9:16",
-                            "file_size_mb": file_size_mb,
-                            "duration": duration,
-                            "aspect_ratio": aspect_ratio,
-                        }),
-                        loop
-                    )
-            except Exception:
-                pass
+            notify_clients("export_ready", room.export_ready_payload(aspect_ratio))
         except Exception as ex:
             room.export_status[aspect_ratio] = f"failed: {str(ex)}"
             print(f"[ExportWorkerError] Error rendering {room.room_id} ({aspect_ratio}): {ex}")
+            notify_clients("export_failed", {"aspect_ratio": aspect_ratio, "error": str(ex)})
 
     threading.Thread(target=render_worker, daemon=True).start()
 
@@ -1586,24 +1596,8 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    is_9_16 = (aspect_ratio == "9:16")
-    target_path = room.exported_video_9_16_path if is_9_16 else room.exported_video_path
-    if target_path and os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
-        file_size_mb = round(os.path.getsize(target_path) / (1024 * 1024), 2)
-        duration = round(room.pack.duration, 1)
-        timestamp_ms = int(time.time() * 1000)
-        export_video_url = f"/api/rooms/{room.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}"
-        download_url = f"/api/rooms/{room.room_id}/export/download?aspect_ratio={aspect_ratio}"
-        return {
-            "status": "ready",
-            "download_url": download_url,
-            "export_video_url": export_video_url,
-            "download_url_16_9": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=16:9",
-            "download_url_9_16": f"/api/rooms/{room.room_id}/export/download?aspect_ratio=9:16",
-            "file_size_mb": file_size_mb,
-            "duration": duration,
-            "aspect_ratio": aspect_ratio,
-        }
+    if room.ready_export_path(aspect_ratio):
+        return {"status": "ready", **room.export_ready_payload(aspect_ratio)}
 
     status = room.export_status.get(aspect_ratio, "idle")
     return {
@@ -1619,11 +1613,8 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    target_path = room.exported_video_9_16_path if aspect_ratio == "9:16" else room.exported_video_path
-    if not target_path or not os.path.exists(target_path):
-        target_path = room.exported_video_path
-
-    if not target_path or not os.path.exists(target_path):
+    target_path = room.ready_export_path(aspect_ratio) or room.ready_export_path("16:9")
+    if not target_path:
         raise HTTPException(status_code=404, detail="Exported video not found")
 
     return range_stream_file(
@@ -1640,19 +1631,22 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    is_9_16 = (aspect_ratio == "9:16")
-    suffix = "_9_16" if is_9_16 else ""
-    out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}{suffix}.mp4"
-    out_path = os.path.join(EXPORTS_DIR, out_filename)
+    # A render for this aspect is already writing the file; rendering it again here
+    # would put a second ffmpeg on the same output path.
+    if room.export_status.get(aspect_ratio) == "processing":
+        raise HTTPException(status_code=409, detail="Export still rendering")
 
-    target_path = room.exported_video_9_16_path if is_9_16 else room.exported_video_path
-    if not target_path or not os.path.exists(target_path):
+    is_9_16 = (aspect_ratio == "9:16")
+    target_path = room.ready_export_path(aspect_ratio)
+    if not target_path:
+        out_path = room.export_out_path(aspect_ratio)
         # ffmpeg render is fully synchronous; off-loading keeps it from stalling the
         # event loop (and therefore every other room's websocket) for its whole duration.
         await asyncio.to_thread(
             audio_processor.export_dub_video,
             room.pack, dict(room.takes), out_path,
             aspect_ratio="9:16" if is_9_16 else "16:9",
+            master_dialogue_presence_db=room.master_dialogue_presence_db,
         )
         if is_9_16:
             room.exported_video_9_16_path = out_path
@@ -1808,7 +1802,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
                         if key in payload:
                             room.takes[line_idx][key] = payload[key]
-                    room.exported_video_path = None
+                    room.invalidate_exports()
                     await room.broadcast("take_params_updated", {"line_index": line_idx})
 
             elif msg_type == "clear_take":
@@ -1819,7 +1813,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     line_idx = None
                 if line_idx is not None and line_idx in room.takes:
                     del room.takes[line_idx]
-                    room.exported_video_path = None
+                    room.invalidate_exports()
                     await room.broadcast("take_cleared", {"line_index": line_idx})
 
             elif msg_type == "set_user_status":
@@ -1843,24 +1837,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
 
                     # Auto-master the scene into MP4 for the cast
                     try:
-                        out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}.mp4"
-                        out_path = os.path.join(EXPORTS_DIR, out_filename)
+                        out_path = room.export_out_path("16:9")
                         await asyncio.to_thread(
                             audio_processor.export_dub_video,
                             room.pack, dict(room.takes), out_path,
                         )
                         room.exported_video_path = out_path
-                        file_size_mb = round(os.path.getsize(out_path) / (1024 * 1024), 2) if os.path.exists(out_path) else 0.0
-                        duration = round(room.pack.duration, 1)
-                        timestamp_ms = int(time.time() * 1000)
-                        export_video_url = f"/api/rooms/{room.room_id}/export/video?v={timestamp_ms}"
-                        download_url = f"/api/rooms/{room.room_id}/export/download"
-                        await room.broadcast("export_ready", {
-                            "download_url": download_url,
-                            "export_video_url": export_video_url,
-                            "file_size_mb": file_size_mb,
-                            "duration": duration,
-                        })
+                        await room.broadcast("export_ready", room.export_ready_payload("16:9"))
                     except Exception as ex:
                         print(f"[PremiereRenderError] {ex}")
 
@@ -1880,8 +1863,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
             elif msg_type == "set_dialogue_presence":
                 presence_db = float(payload.get("presence_db", 0.0))
                 room.master_dialogue_presence_db = max(-12.0, min(12.0, presence_db))
-                room.exported_video_path = None
-                room.exported_video_9_16_path = None
+                room.invalidate_exports()
                 await room.broadcast("dialogue_presence_sync", {
                     "presence_db": room.master_dialogue_presence_db,
                     "triggered_by": user_id
