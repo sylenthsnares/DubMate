@@ -203,5 +203,36 @@ class TestWebSocketAuthorization(unittest.TestCase):
                 )
 
 
+class TestConfigLocalOnly(unittest.TestCase):
+    """POST /api/config must refuse requests that came through the Cloudflare tunnel."""
+
+    def setUp(self):
+        import tempfile
+        self.client = TestClient(app)
+        self.target = tempfile.mkdtemp(prefix="dm_cfg_")
+        self.orig_config = pack_loader.load_config()
+        self.orig_exports = app_module.EXPORTS_DIR
+
+    def tearDown(self):
+        import shutil
+        pack_loader.save_config(self.orig_config)
+        app_module.EXPORTS_DIR = self.orig_exports
+        shutil.rmtree(self.target, ignore_errors=True)
+
+    def test_tunnel_request_is_rejected_and_config_unchanged(self):
+        for header in ({"Cf-Connecting-Ip": "1.2.3.4"}, {"Cf-Ray": "abc123-LHR"}):
+            resp = self.client.post("/api/config", json={"exports_dir": self.target}, headers=header)
+            self.assertEqual(resp.status_code, 403, header)
+            self.assertEqual(pack_loader.load_config(), self.orig_config)
+            self.assertEqual(app_module.EXPORTS_DIR, self.orig_exports)
+
+    def test_local_request_behaves_as_before(self):
+        resp = self.client.post("/api/config", json={})
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post("/api/config", json={"exports_dir": self.target})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(pack_loader.load_config().get("exports_dir"), self.target)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -137,6 +137,16 @@ def safe_join(base_dir: str, *user_parts: str) -> str:
     return cand_real
 
 
+def require_local_request(request: Request) -> None:
+    """
+    Rejects requests that arrived through the Cloudflare tunnel. cloudflared
+    connects to the engine from localhost, so the client address cannot tell a
+    tunnel guest from the host; the headers Cloudflare adds can.
+    """
+    if request.headers.get("cf-connecting-ip") or request.headers.get("cf-ray"):
+        raise HTTPException(status_code=403, detail="This setting can only be changed on the host machine")
+
+
 def is_version_outdated(client_v: str, req_v: str) -> bool:
     """Returns True if client_v is strictly older than req_v."""
     try:
@@ -569,13 +579,14 @@ async def get_config():
 
 
 @app.post("/api/config")
-async def update_config(payload: Dict[str, Any]):
+async def update_config(payload: Dict[str, Any], request: Request):
     """
     Updates persistent configuration. Accepts packs_dir and/or exports_dir; at least
     one must be supplied. Previously packs_dir was mandatory, which made it
     impossible to change the export location on its own.
     """
     global PACKS_CACHE, EXPORTS_DIR
+    require_local_request(request)
 
     packs_dir = (payload.get("packs_dir") or "").strip()
     exports_dir = (payload.get("exports_dir") or "").strip()
