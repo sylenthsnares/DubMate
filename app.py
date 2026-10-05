@@ -26,7 +26,7 @@ if sys.platform == "win32":
         pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -176,7 +176,6 @@ class Room:
     def __init__(self, room_id: str, pack: pack_loader.PackInfo, host_id: str, host_name: str, host_color: str, min_required_version: str = "1.0.0"):
         self.room_id = room_id
         self.pack = pack
-        self.pack_id = pack.pack_id
         self.host_id = host_id
         self.min_required_version = min_required_version or "1.0.0"
         self.pending_transfer_to: Optional[str] = None
@@ -257,9 +256,6 @@ class Room:
         except Exception as ex:
             print(f"[RoomPersistence] Error saving room {self.room_id}: {ex}")
 
-    def save_to_disk(self):
-        self._sync_save_to_disk()
-
     def to_state_dict(self) -> Dict[str, Any]:
         has_export_16_9 = self.exported_video_path is not None and os.path.exists(self.exported_video_path)
         has_export = has_export_16_9
@@ -293,7 +289,7 @@ class Room:
             "current_line": self.current_line,
             "mode": self.mode,
             "status": self.status,
-            "master_dialogue_presence_db": getattr(self, "master_dialogue_presence_db", 0.0),
+            "master_dialogue_presence_db": self.master_dialogue_presence_db,
             "has_export": has_export,
             "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,
             "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9" if has_export else None,
@@ -424,39 +420,6 @@ def load_persisted_rooms():
                     print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
             except Exception as ex:
                 print(f"[DubMate] Error restoring room {r_id}: {ex}")
-        else:
-            # Reconstruct room from take files
-            try:
-                take_files = [f for f in os.listdir(room_folder) if f.startswith("take_line_") and f.endswith(".wav")]
-                if take_files and PACKS_CACHE:
-                    default_pack = list(PACKS_CACHE.values())[0]
-                    room = Room(r_id.upper(), default_pack, "host", "Host", "#8a6eff")
-                    for tf in take_files:
-                        m = re.search(r"take_line_(\d+)\.wav", tf)
-                        if m:
-                            l_idx = int(m.group(1))
-                            wav_p = os.path.join(room_folder, tf)
-                            audio_data = audio_processor.read_wav_mono(wav_p)
-                            dur = len(audio_data) / float(audio_processor.SR)
-                            peaks = audio_processor.compute_waveform_peaks(audio_data, 100)
-                            room.takes[l_idx] = {
-                                "user_id": "host",
-                                "user_name": "Actor",
-                                "wav_path": wav_p,
-                                "duration": round(dur, 3),
-                                "peaks": peaks,
-                                "url": f"/api/rooms/{r_id.upper()}/takes/{l_idx}/audio",
-                                "offset_ms": 0,
-                                "pitch_semitones": 0.0,
-                                "reverb_wet": 0.0,
-                                "gain_db": 0.0,
-                                "recorded_at": time.time(),
-                            }
-                    room.save_to_disk()
-                    ROOMS[r_id.upper()] = room
-                    print(f"[DubMate] Auto-reconstructed last session {r_id.upper()} with {len(room.takes)} takes from existing files.")
-            except Exception as ex:
-                print(f"[DubMate] Error reconstructing room {r_id}: {ex}")
 
 
 @asynccontextmanager
@@ -1171,7 +1134,7 @@ def _needs_publish(code: str, tunnel_url: str) -> bool:
     return (time.time() - WORKER_PUBLISHED_AT.get(code, 0.0)) >= REGISTRY_REFRESH_SECONDS
 
 
-async def publish_pending_rooms(reason: str = "") -> None:
+async def publish_pending_rooms() -> None:
     """
     Publishes every room this process created that is not already live at the
     current tunnel URL.
@@ -1199,10 +1162,10 @@ async def publish_pending_rooms(reason: str = "") -> None:
             await register_room_with_worker(code, tunnel, app_version)
 
 
-def schedule_registry_publish(reason: str = "") -> None:
+def schedule_registry_publish() -> None:
     """Fire-and-forget publish, safe to call from any request handler."""
     try:
-        asyncio.get_running_loop().create_task(publish_pending_rooms(reason))
+        asyncio.get_running_loop().create_task(publish_pending_rooms())
     except RuntimeError:
         # No running loop (e.g. imported by a script); the heartbeat will catch up.
         pass
@@ -1218,7 +1181,7 @@ async def registry_heartbeat() -> None:
     while True:
         try:
             await asyncio.sleep(REGISTRY_HEARTBEAT_SECONDS)
-            await publish_pending_rooms("heartbeat")
+            await publish_pending_rooms()
         except asyncio.CancelledError:
             raise
         except Exception as ex:
@@ -1256,11 +1219,6 @@ def build_room_share_payload(room_id: str) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/tunnel")
-async def get_tunnel_endpoint():
-    return {"tunnel_url": ACTIVE_TUNNEL_URL, "error": TUNNEL_ERROR}
-
-
 @app.post("/api/tunnel")
 async def set_tunnel_endpoint(payload: Dict[str, Any]):
     global ACTIVE_TUNNEL_URL, TUNNEL_ERROR
@@ -1273,7 +1231,7 @@ async def set_tunnel_endpoint(payload: Dict[str, Any]):
         TUNNEL_ERROR = None
         # Drain the publish queue: rooms created before the tunnel existed become
         # joinable here, and a changed hostname republishes every live code.
-        schedule_registry_publish("tunnel-ready")
+        schedule_registry_publish()
         return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL}
 
     # The desktop shell reports tunnel failures here too, so a room that can never
@@ -1315,7 +1273,7 @@ async def create_room(payload: Dict[str, Any]):
         "Publishing room code to the registry..." if ACTIVE_TUNNEL_URL
         else "Waiting for the public tunnel to come up...",
     )
-    schedule_registry_publish("room-created")
+    schedule_registry_publish()
 
     return {
         "room_id": room_id,
@@ -1333,20 +1291,6 @@ async def get_room_share(room_id: str):
     if code not in ROOMS:
         raise HTTPException(status_code=404, detail="Room not found")
     return build_room_share_payload(code)
-
-
-@app.post("/api/admin/clean")
-@app.get("/api/admin/clean")
-async def clean_server_cache(keep_last: bool = True):
-    """Prunes old room caches and exports to keep the server ultra-light."""
-    last_room = list(ROOMS.keys())[-1] if (keep_last and ROOMS) else None
-    prune_sessions(keep_room_id=last_room)
-    return {
-        "status": "ok",
-        "retained_room": last_room,
-        "active_rooms": list(ROOMS.keys()),
-        "message": "Server cache pruned to only keep the last recorded session."
-    }
 
 
 @app.get("/api/rooms/{room_id}")
@@ -1551,7 +1495,7 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    presence_val = float(presence) if presence != 0.0 else getattr(room, "master_dialogue_presence_db", 0.0)
+    presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
     room.master_dialogue_presence_db = presence_val
 
     is_9_16 = (aspect_ratio == "9:16")
@@ -1560,7 +1504,7 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
     out_path = os.path.join(EXPORTS_DIR, out_filename)
 
     # Check if existing rendered file is already ready
-    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
+    target_path = room.exported_video_9_16_path if is_9_16 else room.exported_video_path
     if target_path and os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
         file_size_mb = round(os.path.getsize(target_path) / (1024 * 1024), 2)
         duration = round(room.pack.duration, 1)
@@ -1577,9 +1521,6 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
             "duration": duration,
             "aspect_ratio": aspect_ratio,
         }
-
-    if not hasattr(room, "export_status"):
-        room.export_status = {}
 
     current_status = room.export_status.get(aspect_ratio)
     if current_status == "processing":
@@ -1653,7 +1594,7 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
         raise HTTPException(status_code=404, detail="Room not found")
 
     is_9_16 = (aspect_ratio == "9:16")
-    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
+    target_path = room.exported_video_9_16_path if is_9_16 else room.exported_video_path
     if target_path and os.path.exists(target_path) and os.path.getsize(target_path) > 1000:
         file_size_mb = round(os.path.getsize(target_path) / (1024 * 1024), 2)
         duration = round(room.pack.duration, 1)
@@ -1671,7 +1612,7 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
             "aspect_ratio": aspect_ratio,
         }
 
-    status = getattr(room, "export_status", {}).get(aspect_ratio, "idle")
+    status = room.export_status.get(aspect_ratio, "idle")
     return {
         "status": status,
         "aspect_ratio": aspect_ratio,
@@ -1685,7 +1626,7 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    target_path = getattr(room, "exported_video_9_16_path", None) if aspect_ratio == "9:16" else getattr(room, "exported_video_path", None)
+    target_path = room.exported_video_9_16_path if aspect_ratio == "9:16" else room.exported_video_path
     if not target_path or not os.path.exists(target_path):
         target_path = room.exported_video_path
 
@@ -1711,7 +1652,7 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     out_filename = f"Dub_{room.pack.pack_id}_{room.room_id}{suffix}.mp4"
     out_path = os.path.join(EXPORTS_DIR, out_filename)
 
-    target_path = getattr(room, "exported_video_9_16_path", None) if is_9_16 else getattr(room, "exported_video_path", None)
+    target_path = room.exported_video_9_16_path if is_9_16 else room.exported_video_path
     if not target_path or not os.path.exists(target_path):
         # ffmpeg render is fully synchronous; off-loading keeps it from stalling the
         # event loop (and therefore every other room's websocket) for its whole duration.
@@ -1843,21 +1784,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
 
                 await room.broadcast("user_joined", {"user_id": user_id})
 
-            elif msg_type == "claim_host":
-                # Only allow claiming an unowned/vacated room. Previously any
-                # connected client could seize host at will.
-                current_host_present = room.host_id in room.users
-                if room.host_id not in ("", "host", None) and current_host_present and user_id != room.host_id:
-                    await websocket.send_json({
-                        "type": "error",
-                        "payload": {"message": "This room already has an active host."},
-                    })
-                    continue
-                room.host_id = user_id
-                for uid, u in room.users.items():
-                    u["is_host"] = (uid == room.host_id)
-                await room.broadcast("host_changed", {"host_id": user_id})
-
             elif msg_type == "assign_role":
                 if user_id != room.host_id and room.host_id != "host":
                     await websocket.send_json({
@@ -1903,36 +1829,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                             room.takes[line_idx][key] = payload[key]
                     room.exported_video_path = None
                     await room.broadcast("take_params_updated", {"line_index": line_idx})
-
-            elif msg_type == "toggle_noise_reduction":
-                raw_idx = payload.get("line_index")
-                enable = bool(payload.get("noise_reduction", False))
-                try:
-                    line_idx = int(raw_idx)
-                except (TypeError, ValueError):
-                    line_idx = None
-                if line_idx is not None and line_idx in room.takes:
-                    try:
-                        toggled = audio_processor.toggle_take_noise_reduction(
-                            room.room_id,
-                            line_idx,
-                            enable_noise_reduction=enable,
-                            user_id=user_id
-                        )
-                        timestamp_ms = int(time.time() * 1000)
-                        versioned_url = f"/api/rooms/{room.room_id}/takes/{line_idx}/audio?v={timestamp_ms}"
-                        room.takes[line_idx]["noise_reduction"] = enable
-                        room.takes[line_idx]["url"] = versioned_url
-                        room.takes[line_idx]["peaks"] = toggled["peaks"]
-                        room.takes[line_idx]["duration"] = toggled["duration"]
-                        room.exported_video_path = None
-                        await room.broadcast("take_params_updated", {
-                            "line_index": line_idx,
-                            "url": versioned_url,
-                            "noise_reduction": enable
-                        })
-                    except Exception as ex:
-                        print(f"[WSToggleNoiseReductionError] {ex}")
 
             elif msg_type == "clear_take":
                 raw_idx = payload.get("line_index")
@@ -2700,31 +2596,6 @@ async def builder_serve_video(session_id: str, request: Request):
     )
 
 
-@app.get("/api/builder/{session_id}/audio/{track}")
-async def builder_serve_audio_track(session_id: str, track: str, request: Request):
-    """Streams full, vocals, or backing audio track with HTTP 206 Range seeking."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
-
-    if track == "vocals":
-        file_path = session.get("vocals_path") or session.get("full_audio_path")
-    elif track == "backing":
-        file_path = session.get("backing_path")
-    else:
-        file_path = session.get("full_audio_path")
-
-    if not file_path or not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail=f"Audio track '{track}' is not ready yet.")
-
-    return range_stream_file(
-        file_path,
-        request,
-        media_type="audio/wav",
-        cache_control="no-cache"
-    )
-
-
 @app.post("/api/builder/{session_id}/compile")
 async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     """
@@ -2794,17 +2665,16 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
 @app.get("/")
 @app.get("/index.html")
 async def serve_root_index():
-    static_dir = find_static_dir()
+    static_dir = STATIC_DIR
     index_file = os.path.join(static_dir, "index.html")
     if os.path.isfile(index_file):
         return FileResponse(index_file, media_type="text/html")
     raise HTTPException(status_code=404, detail=f"index.html not found in {static_dir}")
 
 
-@app.get("/builder")
 @app.get("/builder.html")
 async def serve_builder_index():
-    static_dir = find_static_dir()
+    static_dir = STATIC_DIR
     builder_file = os.path.join(static_dir, "builder.html")
     if os.path.isfile(builder_file):
         return FileResponse(builder_file, media_type="text/html")
@@ -2813,7 +2683,7 @@ async def serve_builder_index():
 
 @app.get("/css/{file_path:path}")
 async def serve_static_css(file_path: str):
-    static_dir = find_static_dir()
+    static_dir = STATIC_DIR
     full_path = safe_join(static_dir, "css", file_path)
     if os.path.isfile(full_path):
         return FileResponse(full_path, media_type="text/css")
@@ -2822,7 +2692,7 @@ async def serve_static_css(file_path: str):
 
 @app.get("/js/{file_path:path}")
 async def serve_static_js(file_path: str):
-    static_dir = find_static_dir()
+    static_dir = STATIC_DIR
     full_path = safe_join(static_dir, "js", file_path)
     if os.path.isfile(full_path):
         return FileResponse(full_path, media_type="application/javascript")
@@ -2831,15 +2701,10 @@ async def serve_static_js(file_path: str):
 
 # Mount static assets as general fallback
 if os.path.isdir(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static_dir")
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static_root")
 
 
 if __name__ == "__main__":
     import uvicorn
-    import sys
-    if sys.platform == "win32":
-        import asyncio
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     # High-performance production mode: eliminates file polling over pack assets
     uvicorn.run("app:app", host="0.0.0.0", port=get_engine_port(), reload=False, access_log=False)

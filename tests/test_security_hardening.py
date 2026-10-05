@@ -140,7 +140,7 @@ class TestCorsConfiguration(unittest.TestCase):
 
 
 class TestWebSocketAuthorization(unittest.TestCase):
-    """claim_host and assign_role were callable by any connected participant."""
+    """Host-only actions (and the host seat itself) must not be reachable by a guest."""
 
     def _make_room(self, client):
         packs = get_packs_registry()
@@ -156,6 +156,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
         return resp.json()
 
     def test_guest_cannot_steal_active_host(self):
+        """A guest joining a room with a live host must not take over the host seat."""
         client = TestClient(app)
         data = self._make_room(client)
         room_id = data["room_id"]
@@ -167,7 +168,6 @@ class TestWebSocketAuthorization(unittest.TestCase):
             with client.websocket_connect(f"/ws/{room_id}/intruder") as guest_ws:
                 guest_ws.send_json({"type": "join", "payload": {
                     "name": "Guest", "color": "#ff0000", "app_version": "1.0.0"}})
-                guest_ws.send_json({"type": "claim_host", "payload": {}})
 
                 room = app_module.ROOMS.get(room_id.upper())
                 self.assertIsNotNone(room)
