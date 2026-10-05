@@ -8,7 +8,6 @@ Extracts character roles, timestamps, captions, backing tracks, cover art, and h
 import os
 import sys
 import re
-import glob
 import json
 import shutil
 import subprocess
@@ -766,12 +765,6 @@ def extract_character_and_caption(caption_text: str, filename: str) -> tuple[str
     return char_name, display_cap
 
 
-def extract_character_from_caption_or_name(caption: str, filename: str) -> str:
-    """Extracts character name safely supporting nested brackets and fallbacks."""
-    char_name, _ = extract_character_and_caption(caption, filename)
-    return char_name
-
-
 _DETECTED_ENCODER: Optional[str] = None
 _CACHED_ENCODER_INFO: Optional[Dict[str, Any]] = None
 
@@ -974,7 +967,7 @@ class PackInfo:
 
     def to_dict(self) -> Dict[str, Any]:
         quoted_id = urllib.parse.quote(self.pack_id)
-        has_icon = bool(self.icon_path and os.path.isfile(self.icon_path))
+        has_icon = self.has_icon
         return {
             "id": self.pack_id,
             "name": self.name,
@@ -991,7 +984,7 @@ class PackInfo:
             "video_url": f"/api/packs/{quoted_id}/video",
             "backing_url": f"/api/packs/{quoted_id}/backing" if self.backing_track_path else None,
             "export_url": f"/api/packs/{quoted_id}/export",
-            "mean_vocal_loudness_db": getattr(self, "mean_vocal_loudness_db", -21.0),
+            "mean_vocal_loudness_db": self.mean_vocal_loudness_db,
             "lines": self.lines,
         }
 
@@ -1591,39 +1584,19 @@ def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
     return packs
 
 
-def export_pack_archive(pack_id_or_folder: str, output_zip_path: Optional[str] = None) -> str:
+def export_pack_archive(pack_folder: str, output_zip_path: str) -> str:
     """
     Packages an entire scene pack folder into a clean, portable .zip archive.
-    Returns the absolute path to the generated .zip file.
+    Returns the path to the generated .zip file.
     """
     import zipfile
 
-    # 1. Resolve pack folder
-    pack_folder = None
-    if os.path.isdir(pack_id_or_folder):
-        pack_folder = os.path.abspath(pack_id_or_folder)
-    else:
-        for base in PACKS_DIRS:
-            candidate = os.path.join(base, pack_id_or_folder)
-            if os.path.isdir(candidate):
-                pack_folder = os.path.abspath(candidate)
-                break
+    if not os.path.isdir(pack_folder):
+        raise FileNotFoundError(f"Pack folder not found for '{pack_folder}'")
+    pack_folder = os.path.abspath(pack_folder)
+    os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
 
-    if not pack_folder or not os.path.isdir(pack_folder):
-        raise FileNotFoundError(f"Pack folder not found for '{pack_id_or_folder}'")
-
-    pack_name = os.path.basename(os.path.normpath(pack_folder))
-    safe_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', pack_name).strip() or "scene_pack"
-
-    # 2. Determine destination zip path
-    if not output_zip_path:
-        exports_dir = os.path.join(CACHE_DIR, "exports", "packs")
-        os.makedirs(exports_dir, exist_ok=True)
-        output_zip_path = os.path.join(exports_dir, f"{safe_name}.zip")
-    else:
-        os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
-
-    # 3. Create zip archive containing all pack assets at the root of the archive
+    # Create zip archive containing all pack assets at the root of the archive
     with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(pack_folder):
             dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith("__")]

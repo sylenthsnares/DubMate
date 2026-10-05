@@ -9,12 +9,10 @@ audio line slicing, and DubMate / Choicer Voicer pack folder assembly.
 
 import os
 import re
-import io
 import sys
 import json
 import time
 import shutil
-import tempfile
 import threading
 import subprocess
 from typing import Dict, List, Optional, Tuple, Any
@@ -86,21 +84,6 @@ def get_whisper_model(model_size: str, device: str) -> Any:
             print(f"[PackBuilder] Loading Whisper ({model_size}) onto {device.upper()} (cached)...")
             _WHISPER_MODELS[key] = whisper.load_model(model_size, device=device)
         return _WHISPER_MODELS[key]
-
-
-# Default character color palette (Warm Analog Studio & Pro DAW palette)
-DEFAULT_CHARACTER_COLORS = [
-    "#d97706",  # Vintage Amber
-    "#cca458",  # Walnut Gold
-    "#dc2626",  # Pilot Red
-    "#16a34a",  # Studio Olive
-    "#b45309",  # Terracotta Bronze
-    "#7c5cff",  # Electric Violet
-    "#ec4899",  # Magenta Neon
-    "#06b6d4",  # Cyan Console
-    "#8b5cf6",  # Purple Tone
-    "#f59e0b",  # Amber Glow
-]
 
 
 class BuildProgress:
@@ -843,7 +826,6 @@ def slice_audio_lines(
     ffmpeg = pack_loader.get_ffmpeg_path()
     os.makedirs(output_dir, exist_ok=True)
     
-    total_audio_duration = pack_loader.probe_duration(vocals_wav)
     enriched_segments = []
 
     for i, seg in enumerate(segments):
@@ -901,7 +883,6 @@ def slice_audio_lines(
             "caption": text,
             "raw_caption": f"[{raw_char}] {text}" if text else f"[{raw_char}]",
             "file_path": out_wav,
-            "audio_file": out_wav
         })
 
     return enriched_segments
