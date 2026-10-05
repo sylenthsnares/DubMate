@@ -2,19 +2,17 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::Emitter;
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct GithubRelease {
     pub tag_name: String,
-    pub name: Option<String>,
     pub body: Option<String>,
     pub assets: Vec<GithubAsset>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct GithubAsset {
     pub name: String,
     pub browser_download_url: String,
-    pub size: u64,
 }
 
 #[derive(Serialize, Clone, Debug)]

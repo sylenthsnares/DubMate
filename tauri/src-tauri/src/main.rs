@@ -838,22 +838,6 @@ async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
     kill_sidecars(&app);
     start_sidecars(app.clone()).await;
 
-    let _ = app.emit("packbuilder-complete", ());
-    Ok(())
-}
-
-#[tauri::command]
-async fn remove_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
-    let root = install_root_dir(&app);
-    let target = root.join(AI_PACKAGES_DIR);
-    if target.is_dir() {
-        std::fs::remove_dir_all(&target)
-            .map_err(|e| format!("Could not remove {}: {}", target.display(), e))?;
-    }
-    let _ = std::fs::remove_file(root.join(PACKBUILDER_OPTIN_MARKER));
-
-    kill_sidecars(&app);
-    start_sidecars(app.clone()).await;
     Ok(())
 }
 
@@ -908,7 +892,6 @@ fn main() {
             apply_update,
             get_packbuilder_status,
             install_packbuilder,
-            remove_packbuilder,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed
@@ -1021,7 +1004,7 @@ async fn start_sidecars(app: tauri::AppHandle) {
                 let mut stdout = child.stdout.take();
                 let mut stderr = child.stderr.take();
 
-                tauri::async_runtime::spawn(async move {
+                std::thread::spawn(move || {
                     if let Some(out) = stdout.take() {
                         use std::io::{BufRead, BufReader};
                         let reader = BufReader::new(out);
@@ -1035,7 +1018,7 @@ async fn start_sidecars(app: tauri::AppHandle) {
                 let last_error_buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
                 let last_error_writer = last_error_buf.clone();
 
-                tauri::async_runtime::spawn(async move {
+                std::thread::spawn(move || {
                     if let Some(err) = stderr.take() {
                         use std::io::{BufRead, BufReader};
                         let reader = BufReader::new(err);
@@ -1304,7 +1287,7 @@ async fn start_sidecars(app: tauri::AppHandle) {
                         &watchdog_app,
                         engine_port,
                         format!(
-                            "The public tunnel did not come up within {TUNNEL_READY_TIMEOUT_SECS} seconds.                              Local and LAN play still work; friends on other networks cannot join yet."
+                            "The public tunnel did not come up within {TUNNEL_READY_TIMEOUT_SECS} seconds. Local and LAN play still work; friends on other networks cannot join yet."
                         ),
                     );
                 }
