@@ -352,7 +352,6 @@ fn kill_sidecars(app: &tauri::AppHandle) {
         data.cloudflared_pid = None;
         data.python_image = None;
         data.cloudflared_image = None;
-        data.is_server_ready = false;
         data.is_tunnel_ready = false;
         targets
     };
@@ -884,9 +883,6 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_tunnel_url,
-            get_room_token,
-            set_room_token,
             get_engine_port,
             trigger_start_sidecars,
             apply_update,
@@ -1124,8 +1120,6 @@ async fn start_sidecars(app: tauri::AppHandle) {
         let _ = app.emit("startup-progress", format!("Connecting to Studio Engine... ({}/60)", i));
         if let Ok(resp) = client.get(&health_url).send().await {
             if resp.status().is_success() {
-                let state = app.state::<SharedState>();
-                state.0.lock().unwrap().is_server_ready = true;
                 is_ready = true;
                 let _ = app.emit("server-ready", engine_port);
                 println!("[DubMate] Server healthy on http://127.0.0.1:{}", engine_port);
@@ -1213,7 +1207,6 @@ async fn start_sidecars(app: tauri::AppHandle) {
                     {
                         let state = app_clone.state::<SharedState>();
                         let mut data = state.0.lock().unwrap();
-                        data.tunnel_url = Some(tunnel_url.clone());
                         data.is_tunnel_ready = true;
                     }
                     let _ = app_clone.emit("tunnel-ready", tunnel_url.clone());
@@ -1367,21 +1360,6 @@ fn report_tunnel_failure(app: &tauri::AppHandle, engine_port: u16, reason: Strin
 #[tauri::command]
 fn get_engine_port(state: tauri::State<'_, SharedState>) -> u16 {
     state.0.lock().unwrap().engine_port.unwrap_or(DEFAULT_ENGINE_PORT)
-}
-
-#[tauri::command]
-fn get_tunnel_url(state: tauri::State<'_, SharedState>) -> Option<String> {
-    state.0.lock().unwrap().tunnel_url.clone()
-}
-
-#[tauri::command]
-fn get_room_token(state: tauri::State<'_, SharedState>) -> Option<String> {
-    state.0.lock().unwrap().room_token.clone()
-}
-
-#[tauri::command]
-fn set_room_token(token: String, state: tauri::State<'_, SharedState>) {
-    state.0.lock().unwrap().room_token = Some(token);
 }
 
 #[tauri::command]

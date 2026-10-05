@@ -147,20 +147,6 @@ def require_local_request(request: Request) -> None:
         raise HTTPException(status_code=403, detail="This setting can only be changed on the host machine")
 
 
-def is_version_outdated(client_v: str, req_v: str) -> bool:
-    """Returns True if client_v is strictly older than req_v."""
-    try:
-        def parse_v(v_str: str) -> List[int]:
-            clean = str(v_str).strip().lstrip("v")
-            parts = [int(re.sub(r"[^\d]", "", p)) for p in clean.split(".") if re.search(r"\d", p)]
-            while len(parts) < 3:
-                parts.append(0)
-            return parts[:3]
-        return parse_v(client_v) < parse_v(req_v)
-    except Exception:
-        return False
-
-
 DEFAULT_ENGINE_PORT = 8000
 
 
@@ -183,13 +169,10 @@ def generate_room_code() -> str:
 
 
 class Room:
-    def __init__(self, room_id: str, pack: pack_loader.PackInfo, host_id: str, host_name: str, host_color: str, min_required_version: str = "1.0.0"):
+    def __init__(self, room_id: str, pack: pack_loader.PackInfo, host_id: str, host_name: str, host_color: str):
         self.room_id = room_id
         self.pack = pack
         self.host_id = host_id
-        self.min_required_version = min_required_version or "1.0.0"
-        self.pending_transfer_to: Optional[str] = None
-        self._transfer_timeout_task: Optional[asyncio.Task] = None
         self.users: Dict[str, Dict[str, Any]] = {
             host_id: {
                 "id": host_id,
@@ -271,7 +254,6 @@ class Room:
         has_export = has_export_16_9
         return {
             "room_id": self.room_id,
-            "min_required_version": self.min_required_version,
             "pack": self.pack.to_dict(),
             "host_id": self.host_id,
             "users": self.users,
@@ -1260,7 +1242,7 @@ async def create_room(payload: Dict[str, Any]):
     pack_id = payload.get("pack_id")
     host_name = payload.get("host_name", "Host").strip() or "Host"
     host_color = sanitize_color(payload.get("host_color"), "#7c5cff")
-    app_version = payload.get("app_version", "1.0.0")
+    app_version = read_version()
 
     pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
     if not pack:
@@ -1271,7 +1253,7 @@ async def create_room(payload: Dict[str, Any]):
     prune_sessions(keep_room_id=room_id)
 
     host_id = str(uuid.uuid4())[:8]
-    room = Room(room_id, pack, host_id, host_name, host_color, min_required_version=app_version)
+    room = Room(room_id, pack, host_id, host_name, host_color)
     ROOMS[room_id] = room
 
     # Queue the code for the public registry instead of gating on the tunnel already
@@ -1762,18 +1744,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
             payload = data.get("payload", {})
 
             if msg_type == "join":
-                client_version = payload.get("app_version", "1.0.0")
-                if room.min_required_version and is_version_outdated(client_version, room.min_required_version):
-                    await websocket.send_text(json.dumps({
-                        "type": "version_mismatch",
-                        "payload": {
-                            "required": room.min_required_version,
-                            "yours": client_version,
-                        }
-                    }))
-                    await websocket.close()
-                    return
-
                 name = payload.get("name", "Actor").strip() or "Actor"
                 color = sanitize_color(payload.get("color"), "#25d3a4")
 
@@ -1915,67 +1885,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 await room.broadcast("dialogue_presence_sync", {
                     "presence_db": room.master_dialogue_presence_db,
                     "triggered_by": user_id
-                })
-
-            elif msg_type == "initiate_transfer":
-                if user_id != room.host_id:
-                    continue
-                target_id = payload.get("target_user_id")
-                if not target_id or target_id not in room.users:
-                    continue
-                if not room.users[target_id].get("is_online", False):
-                    continue
-
-                room.pending_transfer_to = target_id
-
-                async def _timeout_transfer(tid=target_id):
-                    await asyncio.sleep(10)
-                    if room.pending_transfer_to == tid:
-                        room.pending_transfer_to = None
-                        await room.broadcast("host_transfer_cancelled", {"reason": "timeout"})
-
-                if room._transfer_timeout_task and not room._transfer_timeout_task.done():
-                    room._transfer_timeout_task.cancel()
-                try:
-                    loop = asyncio.get_running_loop()
-                    room._transfer_timeout_task = loop.create_task(_timeout_transfer())
-                except RuntimeError:
-                    pass
-
-                new_host_name = room.users[target_id].get("name", "Unknown")
-                await room.broadcast("host_transfer_pending", {
-                    "new_host_id": target_id,
-                    "new_host_name": new_host_name,
-                })
-
-            elif msg_type == "complete_transfer":
-                if user_id != room.pending_transfer_to:
-                    continue
-
-                new_tunnel_url = payload.get("new_tunnel_url", "")
-                if not new_tunnel_url.startswith("https://") and not new_tunnel_url.startswith("http://"):
-                    continue
-
-                if room._transfer_timeout_task and not room._transfer_timeout_task.done():
-                    room._transfer_timeout_task.cancel()
-                room.pending_transfer_to = None
-
-                # Clean slate: wipe all takes, role assignments, and resets room to lobby
-                room.takes.clear()
-                room.role_assignments = {char: [] for char in room.pack.characters}
-                room.status = "lobby"
-                room.current_line = 0
-                room.exported_video_path = None
-                room.exported_video_9_16_path = None
-
-                # Promote new host and synchronize flags
-                room.host_id = user_id
-                for uid, u in room.users.items():
-                    u["is_host"] = (uid == room.host_id)
-
-                await room.broadcast("host_transfer_confirmed", {
-                    "new_host_id": user_id,
-                    "new_tunnel_url": new_tunnel_url,
                 })
 
             elif msg_type == "ping":

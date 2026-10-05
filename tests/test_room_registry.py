@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import app as dubmate
-from app import app, get_packs_registry
+from app import app, get_packs_registry, read_version
 
 STUB_SECRET = "test-registry-key"
 
@@ -138,6 +138,7 @@ def _wait_for_share(client, code, predicate, timeout=8.0):
 
 
 def _create_room(client, pack_id):
+    # A client-supplied app_version is ignored; the engine registers its own VERSION.
     resp = client.post("/api/rooms", json={
         "pack_id": pack_id,
         "host_name": "HostActor",
@@ -179,6 +180,7 @@ def test_room_created_before_tunnel_is_published_when_tunnel_arrives():
             assert share["code_is_live"] is True, share
             assert share["join_url"].endswith(f"/join/{code.upper()}")
             assert stub.kv[code.upper()]["tunnel_url"] == tunnel
+            assert stub.kv[code.upper()]["app_version"] == read_version()
             print(f"[PASS] room {code} published after the tunnel came up")
     finally:
         dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
@@ -205,6 +207,7 @@ def test_room_created_after_tunnel_publishes_immediately():
             share = _wait_for_share(client, code, lambda s: s["code_is_live"])
             assert share["code_is_live"] is True, share
             assert stub.kv[code.upper()]["tunnel_url"] == tunnel
+            assert stub.kv[code.upper()]["app_version"] == read_version()
             print(f"[PASS] room {code} published immediately when the tunnel was already up")
     finally:
         dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
