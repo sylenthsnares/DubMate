@@ -881,7 +881,7 @@ def slice_audio_lines(
             "end": round(end, 3),
             "duration": round(seg_dur, 3),
             "caption": text,
-            "raw_caption": f"[{raw_char}] {text}" if text else f"[{raw_char}]",
+            "raw_caption": pack_loader.format_raw_caption(raw_char, text),
             "file_path": out_wav,
         })
 
@@ -910,11 +910,11 @@ def assemble_pack(
     - `icon.png` (if provided)
     """
     safe_title = pack_name.strip() or "Custom Dub Scene"
-    safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', safe_title).strip() or "Custom_Pack"
+    folder_name = pack_loader.safe_folder_name(safe_title, "Custom_Pack")
     
     target_base = pack_loader.PACKS_DIRS[0]
     os.makedirs(target_base, exist_ok=True)
-    pack_dir = os.path.join(target_base, safe_folder_name)
+    pack_dir = os.path.join(target_base, folder_name)
     os.makedirs(pack_dir, exist_ok=True)
 
     # 1. Copy / Transcode Video to dub_video.mp4
@@ -946,30 +946,18 @@ def assemble_pack(
         target_icon = os.path.join(pack_dir, f"icon{ext}")
         shutil.copyfile(cover_image_path, target_icon)
 
-    # 5. Generate _captions.json
-    captions_map = {}
-    for line in line_slices:
-        cap = line.get("caption", "").strip()
-        char = line.get("character", "Actor").strip()
-        captions_map[line["filename"]] = f"[{char}] {cap}" if cap else f"[{char}]"
-    
-    with open(os.path.join(pack_dir, "_captions.json"), "w", encoding="utf-8") as f:
-        json.dump(captions_map, f, ensure_ascii=False, indent=2)
-
-    # 6. Generate _TIMESTAMPS.txt
-    ts_lines = [
-        f"# {safe_title}",
-        "# Auto-generated DubMate Pack Builder timestamps",
-        "# File | start time (s) | subtitle\n"
+    # 5-6. Generate _captions.json and _TIMESTAMPS.txt
+    caption_lines = [
+        {
+            "filename": line["filename"],
+            "start": line["start"],
+            "character": line.get("character", "Actor").strip(),
+            "caption": line.get("caption", "").strip(),
+        }
+        for line in line_slices
     ]
-    for line in line_slices:
-        cap = line.get("caption", "").strip()
-        char = line.get("character", "Actor").strip()
-        sub = f"[{char}] {cap}" if cap else f"[{char}]"
-        ts_lines.append(f"{line['filename']:<40} {line['start']:>10.3f}s   | {sub}")
-    
-    with open(os.path.join(pack_dir, "_TIMESTAMPS.txt"), "w", encoding="utf-8") as f:
-        f.write("\n".join(ts_lines) + "\n")
+    pack_loader.write_caption_files(pack_dir, safe_title, caption_lines,
+                                    "Auto-generated DubMate Pack Builder timestamps")
 
     # 7. Generate pack.json / info.ini metadata
     char_list = sorted(list({l.get("character", "Actor") for l in line_slices}))

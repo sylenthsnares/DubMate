@@ -316,6 +316,18 @@ def _member_violation(rel_path: str, extra_allowed: tuple = ()) -> Optional[str]
     return None
 
 
+def _looks_like_pack_root(filenames: List[str]) -> bool:
+    """True if a directory listing holds both a scene video and dialogue audio clips."""
+    has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
+    has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
+    return has_video and has_clips
+
+
+def safe_folder_name(title: str, fallback: str) -> str:
+    """Strips a pack title down to a filesystem-safe folder name (A-Z, 0-9, space, _ and -)."""
+    return re.sub(r'[^A-Za-z0-9 _\-]+', '', title).strip() or fallback
+
+
 # Archive extraction security limits
 MAX_ARCHIVE_SIZE_BYTES = 500 * 1024 * 1024       # 500 MB max zip upload
 MAX_UNCOMPRESSED_SIZE_BYTES = 1200 * 1024 * 1024  # 1.2 GB max uncompressed total
@@ -1073,34 +1085,49 @@ def find_pack_icon(folder: str, icon_hint: Optional[str] = None) -> Optional[str
     return None
 
 
+def format_raw_caption(character: str, caption: str) -> str:
+    """'[Character] caption', or just '[Character]' when the caption is empty."""
+    return f"[{character}] {caption}" if caption else f"[{character}]"
+
+
+def write_caption_files(folder: str, title: str, lines: List[Dict[str, Any]], note: str, overwrite: bool = True):
+    """
+    Writes _captions.json and _TIMESTAMPS.txt for `lines` (dicts with filename, start,
+    character, caption). With overwrite=False, a file that already exists is left alone.
+    """
+    captions_path = os.path.join(folder, "_captions.json")
+    if overwrite or not os.path.isfile(captions_path):
+        captions_map = {}
+        for l in lines:
+            cap = (l.get("caption") or "").strip()
+            captions_map[l["filename"]] = format_raw_caption(l["character"], cap)
+        with open(captions_path, "w", encoding="utf-8") as f:
+            json.dump(captions_map, f, ensure_ascii=False, indent=2)
+
+    ts_path = os.path.join(folder, "_TIMESTAMPS.txt")
+    if overwrite or not os.path.isfile(ts_path):
+        lines_out = [
+            f"# {title}",
+            f"# {note}",
+            "# File | start time (s) | subtitle\n"
+        ]
+        for l in lines:
+            cap = (l.get("caption") or "").strip()
+            sub = format_raw_caption(l["character"], cap)
+            lines_out.append(f"{l['filename']:<40} {l['start']:>10.3f}s   | {sub}")
+        with open(ts_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines_out) + "\n")
+
+
 def ensure_pack_compatibility(pack_folder: str, pack: PackInfo):
     """
     Auto-generates standard _captions.json and _TIMESTAMPS.txt for Choicer Voicer packs
     so they are 100% compatible with DubMate native format.
     """
     try:
-        captions_path = os.path.join(pack_folder, "_captions.json")
-        if not os.path.isfile(captions_path) and pack.lines:
-            captions_map = {}
-            for l in pack.lines:
-                cap = (l.get("caption") or "").strip()
-                captions_map[l["filename"]] = f"[{l['character']}] {cap}" if cap else f"[{l['character']}]"
-            with open(captions_path, "w", encoding="utf-8") as f:
-                json.dump(captions_map, f, ensure_ascii=False, indent=2)
-
-        ts_path = os.path.join(pack_folder, "_TIMESTAMPS.txt")
-        if not os.path.isfile(ts_path) and pack.lines:
-            lines_out = [
-                f"# {pack.name}",
-                "# Auto-generated DubMate timestamps and subtitle map",
-                "# File | start time (s) | subtitle\n"
-            ]
-            for l in pack.lines:
-                cap = (l.get("caption") or "").strip()
-                sub = f"[{l['character']}] {cap}" if cap else f"[{l['character']}]"
-                lines_out.append(f"{l['filename']:<40} {l['start']:>10.3f}s   | {sub}")
-            with open(ts_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines_out) + "\n")
+        if pack.lines:
+            write_caption_files(pack_folder, pack.name, pack.lines,
+                                "Auto-generated DubMate timestamps and subtitle map", overwrite=False)
     except Exception as ex:
         print(f"[pack_loader] Could not write compatibility files for {pack_folder}: {ex}")
 
@@ -1255,7 +1282,7 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
             "duration": round(line_duration, 3),
             "end": round(start_ts + line_duration, 3),
             "caption": caption_text,
-            "raw_caption": f"[{char_name}] {caption_text}" if caption_text else f"[{char_name}]",
+            "raw_caption": format_raw_caption(char_name, caption_text),
             "audio_url": f"/api/packs/{quoted_pack_id}/audio/{quoted_filename}",
             "peaks": peaks,
             "reference_loudness_db": ref_loudness,
@@ -1279,6 +1306,37 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
     ensure_pack_compatibility(pack_folder, pack)
 
     return pack
+
+
+def _install_pack_root(pack_root: str, fallback_title: str) -> Optional[PackInfo]:
+    """
+    Copies a validated pack root into PACKS_DIRS[0] under a sanitized folder name
+    (replacing any existing install), loads it and caches it. Returns None if the
+    copied folder does not parse as a pack. Raises PackSecurityError if the
+    destination would escape the packs directory.
+    """
+    meta = parse_pack_info(pack_root)
+    base_title = meta.get("title") or fallback_title
+    folder_name = safe_folder_name(base_title, "Imported_Pack")
+
+    target_base = PACKS_DIRS[0]
+    os.makedirs(target_base, exist_ok=True)
+    dest_folder = os.path.join(target_base, folder_name)
+
+    # Ensure dest_folder resolves strictly within target_base
+    if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
+        raise PackSecurityError("Invalid destination folder name.")
+
+    if os.path.exists(dest_folder):
+        shutil.rmtree(dest_folder)
+
+    shutil.copytree(pack_root, dest_folder)
+    loaded = load_pack(dest_folder)
+    if loaded:
+        folder_mtime = os.path.getmtime(dest_folder)
+        PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
+        print(f"[pack_loader] Successfully installed pack '{loaded.name}' into {dest_folder}")
+    return loaded
 
 
 def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pack.zip") -> Optional[PackInfo]:
@@ -1353,9 +1411,7 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
         # 5. Pack Root Detection & Structure Verification
         pack_root = None
         for dirpath, _dirnames, filenames in os.walk(tmp_extract_dir):
-            has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
-            has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
-            if has_video and has_clips:
+            if _looks_like_pack_root(filenames):
                 pack_root = dirpath
                 break
 
@@ -1366,27 +1422,8 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
             )
 
         # 6. Safe Destination Sanitization & Installation
-        meta = parse_pack_info(pack_root)
-        base_title = meta.get("title") or os.path.splitext(os.path.basename(archive_filename))[0]
-        safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
-
-        target_base = PACKS_DIRS[0]
-        os.makedirs(target_base, exist_ok=True)
-        dest_folder = os.path.join(target_base, safe_folder_name)
-
-        # Ensure dest_folder resolves strictly within target_base
-        if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
-            raise PackSecurityError("Invalid destination folder name.")
-
-        if os.path.exists(dest_folder):
-            shutil.rmtree(dest_folder)
-
-        shutil.copytree(pack_root, dest_folder)
-        loaded = load_pack(dest_folder)
+        loaded = _install_pack_root(pack_root, os.path.splitext(os.path.basename(archive_filename))[0])
         if loaded:
-            folder_mtime = os.path.getmtime(dest_folder)
-            PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
-            print(f"[pack_loader] Successfully validated, security-cleared, and imported pack '{loaded.name}' into {dest_folder}")
             return loaded
 
         raise PackValidationError("Pack files extracted but could not be parsed into a playable studio scene.")
@@ -1484,9 +1521,7 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
         # 3. Discover all distinct unpacked scene pack root directories in the staged tree
         discovered_pack_roots = []
         for dirpath, _dirnames, filenames in os.walk(tmp_stage_dir):
-            has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
-            has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
-            if has_video and has_clips:
+            if _looks_like_pack_root(filenames):
                 # Ensure we don't pick subdirectories if parent is already a pack root
                 is_sub = False
                 for p_root in discovered_pack_roots:
@@ -1497,29 +1532,11 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
                     discovered_pack_roots.append(dirpath)
 
         # 4. Install each discovered unpacked pack
-        target_base = PACKS_DIRS[0]
-        os.makedirs(target_base, exist_ok=True)
-
         for pack_root in discovered_pack_roots:
             try:
-                meta = parse_pack_info(pack_root)
-                base_title = meta.get("title") or os.path.basename(pack_root)
-                safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
-                dest_folder = os.path.join(target_base, safe_folder_name)
-
-                if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
-                    continue
-
-                if os.path.exists(dest_folder):
-                    shutil.rmtree(dest_folder)
-
-                shutil.copytree(pack_root, dest_folder)
-                loaded = load_pack(dest_folder)
+                loaded = _install_pack_root(pack_root, os.path.basename(pack_root))
                 if loaded:
-                    folder_mtime = os.path.getmtime(dest_folder)
-                    PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
                     imported_packs.append(loaded)
-                    print(f"[pack_loader] Successfully installed unpacked pack '{loaded.name}' into {dest_folder}")
             except Exception as ex:
                 errors.append({"filename": os.path.basename(pack_root), "error": str(ex)})
 
