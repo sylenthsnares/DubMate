@@ -127,6 +127,20 @@ class TestZipExtensionAllowlist(unittest.TestCase):
                 if os.path.exists(tmp):
                     os.remove(tmp)
 
+    def test_macosx_named_executables_are_rejected(self):
+        # Validation used to skip any name merely containing '__macosx' while extraction
+        # only skipped case-sensitive '__MACOSX', so these were extracted unchecked.
+        for name in ("__macosx/evil.exe", "x__macosx.exe"):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("MyPack/dub_video.mp4", b"\x00" * 64)
+                z.writestr("MyPack/01_Hero_1-000.wav", b"\x00" * 64)
+                z.writestr(name, b"MZ payload")
+            with self.assertRaises(
+                pack_loader.PackSecurityError, msg=f"{name!r} should be rejected"
+            ):
+                pack_loader.import_pack_archive(buf.getvalue())
+
 
 class TestCorsConfiguration(unittest.TestCase):
     def test_wildcard_origin_does_not_allow_credentials(self):

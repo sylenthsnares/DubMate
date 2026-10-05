@@ -271,6 +271,52 @@ PROHIBITED_EXTENSIONS = (
     ".sys", ".drv", ".cpl", ".inf", ".ins", ".isp", ".lnk", ".url", ".desktop"
 )
 
+_IGNORABLE_BASENAMES = (".ds_store", "thumbs.db", "desktop.ini", ".gitkeep")
+_DISGUISED_EXEC_EXTS = (".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".sh", ".py")
+
+
+def _is_ignorable_member(rel_path: str) -> bool:
+    """True for OS metadata (a '__MACOSX' path segment, or .DS_Store-style basenames)."""
+    segments = rel_path.replace("\\", "/").lower().rstrip().split("/")
+    return any(seg == "__macosx" for seg in segments) or segments[-1] in _IGNORABLE_BASENAMES
+
+
+def _member_violation(rel_path: str, extra_allowed: tuple = ()) -> Optional[str]:
+    """
+    Shared pack-member policy ('prohibited wins'). Returns the security message for a
+    disallowed member, or None if it may be imported. Order: prohibited extension,
+    disguised double extension, ignorable metadata, extension allowlist.
+    Paths ending in '/' are directories and skip the allowlist.
+    """
+    low_name = rel_path.replace("\\", "/").lower().rstrip()
+    base_name = os.path.basename(low_name)
+
+    # Block all prohibited executable, script, and system extensions
+    if any(low_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
+        return f"Security Alert: Prohibited executable or script file detected in archive: '{base_name}'"
+
+    # Block disguised executable extensions e.g. 'video.mp4.exe' or 'line.wav.bat'
+    if any(ext + "." in low_name for ext in _DISGUISED_EXEC_EXTS):
+        return f"Security Alert: Disguised executable detected in archive: '{base_name}'"
+
+    if _is_ignorable_member(rel_path):
+        return None
+
+    # Check strict whitelist for non-directory files
+    if not low_name.endswith("/"):
+        _, ext = os.path.splitext(base_name)
+        # An empty ext must be rejected, not skipped: os.path.splitext("payload")
+        # returns "", so extension-less binaries previously bypassed this
+        # allowlist AND the PROHIBITED_EXTENSIONS blocklist (all dotted).
+        if not ext or ext not in ALLOWED_PACK_EXTS + tuple(extra_allowed):
+            return (
+                f"Security Alert: Disallowed file extension '{ext or chr(40) + 'none' + chr(41)}' in '{base_name}'. "
+                f"DubMate packs only accept audio ({', '.join(AUDIO_EXTS)}), "
+                f"video ({', '.join(VIDEO_EXTS)}), images, and text/ini subtitle files."
+            )
+    return None
+
+
 # Archive extraction security limits
 MAX_ARCHIVE_SIZE_BYTES = 500 * 1024 * 1024       # 500 MB max zip upload
 MAX_UNCOMPRESSED_SIZE_BYTES = 1200 * 1024 * 1024  # 1.2 GB max uncompressed total
@@ -1288,6 +1334,7 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
 
             # 3. Path Traversal & Malware / Prohibited File Extension Verification
             canonical_tmp_dir = os.path.abspath(tmp_extract_dir)
+            members_to_extract = []
             for info in infolist:
                 norm_name = info.filename.replace("\\", "/")
                 
@@ -1300,38 +1347,14 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
                 if not dest_path.startswith(canonical_tmp_dir + os.sep) and dest_path != canonical_tmp_dir:
                     raise PackSecurityError(f"Zip-slip path traversal attempt: '{info.filename}'")
 
-                low_name = norm_name.lower().rstrip()
-                base_name = os.path.basename(low_name)
-                
-                # Skip macOS metadata or harmless system files
-                if base_name in (".ds_store", "thumbs.db", "desktop.ini", ".gitkeep") or "__macosx" in low_name:
-                    continue
+                violation = _member_violation(norm_name)
+                if violation:
+                    raise PackSecurityError(violation)
+                if not _is_ignorable_member(norm_name):
+                    members_to_extract.append(info)
 
-                # Block all prohibited executable, script, and system extensions
-                if any(low_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
-                    raise PackSecurityError(f"Security Alert: Prohibited executable or script file detected in archive: '{base_name}'")
-
-                # Block disguised executable extensions e.g. 'video.mp4.exe' or 'line.wav.bat'
-                if any(ext + "." in low_name for ext in (".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".sh", ".py")):
-                    raise PackSecurityError(f"Security Alert: Disguised executable detected in archive: '{base_name}'")
-
-                # Check strict whitelist for non-directory files
-                if not info.is_dir() and not low_name.endswith("/"):
-                    _, ext = os.path.splitext(base_name)
-                    # An empty ext must be rejected, not skipped: os.path.splitext("payload")
-                    # returns "", so extension-less binaries previously bypassed this
-                    # allowlist AND the PROHIBITED_EXTENSIONS blocklist (all dotted).
-                    if ext not in ALLOWED_PACK_EXTS:
-                        raise PackSecurityError(
-                            f"Security Alert: Disallowed file extension '{ext or chr(40) + 'none' + chr(41)}' in '{base_name}'. "
-                            f"DubMate packs only accept audio ({', '.join(AUDIO_EXTS)}), "
-                            f"video ({', '.join(VIDEO_EXTS)}), images, and text/ini subtitle files."
-                        )
-
-            # 4. Safe Sandboxed Extraction
-            for info in infolist:
-                if "__MACOSX" in info.filename or os.path.basename(info.filename).lower() in (".ds_store", "thumbs.db"):
-                    continue
+            # 4. Safe Sandboxed Extraction (OS metadata such as __MACOSX/.DS_Store is skipped)
+            for info in members_to_extract:
                 z.extract(info, tmp_extract_dir)
 
         # 5. Pack Root Detection & Structure Verification
@@ -1436,8 +1459,12 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
             if ".." in norm_path.split(os.sep):
                 continue
 
-            base_name = os.path.basename(norm_path).lower()
-            if any(base_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
+            # Same member policy as archive import ('prohibited wins'); nested .zip packs are allowed
+            violation = _member_violation(norm_path, extra_allowed=(".zip",))
+            if violation:
+                errors.append({"filename": os.path.basename(norm_path), "error": violation})
+                continue
+            if _is_ignorable_member(norm_path):
                 continue
 
             dest = os.path.abspath(os.path.join(tmp_stage_dir, norm_path))

@@ -308,6 +308,58 @@ class TestPackSecurityAndAutoScan(unittest.TestCase):
             if os.path.isdir(p_dir):
                 shutil.rmtree(p_dir, ignore_errors=True)
 
+    @staticmethod
+    def _silent_wav() -> bytes:
+        import wave
+        wav_buf = io.BytesIO()
+        with wave.open(wav_buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(22050)
+            w.writeframes(b"\x00\x00" * 2205)
+        return wav_buf.getvalue()
+
+    def test_12_macos_metadata_is_ignored_not_installed(self):
+        """A valid pack zip carrying __MACOSX/ and .DS_Store metadata imports cleanly without them."""
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as z:
+            z.writestr("dub_video.mp4", b"\x00\x00\x00 ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 500)
+            z.writestr("01_Hero_1-000.wav", self._silent_wav())
+            z.writestr("__MACOSX/Pack/._01_A_S-001.wav", b"\x00\x05\x16\x07AppleDouble")
+            z.writestr(".DS_Store", b"\x00\x00\x00\x01Bud1")
+
+        pack = pack_loader.import_pack_archive(zip_buf.getvalue(), archive_filename="Macos_Meta_Pack.zip")
+        try:
+            self.assertIsNotNone(pack)
+            installed = os.listdir(pack.folder)
+            self.assertNotIn("__MACOSX", installed)
+            self.assertNotIn(".DS_Store", installed)
+        finally:
+            if pack and os.path.isdir(pack.folder):
+                shutil.rmtree(pack.folder, ignore_errors=True)
+
+    def test_13_folder_tree_reports_disallowed_files_and_imports_nested_zip(self):
+        """Folder-tree import applies the archive member policy but still accepts nested pack zips."""
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as z:
+            z.writestr("Nested_Zip_Pack/dub_video.mp4", b"\x00\x00\x00 ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 500)
+            z.writestr("Nested_Zip_Pack/01_Hero_1-000.wav", self._silent_wav())
+
+        result = pack_loader.import_pack_folder_tree([
+            (b"#!/bin/sh\necho pwned\n", "Drop/payload"),
+            (b"<script>alert(1)</script>", "Drop/run.exe.html"),
+            (nested.getvalue(), "Drop/Nested_Zip_Pack.zip"),
+        ])
+        try:
+            error_files = sorted(e["filename"] for e in result["errors"])
+            self.assertEqual(error_files, ["payload", "run.exe.html"])
+            self.assertEqual(result["imported_count"], 1)
+        finally:
+            for p_name in ("Nested_Zip_Pack", "Nested Zip Pack"):
+                p_dir = os.path.join(pack_loader.PACKS_DIRS[0], p_name)
+                if os.path.isdir(p_dir):
+                    shutil.rmtree(p_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
