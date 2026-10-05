@@ -2,14 +2,11 @@ const jsdom = require("jsdom");
 const fs = require("fs");
 const path = require("path");
 
+const { buildStudioBundle } = require("./helpers/studio_dom");
+
 const PROJECT_ROOT = path.join(__dirname, "..");
 
 const html = fs.readFileSync(path.join(PROJECT_ROOT, "static", "index.html"), "utf8");
-const appJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "app.js"), "utf8");
-const knobJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "knob.js"), "utf8");
-const audioJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "audio_engine.js"), "utf8");
-const waveformJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "waveform.js"), "utf8");
-const roomJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "room_socket.js"), "utf8");
 
 const { JSDOM } = jsdom;
 const dom = new JSDOM(html, {
@@ -124,26 +121,8 @@ dom.window.fetch = (url) => {
   });
 };
 
-function stripModules(code) {
-  return code
-    .split("\n")
-    .filter(l => !l.trim().startsWith("import "))
-    .join("\n")
-    .replace(/export\s+(class|function|const|let|var)\s+/g, "$1 ")
-    .replace(/export\s+default\s+/g, "")
-    .replace(/export\s*\{[^}]*\};?/g, "");
-}
-
 try {
-  const combinedCode = `
-    (function() {
-      ${stripModules(audioJsCode)}
-      ${stripModules(waveformJsCode)}
-      ${stripModules(roomJsCode)}
-      ${stripModules(knobJsCode)}
-      ${stripModules(appJsCode)}
-    })();
-  `;
+  const combinedCode = buildStudioBundle();
 
   dom.window.eval(combinedCode);
   dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
