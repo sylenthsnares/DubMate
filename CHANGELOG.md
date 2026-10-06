@@ -12,6 +12,7 @@
 - **Pack Builder Touch and Pen**: the timeline works with touch and pen.
 - **Pack Builder Lines Without Words**: grunts, efforts, screams and laughs the transcript skipped become lines to record, marked "No words".
 - **Pack Builder Notices**: the editor now shows processing notices, such as when voices couldn't be fully separated.
+- **Take History**: recording a line again keeps every take. Open Takes to listen to them and choose the one used in the dub. Picks and deletes show up for everyone in the room.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -23,6 +24,7 @@
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
 - **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
 - **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB (desktop installs from before this release: about 55 MB). If that isn't possible, speakers are guessed from pauses as before and the editor says so.
+- **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.

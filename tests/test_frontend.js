@@ -78,8 +78,8 @@ const mockPacks = [
     duration: 38.5,
     characters: ["Deku", "Todoroki"],
     lines: [
-      { index: 0, character: "Deku", start: 1.2, end: 4.5, duration: 3.3, audio_url: "/api/packs/Deku_vs_Todoroki/audio/0.wav", text: "It is your power, isn't it?!" },
-      { index: 1, character: "Todoroki", start: 5.0, end: 9.0, duration: 4.0, audio_url: "/api/packs/Deku_vs_Todoroki/audio/1.wav", text: "My left side..." }
+      { index: 0, line_id: "t1200", character: "Deku", start: 1.2, end: 4.5, duration: 3.3, audio_url: "/api/packs/Deku_vs_Todoroki/audio/0.wav", text: "It is your power, isn't it?!" },
+      { index: 1, line_id: "t5000", character: "Todoroki", start: 5.0, end: 9.0, duration: 4.0, audio_url: "/api/packs/Deku_vs_Todoroki/audio/1.wav", text: "My left side..." }
     ]
   }
 ];
@@ -260,28 +260,31 @@ try {
       app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
       let sentForm = null;
       dom.window.fetch = (url, opts) => {
-        if (String(url).includes("/takes/0") && opts && opts.method === "POST") {
+        if (String(url) === "/api/rooms/B3ROOM/lines/t1200/takes" && opts && opts.method === "POST") {
           sentForm = opts.body;
           const autoGain = opts.body.get("auto_gain") === "true";
           const take = {
-            user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=2",
+            take_id: "new2", number: 2, user_id: app.user.id, url: "/api/rooms/B3ROOM/lines/t1200/takes/new2/audio?v=2",
             offset_ms: 0, pitch_semitones: 0, reverb_wet: 0,
             gain_db: autoGain ? -4 : parseFloat(opts.body.get("gain_db")),
             auto_gain_db: -4, speech_loudness_db: -17, target_loudness_db: -21,
           };
-          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", take }) });
+          const line = { picked: "new2", next_number: 3, takes: [{ ...prevTake }, take] };
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", line_id: "t1200", take, line }) });
         }
         return realFetch(url, opts);
       };
-      const prevTake = { user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=1", gain_db: 6, auto_gain_db: 6 };
-      const roomB3 = () => ({ room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0], takes: { 0: { ...prevTake } }, users: {} });
+      const prevTake = { take_id: "old1", number: 1, user_id: app.user.id, url: "/api/rooms/B3ROOM/lines/t1200/takes/old1/audio?v=1", gain_db: 6, auto_gain_db: 6 };
+      const roomB3 = () => ({ state_version: 2, room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0],
+        takes: { t1200: { picked: "old1", next_number: 2, takes: [{ ...prevTake }] } }, users: {} });
 
       // Slider still shows the previous take's auto gain: the new take must get its own.
       app.roomState = roomB3();
       app.sliderGain.value = "6";
       await app.uploadTake(0, new dom.window.Blob(["x"]));
       if (sentForm?.get("auto_gain") !== "true" || parseFloat(app.sliderGain.value) !== -4
-          || app.roomState.takes[0].gain_db !== -4) {
+          || app.takeForLine(0).gain_db !== -4 || app.takeForLine(0).take_id !== "new2"
+          || app.roomState.takes.t1200.takes.length !== 2) {
         console.error("FAIL: B3 re-take kept the old take's gain:", sentForm?.get("auto_gain"), app.sliderGain.value);
         process.exit(1);
       }
@@ -490,6 +493,200 @@ try {
     } else {
       console.error("FAIL: releaseExportModal/failExport missing!");
       process.exit(1);
+    }
+
+    // Test 8c: take helpers (static/js/studio/takes.js) over room state keyed by line ID.
+    {
+      const src = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "studio", "takes.js"), "utf8");
+      const T = new Function(src.replace(/^export\s+/gm, "")
+        + "\nreturn { pickedTake, lineTakes, takeCount, takeAudioKey, TAKE_STATE_VERSION };")();
+      const take1 = { take_id: "a1", number: 1, url: "/api/rooms/R/lines/t1200/takes/a1/audio?v=3", user_name: "Ana" };
+      const take0 = { take_id: "b2", number: 2, url: "/api/rooms/R/lines/t1200/takes/b2/audio?v=7", user_name: "Ana" };
+      const takes = { t1200: { picked: "b2", next_number: 3, takes: [take1, take0] } };
+      const [l0, l1] = mockPacks[0].lines;
+      const checks = [
+        ["pickedTake finds the line's take", T.pickedTake(takes, l0) === take0],
+        ["pickedTake follows the pick", T.pickedTake({ t1200: { ...takes.t1200, picked: "a1" } }, l0) === take1],
+        ["pickedTake is empty for a line with no take", T.pickedTake(takes, l1) === undefined],
+        ["pickedTake tolerates missing state", T.pickedTake(undefined, l0) === undefined && T.pickedTake(takes, null) === undefined],
+        ["lineTakes lists every take, oldest first", T.lineTakes(takes, l0).length === 2 && T.lineTakes(takes, l0)[0] === take1],
+        ["lineTakes is empty without a take", T.lineTakes(takes, l1).length === 0 && T.lineTakes(null, l0).length === 0],
+        ["takeCount counts", T.takeCount(takes, l0) === 2 && T.takeCount(takes, l1) === 0],
+        ["takeAudioKey drops ?v=", T.takeAudioKey(take0) === "/api/rooms/R/lines/t1200/takes/b2/audio"],
+        ["takeAudioKey without a url", T.takeAudioKey({}) === null && T.takeAudioKey(undefined) === null],
+        ["TAKE_STATE_VERSION is 2", T.TAKE_STATE_VERSION === 2],
+      ];
+      const failed = checks.filter(([, ok]) => !ok).map(([name]) => name);
+      if (failed.length) {
+        console.error("FAIL: take helpers:", failed);
+        process.exit(1);
+      }
+
+      // The studio reads the take through the same helper.
+      app.roomState = { state_version: 2, room_id: "R", pack: mockPacks[0], takes, users: {} };
+      if (app.takeForLine(0) !== take0 || app.takeForLine(1) !== undefined || app.takeForLine(99) !== undefined) {
+        console.error("FAIL: takeForLine did not return the line's take");
+        process.exit(1);
+      }
+
+      // Evicting a take drops every cached version of its audio and nothing else.
+      const cache = app.audio.bufferCache;
+      cache.clear();
+      for (const k of ["/api/rooms/R/lines/t1200/takes/b2/audio?v=6", "/api/rooms/R/lines/t1200/takes/b2/audio?v=7",
+                       "/api/rooms/R/lines/t1200/takes/a1/audio?v=3", "/api/rooms/R/lines/t1200/takes/b22/audio?v=1"]) cache.set(k, {});
+      app.audio.evictTakeCache(take0);
+      app.audio.evictTakeCache(undefined);
+      const left = [...cache.keys()].sort().join(",");
+      cache.clear();
+      if (left !== "/api/rooms/R/lines/t1200/takes/a1/audio?v=3,/api/rooms/R/lines/t1200/takes/b22/audio?v=1") {
+        console.error("FAIL: evictTakeCache left the wrong buffers:", left);
+        process.exit(1);
+      }
+      console.log("PASS: take helpers read the picked take and evict only its audio!");
+    }
+
+    // Test 8d: socket state keeps peaks by take ID, and a tab left open across an update
+    // stops applying state and asks for a reload.
+    {
+      const lines = mockPacks[0].lines;
+      const withPeaks = { take_id: "a1", number: 1, url: "/api/rooms/R/lines/t1200/takes/a1/audio?v=1", peaks: [[0.1, 0.2]] };
+      app.roomState = { state_version: 2, room_id: "R", pack: mockPacks[0], users: {},
+        takes: { t1200: { picked: "a1", next_number: 2, takes: [withPeaks] } } };
+      // a1 is no longer picked, so the server sends it without peaks.
+      const applied = app.applyIncomingState({ state: { state_version: 2, room_id: "R", users: {}, takes: {
+        t1200: { picked: "b2", next_number: 3, takes: [
+          { take_id: "a1", number: 1, url: withPeaks.url },
+          { take_id: "b2", number: 2, url: "/api/rooms/R/lines/t1200/takes/b2/audio?v=1", peaks: [[0.5, 0.6]] },
+        ] } } } });
+      const merged = app.roomState.takes.t1200.takes;
+      if (!applied || merged[0].peaks[0][1] !== 0.2 || merged[1].peaks[0][1] !== 0.6 || app.takeForLine(0).take_id !== "b2") {
+        console.error("FAIL: state merge lost peaks or the pick:", JSON.stringify(app.roomState.takes));
+        process.exit(1);
+      }
+
+      const before = app.roomState;
+      const banner = dom.window.document.getElementById("connection-banner");
+      const bannerText = dom.window.document.getElementById("connection-banner-text");
+      app.socket.emit("take_deleted", { type: "take_deleted", payload: { line_index: 0, take_id: "b2" },
+        state: { room_id: "R", pack: mockPacks[0], users: {}, takes: { 0: { url: "/api/rooms/R/takes/0/audio" } } } });
+      const stale = app.applyIncomingState({ state: { state_version: 3, room_id: "R", takes: {} } });
+      app.renderConnectionState({ state: "open" });
+      if (stale !== false || app.roomState !== before || app.takeForLine(0)?.take_id !== "b2"
+          || banner.style.display !== "flex"
+          || bannerText.innerText !== "DubMate was updated. Reload this page to keep going.") {
+        console.error("FAIL: stale-tab notice:", stale, banner.style.display, bannerText.innerText);
+        process.exit(1);
+      }
+      app.isStaleTab = false;
+      banner.style.display = "none";
+      console.log("PASS: a tab from another DubMate version stops applying state and asks for a reload!");
+    }
+
+    // Test 8e: take history in the booth. "Takes (N)" shows only with 2+ takes on a line
+    // you can record; rows list takes oldest first; Use picks, delete confirms, Play
+    // uses the take's own settings and leaves the sliders alone.
+    {
+      const doc = dom.window.document;
+      const btnTakes = doc.getElementById("btn-take-history");
+      const takesBox = doc.getElementById("take-history");
+      const panel = doc.getElementById("take-history-panel");
+      const realFetch = dom.window.fetch;
+      const realConfirm = dom.window.confirm;
+      const realToast = app.showToast;
+      const realLoad = app.audio.loadAudioBuffer;
+      const realPreview = app.audio.previewTakeIsolated;
+      const fail = (msg, ...rest) => { console.error("FAIL: take history:", msg, ...rest); process.exit(1); };
+      const mk = (id, number, name, extra = {}) => ({ take_id: id, number, user_id: app.user.id, user_name: name,
+        duration: 2.41, url: `/api/rooms/TH/lines/t1200/takes/${id}/audio?v=1`,
+        offset_ms: 0, pitch_semitones: 0, reverb_wet: 0, gain_db: 0, ...extra });
+      const roomWith = (takes, extra = {}) => ({ state_version: 2, room_id: "TH", host_id: app.user.id,
+        pack: mockPacks[0], users: {}, role_assignments: {}, takes, ...extra });
+      const toasts = [];
+      app.showToast = (m) => toasts.push(m);
+      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
+
+      // One take: no button.
+      app.roomState = roomWith({ t1200: { picked: "a1", next_number: 2, takes: [mk("a1", 1, "Ana")] } });
+      await app.loadBoothLine(0);
+      if (takesBox.style.display !== "none") fail("button shown with one take");
+
+      // Two takes on a line someone else is cast for: no button.
+      const two = () => ({ t1200: { picked: "b2", next_number: 4, takes: [
+        mk("a1", 1, "Ana", { offset_ms: 120, pitch_semitones: 2, reverb_wet: 0.3, gain_db: -5 }),
+        mk("b2", 3, "Ben", { duration: 1.96 })] } });
+      app.roomState = roomWith(two(), { host_id: "someone", role_assignments: { Deku: ["u9"] } });
+      await app.loadBoothLine(0);
+      if (takesBox.style.display !== "none") fail("button shown on a line you can't record");
+
+      // Two takes on your line: button shown, panel opens with rows oldest first.
+      app.roomState = roomWith(two());
+      await app.loadBoothLine(0);
+      if (takesBox.style.display === "none" || btnTakes.innerText !== "Takes (2)") fail("button not shown with 2 takes", btnTakes.innerText);
+      if (btnTakes.dataset.tip !== "Listen to your other takes and choose the one used in the dub") fail("button tooltip");
+      if (panel.style.display !== "none") fail("panel open before the button is clicked");
+      btnTakes.click();
+      const rows = [...panel.querySelectorAll(".take-history-row")];
+      const labels = rows.map((r) => r.querySelector(".take-history-label").textContent);
+      if (labels.join("|") !== "Take 1 · Ana · 2.4s|Take 3 · Ben · 2.0s") fail("rows", labels);
+      if (rows[0].querySelector(".take-history-picked") || !rows[0].querySelector(".take-history-use")
+          || rows[1].querySelector(".take-history-picked")?.textContent !== "In the dub"
+          || rows[1].querySelector(".take-history-use")) fail("picked row not marked, or Use shown on it");
+      if (rows[0].querySelector(".take-history-use").dataset.tip !== "Use this take in the dub") fail("Use tooltip");
+
+      // Play: the take's own settings go to the preview; the sliders don't move.
+      const sliders = () => [app.sliderNudge.value, app.sliderPitch.value, app.sliderReverb.value, app.sliderGain.value].join(",");
+      const slidersBefore = sliders();
+      let previewArgs = null;
+      app.audio.previewTakeIsolated = (args) => { previewArgs = args; };
+      app.syncVideoSeek = () => Promise.resolve();
+      rows[0].querySelector(".take-history-play").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (!previewArgs || previewArgs.offsetMs !== 120 || previewArgs.pitchSemitones !== 2
+          || previewArgs.reverbWet !== 0.3 || previewArgs.gainDb !== -5) fail("Play used the wrong settings", previewArgs);
+      if (sliders() !== slidersBefore) fail("Play moved the sliders", slidersBefore, sliders());
+      app.stopBoothPlayback();
+
+      // Use: POST pick, toast, the picked row moves.
+      let sent = null;
+      dom.window.fetch = (url, opts) => {
+        if (String(url).includes("/takes/a1") && opts && opts.method) {
+          sent = { url: String(url), opts };
+          const line = { ...two().t1200, picked: "a1" };
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", line_id: "t1200", line }) });
+        }
+        return realFetch(url, opts);
+      };
+      rows[0].querySelector(".take-history-use").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (sent?.url !== "/api/rooms/TH/lines/t1200/takes/a1/pick" || sent.opts.method !== "POST"
+          || JSON.parse(sent.opts.body).user_id !== app.user.id) fail("Use did not send the pick", sent);
+      if (!toasts.includes("Take 1 is in the dub") || app.takeForLine(0).take_id !== "a1") fail("pick not applied", toasts);
+
+      // Delete: asks first; cancel sends nothing, OK sends DELETE.
+      app.roomState = roomWith(two());
+      await app.loadBoothLine(0);
+      // The history stays open after a pick on the same line.
+      if (panel.style.display === "none") fail("history closed after picking a take");
+      const asked = [];
+      sent = null;
+      dom.window.confirm = (m) => { asked.push(m); return false; };
+      panel.querySelector(".take-history-row .take-history-delete").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (asked[0] !== "Delete take 1? This can't be undone." || sent) fail("delete without a confirm", asked, sent);
+      dom.window.confirm = () => true;
+      panel.querySelector(".take-history-row .take-history-delete").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (sent?.url !== `/api/rooms/TH/lines/t1200/takes/a1?user_id=${encodeURIComponent(app.user.id)}`
+          || sent.opts.method !== "DELETE") fail("delete did not send DELETE", sent);
+
+      dom.window.fetch = realFetch;
+      dom.window.confirm = realConfirm;
+      app.showToast = realToast;
+      app.audio.loadAudioBuffer = realLoad;
+      app.audio.previewTakeIsolated = realPreview;
+      delete app.syncVideoSeek;
+      app.leaveRoom();
+      console.log("PASS: take history shows on your lines with 2+ takes, and Play, Use and delete work!");
     }
 
     // Test 8: Sample-Accurate Video Seek & Playback Stop helpers

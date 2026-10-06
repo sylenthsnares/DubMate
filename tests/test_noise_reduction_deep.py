@@ -270,7 +270,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             os.remove(tmp_take_a)
 
             saved_a = audio_processor.save_uploaded_take(
-                test_room, line_index=0, audio_bytes=take_bytes_a, enable_noise_reduction=True, user_id=user_a
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes_a, enable_noise_reduction=True, user_id=user_a
             )
 
             # Actor B records Line 1 (with fan noise)
@@ -282,7 +282,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             os.remove(tmp_take_b)
 
             saved_b = audio_processor.save_uploaded_take(
-                test_room, line_index=1, audio_bytes=take_bytes_b, enable_noise_reduction=True, user_id=user_b
+                test_room, room_dir, "take_line_1", audio_bytes=take_bytes_b, enable_noise_reduction=True, user_id=user_b
             )
 
             self.assertTrue(saved_a["noise_reduction"])
@@ -292,9 +292,9 @@ class TestDeepNoiseReduction(unittest.TestCase):
 
             # Both raw takes and denoised takes exist independently
             self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_0_raw.wav")))
-            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, 0)))
+            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, "take_line_0")))
             self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_1_raw.wav")))
-            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, 1)))
+            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, "take_line_1")))
 
         finally:
             shutil.rmtree(room_dir, ignore_errors=True)
@@ -319,19 +319,19 @@ class TestDeepNoiseReduction(unittest.TestCase):
 
             # Initially saved as RAW (noise reduction OFF)
             saved = audio_processor.save_uploaded_take(
-                test_room, line_index=0, audio_bytes=take_bytes, enable_noise_reduction=False, user_id=user_id
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=False, user_id=user_id
             )
             self.assertFalse(saved["noise_reduction"])
 
             raw_wav = os.path.join(room_dir, "take_line_0_raw.wav")
-            denoised_wav = audio_processor.denoised_take_path(room_dir, 0)
+            denoised_wav = audio_processor.denoised_take_path(room_dir, "take_line_0")
             active_wav = os.path.join(room_dir, "take_line_0.wav")
 
             # Toggle 12 times alternating ON and OFF
             for i in range(12):
                 should_enable = (i % 2 == 0) # True on even, False on odd
                 toggled = audio_processor.toggle_take_noise_reduction(
-                    test_room, line_index=0, enable_noise_reduction=should_enable, user_id=user_id
+                    test_room, room_dir, "take_line_0", enable_noise_reduction=should_enable, user_id=user_id
                 )
                 self.assertEqual(toggled["noise_reduction"], should_enable)
                 expected_size = os.path.getsize(denoised_wav if should_enable else raw_wav)
@@ -363,7 +363,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             os.remove(tmp_take)
 
             saved = audio_processor.save_uploaded_take(
-                test_room, line_index=0, audio_bytes=take_bytes, enable_noise_reduction=True, user_id="host"
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=True, user_id="host"
             )
 
             takes_dict = {
