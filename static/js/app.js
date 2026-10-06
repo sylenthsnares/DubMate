@@ -292,6 +292,14 @@ class DubMateApp {
     this.btnSaveExportsDir = document.getElementById('btn-save-exports-dir');
     this.btnSaveExportsDirText = document.getElementById('btn-save-exports-dir-text');
     this.exportsDirFeedback = document.getElementById('exports-dir-feedback');
+    this.packBuilderRow = document.getElementById('packbuilder-row');
+    this.packBuilderSizeNote = document.getElementById('packbuilder-size-note');
+    this.packBuilderRemoveConfirm = document.getElementById('packbuilder-remove-confirm');
+    this.packBuilderRemoveFeedback = document.getElementById('packbuilder-remove-feedback');
+    this.btnRemovePackBuilder = document.getElementById('btn-remove-packbuilder');
+    this.btnRemovePackBuilderText = document.getElementById('btn-remove-packbuilder-text');
+    this.btnCancelRemovePackBuilder = document.getElementById('btn-cancel-remove-packbuilder');
+    this.btnConfirmRemovePackBuilder = document.getElementById('btn-confirm-remove-packbuilder');
 
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');

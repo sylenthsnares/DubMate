@@ -1658,6 +1658,28 @@
           </p>
         </div>
 
+        <!-- Remove Pack Builder: desktop app only, and only once it is installed.
+             Shown by loadPackBuilderRemoval() in studio/audio_setup.js. -->
+        <div class="audio-device-row" id="packbuilder-row" style="display: none;">
+          <span class="form-label">Pack Builder</span>
+          <div class="audio-path-row">
+            <p id="packbuilder-size-note" class="audio-device-note" style="flex: 1; margin: 0;"></p>
+            <button id="btn-remove-packbuilder" class="btn btn-secondary btn-sm" type="button"
+              data-tip="To add it back, run the DubMate installer again and tick Pack Builder.">
+              <span id="btn-remove-packbuilder-text">Remove Pack Builder</span>
+            </button>
+          </div>
+          <div id="packbuilder-remove-confirm" class="audio-inline-feedback is-error" style="display: none;">
+            <p style="margin: 0;">Remove Pack Builder? DubMate restarts, so anyone in your room is disconnected.</p>
+            <div class="modal-actions" style="margin-top: 10px; justify-content: flex-end; gap: 8px;">
+              <button id="btn-cancel-remove-packbuilder" class="btn btn-ghost btn-sm" type="button">Cancel</button>
+              <button id="btn-confirm-remove-packbuilder" class="btn btn-primary btn-sm" type="button">Remove</button>
+            </div>
+          </div>
+          <div id="packbuilder-remove-feedback" class="audio-inline-feedback is-error" role="alert"
+            style="display: none;"></div>
+        </div>
+
         <div class="modal-actions" style="margin-top: 20px; justify-content: flex-end; gap: 10px;">
           <button id="btn-audio-settings-done" class="btn btn-primary btn-md" type="button">
             <span>Done</span>

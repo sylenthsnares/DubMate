@@ -3,5 +3,12 @@
   "identifier": "default",
   "description": "Default capability for DubMate Studio",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-get-engine-port",
+    "allow-trigger-start-sidecars",
+    "allow-apply-update",
+    "allow-get-packbuilder-status",
+    "allow-install-packbuilder"
+  ]
 }

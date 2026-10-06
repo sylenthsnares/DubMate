@@ -62,6 +62,7 @@ fn main() {
             apply_update,
             packbuilder::get_packbuilder_status,
             packbuilder::install_packbuilder,
+            packbuilder::remove_packbuilder,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed

@@ -1,4 +1,5 @@
-// studio/audio_setup.js - Audio device setup, first-run onboarding, input meter and export folder setting.
+// studio/audio_setup.js - Audio device setup, first-run onboarding, input meter, export folder setting
+// and removing Pack Builder in the desktop app.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { AudioEngine } from '../audio_engine.js';
 import { escapeHtml } from '../ui_common.js';
@@ -42,6 +43,14 @@ function formatDbFS(db) {
   if (typeof db !== 'number' || !isFinite(db)) return '-∞';
   if (db <= METER_FLOOR_DB) return '-∞';
   return (db > 0 ? '+' : '') + db.toFixed(1);
+}
+
+// "2.1 GB" or "340 MB"; empty when the size is unknown.
+function formatDiskSize(bytes) {
+  if (typeof bytes !== 'number' || !isFinite(bytes) || bytes <= 0) return '';
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
 }
 
 export class AudioSetupMethods {
@@ -116,6 +125,18 @@ export class AudioSetupMethods {
       this.inputExportsDir.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') this.saveExportsDir();
       });
+    }
+    if (this.btnRemovePackBuilder) {
+      this.btnRemovePackBuilder.addEventListener('click', () => this.showPackBuilderRemoveConfirm(true));
+    }
+    if (this.btnCancelRemovePackBuilder) {
+      this.btnCancelRemovePackBuilder.addEventListener('click', () => {
+        this.showPackBuilderRemoveConfirm(false);
+        if (this.btnRemovePackBuilder) this.btnRemovePackBuilder.focus();
+      });
+    }
+    if (this.btnConfirmRemovePackBuilder) {
+      this.btnConfirmRemovePackBuilder.addEventListener('click', () => this.removePackBuilder());
     }
 
     // Devices can be hot-plugged while the panel is open.
@@ -262,6 +283,7 @@ export class AudioSetupMethods {
 
     // Fire and forget: hidden entirely if the backend has no exports_dir yet.
     this.loadExportsDirSetting();
+    this.loadPackBuilderRemoval();
 
     if (state === 'granted') {
       this.showAudioSetupStep('devices');
@@ -287,6 +309,7 @@ export class AudioSetupMethods {
     }
     this.audioSetup.firstRunMode = false;
     this.setExportsFeedback('', null);
+    this.showPackBuilderRemoveConfirm(false);
     this.updateAudioSettingsAffordance();
   }
 
@@ -740,6 +763,88 @@ export class AudioSetupMethods {
     this.exportsDirFeedback.className =
       isSuccess ? 'audio-inline-feedback is-success' : 'audio-inline-feedback is-error';
     this.exportsDirFeedback.innerText = message;
+  }
+
+  // --- Remove Pack Builder (desktop app only) ---
+
+  /**
+   * The desktop app's command bridge, or null in a browser or on a host's page.
+   * The desktop app only answers this page on this computer's loopback address
+   * (tauri/src-tauri/capabilities/studio.json), so nothing else even asks.
+   */
+  desktopInvoke() {
+    const invoke = window.__TAURI__?.core?.invoke;
+    return typeof invoke === 'function' && this.isEngineLocal() ? invoke : null;
+  }
+
+  async loadPackBuilderRemoval() {
+    if (!this.packBuilderRow || this.packBuilderRemoving) return;
+    this.packBuilderRow.style.display = 'none';
+    this.showPackBuilderRemoveConfirm(false);
+    this.setPackBuilderRemoveFeedback('');
+
+    const invoke = this.desktopInvoke();
+    if (!invoke) return;
+    let status = null;
+    try {
+      status = await invoke('get_packbuilder_status', { withSize: true });
+    } catch (err) {
+      // An older desktop app without this permission refuses the call.
+      console.warn('[DubMate] Could not read the Pack Builder status:', err);
+      return;
+    }
+    if (!status || !status.installed) return;
+
+    if (this.packBuilderSizeNote) {
+      const size = formatDiskSize(status.size_bytes);
+      this.packBuilderSizeNote.innerText = size ? `Removing it frees ${size}.` : '';
+    }
+    this.packBuilderRow.style.display = 'block';
+  }
+
+  showPackBuilderRemoveConfirm(show) {
+    if (this.packBuilderRemoving) return;
+    if (this.packBuilderRemoveConfirm) this.packBuilderRemoveConfirm.style.display = show ? 'block' : 'none';
+    if (this.btnRemovePackBuilder) this.btnRemovePackBuilder.style.display = show ? 'none' : '';
+    if (show && this.btnCancelRemovePackBuilder) this.btnCancelRemovePackBuilder.focus();
+  }
+
+  setPackBuilderRemoveFeedback(message) {
+    if (!this.packBuilderRemoveFeedback) return;
+    this.packBuilderRemoveFeedback.innerText = message;
+    this.packBuilderRemoveFeedback.style.display = message ? 'block' : 'none';
+  }
+
+  async removePackBuilder() {
+    const invoke = this.desktopInvoke();
+    if (!invoke || this.packBuilderRemoving) return;
+    this.showPackBuilderRemoveConfirm(false);
+    this.setPackBuilderRemoveFeedback('');
+    this.packBuilderRemoving = true;
+    if (this.btnRemovePackBuilder) this.btnRemovePackBuilder.disabled = true;
+    if (this.btnRemovePackBuilderText) this.btnRemovePackBuilderText.innerText = 'Removing…';
+
+    try {
+      // Resolves once the engine is back up without Pack Builder.
+      await invoke('remove_packbuilder');
+    } catch (err) {
+      console.warn('[DubMate] Pack Builder was not removed:', err);
+      this.packBuilderRemoving = false;
+      if (this.btnRemovePackBuilder) this.btnRemovePackBuilder.disabled = false;
+      if (this.btnRemovePackBuilderText) this.btnRemovePackBuilderText.innerText = 'Remove Pack Builder';
+      this.setPackBuilderRemoveFeedback("Pack Builder couldn't be removed. Restart DubMate and try again.");
+      return;
+    }
+
+    // The engine restarted and may have picked another port, so reopen the studio there.
+    let port = Number(window.location.port);
+    try {
+      const current = await invoke('get_engine_port');
+      if (Number.isInteger(current) && current > 0) port = current;
+    } catch (err) {
+      console.warn('[DubMate] Could not read the engine port:', err);
+    }
+    this.navigateTo(`http://127.0.0.1:${port}/`);
   }
 
   // Guard used by the record and calibration paths so the browser permission
