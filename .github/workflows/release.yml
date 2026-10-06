@@ -188,14 +188,14 @@ jobs:
         shell: pwsh
         run: |
           cd tauri/src-tauri/resources
-          ./python-runtime/python.exe -c "import app, dubmate.common"
+          ./python-runtime/python.exe -c "import app, dubmate.common, pedalboard"
 
       - name: Import smoke on staged engine (macOS)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           cd tauri/src-tauri/resources
-          PYTHONPATH="$PWD" ./python-runtime/bin/python3 -c "import app, dubmate.common"
+          PYTHONPATH="$PWD" ./python-runtime/bin/python3 -c "import app, dubmate.common, pedalboard"
 
       - name: Download release notes
         uses: actions/download-artifact@v4

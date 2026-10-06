@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 
 from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, cpu_h264_args, CACHE_DIR, PackInfo
 from pack_loader import compute_waveform_peaks  # re-exported: app.py and tests use audio_processor.compute_waveform_peaks
+from dubmate.vocal_chain import get_reverb_impulse, _fft_convolve  # the reverb lives with the voice chain; apply_audio_effects still uses it
 from pack_loader import (
     run_subprocess as _run_subprocess,
     SUBPROCESS_TIMEOUT_PROBE,
@@ -835,43 +836,6 @@ def toggle_take_noise_reduction(
         "target_loudness_db": gain_match["target_loudness_db"],
         "auto_gain_db": gain_match["auto_gain_db"],
     }
-
-
-_REVERB_CACHE: Dict[Tuple[float, int], np.ndarray] = {}
-
-
-def get_reverb_impulse(decay_sec: float = 1.5, sr: int = SR) -> np.ndarray:
-    """Generates and caches an acoustic room impulse response with exponential decay and diffusion."""
-    cache_key = (round(decay_sec, 2), sr)
-    if cache_key in _REVERB_CACHE:
-        return _REVERB_CACHE[cache_key]
-
-    length = int(sr * min(2.0, max(0.2, decay_sec)))
-    pre_delay = int(sr * 0.020)  # 20ms pre-delay
-    impulse = np.zeros(length, dtype=np.float32)
-    t = np.arange(length - pre_delay, dtype=np.float32) / float(sr)
-    envelope = np.exp(-3.2 * t / max(0.1, decay_sec))
-
-    rng = np.random.default_rng(42)  # Deterministic room reflection pattern (local RNG, no global mutation)
-    impulse[pre_delay:] = (rng.random(len(t)).astype(np.float32) * 2.0 - 1.0) * envelope
-    norm = np.sqrt(np.sum(impulse ** 2))
-    if norm > 1e-6:
-        impulse /= norm
-
-    _REVERB_CACHE[cache_key] = impulse
-    return impulse
-
-
-def _fft_convolve(signal: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """
-    Full linear convolution (length len(signal) + len(kernel) - 1) through numpy's real FFT.
-    Replaces scipy.signal.fftconvolve, the only thing scipy was installed for. The FFT runs
-    in float64 and the result is float32, like fftconvolve gave for float32 input.
-    """
-    n = len(signal) + len(kernel) - 1
-    nfft = 1 << (n - 1).bit_length()
-    spectrum = np.fft.rfft(np.asarray(signal, dtype=np.float64), nfft) * np.fft.rfft(np.asarray(kernel, dtype=np.float64), nfft)
-    return np.fft.irfft(spectrum, nfft)[:n].astype(np.float32)
 
 
 def master_soft_limiter(audio: np.ndarray, ceiling_db: float = LIMITER_CEILING_DB) -> np.ndarray:

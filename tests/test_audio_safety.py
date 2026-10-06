@@ -24,6 +24,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import audio_processor
 import pack_loader
+from dubmate import vocal_chain
 
 
 class TestPathTraversalSanitization(unittest.TestCase):
@@ -195,8 +196,8 @@ class TestReverbImpulseRngIsolation(unittest.TestCase):
         expected_next = np.random.rand(5)
 
         np.random.seed(1234)
-        audio_processor._REVERB_CACHE.clear()
-        audio_processor.get_reverb_impulse(decay_sec=1.5, sr=44100)
+        vocal_chain._REVERB_CACHE.clear()
+        vocal_chain.get_reverb_impulse(decay_sec=1.5, sr=44100)
         actual_next = np.random.rand(5)
 
         np.testing.assert_allclose(
@@ -205,10 +206,10 @@ class TestReverbImpulseRngIsolation(unittest.TestCase):
         )
 
     def test_get_reverb_impulse_is_deterministic(self):
-        audio_processor._REVERB_CACHE.clear()
-        impulse_a = audio_processor.get_reverb_impulse(decay_sec=0.8, sr=44100).copy()
-        audio_processor._REVERB_CACHE.clear()
-        impulse_b = audio_processor.get_reverb_impulse(decay_sec=0.8, sr=44100).copy()
+        vocal_chain._REVERB_CACHE.clear()
+        impulse_a = vocal_chain.get_reverb_impulse(decay_sec=0.8, sr=44100).copy()
+        vocal_chain._REVERB_CACHE.clear()
+        impulse_b = vocal_chain.get_reverb_impulse(decay_sec=0.8, sr=44100).copy()
         np.testing.assert_array_equal(impulse_a, impulse_b)
 
 
@@ -220,7 +221,7 @@ class TestReverbConvolution(unittest.TestCase):
     """
 
     def setUp(self):
-        audio_processor._REVERB_CACHE.clear()
+        vocal_chain._REVERB_CACHE.clear()
 
     def _assert_close(self, actual, expected):
         self.assertEqual(len(actual), len(expected))
@@ -228,17 +229,17 @@ class TestReverbConvolution(unittest.TestCase):
         self.assertLess(rel, 1e-6, f"relative error {rel:.2e}")
 
     def test_matches_direct_convolution(self):
-        impulse = audio_processor.get_reverb_impulse(decay_sec=0.2, sr=44100)
+        impulse = vocal_chain.get_reverb_impulse(decay_sec=0.2, sr=44100)
         signal = (np.random.default_rng(3).random(1500).astype(np.float32) * 2.0 - 1.0) * 0.4
-        wet = audio_processor._fft_convolve(signal, impulse)
+        wet = vocal_chain._fft_convolve(signal, impulse)
         self.assertEqual(wet.dtype, np.float32)
         self._assert_close(wet, np.convolve(signal.astype(np.float64), impulse.astype(np.float64)))
 
     def test_unit_click_returns_the_impulse_shifted(self):
-        impulse = audio_processor.get_reverb_impulse(decay_sec=1.5, sr=44100)
+        impulse = vocal_chain.get_reverb_impulse(decay_sec=1.5, sr=44100)
         click = np.zeros(100, dtype=np.float32)
         click[37] = 1.0
-        wet = audio_processor._fft_convolve(click, impulse)
+        wet = vocal_chain._fft_convolve(click, impulse)
         expected = np.zeros(len(click) + len(impulse) - 1)
         expected[37:37 + len(impulse)] = impulse
         self._assert_close(wet, expected)
@@ -246,9 +247,9 @@ class TestReverbConvolution(unittest.TestCase):
     def test_reverb_matches_values_scipy_produced(self):
         # Exact (float64) scipy.signal.fftconvolve output for the 1.5s room impulse and a
         # 0.1s 220 Hz sine, recorded before scipy was dropped.
-        impulse = audio_processor.get_reverb_impulse(decay_sec=1.5, sr=44100)
+        impulse = vocal_chain.get_reverb_impulse(decay_sec=1.5, sr=44100)
         signal = (0.5 * np.sin(2 * np.pi * 220 * np.arange(4410) / 44100)).astype(np.float32)
-        wet = audio_processor._fft_convolve(signal, impulse)
+        wet = vocal_chain._fft_convolve(signal, impulse)
         self.assertEqual(len(wet), 70559)
         peak = 0.5031437009364494
         self.assertLess(abs(np.max(np.abs(wet)) - peak) / peak, 1e-6)
