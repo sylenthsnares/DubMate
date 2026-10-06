@@ -22,6 +22,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import pack_loader
 import app
+from dubmate import common, rooms
 
 
 class TestConfigPackPath(unittest.TestCase):
@@ -137,12 +138,37 @@ class TestConfigPackPath(unittest.TestCase):
         finally:
             shutil.rmtree(temp_single_base, ignore_errors=True)
 
-    @classmethod
-    def tearDownClass(cls):
-        # Restore configuration to standard workspace Packs folder
-        default_packs = os.path.abspath(os.path.join(pack_loader.BASE_DIR, "Packs"))
-        pack_loader.save_config({"packs_dir": default_packs})
-        pack_loader.init_pack_dirs()
+    def test_05_exports_dir_applies_to_new_exports(self):
+        """Verify a changed export folder is used by the next render of an existing room."""
+        packs = pack_loader.get_all_packs()
+        self.assertGreater(len(packs), 0, "Expected at least one fixture pack")
+        pack_id = list(packs.keys())[0]
+
+        resp_room = self.client.post("/api/rooms", json={"pack_id": pack_id, "host_name": "ExportTester"})
+        self.assertEqual(resp_room.status_code, 200)
+        room_id = resp_room.json()["room_id"]
+
+        previous_exports_dir = common.exports_dir()
+        new_exports_dir = tempfile.mkdtemp(prefix="dubmate_test_exports_")
+        try:
+            resp = self.client.post("/api/config", json={"exports_dir": new_exports_dir})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(os.path.normpath(resp.json()["exports_dir"]), os.path.normpath(new_exports_dir))
+
+            resp_get = self.client.get("/api/config")
+            self.assertEqual(resp_get.status_code, 200)
+            self.assertEqual(os.path.normpath(resp_get.json()["exports_dir"]), os.path.normpath(new_exports_dir))
+
+            out_path = rooms.ROOMS[room_id.upper()].export_out_path("16:9")
+            self.assertTrue(
+                os.path.normpath(out_path).startswith(os.path.normpath(new_exports_dir)),
+                f"{out_path} is not inside {new_exports_dir}",
+            )
+            print(f"[Test 5] New exports land in the configured folder: {out_path}")
+        finally:
+            common._exports_dir = previous_exports_dir
+            rooms.ROOMS.pop(room_id.upper(), None)
+            shutil.rmtree(new_exports_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,18 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 PROJECT_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 TAURI_CONF = _os.path.join(PROJECT_ROOT, "tauri", "src-tauri", "tauri.conf.json")
-MAIN_RS = _os.path.join(PROJECT_ROOT, "tauri", "src-tauri", "src", "main.rs")
+RUST_SRC_DIR = _os.path.join(PROJECT_ROOT, "tauri", "src-tauri", "src")
+
+
+def _rust_source():
+    """Every tauri/src-tauri/src/*.rs, sorted and concatenated, so moving code
+    between modules does not hide it from these checks."""
+    parts = []
+    for name in sorted(_os.listdir(RUST_SRC_DIR)):
+        if name.endswith(".rs"):
+            with open(_os.path.join(RUST_SRC_DIR, name), "r", encoding="utf-8") as f:
+                parts.append(f.read())
+    return "\n".join(parts)
 
 # `app.shell().sidecar("<name>")`
 SIDECAR_CALL = re.compile(r'\.sidecar\(\s*"([^"]+)"\s*\)')
@@ -57,8 +68,7 @@ def _declared_binaries():
 def test_every_sidecar_lookup_matches_a_shipped_binary():
     shipped, declared = _declared_binaries()
 
-    with open(MAIN_RS, "r", encoding="utf-8") as f:
-        source = f.read()
+    source = _rust_source()
 
     requested = _all_requested_names(source)
     assert requested, "no .sidecar(...) calls found -- has the API changed?"
@@ -83,8 +93,7 @@ def test_cloudflared_is_requested_by_its_flattened_name():
     The flattened name is the one the bundler actually produces. Requesting only
     the declared path is what broke every install.
     """
-    with open(MAIN_RS, "r", encoding="utf-8") as f:
-        source = f.read()
+    source = _rust_source()
     requested = _all_requested_names(source)
 
     cloudflared_lookups = [n for n in requested if n.rsplit("/", 1)[-1] == "cloudflared"]
@@ -102,8 +111,7 @@ def test_the_tunnel_failure_path_is_not_silent():
     The reason this went unnoticed for so long: the failure had no else branch.
     Any future rewrite must still report it.
     """
-    with open(MAIN_RS, "r", encoding="utf-8") as f:
-        source = f.read()
+    source = _rust_source()
 
     assert "fn report_tunnel_failure" in source, \
         "report_tunnel_failure is gone; a tunnel that cannot start would be silent again"

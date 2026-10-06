@@ -9,12 +9,10 @@ audio line slicing, and DubMate / Choicer Voicer pack folder assembly.
 
 import os
 import re
-import io
 import sys
 import json
 import time
 import shutil
-import tempfile
 import threading
 import subprocess
 from typing import Dict, List, Optional, Tuple, Any
@@ -86,21 +84,6 @@ def get_whisper_model(model_size: str, device: str) -> Any:
             print(f"[PackBuilder] Loading Whisper ({model_size}) onto {device.upper()} (cached)...")
             _WHISPER_MODELS[key] = whisper.load_model(model_size, device=device)
         return _WHISPER_MODELS[key]
-
-
-# Default character color palette (Warm Analog Studio & Pro DAW palette)
-DEFAULT_CHARACTER_COLORS = [
-    "#d97706",  # Vintage Amber
-    "#cca458",  # Walnut Gold
-    "#dc2626",  # Pilot Red
-    "#16a34a",  # Studio Olive
-    "#b45309",  # Terracotta Bronze
-    "#7c5cff",  # Electric Violet
-    "#ec4899",  # Magenta Neon
-    "#06b6d4",  # Cyan Console
-    "#8b5cf6",  # Purple Tone
-    "#f59e0b",  # Amber Glow
-]
 
 
 class BuildProgress:
@@ -194,9 +177,15 @@ def extract_audio_from_video(video_path: str, output_wav: str) -> str:
         "-f", "wav",
         output_wav
     ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if res.returncode == 0 and os.path.isfile(output_wav) and os.path.getsize(output_wav) >= 100:
-        return output_wav
+    try:
+        res = pack_loader.run_subprocess(cmd, timeout=pack_loader.SUBPROCESS_TIMEOUT_RENDER,
+                                         context="audio extraction of " + repr(video_path),
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        extract_error = (res.stderr or "").strip()
+        if os.path.isfile(output_wav) and os.path.getsize(output_wav) >= 100:
+            return output_wav
+    except subprocess.CalledProcessError as ex:
+        extract_error = (ex.stderr or "").strip()
 
     # 2. If extraction returned "Output file does not contain any stream" or video has no audio track,
     # generate a silent audio track matching video duration so the editor and pipeline function properly
@@ -213,11 +202,16 @@ def extract_audio_from_video(video_path: str, output_wav: str) -> str:
         "-f", "wav",
         output_wav
     ]
-    silent_res = subprocess.run(silent_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if silent_res.returncode == 0 and os.path.isfile(output_wav):
-        return output_wav
+    try:
+        pack_loader.run_subprocess(silent_cmd, timeout=pack_loader.SUBPROCESS_TIMEOUT_PROCESS,
+                                   context="silent audio generation for " + repr(video_path),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if os.path.isfile(output_wav):
+            return output_wav
+    except (subprocess.CalledProcessError, RuntimeError):
+        pass
 
-    raise RuntimeError(f"FFmpeg audio extraction failed: {res.stderr.strip() or 'Unknown error'}")
+    raise RuntimeError(f"FFmpeg audio extraction failed: {extract_error or 'Unknown error'}")
 
 
 # Captions are written under their own prefix so the scan below cannot confuse them
@@ -409,8 +403,14 @@ def download_video_from_url(
         "-movflags", "+faststart",
         standardized_mp4
     ]
-    trans_res = subprocess.run(transcode_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if trans_res.returncode == 0 and os.path.isfile(standardized_mp4) and os.path.getsize(standardized_mp4) > 1000:
+    try:
+        pack_loader.run_subprocess(transcode_cmd, timeout=pack_loader.SUBPROCESS_TIMEOUT_RENDER,
+                                   context="URL import transcode of " + repr(raw_video_path),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        transcoded = os.path.isfile(standardized_mp4) and os.path.getsize(standardized_mp4) > 1000
+    except (subprocess.CalledProcessError, RuntimeError):
+        transcoded = False
+    if transcoded:
         if os.path.abspath(raw_video_path) != os.path.abspath(standardized_mp4):
             try:
                 os.remove(raw_video_path)
@@ -568,8 +568,13 @@ def attenuate_vocals_dsp(input_wav: str, output_wav: str) -> bool:
         "-ar", "44100",
         output_wav
     ]
-    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return res.returncode == 0 and os.path.isfile(output_wav) and os.path.getsize(output_wav) > 100
+    try:
+        pack_loader.run_subprocess(cmd, timeout=pack_loader.SUBPROCESS_TIMEOUT_RENDER,
+                                   context="vocal attenuation of " + repr(input_wav),
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, RuntimeError):
+        return False
+    return os.path.isfile(output_wav) and os.path.getsize(output_wav) > 100
 
 
 def to_romaji(text: str) -> str:
@@ -596,13 +601,32 @@ def to_romaji(text: str) -> str:
         return text
 
 
+def _whisper_options(device: str, language: Optional[str], romanize: bool) -> Tuple[Dict[str, Any], bool]:
+    """
+    Whisper transcribe() options shared by transcribe_segment and transcribe_audio.
+    Returns (options, romanize); a 'romaji' language request also turns romanization on.
+    """
+    opts: Dict[str, Any] = {
+        "verbose": False,
+        "fp16": (device == "cuda"),
+        "condition_on_previous_text": False,
+        "compression_ratio_threshold": 2.4,
+        "no_speech_threshold": 0.6,
+    }
+    romanize = bool(romanize or (language and "romaji" in language.lower()))
+    whisper_lang = "ja" if (language and "ja" in language.lower()) else language
+    if whisper_lang and whisper_lang.strip().lower() not in ("auto", "none"):
+        opts["language"] = whisper_lang.strip().lower()
+    return opts, romanize
+
+
 def transcribe_segment(audio_wav: str, start: float, end: float, model_size: str = "base", language: Optional[str] = None, romanize: bool = False) -> str:
     """
     Transcribes a specific time slice [start, end] using Whisper on-demand.
     Returns the recognized speech text string (with optional Romaji romanization).
     """
-    torch_avail, cuda_avail, device = detect_torch_and_cuda()
-    
+    _, _, device = detect_torch_and_cuda()
+
     # 1. Extract slice to a temp wav file
     temp_slice = audio_wav + f".slice_{start:.2f}_{end:.2f}.wav"
     ffmpeg = pack_loader.get_ffmpeg_path()
@@ -618,7 +642,9 @@ def transcribe_segment(audio_wav: str, start: float, end: float, model_size: str
         temp_slice
     ]
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        pack_loader.run_subprocess(cmd, timeout=pack_loader.SUBPROCESS_TIMEOUT_PROCESS,
+                                   context="segment slice for transcription",
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         temp_slice = audio_wav
 
@@ -626,18 +652,7 @@ def transcribe_segment(audio_wav: str, start: float, end: float, model_size: str
         import whisper
         print(f"[PackBuilder] Transcribing segment [{start:.2f}s - {end:.2f}s] with Whisper on {device.upper()}...")
         model = get_whisper_model(model_size, device=device)
-        transcribe_opts = {
-            "verbose": False,
-            "fp16": (device == "cuda"),
-            "condition_on_previous_text": False,
-            "compression_ratio_threshold": 2.4,
-            "no_speech_threshold": 0.6,
-        }
-        
-        is_romaji_req = romanize or (language and "romaji" in language.lower())
-        whisper_lang = "ja" if (language and "ja" in language.lower()) else language
-        if whisper_lang and whisper_lang.strip().lower() not in ("auto", "none"):
-            transcribe_opts["language"] = whisper_lang.strip().lower()
+        transcribe_opts, is_romaji_req = _whisper_options(device, language, romanize)
 
         res = model.transcribe(temp_slice, **transcribe_opts)
         text = (res.get("text") or "").strip()
@@ -668,25 +683,14 @@ def transcribe_audio(audio_wav: str, model_size: str = "base", language: Optiona
     GPU-first: Uses CUDA if available, CPU as fallback.
     Returns a list of segment dictionaries with start, end, text, and character.
     """
-    torch_avail, cuda_avail, device = detect_torch_and_cuda()
+    _, _, device = detect_torch_and_cuda()
 
     try:
         import whisper
         print(f"[PackBuilder] Running Whisper ({model_size}) transcription on {device.upper()}...")
         
         model = get_whisper_model(model_size, device=device)
-        
-        transcribe_opts = {
-            "verbose": False,
-            "fp16": (device == "cuda"),
-            "condition_on_previous_text": False,
-            "compression_ratio_threshold": 2.4,
-            "no_speech_threshold": 0.6,
-        }
-        is_romaji_req = romanize or (language and "romaji" in language.lower())
-        whisper_lang = "ja" if (language and "ja" in language.lower()) else language
-        if whisper_lang and whisper_lang.strip().lower() not in ("auto", "none"):
-            transcribe_opts["language"] = whisper_lang.strip().lower()
+        transcribe_opts, is_romaji_req = _whisper_options(device, language, romanize)
 
         result = model.transcribe(audio_wav, **transcribe_opts)
         raw_segments = result.get("segments", [])
@@ -843,7 +847,6 @@ def slice_audio_lines(
     ffmpeg = pack_loader.get_ffmpeg_path()
     os.makedirs(output_dir, exist_ok=True)
     
-    total_audio_duration = pack_loader.probe_duration(vocals_wav)
     enriched_segments = []
 
     for i, seg in enumerate(segments):
@@ -877,8 +880,14 @@ def slice_audio_lines(
             "-ac", "2",
             out_wav
         ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if res.returncode != 0 or not os.path.isfile(out_wav) or os.path.getsize(out_wav) < 100:
+        try:
+            pack_loader.run_subprocess(cmd, timeout=pack_loader.SUBPROCESS_TIMEOUT_PROCESS,
+                                       context="line slice " + filename,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            sliced = os.path.isfile(out_wav) and os.path.getsize(out_wav) >= 100
+        except (subprocess.CalledProcessError, RuntimeError):
+            sliced = False
+        if not sliced:
             # Fallback simple slice without afade
             cmd_fallback = [
                 ffmpeg, "-y",
@@ -889,7 +898,22 @@ def slice_audio_lines(
                 "-ac", "2",
                 out_wav
             ]
-            subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                pack_loader.run_subprocess(cmd_fallback, timeout=pack_loader.SUBPROCESS_TIMEOUT_PROCESS,
+                                           context="line slice (no fades) " + filename,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                fallback_error = None
+            except subprocess.CalledProcessError as ex:
+                fallback_error = (ex.stderr or b"").decode("utf-8", "replace").strip() or f"ffmpeg exit code {ex.returncode}"
+            except RuntimeError as ex:
+                fallback_error = str(ex)
+            # Both attempts failed: stop the build with a clear message instead of
+            # installing a pack that is silently missing this line's audio.
+            if fallback_error is not None or not os.path.isfile(out_wav):
+                raise RuntimeError(
+                    f"Could not cut dialogue line {i + 1} ({start:.3f}s-{end:.3f}s) from the vocals track: "
+                    f"{fallback_error or 'no audio file was written'}"
+                )
 
         enriched_segments.append({
             "index": i,
@@ -899,9 +923,8 @@ def slice_audio_lines(
             "end": round(end, 3),
             "duration": round(seg_dur, 3),
             "caption": text,
-            "raw_caption": f"[{raw_char}] {text}" if text else f"[{raw_char}]",
+            "raw_caption": pack_loader.format_raw_caption(raw_char, text),
             "file_path": out_wav,
-            "audio_file": out_wav
         })
 
     return enriched_segments
@@ -929,12 +952,23 @@ def assemble_pack(
     - `icon.png` (if provided)
     """
     safe_title = pack_name.strip() or "Custom Dub Scene"
-    safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', safe_title).strip() or "Custom_Pack"
+    folder_name = pack_loader.safe_folder_name(safe_title, "Custom_Pack")
     
     target_base = pack_loader.PACKS_DIRS[0]
     os.makedirs(target_base, exist_ok=True)
-    pack_dir = os.path.join(target_base, safe_folder_name)
+    pack_dir = os.path.join(target_base, folder_name)
     os.makedirs(pack_dir, exist_ok=True)
+
+    # Rebuilding under an existing pack name must not leave the previous build's line
+    # slices or icon behind: load_pack would pick stale slices up as extra lines.
+    for existing in os.listdir(pack_dir):
+        existing_path = os.path.join(pack_dir, existing)
+        if not os.path.isfile(existing_path):
+            continue
+        low = existing.lower()
+        is_stale_slice = low.endswith(pack_loader.AUDIO_EXTS) and pack_loader.timestamp_from_filename(existing) is not None
+        if is_stale_slice or low.startswith("icon."):
+            os.remove(existing_path)
 
     # 1. Copy / Transcode Video to dub_video.mp4
     target_video = os.path.join(pack_dir, "dub_video.mp4")
@@ -965,30 +999,18 @@ def assemble_pack(
         target_icon = os.path.join(pack_dir, f"icon{ext}")
         shutil.copyfile(cover_image_path, target_icon)
 
-    # 5. Generate _captions.json
-    captions_map = {}
-    for line in line_slices:
-        cap = line.get("caption", "").strip()
-        char = line.get("character", "Actor").strip()
-        captions_map[line["filename"]] = f"[{char}] {cap}" if cap else f"[{char}]"
-    
-    with open(os.path.join(pack_dir, "_captions.json"), "w", encoding="utf-8") as f:
-        json.dump(captions_map, f, ensure_ascii=False, indent=2)
-
-    # 6. Generate _TIMESTAMPS.txt
-    ts_lines = [
-        f"# {safe_title}",
-        "# Auto-generated DubMate Pack Builder timestamps",
-        "# File | start time (s) | subtitle\n"
+    # 5-6. Generate _captions.json and _TIMESTAMPS.txt
+    caption_lines = [
+        {
+            "filename": line["filename"],
+            "start": line["start"],
+            "character": line.get("character", "Actor").strip(),
+            "caption": line.get("caption", "").strip(),
+        }
+        for line in line_slices
     ]
-    for line in line_slices:
-        cap = line.get("caption", "").strip()
-        char = line.get("character", "Actor").strip()
-        sub = f"[{char}] {cap}" if cap else f"[{char}]"
-        ts_lines.append(f"{line['filename']:<40} {line['start']:>10.3f}s   | {sub}")
-    
-    with open(os.path.join(pack_dir, "_TIMESTAMPS.txt"), "w", encoding="utf-8") as f:
-        f.write("\n".join(ts_lines) + "\n")
+    pack_loader.write_caption_files(pack_dir, safe_title, caption_lines,
+                                    "Auto-generated DubMate Pack Builder timestamps")
 
     # 7. Generate pack.json / info.ini metadata
     char_list = sorted(list({l.get("character", "Actor") for l in line_slices}))

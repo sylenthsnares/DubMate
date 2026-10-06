@@ -1,4 +1,4 @@
-import type { RoomEntry, CreateRoomRequest, UpdateRoomRequest, CreateRoomResponse, UpdateRoomResponse } from "./types.ts";
+import type { RoomEntry, CreateRoomRequest, CreateRoomResponse } from "./types.ts";
 
 export interface Env {
   ROOMS: KVNamespace;
@@ -191,6 +191,9 @@ export default {
       } catch {
         return jsonResponse({ error: "Invalid JSON payload" }, 400);
       }
+      if (!body || typeof body !== "object") {
+        return jsonResponse({ error: "Invalid JSON payload" }, 400);
+      }
 
       if (!body.tunnel_url || typeof body.tunnel_url !== "string") {
         return jsonResponse({ error: "Missing or invalid tunnel_url (must be a string)" }, 400);
@@ -295,79 +298,7 @@ export default {
       return jsonResponse(responsePayload, statusCode);
     }
 
-    // 2. POST /rooms/:code/update
-    const updateMatch = path.match(/^\/rooms\/([A-Za-z0-9-]+)\/update$/);
-    if (request.method === "POST" && updateMatch) {
-      const code = updateMatch[1].toUpperCase();
-      if (code.length > MAX_CODE_LENGTH) {
-        return jsonResponse({ error: `code exceeds maximum length of ${MAX_CODE_LENGTH} characters` }, 400);
-      }
-
-      const rawEntry = await env.ROOMS.get(code);
-      if (!rawEntry) {
-        return jsonResponse({ error: "Room not found or expired" }, 404);
-      }
-
-      let entry: RoomEntry;
-      try {
-        entry = JSON.parse(rawEntry);
-      } catch {
-        return jsonResponse({ error: "Corrupt room data in registry" }, 500);
-      }
-
-      // Validate room token or global admin secret
-      const authHeader = request.headers.get("Authorization") || "";
-      const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
-      const clientKey = request.headers.get("X-DubMate-Key") ?? "";
-
-      const isTokenValid = bearerToken.length > 0 && timingSafeEqual(bearerToken, entry.room_token);
-      const isMasterKeyValid = !!env.DUBMATE_SECRET_KEY && timingSafeEqual(clientKey, env.DUBMATE_SECRET_KEY);
-
-      if (!isTokenValid && !isMasterKeyValid) {
-        return jsonResponse({ error: "Unauthorized: Invalid room token or authorization header" }, 401);
-      }
-
-      let body: UpdateRoomRequest;
-      try {
-        body = await request.json() as UpdateRoomRequest;
-      } catch {
-        return jsonResponse({ error: "Invalid JSON payload" }, 400);
-      }
-
-      if (!body.tunnel_url || typeof body.tunnel_url !== "string") {
-        return jsonResponse({ error: "Missing or invalid tunnel_url (must be a string)" }, 400);
-      }
-      if (body.tunnel_url.length > MAX_TUNNEL_URL_LENGTH) {
-        return jsonResponse({ error: `tunnel_url exceeds maximum length of ${MAX_TUNNEL_URL_LENGTH} characters` }, 400);
-      }
-      if (!isAllowedTunnelUrl(body.tunnel_url)) {
-        return jsonResponse({ error: "Invalid tunnel_url: must be an https:// URL on an allowed domain" }, 400);
-      }
-
-      entry.tunnel_url = body.tunnel_url.trim();
-      if (body.app_version) {
-        if (typeof body.app_version !== "string") {
-          return jsonResponse({ error: "Invalid app_version: must be a string" }, 400);
-        }
-        const trimmedVersion = body.app_version.trim();
-        if (trimmedVersion.length > MAX_APP_VERSION_LENGTH) {
-          return jsonResponse({ error: `app_version exceeds maximum length of ${MAX_APP_VERSION_LENGTH} characters` }, 400);
-        }
-        entry.app_version = trimmedVersion;
-      }
-
-      // Re-save with fresh 12 hours TTL
-      await env.ROOMS.put(code, JSON.stringify(entry), { expirationTtl: 43200 });
-
-      const responsePayload: UpdateRoomResponse = {
-        ok: true,
-        message: "Room tunnel updated successfully",
-      };
-
-      return jsonResponse(responsePayload, 200);
-    }
-
-    // 3. GET /rooms/:code/resolve OR GET /join/:code
+    // 2. GET /rooms/:code/resolve OR GET /join/:code
     const resolveMatch = path.match(/^\/(?:rooms\/([A-Za-z0-9-]+)\/resolve|join\/([A-Za-z0-9-]+))$/);
     if (request.method === "GET" && resolveMatch) {
       const rawCode = (resolveMatch[1] || resolveMatch[2]).toUpperCase();

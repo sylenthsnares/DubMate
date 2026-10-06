@@ -816,7 +816,7 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "${PRODUCTNAME} and everything it needs to run. Required."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecPackBuilder} "Adds automatic vocal/instrumental separation (Demucs) and speech-to-text transcription (Whisper) for building your own scene packs. Roughly 2 GB is downloaded into the install folder on first launch, with a progress bar. The core dubbing studio works fully without it, and you can add or remove it later from the app."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecPackBuilder} "Adds automatic vocal/instrumental separation (Demucs) and speech-to-text transcription (Whisper) for building your own scene packs. Roughly 2 GB is downloaded into the install folder on first launch, with a progress bar. The core dubbing studio works fully without it."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; Called from .onInit. Defined here because ${SecPackBuilder} only exists after the

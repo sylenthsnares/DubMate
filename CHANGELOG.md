@@ -1,5 +1,39 @@
 # DubMate Studio Changelog
 
+## [Unreleased]
+
+### Removed
+- **Host Transfer**: the "Make Host" button and the hand-off flow that moved a running room to another member's machine are gone. The unused client-version check on room join was removed with it.
+- **COMPRESS Rocker**: the booth's compressor switch only affected the in-browser preview; the exported video was never compressed, so previews played louder or quieter than the export. Preview and export now go through the same processing.
+- **Registry `/rooms/:code/update` Route (worker)**: nothing called it, and it let anyone holding the shared app key repoint a live room. Re-registering a room now always needs that room's own token. Takes effect after the worker is redeployed with `npm run cf:deploy`.
+- **Pack Builder Touch Resizing**: the timeline splitter's touch handler never worked (it had no move or end handlers) and was removed.
+- **Legacy Leftovers**: `scripts/launch_local.py`, reuse of cached FFmpeg zips from the temp folder, copying of a root-level `cloudflared.exe` into `tools\`, and several unused engine routes.
+
+### Fixed
+- **Wrong Background Track in the Next Scene**: after recording one scene, the next scene could play the previous scene's backing track.
+- **Leaving a Host's Room**: party members who joined a room hosted on another machine now return to their own studio and pack list when they leave, instead of staying on the host's.
+- **Auto Volume Matching**: each take is now matched to the loudness measured from its own original line, instead of a fixed -21 dBFS for every line. Re-takes get their own level, boosts never push the take's peak above -1 dBFS, and toggling noise reduction re-matches the take. Stale per-pack `*_loudness.json` files from older versions are no longer read.
+- **Renders Saved Twice**: on the host's own computer, the download buttons no longer save a second copy of a render to the Downloads folder; the render is written once to the Render & Export Folder. Members joining from another computer still download their copy through the browser.
+- **9:16 Videos in the Pack Builder**: portrait videos no longer push the timeline controls (Play, Mark IN/OUT, Add Cue, Whisper AI, Zoom) off screen.
+- **Pack Builder Duplicated Segments on Save**: editing a cue added it again as a new segment instead of replacing the list.
+- **Pack Builder Errors Are Shown**: failed processing, cover uploads and romanization now show an error instead of stalling silently.
+- **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old dialogue lines or the old cover behind, and stuck FFmpeg steps now time out with a clear error.
+- **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
+- **Record Button Pulse**: the record button pulses while recording again.
+- **Stale State in Room Events**: room events are applied before they are handled, so a new take shows up right away; joining another room no longer carries over the previous room's line, takes or audio; and a render finishing mid-take no longer cuts the microphone.
+- **Pitch Shift Mix-Up**: two different takes of the same length could share one cached pitch-shifted version.
+- **Pack Import Safety**: archive entries disguised under `__MACOSX` names are now checked like every other file.
+- **Desktop Install Paths**: installing under a folder whose path merely contains "target" (for example `D:\Targets\DubMate`) no longer confuses the app's install-folder detection.
+- **Windows `update.bat`**: the dependency and tools steps now report errors correctly.
+
+### Security
+- **Settings Locked to the Host Machine**: `POST /api/config` (packs folder, export folder) now refuses requests that arrive through the public Cloudflare tunnel.
+- **Room Registry Hardening**: the worker answers a malformed room-create request with a 400 instead of a server error.
+
+### Changed
+- **Engine Layout**: the backend routes moved from `app.py` into the `dubmate/` package, and the studio frontend was split into `static/js/studio/` modules and `static/css/builder.css`. No behaviour change.
+- **CI**: release builds now run the full test suite and check that the staged engine imports before bundling.
+
 ## [1.1.3] - 2026-08-31
 
 ### Fixed

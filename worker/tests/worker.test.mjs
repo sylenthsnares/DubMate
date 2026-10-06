@@ -105,51 +105,6 @@ test("POST /rooms/create requires auth if DUBMATE_SECRET_KEY is configured", asy
   assert.equal(stored.app_version, "1.2.0");
 });
 
-test("POST /rooms/:code/update validates auth token and updates tunnel_url", async () => {
-  const kv = new MockKV();
-  const env = { ROOMS: kv, DUBMATE_SECRET_KEY: "secret_123" };
-
-  // Create room first
-  const createReq = new Request("http://localhost:8787/rooms/create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-DubMate-Key": "secret_123" },
-    body: JSON.stringify({ tunnel_url: "https://host1.trycloudflare.com", app_version: "1.0.0" }),
-  });
-  const createRes = await worker.fetch(createReq, env);
-  const { code, room_token } = await createRes.json();
-
-  // Try updating with invalid token
-  const updateReqFail = new Request(`http://localhost:8787/rooms/${code}/update`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer bad_token_123",
-    },
-    body: JSON.stringify({ tunnel_url: "https://host2.trycloudflare.com" }),
-  });
-  const updateResFail = await worker.fetch(updateReqFail, env);
-  assert.equal(updateResFail.status, 401);
-
-  // Update with valid Bearer token
-  const updateReqSuccess = new Request(`http://localhost:8787/rooms/${code}/update`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${room_token}`,
-    },
-    body: JSON.stringify({ tunnel_url: "https://host2.trycloudflare.com", app_version: "1.1.0" }),
-  });
-  const updateResSuccess = await worker.fetch(updateReqSuccess, env);
-  assert.equal(updateResSuccess.status, 200);
-  const updateData = await updateResSuccess.json();
-  assert.equal(updateData.ok, true);
-
-  // Check that KV has updated tunnel URL
-  const stored = JSON.parse(await kv.get(code));
-  assert.equal(stored.tunnel_url, "https://host2.trycloudflare.com");
-  assert.equal(stored.app_version, "1.1.0");
-});
-
 test("GET /rooms/:code/resolve redirects to tunnel URL or returns JSON", async () => {
   const kv = new MockKV();
   const env = { ROOMS: kv, DUBMATE_SECRET_KEY: "secret_123" };

@@ -24,8 +24,10 @@ from fastapi.testclient import TestClient
 
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
-import app as dubmate
-from app import app, get_packs_registry
+from app import app
+from dubmate import room_registry, rooms
+from dubmate.common import read_version
+from dubmate.packs_cache import get_packs_registry
 
 STUB_SECRET = "test-registry-key"
 
@@ -109,13 +111,13 @@ class StubRegistry:
 
 
 def _reset_registry_state():
-    dubmate.ACTIVE_TUNNEL_URL = None
-    dubmate.WORKER_ROOM_TOKENS.clear()
-    dubmate.WORKER_PENDING_ROOMS.clear()
-    dubmate.WORKER_PUBLISHED_TUNNEL.clear()
-    dubmate.WORKER_PUBLISHED_AT.clear()
-    dubmate.WORKER_ROOM_STATUS.clear()
-    dubmate.ROOMS.clear()
+    room_registry.ACTIVE_TUNNEL_URL = None
+    room_registry.WORKER_ROOM_TOKENS.clear()
+    room_registry.WORKER_PENDING_ROOMS.clear()
+    room_registry.WORKER_PUBLISHED_TUNNEL.clear()
+    room_registry.WORKER_PUBLISHED_AT.clear()
+    room_registry.WORKER_ROOM_STATUS.clear()
+    rooms.ROOMS.clear()
 
 
 def _first_pack_id():
@@ -138,6 +140,7 @@ def _wait_for_share(client, code, predicate, timeout=8.0):
 
 
 def _create_room(client, pack_id):
+    # A client-supplied app_version is ignored; the engine registers its own VERSION.
     resp = client.post("/api/rooms", json={
         "pack_id": pack_id,
         "host_name": "HostActor",
@@ -151,16 +154,14 @@ def _create_room(client, pack_id):
 def test_room_created_before_tunnel_is_published_when_tunnel_arrives():
     """The core regression: room first, tunnel second, code still ends up live."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
-    original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
+    original_base, original_key = room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY
     try:
         _reset_registry_state()
-        dubmate.WORKER_REGISTRY_BASE = stub.base_url
-        dubmate.WORKER_API_KEY = STUB_SECRET
+        room_registry.WORKER_REGISTRY_BASE = stub.base_url
+        room_registry.WORKER_API_KEY = STUB_SECRET
 
         with TestClient(app) as client:
             created = _create_room(client, pack_id)
@@ -171,7 +172,7 @@ def test_room_created_before_tunnel_is_published_when_tunnel_arrives():
             assert created["share"]["code_is_live"] is False
             assert created["share"]["state"] == "waiting"
             assert stub.kv == {}, "nothing should reach the registry without a tunnel"
-            assert code.upper() in dubmate.WORKER_PENDING_ROOMS
+            assert code.upper() in room_registry.WORKER_PENDING_ROOMS
 
             tunnel = "https://late-tunnel.trycloudflare.com"
             resp = client.post("/api/tunnel", json={"tunnel_url": tunnel})
@@ -181,25 +182,24 @@ def test_room_created_before_tunnel_is_published_when_tunnel_arrives():
             assert share["code_is_live"] is True, share
             assert share["join_url"].endswith(f"/join/{code.upper()}")
             assert stub.kv[code.upper()]["tunnel_url"] == tunnel
+            assert stub.kv[code.upper()]["app_version"] == read_version()
             print(f"[PASS] room {code} published after the tunnel came up")
     finally:
-        dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
+        room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY = original_base, original_key
         stub.stop()
         _reset_registry_state()
 
 
 def test_room_created_after_tunnel_publishes_immediately():
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
-    original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
+    original_base, original_key = room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY
     try:
         _reset_registry_state()
-        dubmate.WORKER_REGISTRY_BASE = stub.base_url
-        dubmate.WORKER_API_KEY = STUB_SECRET
+        room_registry.WORKER_REGISTRY_BASE = stub.base_url
+        room_registry.WORKER_API_KEY = STUB_SECRET
 
         with TestClient(app) as client:
             tunnel = "https://early-tunnel.trycloudflare.com"
@@ -209,9 +209,10 @@ def test_room_created_after_tunnel_publishes_immediately():
             share = _wait_for_share(client, code, lambda s: s["code_is_live"])
             assert share["code_is_live"] is True, share
             assert stub.kv[code.upper()]["tunnel_url"] == tunnel
+            assert stub.kv[code.upper()]["app_version"] == read_version()
             print(f"[PASS] room {code} published immediately when the tunnel was already up")
     finally:
-        dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
+        room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY = original_base, original_key
         stub.stop()
         _reset_registry_state()
 
@@ -219,16 +220,14 @@ def test_room_created_after_tunnel_publishes_immediately():
 def test_new_tunnel_url_republishes_with_owner_token():
     """cloudflared quick tunnels change hostname on reconnect; the code must follow."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
-    original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
+    original_base, original_key = room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY
     try:
         _reset_registry_state()
-        dubmate.WORKER_REGISTRY_BASE = stub.base_url
-        dubmate.WORKER_API_KEY = STUB_SECRET
+        room_registry.WORKER_REGISTRY_BASE = stub.base_url
+        room_registry.WORKER_API_KEY = STUB_SECRET
 
         with TestClient(app) as client:
             client.post("/api/tunnel", json={"tunnel_url": "https://first.trycloudflare.com"})
@@ -246,7 +245,7 @@ def test_new_tunnel_url_republishes_with_owner_token():
             assert stub.kv[code.upper()]["tunnel_url"] == "https://second.trycloudflare.com"
             print(f"[PASS] room {code} followed the tunnel to a new hostname")
     finally:
-        dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
+        room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY = original_base, original_key
         stub.stop()
         _reset_registry_state()
 
@@ -254,16 +253,14 @@ def test_new_tunnel_url_republishes_with_owner_token():
 def test_rejected_key_is_reported_with_a_usable_fallback():
     """A bad registry key must be visible in the UI, not swallowed into a console."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
-    original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
+    original_base, original_key = room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY
     try:
         _reset_registry_state()
-        dubmate.WORKER_REGISTRY_BASE = stub.base_url
-        dubmate.WORKER_API_KEY = "wrong-key"
+        room_registry.WORKER_REGISTRY_BASE = stub.base_url
+        room_registry.WORKER_API_KEY = "wrong-key"
 
         with TestClient(app) as client:
             tunnel = "https://unauthorized.trycloudflare.com"
@@ -278,7 +275,7 @@ def test_rejected_key_is_reported_with_a_usable_fallback():
             assert share["direct_url"] == f"{tunnel}?room={code.upper()}"
             print("[PASS] rejected key surfaces as unauthorized with a direct invite link")
     finally:
-        dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
+        room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY = original_base, original_key
         stub.stop()
         _reset_registry_state()
 
@@ -286,16 +283,14 @@ def test_rejected_key_is_reported_with_a_usable_fallback():
 def test_rejected_key_is_not_retried_until_the_tunnel_changes():
     """The heartbeat runs every 20s; a verdict that cannot change must not be re-asked."""
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     stub = StubRegistry().start()
-    original_base, original_key = dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY
+    original_base, original_key = room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY
     try:
         _reset_registry_state()
-        dubmate.WORKER_REGISTRY_BASE = stub.base_url
-        dubmate.WORKER_API_KEY = "wrong-key"
+        room_registry.WORKER_REGISTRY_BASE = stub.base_url
+        room_registry.WORKER_API_KEY = "wrong-key"
 
         with TestClient(app) as client:
             client.post("/api/tunnel", json={"tunnel_url": "https://denied.trycloudflare.com"})
@@ -317,7 +312,7 @@ def test_rejected_key_is_not_retried_until_the_tunnel_changes():
             assert len(stub.requests) > attempts_after_verdict, "a new tunnel should be retried"
             print("[PASS] settled rejections are not retried, but a new tunnel is")
     finally:
-        dubmate.WORKER_REGISTRY_BASE, dubmate.WORKER_API_KEY = original_base, original_key
+        room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY = original_base, original_key
         stub.stop()
         _reset_registry_state()
 
@@ -331,13 +326,11 @@ def test_a_failed_tunnel_is_reported_instead_of_waiting_forever():
     rest of the session no matter what had gone wrong.
     """
     pack_id = _first_pack_id()
-    if not pack_id:
-        print("[SKIP] No packs in registry")
-        return
+    assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
     try:
         _reset_registry_state()
-        dubmate.TUNNEL_ERROR = None
+        room_registry.TUNNEL_ERROR = None
 
         with TestClient(app) as client:
             code = _create_room(client, pack_id)["room_id"]
@@ -357,12 +350,12 @@ def test_a_failed_tunnel_is_reported_instead_of_waiting_forever():
 
             # A tunnel arriving later must clear the failure.
             client.post("/api/tunnel", json={"tunnel_url": "https://recovered.trycloudflare.com"})
-            assert dubmate.TUNNEL_ERROR is None
+            assert room_registry.TUNNEL_ERROR is None
             recovered = client.get(f"/api/rooms/{code}/share").json()
             assert recovered["state"] != "tunnel_unavailable", recovered
             print("[PASS] a failed tunnel is reported, and clears when one arrives")
     finally:
-        dubmate.TUNNEL_ERROR = None
+        room_registry.TUNNEL_ERROR = None
         _reset_registry_state()
 
 

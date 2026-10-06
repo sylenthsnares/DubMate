@@ -6,7 +6,9 @@
  *     never navigate (a JSON error body used to replace the whole studio);
  *   - every download must announce itself starting and finishing;
  *   - a failed download must produce a toast, not a page;
- *   - a successful render must name the folder it was written to.
+ *   - a successful render must name the folder it was written to;
+ *   - on the engine's own computer (loopback origin) a Download button must not
+ *     save a second copy: the render is already in the export folder (bug B4).
  *
  * Navigation detection note: jsdom cannot have `location.assign` patched (it is an
  * unforgeable own property), but every navigation route it could take --
@@ -19,15 +21,12 @@ const jsdom = require("jsdom");
 const fs = require("fs");
 const path = require("path");
 
+const { buildStudioBundle } = require("./helpers/studio_dom");
+
 const PROJECT_ROOT = path.join(__dirname, "..");
 const EXPORTS_DIR = "X:\\Users\\Tani\\Videos\\DubMate Renders";
 
 const html = fs.readFileSync(path.join(PROJECT_ROOT, "static", "index.html"), "utf8");
-const appJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "app.js"), "utf8");
-const knobJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "knob.js"), "utf8");
-const audioJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "audio_engine.js"), "utf8");
-const waveformJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "waveform.js"), "utf8");
-const roomJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "room_socket.js"), "utf8");
 
 const { JSDOM, VirtualConsole } = jsdom;
 
@@ -129,6 +128,7 @@ const fetchLog = [];
 let exportDownloadGate = null;   // set to a promise to hold the response open
 let exportDownloadFails = false;
 let configHasExportsDir = true;
+let exportStatusReady = true;    // what /export/status reports for the host path
 
 function blobResponse() {
   return {
@@ -140,9 +140,11 @@ function blobResponse() {
   };
 }
 
-dom.window.fetch = async (url) => {
+const methodLog = [];
+dom.window.fetch = async (url, opts) => {
   const u = String(url || "");
   fetchLog.push(u);
+  methodLog.push(`${(opts && opts.method) || "GET"} ${u}`);
 
   if (u.startsWith("/api/config")) {
     return {
@@ -166,6 +168,27 @@ dom.window.fetch = async (url) => {
   if (u.startsWith("/api/packs/") && u.includes("/export")) {
     return blobResponse();
   }
+  if (u.startsWith("/api/rooms/TEST12/export/status")) {
+    return {
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ status: exportStatusReady ? "ready" : "idle" }),
+    };
+  }
+  if (u.startsWith("/api/rooms/TEST12/export?")) {
+    const aspect = /aspect_ratio=([^&]+)/.exec(u)[1];
+    return {
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        status: "ok",
+        aspect_ratio: aspect,
+        export_video_url: `/api/rooms/TEST12/export/video?aspect_ratio=${aspect}`,
+        download_url_16_9: "/api/rooms/TEST12/export/download?aspect_ratio=16:9",
+        download_url_9_16: "/api/rooms/TEST12/export/download?aspect_ratio=9:16",
+      }),
+    };
+  }
   if (u.startsWith("/api/packs") && !u.includes("/audio/")) {
     return {
       ok: true,
@@ -182,16 +205,6 @@ dom.window.fetch = async (url) => {
   };
 };
 
-function stripModules(code) {
-  return code
-    .split("\n")
-    .filter(l => !l.trim().startsWith("import "))
-    .join("\n")
-    .replace(/export\s+(class|function|const|let|var)\s+/g, "$1 ")
-    .replace(/export\s+default\s+/g, "")
-    .replace(/export\s*\{[^}]*\};?/g, "");
-}
-
 function fail(message, extra) {
   console.error("FAIL: " + message, extra === undefined ? "" : extra);
   process.exit(1);
@@ -205,19 +218,11 @@ const clickUi = (el) => el.dispatchEvent(new dom.window.MouseEvent("click", { bu
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
 
 try {
-  const combinedCode = `
-    (function() {
-      ${stripModules(audioJsCode)}
-      ${stripModules(waveformJsCode)}
-      ${stripModules(roomJsCode)}
-      ${stripModules(knobJsCode)}
-      ${stripModules(appJsCode)}
-    })();
-  `;
+  const combinedCode = buildStudioBundle();
 
   // Evaluate the bundle only once jsdom has finished parsing. Dispatching
   // DOMContentLoaded by hand races jsdom's own event, which constructs the studio
-  // twice: window.app then points at an instance that owns none of the click
+  // twice: window.dubMateApp then points at an instance that owns none of the click
   // handlers, and every assertion about them silently measures the wrong object.
   const domReady = dom.window.document.readyState === "complete"
     ? Promise.resolve()
@@ -230,7 +235,7 @@ try {
 
   async function runSuite() {
     const doc = dom.window.document;
-    const app = dom.window.dubMateApp || dom.window.app;
+    const app = dom.window.dubMateApp;
     if (!app) fail("DubMateApp was not instantiated");
 
     const toasts = [];
@@ -260,6 +265,10 @@ try {
       if (!href || href === "#") fail(`#${id} never received a real download href`, href);
     }
     pass("a finished render puts real download hrefs on all four export anchors");
+
+    // Tests 1-3 are a remote member: their page is on the host's tunnel, the
+    // render lives on the host's disk, so they need a real browser download.
+    app.isEngineLocal = () => false;
 
     // --- Test 1: every export anchor is wired to the fetch/blob path ---------
     const anchorIds = [
@@ -398,6 +407,19 @@ try {
     const savedPathEl = doc.getElementById("export-saved-path");
     if (!savedPathEl) fail("#export-saved-path missing from the export modal");
 
+    // A remote member must not be shown the host's disk path as "Saved to".
+    app.exportsDirCache = undefined;
+    await app.showExportSavedPath();
+    if (savedPathEl.classList.contains("is-visible")) {
+      fail("a remote member was told the render is saved to the host's folder", savedPathEl.innerText);
+    }
+    pass("a remote member is not shown the host's Render & Export folder");
+
+    // From here on the page is on the engine's own computer (the real loopback
+    // origin this jsdom runs at).
+    delete app.isEngineLocal;
+    if (app.isEngineLocal() !== true) fail("http://localhost:8000 was not detected as a local engine");
+
     app.exportsDirCache = undefined;
     app.handleExportSuccess({
       export_video_url: "/api/rooms/TEST12/export/video",
@@ -440,7 +462,61 @@ try {
     if (!/browser/i.test(rowText) || !/saved here|saves .*here/i.test(rowText)) {
       fail("the Render & Export Folder setting does not explain where downloads go", rowText);
     }
+    if (/extra copy/i.test(rowText)) {
+      fail("the Render & Export Folder setting still promises a second copy", rowText);
+    }
     pass("the Render & Export Folder setting explains renders vs downloaded copies");
+
+    // --- Test 8 (B4): on the engine's computer, Download saves no second copy
+    const createdBeforeHost = objectUrls.created;
+    for (const anchor of anchors) {
+      const savesBefore = savedFiles.length;
+      const fetchesBefore = fetchLog.length;
+      toasts.length = 0;
+      app.exportsDirCache = undefined;
+      savedPathEl.classList.remove("is-visible");
+
+      clickUi(anchor);
+      await settle();
+
+      const requested = fetchLog.slice(fetchesBefore);
+      if (requested.some(u => u.includes("/export/download"))) {
+        fail(`#${anchor.id} pulled the render through the browser on the host's own computer`, requested);
+      }
+      if (savedFiles.length !== savesBefore) {
+        fail(`#${anchor.id} saved a second copy of the render on the host's own computer`);
+      }
+      if (!toasts.some(t => t.includes(EXPORTS_DIR))) {
+        fail(`#${anchor.id} did not say which folder the render is already in`, toasts);
+      }
+      if (!savedPathEl.classList.contains("is-visible")) {
+        fail(`#${anchor.id} did not reveal the saved-path line`);
+      }
+    }
+    if (objectUrls.created !== createdBeforeHost) {
+      fail("the host path still created a blob URL for a download");
+    }
+    pass("on the engine's own computer, every Download button names the export folder and saves no copy");
+
+    // An aspect that was never rendered is rendered into the export folder, once,
+    // through the normal render route -- still no browser copy.
+    exportStatusReady = false;
+    const savesBeforeRender = savedFiles.length;
+    const methodsBefore = methodLog.length;
+    clickUi(doc.getElementById("btn-download-link-9-16"));
+    await settle();
+    exportStatusReady = true;
+    const calls = methodLog.slice(methodsBefore);
+    if (!calls.some(c => c.startsWith("POST /api/rooms/TEST12/export?aspect_ratio=9:16"))) {
+      fail("an unrendered aspect was not rendered into the export folder", calls);
+    }
+    if (calls.some(c => c.includes("/export/download")) || savedFiles.length !== savesBeforeRender) {
+      fail("rendering a missing aspect on the host also saved a browser copy", calls);
+    }
+    if (!savedPathEl.classList.contains("is-visible")) {
+      fail("rendering a missing aspect did not end on the 'Saved to' line");
+    }
+    pass("an unrendered aspect on the host renders once into the export folder, no browser copy");
 
     if (objectUrls.created === 0) {
       fail("no object URL was ever created; the blob path did not run");

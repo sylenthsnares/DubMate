@@ -85,5 +85,6 @@ Two things to know before rotating:
   Treat it as permanently public; rotation stops it working but cannot un-publish it.
 - Rotating breaks clients older than the release that carries the new key — they will
   receive 401 on room registration. Either accept that as a forced upgrade, or leave the
-  secret unset during a transition window. Overwriting an existing room still requires
-  that room's `room_token`, so the ownership check remains in force either way.
+  secret unset during a transition window. Overwriting or repointing an existing room
+  requires that room's `room_token` (the shared key alone is not enough), so the ownership
+  check remains in force either way.

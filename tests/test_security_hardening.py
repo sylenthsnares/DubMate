@@ -18,9 +18,11 @@ import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
-import app as app_module
 import pack_loader
-from app import app, safe_join, require_safe_identifier, get_packs_registry
+from app import app
+from dubmate import common, rooms
+from dubmate.common import safe_join, require_safe_identifier
+from dubmate.packs_cache import get_packs_registry
 
 PROJECT_ROOT = _sys.path[0]
 
@@ -90,8 +92,7 @@ class TestPackAudioEndpointTraversal(unittest.TestCase):
     def test_traversal_filename_is_rejected(self):
         client = TestClient(app)
         packs = get_packs_registry()
-        if not packs:
-            self.skipTest("no packs in registry")
+        self.assertTrue(packs, 'fixture packs missing: run scripts/make_test_packs.py')
         pack_id = list(packs.keys())[0]
         for payload in ("..%5C..%5Capp.py", "..%2F..%2Fapp.py"):
             resp = client.get(f"/api/packs/{pack_id}/audio/{payload}")
@@ -128,6 +129,20 @@ class TestZipExtensionAllowlist(unittest.TestCase):
                 if os.path.exists(tmp):
                     os.remove(tmp)
 
+    def test_macosx_named_executables_are_rejected(self):
+        # Validation used to skip any name merely containing '__macosx' while extraction
+        # only skipped case-sensitive '__MACOSX', so these were extracted unchecked.
+        for name in ("__macosx/evil.exe", "x__macosx.exe"):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("MyPack/dub_video.mp4", b"\x00" * 64)
+                z.writestr("MyPack/01_Hero_1-000.wav", b"\x00" * 64)
+                z.writestr(name, b"MZ payload")
+            with self.assertRaises(
+                pack_loader.PackSecurityError, msg=f"{name!r} should be rejected"
+            ):
+                pack_loader.import_pack_archive(buf.getvalue())
+
 
 class TestCorsConfiguration(unittest.TestCase):
     def test_wildcard_origin_does_not_allow_credentials(self):
@@ -141,12 +156,11 @@ class TestCorsConfiguration(unittest.TestCase):
 
 
 class TestWebSocketAuthorization(unittest.TestCase):
-    """claim_host and assign_role were callable by any connected participant."""
+    """Host-only actions (and the host seat itself) must not be reachable by a guest."""
 
     def _make_room(self, client):
         packs = get_packs_registry()
-        if not packs:
-            self.skipTest("no packs in registry")
+        self.assertTrue(packs, 'fixture packs missing: run scripts/make_test_packs.py')
         pack_id = list(packs.keys())[0]
         resp = client.post("/api/rooms", json={
             "pack_id": pack_id,
@@ -158,6 +172,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
         return resp.json()
 
     def test_guest_cannot_steal_active_host(self):
+        """A guest joining a room with a live host must not take over the host seat."""
         client = TestClient(app)
         data = self._make_room(client)
         room_id = data["room_id"]
@@ -169,9 +184,8 @@ class TestWebSocketAuthorization(unittest.TestCase):
             with client.websocket_connect(f"/ws/{room_id}/intruder") as guest_ws:
                 guest_ws.send_json({"type": "join", "payload": {
                     "name": "Guest", "color": "#ff0000", "app_version": "1.0.0"}})
-                guest_ws.send_json({"type": "claim_host", "payload": {}})
 
-                room = app_module.ROOMS.get(room_id.upper())
+                room = rooms.ROOMS.get(room_id.upper())
                 self.assertIsNotNone(room)
                 _barrier(guest_ws)
                 self.assertEqual(
@@ -188,7 +202,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
         with client.websocket_connect(f"/ws/{room_id}/{host_id}") as host_ws:
             host_ws.send_json({"type": "join", "payload": {
                 "name": "HostA", "color": "#7c5cff", "app_version": "1.0.0"}})
-            room = app_module.ROOMS.get(room_id.upper())
+            room = rooms.ROOMS.get(room_id.upper())
             if not room or not room.role_assignments:
                 self.skipTest("pack has no characters to assign")
             character = list(room.role_assignments.keys())[0]
@@ -203,6 +217,37 @@ class TestWebSocketAuthorization(unittest.TestCase):
                     "intruder", room.role_assignments.get(character, []),
                     "an unauthorized client reassigned a character role",
                 )
+
+
+class TestConfigLocalOnly(unittest.TestCase):
+    """POST /api/config must refuse requests that came through the Cloudflare tunnel."""
+
+    def setUp(self):
+        import tempfile
+        self.client = TestClient(app)
+        self.target = tempfile.mkdtemp(prefix="dm_cfg_")
+        self.orig_config = pack_loader.load_config()
+        self.orig_exports = common.exports_dir()
+
+    def tearDown(self):
+        import shutil
+        pack_loader.save_config(self.orig_config)
+        common._exports_dir = self.orig_exports
+        shutil.rmtree(self.target, ignore_errors=True)
+
+    def test_tunnel_request_is_rejected_and_config_unchanged(self):
+        for header in ({"Cf-Connecting-Ip": "1.2.3.4"}, {"Cf-Ray": "abc123-LHR"}):
+            resp = self.client.post("/api/config", json={"exports_dir": self.target}, headers=header)
+            self.assertEqual(resp.status_code, 403, header)
+            self.assertEqual(pack_loader.load_config(), self.orig_config)
+            self.assertEqual(common.exports_dir(), self.orig_exports)
+
+    def test_local_request_behaves_as_before(self):
+        resp = self.client.post("/api/config", json={})
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.post("/api/config", json={"exports_dir": self.target})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(pack_loader.load_config().get("exports_dir"), self.target)
 
 
 if __name__ == "__main__":

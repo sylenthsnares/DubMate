@@ -27,7 +27,8 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import pack_loader
 import pack_builder
-from app import app, BUILDER_SESSIONS
+from app import app
+from dubmate.builder_api import BUILDER_SESSIONS
 
 
 def create_dummy_wav(path: str, duration_sec: float = 3.0, sample_rate: int = 44100):
@@ -514,6 +515,96 @@ NOTE This is a test subtitle file
         finally:
             if os.path.isdir(pack_folder):
                 shutil.rmtree(pack_folder, ignore_errors=True)
+
+    def test_13_rebuild_same_pack_name_drops_stale_slices(self):
+        """Rebuilding a pack under the same name must not keep the previous build's line slices or icon."""
+        src_wav = os.path.join(self.tmp_dir, "rebuild_audio.wav")
+        create_dummy_wav(src_wav, duration_sec=6.0)
+        video_dummy = os.path.join(self.tmp_dir, "rebuild_video.mp4")
+        create_dummy_mp4(video_dummy, duration_sec=4.0)
+        cover = os.path.join(self.tmp_dir, "cover.png")
+        with open(cover, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+
+        first_segments = [
+            {"start": 0.500, "end": 1.500, "text": "One", "character": "Hero"},
+            {"start": 2.000, "end": 3.000, "text": "Two", "character": "Villain"},
+            {"start": 3.500, "end": 4.500, "text": "Three", "character": "Hero"},
+        ]
+        second_segments = [
+            {"start": 1.000, "end": 2.000, "text": "Uno", "character": "Hero"},
+            {"start": 4.000, "end": 5.000, "text": "Dos", "character": "Villain"},
+        ]
+
+        pack_folder = None
+        try:
+            first_slices = pack_builder.slice_audio_lines(
+                src_wav, first_segments, os.path.join(self.tmp_dir, "slices_1"), "Rebuild_Test_Pack")
+            pack_folder = pack_builder.assemble_pack(
+                pack_name="Rebuild_Test_Pack",
+                video_source_path=video_dummy,
+                backing_source_path=src_wav,
+                line_slices=first_slices,
+                cover_image_path=cover,
+            )
+            first = pack_loader.load_pack(pack_folder)
+            self.assertIsNotNone(first)
+            self.assertEqual(len(first.lines), 3)
+            self.assertTrue(os.path.isfile(os.path.join(pack_folder, "icon.png")))
+
+            second_slices = pack_builder.slice_audio_lines(
+                src_wav, second_segments, os.path.join(self.tmp_dir, "slices_2"), "Rebuild_Test_Pack")
+            second_folder = pack_builder.assemble_pack(
+                pack_name="Rebuild_Test_Pack",
+                video_source_path=video_dummy,
+                backing_source_path=src_wav,
+                line_slices=second_slices,
+            )
+            self.assertEqual(os.path.normpath(second_folder), os.path.normpath(pack_folder))
+            second = pack_loader.load_pack(second_folder)
+            self.assertIsNotNone(second)
+            self.assertEqual(len(second.lines), 2)
+            self.assertFalse(os.path.isfile(os.path.join(pack_folder, "icon.png")))
+            self.assertTrue(os.path.isfile(os.path.join(pack_folder, "_backing_track.wav")))
+        finally:
+            if pack_folder and os.path.isdir(pack_folder):
+                shutil.rmtree(pack_folder, ignore_errors=True)
+
+    def test_14_slice_failure_raises_clear_error(self):
+        """When both slice attempts fail, slice_audio_lines raises instead of returning a missing file."""
+        missing_wav = os.path.join(self.tmp_dir, "does_not_exist.wav")
+        segments = [{"start": 0.0, "end": 1.0, "text": "Hi", "character": "Hero"}]
+        with self.assertRaises(RuntimeError) as ctx:
+            pack_builder.slice_audio_lines(missing_wav, segments, os.path.join(self.tmp_dir, "slices_fail"), "Fail Pack")
+        self.assertIn("Could not cut dialogue line 1", str(ctx.exception))
+
+    def test_15_editor_video_does_not_size_the_pane(self):
+        """B5: a 9:16 clip must not push the editor control deck off-screen.
+
+        In normal flow the <video> takes its natural aspect-ratio height
+        (~850px for 1080x1920 at 478px wide), which grows the editor's top row
+        and hides Play / Mark IN/OUT / + Add Cue / Zoom below the clipped area.
+        The player must be taken out of flow inside its relative container.
+        """
+        import re
+        css_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                 "static", "css", "builder.css")
+        with open(css_path, encoding="utf-8") as f:
+            css = re.sub(r"/\*.*?\*/", "", f.read(), flags=re.S)
+
+        def decls(selector):
+            m = re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", css)
+            self.assertIsNotNone(m, f"{selector} rule missing from builder.css")
+            return {k.strip(): v.strip() for k, v in
+                    (d.split(":", 1) for d in m.group(1).split(";") if ":" in d)}
+
+        player = decls(".editor-video-player")
+        self.assertEqual(player.get("position"), "absolute")
+        self.assertEqual(player.get("inset"), "0")
+        self.assertEqual(player.get("object-fit"), "contain")
+        container = decls(".editor-video-container")
+        self.assertEqual(container.get("position"), "relative")
+        self.assertEqual(container.get("overflow"), "hidden")
 
 
 if __name__ == "__main__":

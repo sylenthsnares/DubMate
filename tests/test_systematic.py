@@ -78,11 +78,11 @@ class TestSystematicDualEngine(unittest.TestCase):
     def test_02_bracket_and_caption_extraction(self):
         """Test extraction of character and caption with simple, nested, and empty captions."""
         # Simple bracket
-        c1 = pack_loader.extract_character_from_caption_or_name("[Levi] You are running on fumes", "01_Levi_2-4.wav")
+        c1 = pack_loader.extract_character_and_caption("[Levi] You are running on fumes", "01_Levi_2-4.wav")[0]
         self.assertEqual(c1, "Levi")
         
         # Fallback from filename
-        c2 = pack_loader.extract_character_from_caption_or_name("", "01_Zeke_2-420.wav")
+        c2 = pack_loader.extract_character_and_caption("", "01_Zeke_2-420.wav")[0]
         self.assertEqual(c2, "Zeke")
 
     def test_03_dsp_audio_effects(self):
@@ -235,7 +235,7 @@ class TestSystematicDualEngine(unittest.TestCase):
         zip_bytes = zip_buf.getvalue()
         try:
             res_import = pack_loader.import_pack_archive(zip_bytes, "test_pack.zip")
-            self.assertTrue(res_import is None or isinstance(res_import, pack_loader.PackInfo))
+            self.assertIsInstance(res_import, pack_loader.PackInfo)
         finally:
             test_pack_dir = os.path.join(PROJECT_ROOT, "Packs", "test_pack")
             if os.path.isdir(test_pack_dir):

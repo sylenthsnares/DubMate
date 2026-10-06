@@ -2,14 +2,11 @@ const jsdom = require("jsdom");
 const fs = require("fs");
 const path = require("path");
 
+const { buildStudioBundle } = require("./helpers/studio_dom");
+
 const PROJECT_ROOT = path.join(__dirname, "..");
 
 const html = fs.readFileSync(path.join(PROJECT_ROOT, "static", "index.html"), "utf8");
-const appJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "app.js"), "utf8");
-const knobJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "knob.js"), "utf8");
-const audioJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "audio_engine.js"), "utf8");
-const waveformJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "waveform.js"), "utf8");
-const roomJsCode = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "room_socket.js"), "utf8");
 
 const { JSDOM } = jsdom;
 const dom = new JSDOM(html, {
@@ -124,32 +121,14 @@ dom.window.fetch = (url) => {
   });
 };
 
-function stripModules(code) {
-  return code
-    .split("\n")
-    .filter(l => !l.trim().startsWith("import "))
-    .join("\n")
-    .replace(/export\s+(class|function|const|let|var)\s+/g, "$1 ")
-    .replace(/export\s+default\s+/g, "")
-    .replace(/export\s*\{[^}]*\};?/g, "");
-}
-
 try {
-  const combinedCode = `
-    (function() {
-      ${stripModules(audioJsCode)}
-      ${stripModules(waveformJsCode)}
-      ${stripModules(roomJsCode)}
-      ${stripModules(knobJsCode)}
-      ${stripModules(appJsCode)}
-    })();
-  `;
+  const combinedCode = buildStudioBundle();
 
   dom.window.eval(combinedCode);
   dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
   
   setTimeout(async () => {
-    const app = dom.window.dubMateApp || dom.window.app;
+    const app = dom.window.dubMateApp;
     if (!app) {
       console.error("FAIL: DubMateApp was not instantiated!");
       process.exit(1);
@@ -202,6 +181,137 @@ try {
     };
     app.leaveRoom();
     console.log("PASS: leaveRoom() executed cleanly without errors!");
+
+    // Test 3b (B1): the backing track must not carry over from one scene to the next.
+    // Recording in scene A cached A's backing; scene B then replayed it.
+    {
+      const realLoad = app.audio.loadAudioBuffer;
+      const deferred = {};
+      app.audio.loadAudioBuffer = (u) => {
+        if (deferred[u]) return deferred[u].promise;
+        return Promise.resolve({ url: u, duration: 10 });
+      };
+      const roomFor = (id) => ({
+        room_id: "B1" + id,
+        host_id: app.user.id,
+        pack: { ...mockPacks[0], id, backing_url: `/api/packs/${id}/backing` },
+        takes: {},
+        users: {}
+      });
+
+      app.roomState = roomFor("A");
+      const bufA = await app.ensureBackingBuffer();
+      if (bufA?.url !== "/api/packs/A/backing") {
+        console.error("FAIL: B1 scene A backing did not load:", bufA);
+        process.exit(1);
+      }
+      app.leaveRoom();
+      if (app.backingBuffer !== null) {
+        console.error("FAIL: B1 leaveRoom() kept the previous scene's backing buffer");
+        process.exit(1);
+      }
+      app.roomState = roomFor("B");
+      const bufB = await app.ensureBackingBuffer();
+      if (bufB?.url !== "/api/packs/B/backing") {
+        console.error("FAIL: B1 scene B played another scene's backing:", bufB?.url);
+        process.exit(1);
+      }
+      // Same room object swapped to another pack without a reset: the cache is keyed by URL.
+      app.roomState = roomFor("C");
+      const bufC = await app.ensureBackingBuffer();
+      if (bufC?.url !== "/api/packs/C/backing") {
+        console.error("FAIL: B1 cached backing reused for a different pack:", bufC?.url);
+        process.exit(1);
+      }
+
+      // Race: scene A's load (started during the countdown) finishes after leaving.
+      app.leaveRoom();
+      app.roomState = roomFor("A");
+      let resolveA;
+      deferred["/api/packs/A/backing"] = { promise: new Promise((r) => { resolveA = r; }) };
+      const pendingA = app.ensureBackingBuffer();
+      app.leaveRoom();
+      app.roomState = roomFor("B");
+      resolveA({ url: "/api/packs/A/backing", duration: 10 });
+      await pendingA;
+      if (app.backingBuffer && app.backingBuffer.url === "/api/packs/A/backing") {
+        console.error("FAIL: B1 a late scene A backing load overwrote scene B's state");
+        process.exit(1);
+      }
+      const bufB2 = await app.ensureBackingBuffer();
+      if (bufB2?.url !== "/api/packs/B/backing") {
+        console.error("FAIL: B1 scene B backing wrong after late load:", bufB2?.url);
+        process.exit(1);
+      }
+      app.leaveRoom();
+      if (app.origBuffer !== null) {
+        console.error("FAIL: B1 leaveRoom() kept the previous scene's line audio");
+        process.exit(1);
+      }
+      app.audio.loadAudioBuffer = realLoad;
+      console.log("PASS: B1 backing track is per scene and late loads are dropped!");
+    }
+
+    // Test 3c (B3): a re-take gets its own auto gain, and the preview never compresses
+    // (the export doesn't, so a compressed preview misreports the level).
+    {
+      const realFetch = dom.window.fetch;
+      const realLoad = app.audio.loadAudioBuffer;
+      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
+      let sentForm = null;
+      dom.window.fetch = (url, opts) => {
+        if (String(url).includes("/takes/0") && opts && opts.method === "POST") {
+          sentForm = opts.body;
+          const autoGain = opts.body.get("auto_gain") === "true";
+          const take = {
+            user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=2",
+            offset_ms: 0, pitch_semitones: 0, reverb_wet: 0,
+            gain_db: autoGain ? -4 : parseFloat(opts.body.get("gain_db")),
+            auto_gain_db: -4, speech_loudness_db: -17, target_loudness_db: -21,
+          };
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", take }) });
+        }
+        return realFetch(url, opts);
+      };
+      const prevTake = { user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=1", gain_db: 6, auto_gain_db: 6 };
+      const roomB3 = () => ({ room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0], takes: { 0: { ...prevTake } }, users: {} });
+
+      // Slider still shows the previous take's auto gain: the new take must get its own.
+      app.roomState = roomB3();
+      app.sliderGain.value = "6";
+      await app.uploadTake(0, new dom.window.Blob(["x"]));
+      if (sentForm?.get("auto_gain") !== "true" || parseFloat(app.sliderGain.value) !== -4
+          || app.roomState.takes[0].gain_db !== -4) {
+        console.error("FAIL: B3 re-take kept the old take's gain:", sentForm?.get("auto_gain"), app.sliderGain.value);
+        process.exit(1);
+      }
+
+      // A level the user picked by hand is kept.
+      app.roomState = roomB3();
+      app.sliderGain.value = "3";
+      await app.uploadTake(0, new dom.window.Blob(["x"]));
+      if (sentForm?.get("auto_gain") !== "false" || parseFloat(app.sliderGain.value) !== 3) {
+        console.error("FAIL: B3 manual gain was overridden:", sentForm?.get("auto_gain"), app.sliderGain.value);
+        process.exit(1);
+      }
+
+      app.audio.initContext();
+      const ctx = app.audio.ctx;
+      let compressorBuilt = false;
+      const realComp = ctx.createDynamicsCompressor;
+      ctx.createDynamicsCompressor = function () { compressorBuilt = true; return realComp.call(this); };
+      const chain = app.audio.buildVocalDSPChain({ gainDb: -4, reverbWet: 0 });
+      ctx.createDynamicsCompressor = realComp;
+      if (compressorBuilt || chain.compressor || dom.window.document.getElementById("check-compressor")) {
+        console.error("FAIL: B3 preview vocal chain still compresses takes");
+        process.exit(1);
+      }
+
+      dom.window.fetch = realFetch;
+      app.audio.loadAudioBuffer = realLoad;
+      app.leaveRoom();
+      console.log("PASS: B3 re-takes get their own auto gain and the preview chain matches the export!");
+    }
 
     // Test 4: Dialogue completion & "I'm Finished" button state
     app.roomState = {

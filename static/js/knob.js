@@ -10,11 +10,8 @@ export class AnalogKnob {
       size: options.size || 54, // Diameter in px
       minAngle: -135, // Degrees (leftmost)
       maxAngle: 135,  // Degrees (rightmost)
-      sensitivity: options.sensitivity || 0.005, // Delta Y sensitivity
       label: options.label || this.input.getAttribute('aria-label') || '',
-      unit: options.unit || '',
       ticks: options.ticks || 7, // Number of tick marks around perimeter
-      accentColor: options.accentColor || '#d97706', // Vintage amber
       ...options
     };
 
@@ -29,7 +26,7 @@ export class AnalogKnob {
 
     this.initDOM();
     this.bindEvents();
-    this.updateFromInput();
+    this.updateVisuals();
   }
 
   initDOM() {
@@ -87,7 +84,7 @@ export class AnalogKnob {
       const isExtreme = i === 0 || i === numTicks - 1;
       const tickClass = isExtreme ? 'dial-tick-major' : (isCenter ? 'dial-tick-center' : 'dial-tick-minor');
       
-      html += `<span class="dial-tick ${tickClass}" style="transform: rotate(${angle}deg); transform-origin: 50% ${originY}px;" data-index="${i}"></span>`;
+      html += `<span class="dial-tick ${tickClass}" style="transform: rotate(${angle}deg); transform-origin: 50% ${originY}px;"></span>`;
     }
     return html;
   }
@@ -221,10 +218,6 @@ export class AnalogKnob {
     }
   }
 
-  updateFromInput() {
-    this.updateVisuals();
-  }
-
   updateVisuals() {
     const val = parseFloat(this.input.value);
     const range = this.max - this.min;
@@ -250,12 +243,12 @@ export function initAllKnobs() {
   const dials = [];
   
   const dialConfigs = [
-    { id: 'slider-backing-vol', size: 44, ticks: 11, unit: '%' },
-    { id: 'slider-pitch', size: 40, ticks: 9, unit: 'st' },
-    { id: 'slider-reverb', size: 40, ticks: 7, unit: '%' },
-    { id: 'slider-gain', size: 40, ticks: 11, unit: 'dB' },
-    { id: 'slider-decay', size: 36, ticks: 7, unit: 's' },
-    { id: 'slider-predelay', size: 36, ticks: 7, unit: 'ms' },
+    { id: 'slider-backing-vol', size: 44, ticks: 11 },
+    { id: 'slider-pitch', size: 40, ticks: 9 },
+    { id: 'slider-reverb', size: 40, ticks: 7 },
+    { id: 'slider-gain', size: 40, ticks: 11 },
+    { id: 'slider-decay', size: 36, ticks: 7 },
+    { id: 'slider-predelay', size: 36, ticks: 7 },
   ];
 
   dialConfigs.forEach(cfg => {

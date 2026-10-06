@@ -3,61 +3,58 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
+import { escapeHtml, showToast, initModeDropdown, mixin } from './ui_common.js';
+import { AudioSetupMethods } from './studio/audio_setup.js';
+import { ExportMethods } from './studio/export.js';
+import { ScreeningMethods } from './studio/screening.js';
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
-}
+// Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
+const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
 
-// --- Audio Device Setup persistence keys & meter constants ---
-const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
-const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
-const AUDIO_OUTPUT_DEVICE_KEY = 'dubmate_audio_output_device';
-const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
+// Joining a room hosted elsewhere moves the whole page onto the host's tunnel,
+// so every relative URL (/api/packs, "/", "/builder.html") then reaches the
+// host's engine. The member's own engine (the desktop app's loopback origin)
+// travels along as ?home= and is kept here, per origin, so leaving the room
+// can navigate back to it.
+const HOME_ORIGIN_KEY = 'dubmate_home_origin';
 
-// Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale).
-const METER_FLOOR_DB = -60;
-const METER_AMBER_DB = -12; // Hot but usable
-const METER_RED_DB = -3;    // Near clipping
-const METER_PEAK_HOLD_MS = 1100;
-const METER_PEAK_DECAY_DB_PER_FRAME = 0.45;
-
-// localStorage/sessionStorage throw in some locked-down webviews and in
-// private-mode Safari, so every access goes through these guards.
-function safeStorageGet(store, key) {
+/** True only for a bare loopback http origin such as http://127.0.0.1:8123. */
+function isLoopbackOrigin(value) {
+  if (typeof value !== 'string' || !value) return false;
   try {
-    return store ? store.getItem(key) : null;
+    const u = new URL(value);
+    return u.protocol === 'http:'
+      && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')
+      && u.origin === value;
   } catch (e) {
-    return null;
+    return false;
   }
 }
 
-function safeStorageSet(store, key, value) {
-  try {
-    if (store) store.setItem(key, value);
-  } catch (e) { }
+/** The member's own engine origin, or null when there is none (browser-only guest). */
+function getHomeOrigin() {
+  if (isLoopbackOrigin(window.location.origin)) return window.location.origin;
+  let saved = null;
+  try { saved = sessionStorage.getItem(HOME_ORIGIN_KEY); } catch (e) { }
+  return isLoopbackOrigin(saved) ? saved : null;
 }
 
-function safeStorageRemove(store, key) {
-  try {
-    if (store) store.removeItem(key);
-  } catch (e) { }
-}
-
-function formatDbFS(db) {
-  if (typeof db !== 'number' || !isFinite(db)) return '-∞';
-  if (db <= METER_FLOOR_DB) return '-∞';
-  return (db > 0 ? '+' : '') + db.toFixed(1);
+/** Remembers ?home= (when valid) and drops it from the address bar. */
+function captureHomeOriginParam() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('home')) return;
+  const home = url.searchParams.get('home');
+  if (isLoopbackOrigin(home)) {
+    try { sessionStorage.setItem(HOME_ORIGIN_KEY, home); } catch (e) { }
+  }
+  url.searchParams.delete('home');
+  window.history.replaceState(window.history.state, '', url);
 }
 
 class DubMateApp {
   constructor() {
     this.audio = new AudioEngine();
+    this.initAudioSetupState();
     this.socket = new RoomSocket();
     this.waveform = null;
     this.knobs = [];
@@ -69,13 +66,12 @@ class DubMateApp {
     this.packSearchQuery = '';
     this.roomState = null;
     this.currentLineIndex = 0;
-    this.currentTakeBlob = null;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
+    this.backingBufferUrl = null;
     this.origBuffer = null;
 
     // Countdown & Recording Mutex
-    this.currentLineIndex = 0;
     this.recordState = 'idle'; // 'idle' | 'countdown' | 'recording' | 'processing'
     this.countdownSessionId = 0;
     this.recordingTimeout = null;
@@ -96,33 +92,28 @@ class DubMateApp {
     this.roomShare = null;
     this.shareWatchTimer = null;
 
-    // --- Audio Device Setup / First-Run Onboarding State ---
-    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-    this.audioSetup = {
-      open: false,
-      firstRunMode: false,
-      requesting: false,
-      permission: 'unknown', // 'unknown' | 'granted' | 'denied' | 'error'
-      setupComplete: safeStorageGet(ls, AUDIO_SETUP_DONE_KEY) === '1',
-      inputId: safeStorageGet(ls, AUDIO_INPUT_DEVICE_KEY) || '',
-      outputId: safeStorageGet(ls, AUDIO_OUTPUT_DEVICE_KEY) || '',
-      devices: { inputs: [], outputs: [], labelled: false, supported: false },
-      meterRaf: null,
-      peakDb: -Infinity,
-      peakHoldUntil: 0,
-      // Guards against two overlapping openAudioSettings() calls landing their
-      // post-await UI updates out of order.
-      openToken: 0,
-    };
-    // Hand the remembered device preferences to the engine before anything can
-    // open a capture stream or play back audio.
-    this.audio.preferredInputId = this.audioSetup.inputId || null;
-    this.audio.preferredOutputId = this.audioSetup.outputId || null;
-
     this.initDOM();
     this.initEvents();
     this.initRouter();
     window.dubMateApp = this;
+  }
+
+  // Per-room state that must not leak from one room into the next. Called by
+  // leaveRoom() and at the start of joinRoom().
+  resetRoomSession() {
+    this.stopShareWatch();
+    this.roomShare = null;
+    this.roomState = null;
+    this.currentLineIndex = 0;
+    this.currentTakeBuffer = null;
+    this.backingBuffer = null;
+    this.backingBufferUrl = null;
+    this.origBuffer = null;
+    // Drop any line-audio load still in flight for the previous room.
+    this.loadLineSeq = (this.loadLineSeq || 0) + 1;
+    if (this.screeningBuffers) {
+      this.screeningBuffers.clear();
+    }
   }
 
   loadUser() {
@@ -235,7 +226,6 @@ class DubMateApp {
     this.overlayCountdown = document.getElementById('overlay-countdown');
     this.overlayStatusText = document.getElementById('overlay-status-text');
     this.boothLineIndicator = document.getElementById('booth-line-indicator');
-    this.boothCharacterBadge = document.getElementById('booth-character-badge');
     this.boothTimeBadge = document.getElementById('booth-time-badge');
     this.stageCaptionCard = document.getElementById('stage-caption-card');
     this.prompterResizeHandle = document.getElementById('prompter-resize-handle');
@@ -277,7 +267,6 @@ class DubMateApp {
     this.btnToggleAdvancedRack = document.getElementById('btn-toggle-advanced-rack');
     this.advancedVocalRack = document.getElementById('advanced-vocal-rack');
     this.checkLowcut = document.getElementById('check-lowcut');
-    this.checkCompressor = document.getElementById('check-compressor');
     this.sliderDecay = document.getElementById('slider-decay');
     this.valDecay = document.getElementById('val-decay');
     this.sliderPredelay = document.getElementById('slider-predelay');
@@ -423,6 +412,8 @@ class DubMateApp {
     // Global Interaction Lock Flags
     this.isRenderingExport = false;
     this.isProcessingTake = false;
+    // setInterval id of exportFinalVideo's status poll, so export_failed can stop it.
+    this.exportPollInterval = null;
 
     // Waveform canvas with real-time drag callbacks
     const canvas = document.getElementById('waveform-canvas');
@@ -471,24 +462,15 @@ class DubMateApp {
     this.initVideoExpand();
     this.initModeDropdown();
     this.initJoinModal();
-    this.initHostTransferModals();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
-      btnLeaveRoom.addEventListener('click', () => {
-        if (confirm('Leave current dubbing session and return to scenes?')) {
-          this.leaveRoom();
-        }
-      });
+      btnLeaveRoom.addEventListener('click', () => this.confirmLeaveRoom());
     }
 
     const btnLeaveRoomLobby = document.getElementById('btn-leave-room-lobby');
     if (btnLeaveRoomLobby) {
-      btnLeaveRoomLobby.addEventListener('click', () => {
-        if (confirm('Leave current dubbing session and return to scenes?')) {
-          this.leaveRoom();
-        }
-      });
+      btnLeaveRoomLobby.addEventListener('click', () => this.confirmLeaveRoom());
     }
 
     this.inputUserName.addEventListener('input', (e) => {
@@ -778,14 +760,8 @@ class DubMateApp {
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
-      if (this.badgeGainMatch) {
-        const take = this.roomState?.takes?.[this.currentLineIndex];
-        if (take && take.auto_gain_db !== undefined) {
-          const isMatched = Math.abs(val - parseFloat(take.auto_gain_db)) < 0.1;
-          this.badgeGainMatch.innerText = isMatched ? `✓ ${take.auto_gain_db >= 0 ? '+' : ''}${take.auto_gain_db} dB (Matched)` : `${take.auto_gain_db >= 0 ? '+' : ''}${take.auto_gain_db} dB (Scene Target)`;
-          this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
-        }
-      }
+      const take = this.roomState?.takes?.[this.currentLineIndex];
+      if (take && take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, val);
       this.syncTakeParams();
     });
 
@@ -798,10 +774,7 @@ class DubMateApp {
           this.valGain.innerText = (targetGain > 0 ? '+' : '') + targetGain + ' dB';
           this.audio.setGain(targetGain);
           this.syncTakeParams();
-          if (this.badgeGainMatch) {
-            this.badgeGainMatch.innerText = `✓ ${targetGain >= 0 ? '+' : ''}${targetGain} dB (Matched)`;
-            this.badgeGainMatch.className = 'badge-calibrated calibrated';
-          }
+          this.renderGainMatchBadge(take, targetGain);
           this.showToast(`Vocal gain calibrated to scene dialogue target (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
         }
       });
@@ -824,16 +797,7 @@ class DubMateApp {
       }
     });
 
-    if (this.checkNoiseReduction) {
-      this.checkNoiseReduction.addEventListener('change', (e) => {
-        const tag = document.getElementById('tag-noise-cleaner');
-        if (tag) tag.innerText = e.target.checked ? 'DFN3' : 'OFF';
-        this.syncTakeParams();
-      });
-    }
-
     this.checkLowcut.addEventListener('change', () => this.syncTakeParams());
-    this.checkCompressor.addEventListener('change', () => this.syncTakeParams());
 
     this.sliderDecay.addEventListener('input', (e) => {
       const decay = parseFloat(e.target.value);
@@ -866,7 +830,12 @@ class DubMateApp {
     }
     if (this.checkNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
-      this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
+      this.checkNoiseReduction.addEventListener('change', (e) => {
+        const tag = document.getElementById('tag-noise-cleaner');
+        if (tag) tag.innerText = e.target.checked ? 'DFN3' : 'OFF';
+        this.syncTakeParams();
+        onNoiseToggleChange(e);
+      });
     }
     if (this.checkRackNoiseReduction) {
       this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
@@ -949,122 +918,9 @@ class DubMateApp {
       }
     });
 
-    // Master Export Modal Actions
-    if (this.btnModalCloseView) {
-      this.btnModalCloseView.addEventListener('click', () => {
-        this.closeExportModal();
-      });
-    }
-    if (this.btnModalCloseX) {
-      this.btnModalCloseX.addEventListener('click', () => {
-        this.closeExportModal();
-      });
-    }
-    if (this.btnModalDismiss) {
-      this.btnModalDismiss.addEventListener('click', () => {
-        this.closeExportModal();
-      });
-    }
-    if (this.modalExportRendering) {
-      this.modalExportRendering.addEventListener('click', (e) => {
-        // If clicking on the backdrop and not actively rendering, dismiss modal
-        if (e.target === this.modalExportRendering && !this.isRenderingExport) {
-          this.closeExportModal();
-        }
-      });
-    }
+    this.initExportEvents();
 
-    // Screening Master Stem Balance Slider
-    if (this.sliderScreeningBalance) {
-      this.sliderScreeningBalance.addEventListener('input', (e) => {
-        this.setScreeningBalance(parseInt(e.target.value, 10));
-      });
-    }
-
-    // Master Dialogue Presence / Vocal Prominence Slider & Presets
-    if (this.sliderDialoguePresence) {
-      this.sliderDialoguePresence.addEventListener('input', (e) => {
-        this.setMasterDialoguePresence(parseFloat(e.target.value));
-      });
-    }
-
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const pres = parseFloat(e.currentTarget.dataset.presence || '0');
-        if (this.sliderDialoguePresence) {
-          this.sliderDialoguePresence.value = pres;
-        }
-        this.setMasterDialoguePresence(pres);
-      });
-    });
-
-    // Screening Controls (Host Sync)
-    this.btnScreeningPlayPause.addEventListener('click', () => this.handleScreeningPlayPause());
-    this.btnScreeningReplay.addEventListener('click', () => this.handleScreeningReplay());
-    this.btnExportVideo.addEventListener('click', () => this.exportFinalVideo());
-
-    if (this.btnDownloadProjectZip) {
-      this.btnDownloadProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
-    }
-    if (this.btnToolbarProjectZip) {
-      this.btnToolbarProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
-    }
-
-    // These four were bare `<a download href="/api/...">`. The webview followed the
-    // href, so a backend error answered as JSON replaced the studio with
-    // `{"detail":"..."}`, and a working download gave no sign it had started or
-    // finished. Same fetch/blob route as downloadFullProjectZip().
-    for (const [anchor, aspectRatio] of [
-      [this.btnDownloadLink, '16:9'],
-      [this.btnDownloadLink916, '9:16'],
-      [this.btnModalDownload169, '16:9'],
-      [this.btnModalDownload916, '9:16'],
-    ]) {
-      if (!anchor) continue;
-      anchor.addEventListener('click', (e) => {
-        e.preventDefault();
-        this.downloadExportVideo(aspectRatio, anchor);
-      });
-    }
-
-    // Screening Video State Listeners
-    if (this.btnAspect169 && this.btnAspect916) {
-      this.btnAspect169.addEventListener('click', () => {
-        this.selectedAspectRatio = '16:9';
-        this.btnAspect169.classList.add('active');
-        this.btnAspect169.setAttribute('aria-checked', 'true');
-        this.btnAspect916.classList.remove('active');
-        this.btnAspect916.setAttribute('aria-checked', 'false');
-        document.querySelector('.theater-player')?.classList.remove('shorts-mode');
-        this.showToast("Aspect ratio set to 🖥️ 16:9 Cinema");
-      });
-
-      this.btnAspect916.addEventListener('click', () => {
-        this.selectedAspectRatio = '9:16';
-        this.btnAspect916.classList.add('active');
-        this.btnAspect916.setAttribute('aria-checked', 'true');
-        this.btnAspect169.classList.remove('active');
-        this.btnAspect169.setAttribute('aria-checked', 'false');
-        document.querySelector('.theater-player')?.classList.add('shorts-mode');
-        this.showToast("Aspect ratio set to 📱 9:16 Shorts (Vertical Letterboxed)");
-      });
-    }
-
-    if (this.screeningVideo) {
-      this.screeningVideo.addEventListener('ended', () => {
-        this.pauseScreeningPlayback();
-        this.screeningVideo.currentTime = 0;
-      });
-      this.screeningVideo.addEventListener('pause', () => {
-        if (this.screeningPlayIcon) {
-          this.screeningPlayIcon.innerText = '▶ Play Dub';
-        }
-        if (!this.isUsingExportedVideo) {
-          this.audio.stopAllPlayback();
-          this.stopScreeningSyncMonitor();
-        }
-      });
-    }
+    this.initScreeningEvents();
 
     this.socket.on('connection_state', (data) => {
       this.renderConnectionState(data.payload || {});
@@ -1079,36 +935,12 @@ class DubMateApp {
     });
 
     // Socket events
+    // room_socket emits the typed event before '*', so every typed handler that
+    // reads this.roomState merges the incoming state first. The merge is
+    // idempotent, so running it again here is harmless.
     this.socket.on('*', (data) => {
       if (data.state) {
-        const incoming = data.state;
-        if (!this.roomState) {
-          this.roomState = incoming;
-        } else {
-          // Preserve local take peaks if incoming take state does not specify them
-          const oldTakes = this.roomState.takes || {};
-          const newTakes = incoming.takes || {};
-          const mergedTakes = {};
-
-          for (const [k, take] of Object.entries(newTakes)) {
-            const oldTake = oldTakes[k];
-            mergedTakes[k] = {
-              ...take,
-              peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (oldTake?.peaks || []),
-            };
-          }
-
-          this.roomState = {
-            ...this.roomState,
-            ...incoming,
-            pack: incoming.pack || this.roomState.pack,
-            users: incoming.users || this.roomState.users,
-            role_assignments: incoming.role_assignments || this.roomState.role_assignments,
-            takes: mergedTakes,
-            // Keep local current_line if in booth mode (solo self-paced dubbing)
-            current_line: (incoming.mode === 'studio') ? incoming.current_line : this.currentLineIndex,
-          };
-        }
+        this.applyIncomingState(data);
 
         if (this.currentView === 'lobby') {
           this.renderLobbyState();
@@ -1135,6 +967,7 @@ class DubMateApp {
     });
 
     this.socket.on('user_status_updated', (data) => {
+      this.applyIncomingState(data);
       if (this.roomState && data.payload?.user) {
         this.roomState.users[data.payload.user_id] = data.payload.user;
         this.renderCastActivityHUD();
@@ -1142,6 +975,7 @@ class DubMateApp {
     });
 
     this.socket.on('take_recorded', async (data) => {
+      this.applyIncomingState(data);
       const lineIdx = data.payload?.line_index;
       // Invalidate old take buffer from audio engine cache immediately
       this.audio.evictTakeCache(lineIdx);
@@ -1170,6 +1004,7 @@ class DubMateApp {
     });
 
     this.socket.on('take_cleared', (data) => {
+      this.applyIncomingState(data);
       const lineIdx = data.payload?.line_index;
       this.audio.evictTakeCache(lineIdx);
       if (lineIdx === this.currentLineIndex) {
@@ -1180,6 +1015,7 @@ class DubMateApp {
     });
 
     this.socket.on('status_changed', (data) => {
+      this.applyIncomingState(data);
       const newStatus = data.payload?.status || data.status;
       if (newStatus === 'recording' && this.currentView === 'lobby') {
         this.showView('booth');
@@ -1191,7 +1027,8 @@ class DubMateApp {
       }
     });
 
-    this.socket.on('warp_to_screening', () => {
+    this.socket.on('warp_to_screening', (data) => {
+      this.applyIncomingState(data);
       this.cancelCurrentCountdown();
       if (this.crumbPremiereLive) {
         this.crumbPremiereLive.style.display = 'inline-block';
@@ -1207,13 +1044,18 @@ class DubMateApp {
     });
 
     this.socket.on('export_started', (data) => {
+      // The client that pressed Export already has the modal open and locked, and
+      // its own POST/poll drives the progress; re-opening here would rewind it.
+      if (this.isRenderingExport) return;
       if (this.views.screening.classList.contains('active')) {
-        this.openExportModal();
+        // Someone else started this render: show it, but leave the modal closable.
+        this.openExportModal({ locked: false });
         this.updateExportModalStep(1, 30, "Applying vocal EQ, studio compression & acoustic room reverb...");
       }
     });
 
     this.socket.on('export_ready', (data) => {
+      this.applyIncomingState(data);
       const payload = data.payload || data;
       if (payload && (payload.download_url || payload.export_video_url || payload.download_url_16_9)) {
         this.handleExportSuccess(payload);
@@ -1221,119 +1063,66 @@ class DubMateApp {
       }
     });
 
+    this.socket.on('export_failed', (data) => {
+      const payload = data.payload || data;
+      const modalOpen = this.modalExportRendering && this.modalExportRendering.style.display !== 'none';
+      if (!modalOpen) return;
+      // The initiator's poll would report the same failure a tick later; stop it so
+      // the failure is shown once.
+      if (this.exportPollInterval) {
+        clearInterval(this.exportPollInterval);
+        this.exportPollInterval = null;
+      }
+      this.failExport(new Error(payload?.error || 'failed'));
+    });
+
     this.socket.on('dialogue_presence_sync', (data) => {
       const pres = parseFloat(data.payload?.presence_db ?? 0.0);
       this.masterDialoguePresence = pres;
-      if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = pres;
-      if (this.valDialoguePresence) {
-        this.valDialoguePresence.innerText = (pres === 0) ? '0.0 dB (Scene Default)' : ((pres > 0 ? '+' : '') + pres.toFixed(1) + ' dB');
-      }
-      document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-        const btnVal = parseFloat(btn.dataset.presence || '0');
-        btn.classList.toggle('active', Math.abs(btnVal - pres) < 0.1);
-      });
+      this.renderPresenceUI(pres);
       if (this.screeningVocalGainNode && this.audio?.ctx) {
         const { vocalGain } = this.getScreeningStemGains();
         this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
       }
     });
+  }
 
-    this.socket.on('host_transfer_pending', async (data) => {
-      const payload = data.payload || {};
-      const newHostId = payload.new_host_id;
-      const newHostName = payload.new_host_name || 'Cast Member';
+  /**
+   * Merges a socket message's room state into this.roomState. Local take peaks
+   * are kept when the incoming take carries none, and the local line is kept
+   * unless the room is in studio (synced prompter) mode. Safe to call more than
+   * once for the same message.
+   */
+  applyIncomingState(data) {
+    if (!data || !data.state) return;
+    const incoming = data.state;
+    if (!this.roomState) {
+      this.roomState = incoming;
+    } else {
+      // Preserve local take peaks if incoming take state does not specify them
+      const oldTakes = this.roomState.takes || {};
+      const newTakes = incoming.takes || {};
+      const mergedTakes = {};
 
-      this.showHostTransferOverlay(`Host designation is migrating to ${newHostName}...`);
-
-      // If WE are the designated new host, coordinate local room creation & Worker tunnel update
-      if (newHostId === this.user.id) {
-        try {
-          const isTauri = typeof window.__TAURI__ !== 'undefined';
-          let myTunnelUrl = '';
-          let myRoomToken = '';
-
-          if (isTauri && window.__TAURI__.core?.invoke) {
-            myTunnelUrl = await window.__TAURI__.core.invoke('get_tunnel_url');
-            myRoomToken = await window.__TAURI__.core.invoke('get_room_token');
-          } else {
-            myTunnelUrl = window.location.origin;
-          }
-
-          const currentRoomCode = this.roomState?.room_id || '';
-          const currentPackId = this.selectedPackId || this.roomState?.pack?.pack_id || '';
-
-          // 1. If Worker registry domain is active, update KV
-          if (currentRoomCode && myRoomToken) {
-            try {
-              await fetch(`https://dubmate.bkaproductions.com/rooms/${currentRoomCode}/update`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${myRoomToken}`,
-                },
-                body: JSON.stringify({
-                  tunnel_url: myTunnelUrl,
-                  app_version: window.__dubmate_app_version || '1.0.0',
-                }),
-              });
-            } catch (wErr) {
-              console.warn('[HostTransfer] Worker update warning:', wErr);
-            }
-          }
-
-          // 2. Create fresh room on our local FastAPI server
-          const newRoomResp = await fetch('/api/rooms', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              pack_id: currentPackId,
-              host_name: this.user.name,
-              host_color: this.user.color,
-              app_version: window.__dubmate_app_version || '1.0.0',
-            }),
-          });
-          const newRoomData = await newRoomResp.json();
-          const newRoomId = newRoomData.room_id;
-
-          // 3. Notify the old host's server to broadcast confirmation to all cast members
-          this.socket.completeTransfer(myTunnelUrl, newRoomId);
-        } catch (err) {
-          console.error('[HostTransfer] Failed to coordinate transfer:', err);
-          this.hideHostTransferOverlay();
-          this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't hand over hosting. Please try again.")}`);
-        }
+      for (const [k, take] of Object.entries(newTakes)) {
+        const oldTake = oldTakes[k];
+        mergedTakes[k] = {
+          ...take,
+          peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (oldTake?.peaks || []),
+        };
       }
-    });
 
-    this.socket.on('host_transfer_confirmed', (data) => {
-      const payload = data.payload || {};
-      const newHostId = payload.new_host_id;
-      const newTunnelUrl = payload.new_tunnel_url;
-
-      if (newHostId === this.user.id) {
-        // We are the new host — reload into our own active studio session
-        this.showToast('👑 You are now the session host!');
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 800);
-      } else if (newTunnelUrl) {
-        // Reconnect to the new host's public tunnel URL
-        this.showToast('🚀 Reconnecting to new host studio...');
-        setTimeout(() => {
-          window.location.href = newTunnelUrl;
-        }, 1200);
-      }
-    });
-
-    this.socket.on('host_transfer_cancelled', () => {
-      this.hideHostTransferOverlay();
-      this.showToast('⚠️ Host transfer cancelled or timed out.');
-    });
-
-    this.socket.on('version_mismatch', (data) => {
-      const payload = data.payload || {};
-      this.showVersionMismatchModal(payload.required || '1.0.0', payload.yours || '0.0.0');
-    });
+      this.roomState = {
+        ...this.roomState,
+        ...incoming,
+        pack: incoming.pack || this.roomState.pack,
+        users: incoming.users || this.roomState.users,
+        role_assignments: incoming.role_assignments || this.roomState.role_assignments,
+        takes: mergedTakes,
+        // Keep local current_line if in booth mode (solo self-paced dubbing)
+        current_line: (incoming.mode === 'studio') ? incoming.current_line : this.currentLineIndex,
+      };
+    }
   }
 
   initVideoPrompterSplitter() {
@@ -1459,6 +1248,8 @@ class DubMateApp {
   }
 
   async initRouter() {
+    captureHomeOriginParam();
+    this.pointHomeLinksAtOwnEngine();
     await this.fetchPacks();
 
     // First-run audio setup / remembered device routing. Deliberately not
@@ -1487,6 +1278,9 @@ class DubMateApp {
   }
 
   showView(viewName) {
+    // The home screen lists the packs of the engine serving this page. On a
+    // host's tunnel page that is the host's engine, so go back to our own.
+    if (viewName === 'landing' && this.goHome()) return;
     document.body.classList.remove('resizing');
     this.currentView = viewName;
     this.cancelCurrentCountdown();
@@ -1544,6 +1338,20 @@ class DubMateApp {
     }
   }
 
+  /** Asks first; returns true only if the user actually left. */
+  confirmLeaveRoom() {
+    if (!confirm('Leave current dubbing session and return to scenes?')) return false;
+    this.leaveRoom();
+    return true;
+  }
+
+  /** Drops ?room= (pushState to the bare path, so the whole query string goes). */
+  clearRoomQueryParam() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.pushState({}, '', url.pathname);
+  }
+
   leaveRoom() {
     document.body.classList.remove('resizing');
     this.cancelCurrentCountdown();
@@ -1552,20 +1360,19 @@ class DubMateApp {
     if (this.socket) {
       this.socket.disconnect();
     }
-    this.stopShareWatch();
-    this.roomShare = null;
-    this.roomState = null;
-    this.selectedPackId = null;
-    this.currentTakeBlob = null;
-    this.currentTakeBuffer = null;
-    if (this.screeningBuffers) {
-      this.screeningBuffers.clear();
+    // A deliberate leave is not a dropped connection: hide any reconnect banner
+    // (disconnect() emits no connection_state, so nothing else would clear it).
+    const connectionBanner = document.getElementById('connection-banner');
+    if (connectionBanner) {
+      clearTimeout(this._connectionBannerTimer);
+      connectionBanner.style.display = 'none';
+      connectionBanner.classList.remove('is-recovered');
     }
+    this.resetRoomSession();
+    this.selectedPackId = null;
 
     // Clean URL query parameters (?room=...)
-    const url = new URL(window.location.href);
-    url.searchParams.delete('room');
-    window.history.pushState({}, '', url.pathname);
+    this.clearRoomQueryParam();
 
     // Reset Header & HUD
     if (this.headerRoomBadge) this.headerRoomBadge.style.display = 'none';
@@ -1576,6 +1383,33 @@ class DubMateApp {
 
     this.showView('landing');
     this.showToast('Left studio session room.');
+  }
+
+  navigateTo(url) {
+    window.location.href = url;
+  }
+
+  /**
+   * Sends a member who is on another host's page back to their own engine.
+   * Returns true when it navigated away. A top-level navigation, so it is not
+   * subject to CORS, mixed-content or private-network rules.
+   */
+  goHome() {
+    const home = getHomeOrigin();
+    if (!home || home === window.location.origin) return false;
+    this.navigateTo(`${home}/`);
+    return true;
+  }
+
+  /** On a host's page, the Studio and Pack Builder links must open the member's own engine. */
+  pointHomeLinksAtOwnEngine() {
+    const home = getHomeOrigin();
+    if (!home || home === window.location.origin) return;
+    const links = { 'mode-opt-studio': '/', 'mode-opt-builder': '/builder.html', 'btn-open-builder': '/builder.html' };
+    Object.entries(links).forEach(([id, path]) => {
+      const el = document.getElementById(id);
+      if (el) el.setAttribute('href', `${home}${path}`);
+    });
   }
 
   /**
@@ -1593,6 +1427,8 @@ class DubMateApp {
     if (!raw) return fallback;
 
     const known = [
+      [/still rendering|409/i,
+        "The video is still rendering. Try again when it's ready."],
       [/failed to fetch|networkerror|load failed|err_connection/i,
         "Couldn't reach DubMate. Check your connection and try again."],
       [/timed out|timeout|etimedout/i,
@@ -1619,26 +1455,7 @@ class DubMateApp {
     return isTechnical ? fallback : raw;
   }
 
-  showToast(message) {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerText = message;
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-6px)';
-    toast.style.transition = 'opacity 160ms var(--ease-out), transform 160ms var(--ease-out)';
-    container.appendChild(toast);
-    requestAnimationFrame(() => {
-      toast.style.opacity = '1';
-      toast.style.transform = 'translateY(0)';
-    });
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateY(-6px)';
-      setTimeout(() => toast.remove(), 180);
-    }, 3200);
-  }
+  showToast(message) { showToast(message); }
 
   /**
    * Shows the connection banner while the room is not live.
@@ -1733,7 +1550,7 @@ class DubMateApp {
         this.stopShareWatch();
         // Only the host hands the code out, so only the host needs telling that
         // it does not work. Guests are already connected by this point.
-        const isHost = this.roomState?.host_id && this.roomState.host_id === this.user.id;
+        const isHost = this.roomState?.host_id && this.isHost();
         if (isHost && share && !share.code_is_live) {
           if (share.state === 'tunnel_unavailable') {
             // The shell told the engine the tunnel failed, so say what went wrong
@@ -1860,7 +1677,7 @@ class DubMateApp {
             <div style="font-size: 32px; margin-bottom: 8px;">🔌</div>
             <p style="margin-bottom: 8px; font-weight: 600; color: #fca5a5;">Could not connect to DubMate Engine</p>
             <p style="font-size: 12px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px;">
-              The studio could not reach <code>http://127.0.0.1:8000</code>. Please ensure the DubMate engine is running.
+              The studio could not reach <code>${escapeHtml(window.location.origin)}</code>. Please ensure the DubMate engine is running.
             </p>
             <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
               <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.fetchPacks()">↺ Retry Connection</button>
@@ -1872,15 +1689,20 @@ class DubMateApp {
     }
   }
 
+  /** Plain GET /api/config: parsed body, or null on a non-2xx answer. Throws on network errors. */
+  async fetchConfig() {
+    const res = await fetch('/api/config');
+    return res.ok ? res.json() : null;
+  }
+
   async openPackConfigModal() {
     if (!this.modalPackConfig) return;
     this.modalPackConfig.style.display = 'flex';
     if (this.webConfigFeedback) this.webConfigFeedback.style.display = 'none';
 
     try {
-      const res = await fetch('/api/config');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await this.fetchConfig();
+      if (data) {
         if (this.webInputPackPath) {
           this.webInputPackPath.value = data.packs_dir || '';
         }
@@ -1941,9 +1763,10 @@ class DubMateApp {
         this.closePackConfigModal();
       }, 1200);
     } catch (err) {
+      // Server details (bad path, unreadable folder) are shown as-is.
       let errMsg = err.message || "Unknown error";
       if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
-        errMsg = "DubMate isn't responding. Try restarting the app.";
+        errMsg = this.friendlyError(err);
       }
       this.showWebConfigFeedback(`❌ ${errMsg}`, false);
     } finally {
@@ -1964,750 +1787,6 @@ class DubMateApp {
     this.webConfigFeedback.innerText = msg;
   }
 
-  promptSetPackFolder() {
-    this.openPackConfigModal();
-  }
-
-  // ==============================================================
-  // AUDIO DEVICE SETUP / FIRST-RUN ONBOARDING
-  // ==============================================================
-
-  initAudioSettingsEvents() {
-    if (this.btnAudioSettings) {
-      this.btnAudioSettings.addEventListener('click', () => this.openAudioSettings());
-    }
-    if (this.btnCloseAudioSettings) {
-      this.btnCloseAudioSettings.addEventListener('click', () => this.closeAudioSettings());
-    }
-    if (this.btnAudioSettingsDone) {
-      this.btnAudioSettingsDone.addEventListener('click', () => this.closeAudioSettings());
-    }
-    if (this.modalAudioSettings) {
-      this.modalAudioSettings.addEventListener('click', (e) => {
-        if (e.target === this.modalAudioSettings) this.closeAudioSettings();
-      });
-    }
-    if (this.btnGrantMic) {
-      this.btnGrantMic.addEventListener('click', () => this.requestMicAccessFromPanel());
-    }
-    if (this.btnRetryMic) {
-      this.btnRetryMic.addEventListener('click', () => this.requestMicAccessFromPanel());
-    }
-    if (this.btnSkipAudioSetup) {
-      this.btnSkipAudioSetup.addEventListener('click', () => this.skipAudioSetup());
-    }
-    if (this.btnDismissAudioDenied) {
-      this.btnDismissAudioDenied.addEventListener('click', () => this.skipAudioSetup());
-    }
-    if (this.btnRefreshAudioDevices) {
-      this.btnRefreshAudioDevices.addEventListener('click', () => this.rescanAudioDevices());
-    }
-    if (this.selectAudioInput) {
-      this.selectAudioInput.addEventListener('change', (e) => this.applyInputDevice(e.target.value));
-    }
-    if (this.selectAudioOutput) {
-      this.selectAudioOutput.addEventListener('change', (e) => this.applyOutputDevice(e.target.value));
-    }
-    if (this.btnSaveExportsDir) {
-      this.btnSaveExportsDir.addEventListener('click', () => this.saveExportsDir());
-    }
-    if (this.inputExportsDir) {
-      this.inputExportsDir.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') this.saveExportsDir();
-      });
-    }
-
-    // Devices can be hot-plugged while the panel is open.
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices
-      && typeof navigator.mediaDevices.addEventListener === 'function') {
-      try {
-        navigator.mediaDevices.addEventListener('devicechange', () => {
-          if (this.isAudioSettingsOpen() && this.audioSetup.permission === 'granted') {
-            this.refreshAudioDevices().catch(() => { });
-          }
-        });
-      } catch (e) { }
-    }
-
-    // A meter must never keep a requestAnimationFrame loop alive in a hidden
-    // tab; pause it on blur and resume when the panel comes back into view.
-    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange', () => {
-        if (this.isDocumentHidden()) {
-          this.stopInputMeter();
-        } else if (this.isAudioSettingsOpen() && this.audioSetup.permission === 'granted'
-          && this.audioStepDevices && this.audioStepDevices.style.display !== 'none') {
-          this.startInputMeter().catch(() => { });
-        }
-      });
-    }
-  }
-
-  isAudioSettingsOpen() {
-    return !!(this.modalAudioSettings && this.modalAudioSettings.style.display !== 'none');
-  }
-
-  // Checks visibilityState rather than document.hidden: some embedded webviews
-  // (and JSDOM) report the legacy 'prerender' state, which would otherwise
-  // wedge the meter permanently off.
-  isDocumentHidden() {
-    if (typeof document === 'undefined') return false;
-    return document.visibilityState === 'hidden';
-  }
-
-  // Runs once on boot, before anything can trigger a bare permission prompt.
-  async initAudioSetupOnBoot() {
-    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-    const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
-
-    // Re-apply the remembered output device to the <video> elements that
-    // already exist in the document.
-    if (this.audioSetup.outputId && this.audio.supportsOutputRouting()) {
-      try {
-        const routed = await this.audio.applyOutputRouting();
-        if (!routed.ok) {
-          // Remembered sink is gone (headphones unplugged) - drop back to default.
-          console.warn('[DubMate] Remembered output device unavailable, using system default.');
-          this.audio.preferredOutputId = null;
-        }
-      } catch (e) { }
-    }
-
-    let state = 'unknown';
-    try {
-      state = await this.audio.getMicPermissionState();
-    } catch (e) { }
-
-    if (state === 'granted') {
-      this.audioSetup.permission = 'granted';
-      this.audioSetup.setupComplete = true;
-      safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
-      this.updateAudioSettingsAffordance();
-      return;
-    }
-    if (state === 'denied') {
-      this.audioSetup.permission = 'denied';
-    }
-
-    this.updateAudioSettingsAffordance();
-
-    const skippedThisSession = safeStorageGet(ss, AUDIO_SETUP_SKIP_KEY) === '1';
-    if (!this.audioSetup.setupComplete && !skippedThisSession) {
-      this.openAudioSettings({ firstRun: true });
-    }
-  }
-
-  updateAudioSettingsAffordance() {
-    if (!this.audioSettingsAlertDot) return;
-    const needsAttention = this.audioSetup.permission !== 'granted' && !this.audioSetup.setupComplete;
-    this.audioSettingsAlertDot.style.display = needsAttention ? 'block' : 'none';
-  }
-
-  showAudioSetupStep(step) {
-    const steps = {
-      intro: this.audioStepIntro,
-      denied: this.audioStepDenied,
-      devices: this.audioStepDevices,
-    };
-    Object.keys(steps).forEach((key) => {
-      if (steps[key]) steps[key].style.display = (key === step) ? 'block' : 'none';
-    });
-
-    if (this.audioSetupStatusPill) {
-      if (step === 'devices') {
-        this.audioSetupStatusPill.innerText = 'MIC CONNECTED';
-      } else if (step === 'denied') {
-        this.audioSetupStatusPill.innerText = 'MIC BLOCKED';
-      } else {
-        this.audioSetupStatusPill.innerText = 'MIC NOT CONNECTED';
-      }
-    }
-    if (this.audioSetupSubtitle) {
-      if (step === 'devices') {
-        this.audioSetupSubtitle.innerText =
-          'Pick the microphone you record with and the headphones you monitor on.';
-      } else if (step === 'denied') {
-        this.audioSetupSubtitle.innerText =
-          'Recording stays disabled until microphone access is restored.';
-      } else {
-        this.audioSetupSubtitle.innerText =
-          'A one-time setup so your first take does not get ambushed by a permission popup.';
-      }
-    }
-  }
-
-  async openAudioSettings(options = {}) {
-    if (!this.modalAudioSettings) return;
-
-    const token = ++this.audioSetup.openToken;
-    this.audioSetup.firstRunMode = !!options.firstRun;
-    this.modalAudioSettings.style.display = 'flex';
-    this.audioSetup.open = true;
-
-    if (this.btnCloseAudioSettings) {
-      // On a genuine first run the close button is redundant with "Skip for now".
-      this.btnCloseAudioSettings.style.display = this.audioSetup.firstRunMode ? 'none' : 'flex';
-    }
-
-    let state = this.audioSetup.permission;
-    if (state !== 'granted') {
-      try {
-        const queried = await this.audio.getMicPermissionState();
-        if (queried === 'granted' || queried === 'denied') state = queried;
-      } catch (e) { }
-    }
-    // A newer open (or a close) superseded this call while it was awaiting.
-    if (token !== this.audioSetup.openToken) return;
-    this.audioSetup.permission = state;
-
-    // Fire and forget: hidden entirely if the backend has no exports_dir yet.
-    this.loadExportsDirSetting();
-
-    if (state === 'granted') {
-      this.showAudioSetupStep('devices');
-      await this.refreshAudioDevices();
-      await this.startInputMeter();
-    } else if (state === 'denied') {
-      this.renderMicDenial(null);
-      this.showAudioSetupStep('denied');
-    } else {
-      this.showAudioSetupStep('intro');
-    }
-
-    this.updateAudioSettingsAffordance();
-  }
-
-  closeAudioSettings() {
-    // Invalidate any in-flight openAudioSettings() so it cannot repaint the
-    // panel after the user has dismissed it.
-    this.audioSetup.openToken++;
-    this.stopInputMeter();
-    if (this.modalAudioSettings) {
-      this.modalAudioSettings.style.display = 'none';
-    }
-    this.audioSetup.open = false;
-    this.audioSetup.firstRunMode = false;
-    this.setExportsFeedback('', null);
-    this.updateAudioSettingsAffordance();
-  }
-
-  skipAudioSetup() {
-    const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
-    safeStorageSet(ss, AUDIO_SETUP_SKIP_KEY, '1');
-    this.closeAudioSettings();
-    this.showToast('Audio setup skipped — reopen it any time from “Audio” in the header.');
-  }
-
-  // The one place in the app that is allowed to trigger getUserMedia cold,
-  // and it only ever runs from an explicit click on the explainer screen.
-  async requestMicAccessFromPanel() {
-    if (this.audioSetup.requesting) return;
-    this.audioSetup.requesting = true;
-
-    const restoreGrantBtn = () => {
-      if (this.btnGrantMic) this.btnGrantMic.disabled = false;
-      if (this.btnRetryMic) this.btnRetryMic.disabled = false;
-      if (this.btnGrantMicText) this.btnGrantMicText.innerText = '🎙️ Allow Microphone Access';
-    };
-
-    if (this.btnGrantMic) this.btnGrantMic.disabled = true;
-    if (this.btnRetryMic) this.btnRetryMic.disabled = true;
-    if (this.btnGrantMicText) this.btnGrantMicText.innerText = 'Waiting for permission…';
-
-    try {
-      await this.audio.requestMicrophone();
-      // Hand the capture device straight back; the meter opens its own stream
-      // and recording re-acquires on demand.
-      this.audio.releaseMicrophone();
-
-      const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-      this.audioSetup.permission = 'granted';
-      this.audioSetup.setupComplete = true;
-      safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
-
-      this.showAudioSetupStep('devices');
-      await this.refreshAudioDevices();
-      await this.startInputMeter();
-      this.showToast('🎙️ Microphone connected. Pick your devices and check your level.');
-    } catch (err) {
-      const name = (err && err.name) || '';
-      this.audioSetup.permission = (name === 'NotAllowedError' || name === 'SecurityError') ? 'denied' : 'error';
-      this.renderMicDenial(err);
-      this.showAudioSetupStep('denied');
-    } finally {
-      this.audioSetup.requesting = false;
-      restoreGrantBtn();
-      this.updateAudioSettingsAffordance();
-    }
-  }
-
-  renderMicDenial(err) {
-    const name = (err && err.name) || '';
-    let heading = 'Microphone access was blocked';
-    let detail = 'The browser refused the request, so recording is disabled until access is restored.';
-
-    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-      heading = 'No microphone was found';
-      detail = 'Windows reported no capture device. Plug in a microphone or headset, then press Try Again.';
-    } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-      heading = 'The microphone is in use by another app';
-      detail = 'Close Discord, OBS, Teams or any other app holding the microphone, then press Try Again.';
-    } else if (name === 'OverconstrainedError') {
-      heading = 'The saved microphone is no longer available';
-      detail = 'The device DubMate remembered has been unplugged. Press Try Again to fall back to the system default.';
-    } else if (name && name !== 'NotAllowedError' && name !== 'SecurityError') {
-      detail = `The browser reported ${name}. Recording is disabled until microphone access works.`;
-    }
-
-    if (this.audioDeniedHeading) this.audioDeniedHeading.innerText = heading;
-    if (this.audioDeniedDetail) this.audioDeniedDetail.innerText = detail;
-  }
-
-  async rescanAudioDevices() {
-    if (this.audioSetup.permission !== 'granted') return;
-    await this.refreshAudioDevices();
-    this.showToast('Re-scanned connected audio devices.');
-  }
-
-  // Labels only come back populated once permission has been granted, which is
-  // why this is never called before requestMicAccessFromPanel() succeeds.
-  async refreshAudioDevices() {
-    let devices = { inputs: [], outputs: [], labelled: false, supported: false };
-    try {
-      devices = await this.audio.enumerateAudioDevices();
-    } catch (e) { }
-    this.audioSetup.devices = devices;
-
-    const inputResult = this.populateDeviceSelect(
-      this.selectAudioInput, devices.inputs, this.audioSetup.inputId,
-      'System Default Microphone', 'Microphone'
-    );
-    this.renderDeviceNote(this.audioInputNote, inputResult, devices, 'microphone');
-
-    const outputSupported = this.audio.supportsOutputRouting();
-    if (this.audioOutputRow) this.audioOutputRow.style.display = outputSupported ? 'block' : 'none';
-    if (this.audioOutputUnsupported) this.audioOutputUnsupported.style.display = outputSupported ? 'none' : 'block';
-
-    if (outputSupported) {
-      const outputResult = this.populateDeviceSelect(
-        this.selectAudioOutput, devices.outputs, this.audioSetup.outputId,
-        'System Default Output', 'Output'
-      );
-      this.renderDeviceNote(this.audioOutputNote, outputResult, devices, 'output device');
-    }
-
-    return devices;
-  }
-
-  // Builds options with createElement/textContent so attacker-influenceable
-  // device labels can never be parsed as markup.
-  populateDeviceSelect(select, list, savedId, defaultLabel, fallbackPrefix) {
-    const result = { missing: false, count: 0, savedLabel: '' };
-    if (!select) return result;
-
-    while (select.firstChild) select.removeChild(select.firstChild);
-
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = '';
-    defaultOpt.textContent = defaultLabel;
-    select.appendChild(defaultOpt);
-
-    const devices = Array.isArray(list) ? list : [];
-    result.count = devices.length;
-
-    let found = false;
-    devices.forEach((device, index) => {
-      const opt = document.createElement('option');
-      opt.value = device.deviceId || '';
-      // Labels are blank until permission is granted; index fallback keeps the
-      // list usable rather than rendering a column of empty rows.
-      opt.textContent = device.label || `${fallbackPrefix} ${index + 1}`;
-      opt.title = opt.textContent;
-      select.appendChild(opt);
-      if (savedId && device.deviceId === savedId) {
-        found = true;
-        result.savedLabel = device.label || '';
-      }
-    });
-
-    select.value = found ? savedId : '';
-    result.missing = !!savedId && !found;
-    return result;
-  }
-
-  renderDeviceNote(noteEl, result, devices, kindLabel) {
-    if (!noteEl) return;
-    noteEl.className = 'audio-device-note';
-
-    if (!devices.supported) {
-      noteEl.style.display = 'block';
-      noteEl.classList.add('is-error');
-      noteEl.innerText = 'This browser does not expose device enumeration.';
-      return;
-    }
-    if (result.count === 0) {
-      noteEl.style.display = 'block';
-      noteEl.classList.add('is-warning');
-      noteEl.innerText = `No ${kindLabel} was detected. Plug one in and press Rescan.`;
-      return;
-    }
-    if (result.missing) {
-      noteEl.style.display = 'block';
-      noteEl.classList.add('is-warning');
-      // escapeHtml() because the remembered label is device-supplied text.
-      noteEl.innerHTML =
-        `⚠️ Your saved ${escapeHtml(kindLabel)} isn’t connected right now — falling back to the system default.`;
-      return;
-    }
-    if (!devices.labelled) {
-      noteEl.style.display = 'block';
-      noteEl.innerText = 'Device names appear once microphone permission has been granted.';
-      return;
-    }
-    noteEl.style.display = 'none';
-    noteEl.innerText = '';
-  }
-
-  async applyInputDevice(deviceId) {
-    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-    const next = deviceId || '';
-    this.audioSetup.inputId = next;
-    if (next) {
-      safeStorageSet(ls, AUDIO_INPUT_DEVICE_KEY, next);
-    } else {
-      safeStorageRemove(ls, AUDIO_INPUT_DEVICE_KEY);
-    }
-    this.audio.setPreferredInputDevice(next || null);
-
-    // Re-point the meter at the newly selected capture device.
-    if (this.isAudioSettingsOpen()) {
-      await this.startInputMeter();
-    }
-  }
-
-  async applyOutputDevice(deviceId) {
-    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-    const next = deviceId || '';
-    this.audioSetup.outputId = next;
-    if (next) {
-      safeStorageSet(ls, AUDIO_OUTPUT_DEVICE_KEY, next);
-    } else {
-      safeStorageRemove(ls, AUDIO_OUTPUT_DEVICE_KEY);
-    }
-
-    let routed = { ok: false, reason: 'unsupported' };
-    try {
-      routed = await this.audio.setPreferredOutputDevice(next || null);
-    } catch (err) {
-      routed = { ok: false, reason: (err && err.name) || 'error' };
-    }
-
-    if (this.audioOutputNote) {
-      this.audioOutputNote.className = 'audio-device-note';
-      if (routed.ok) {
-        this.audioOutputNote.style.display = 'block';
-        this.audioOutputNote.innerText = next
-          ? '✓ Playback routed to the selected output device.'
-          : '✓ Playback follows the system default output.';
-      } else if (routed.reason === 'unsupported') {
-        this.audioOutputNote.style.display = 'none';
-      } else {
-        this.audioOutputNote.style.display = 'block';
-        this.audioOutputNote.classList.add('is-error');
-        this.audioOutputNote.innerText =
-          'Could not switch playback to that device. It may have been unplugged — falling back to the system default.';
-      }
-    }
-  }
-
-  // --- Live Input Level Meter (dBFS) ---
-
-  async startInputMeter() {
-    this.stopInputMeter();
-    if (!this.isAudioSettingsOpen()) return;
-    if (this.isDocumentHidden()) return;
-    if (typeof requestAnimationFrame !== 'function') return;
-
-    try {
-      const info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
-      if (info && info.didFallBack) {
-        this.setMeterHint('Saved microphone unavailable — monitoring the system default instead.', true);
-      } else {
-        this.setMeterHint('Speak your loudest line — aim for peaks around -12 to -6 dBFS.', false);
-      }
-    } catch (err) {
-      const name = (err && err.name) || '';
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        this.audioSetup.permission = 'denied';
-        this.renderMicDenial(err);
-        this.showAudioSetupStep('denied');
-        return;
-      }
-      this.setMeterHint('Could not open this input for monitoring. Try another device or press Rescan.', true);
-      return;
-    }
-
-    // Between the await above and here the user may already have closed the panel.
-    if (!this.isAudioSettingsOpen()) {
-      this.audio.stopInputMonitor();
-      return;
-    }
-
-    if (this.levelMeterLamp) this.levelMeterLamp.classList.add('is-live');
-    this.audioSetup.peakDb = -Infinity;
-    this.audioSetup.peakHoldUntil = 0;
-
-    const tick = () => {
-      // Hard stop: the loop must not outlive the visible panel.
-      if (!this.isAudioSettingsOpen() || this.isDocumentHidden()) {
-        this.stopInputMeter();
-        return;
-      }
-      this.renderInputMeterFrame();
-      this.audioSetup.meterRaf = requestAnimationFrame(tick);
-    };
-    this.audioSetup.meterRaf = requestAnimationFrame(tick);
-  }
-
-  stopInputMeter() {
-    if (this.audioSetup && this.audioSetup.meterRaf !== null && this.audioSetup.meterRaf !== undefined) {
-      try { cancelAnimationFrame(this.audioSetup.meterRaf); } catch (e) { }
-      this.audioSetup.meterRaf = null;
-    }
-    if (this.audio && typeof this.audio.stopInputMonitor === 'function') {
-      this.audio.stopInputMonitor();
-    }
-    this.resetInputMeterUI();
-  }
-
-  resetInputMeterUI() {
-    if (this.levelMeterMask) this.levelMeterMask.style.width = '100%';
-    if (this.levelMeterPeakTick) {
-      this.levelMeterPeakTick.style.display = 'none';
-      this.levelMeterPeakTick.classList.remove('is-clipping');
-    }
-    if (this.levelMeterRms) this.levelMeterRms.innerText = '-∞ dBFS';
-    if (this.levelMeterPeakReadout) {
-      this.levelMeterPeakReadout.innerText = 'PK -∞';
-      this.levelMeterPeakReadout.classList.remove('is-clipping');
-    }
-    if (this.levelMeterLamp) this.levelMeterLamp.classList.remove('is-live', 'is-clipping');
-    if (this.levelMeterTrack) {
-      this.levelMeterTrack.setAttribute('aria-valuenow', String(METER_FLOOR_DB));
-      this.levelMeterTrack.setAttribute('aria-valuetext', '-infinity dBFS');
-    }
-    if (this.audioSetup) {
-      this.audioSetup.peakDb = -Infinity;
-      this.audioSetup.peakHoldUntil = 0;
-    }
-  }
-
-  setMeterHint(message, isError) {
-    if (!this.levelMeterHint) return;
-    this.levelMeterHint.className = isError ? 'level-meter-hint is-error' : 'level-meter-hint';
-    this.levelMeterHint.innerText = message;
-  }
-
-  renderInputMeterFrame() {
-    const level = this.audio.readInputLevel();
-    if (!level) return;
-
-    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const rmsDb = level.rmsDb;
-    const peakDb = level.peakDb;
-
-    // Peak hold, then a slow ballistic decay (classic PPM behaviour).
-    if (!(this.audioSetup.peakDb > peakDb)) {
-      this.audioSetup.peakDb = peakDb;
-      this.audioSetup.peakHoldUntil = now + METER_PEAK_HOLD_MS;
-    } else if (now > this.audioSetup.peakHoldUntil) {
-      this.audioSetup.peakDb = Math.max(peakDb, this.audioSetup.peakDb - METER_PEAK_DECAY_DB_PER_FRAME);
-    }
-
-    const rmsPct = AudioEngine.dbToMeterPercent(rmsDb, METER_FLOOR_DB);
-    const peakPct = AudioEngine.dbToMeterPercent(this.audioSetup.peakDb, METER_FLOOR_DB);
-    const isClipping = this.audioSetup.peakDb >= METER_RED_DB;
-
-    if (this.levelMeterMask) {
-      this.levelMeterMask.style.width = `${(100 - rmsPct).toFixed(1)}%`;
-    }
-    if (this.levelMeterPeakTick) {
-      if (peakPct > 0.1) {
-        this.levelMeterPeakTick.style.display = 'block';
-        this.levelMeterPeakTick.style.left = `${peakPct.toFixed(1)}%`;
-      } else {
-        this.levelMeterPeakTick.style.display = 'none';
-      }
-      this.levelMeterPeakTick.classList.toggle('is-clipping', isClipping);
-    }
-    if (this.levelMeterRms) {
-      this.levelMeterRms.innerText = `${formatDbFS(rmsDb)} dBFS`;
-    }
-    if (this.levelMeterPeakReadout) {
-      this.levelMeterPeakReadout.innerText = `PK ${formatDbFS(this.audioSetup.peakDb)}`;
-      this.levelMeterPeakReadout.classList.toggle('is-clipping', isClipping);
-    }
-    if (this.levelMeterLamp) {
-      this.levelMeterLamp.classList.toggle('is-clipping', isClipping);
-      this.levelMeterLamp.classList.toggle('is-live', !isClipping);
-    }
-    if (this.levelMeterTrack) {
-      const shown = Math.max(METER_FLOOR_DB, Math.min(0, isFinite(rmsDb) ? rmsDb : METER_FLOOR_DB));
-      this.levelMeterTrack.setAttribute('aria-valuenow', shown.toFixed(1));
-      this.levelMeterTrack.setAttribute('aria-valuetext', `${formatDbFS(rmsDb)} dBFS`);
-    }
-
-    if (isClipping) {
-      this.setMeterHint('Too hot — back off the mic or lower your input gain to keep peaks under -3 dBFS.', true);
-    } else if (this.audioSetup.peakDb > METER_AMBER_DB) {
-      this.setMeterHint('Good, strong level. Peaks are sitting in the hot amber zone.', false);
-    }
-  }
-
-  // --- Export Folder Setting (GET/POST /api/config -> exports_dir) ---
-
-  /**
-   * Reads (and remembers) the folder the backend renders into.
-   *
-   * The render always went to the "Render & Export Folder" from settings, but no
-   * screen ever named it, so the setting looked like it was being ignored.
-   * Cached because the export modal asks for it on every successful render;
-   * saveExportsDir() refreshes the cache when the user changes it.
-   */
-  async fetchExportsDir() {
-    if (typeof this.exportsDirCache === 'string') return this.exportsDirCache;
-    try {
-      const res = await fetch('/api/config');
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (!data || typeof data.exports_dir !== 'string' || !data.exports_dir) return null;
-      this.exportsDirCache = data.exports_dir;
-      return this.exportsDirCache;
-    } catch (err) {
-      console.warn('[DubMate] Could not read exports_dir from /api/config:', err);
-      return null;
-    }
-  }
-
-  /**
-   * Names the folder the finished render was written to, in the export modal.
-   * Stays hidden rather than guessing if the backend does not report a folder.
-   */
-  async showExportSavedPath() {
-    if (!this.exportSavedPath) return;
-    const dir = await this.fetchExportsDir();
-    if (!dir) {
-      this.exportSavedPath.classList.remove('is-visible');
-      return;
-    }
-    this.exportSavedPath.innerText = `Saved to ${dir}`;
-    // The line is clamped to two lines, so hover/screen readers get the whole path.
-    this.exportSavedPath.title = dir;
-    this.exportSavedPath.classList.add('is-visible');
-  }
-
-  async loadExportsDirSetting() {
-    if (!this.audioExportsRow) return;
-    // Stay hidden unless the running backend actually reports the key; the
-    // server-side half of this feature may ship after this UI does.
-    this.audioExportsRow.style.display = 'none';
-    try {
-      const res = await fetch('/api/config');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data || typeof data !== 'object') return;
-      if (!Object.prototype.hasOwnProperty.call(data, 'exports_dir')) return;
-
-      this.audioExportsRow.style.display = 'block';
-      if (typeof data.exports_dir === 'string' && data.exports_dir) {
-        this.exportsDirCache = data.exports_dir;
-      }
-      if (this.inputExportsDir) {
-        this.inputExportsDir.value = typeof data.exports_dir === 'string' ? data.exports_dir : '';
-      }
-    } catch (err) {
-      console.warn('[DubMate] Could not read exports_dir from /api/config:', err);
-    }
-  }
-
-  async saveExportsDir() {
-    const raw = this.inputExportsDir ? this.inputExportsDir.value.trim() : '';
-    if (!raw) {
-      this.setExportsFeedback('Enter a folder path first.', false);
-      return;
-    }
-
-    if (this.btnSaveExportsDir) this.btnSaveExportsDir.disabled = true;
-    if (this.btnSaveExportsDirText) this.btnSaveExportsDirText.innerText = 'Saving…';
-
-    try {
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exports_dir: raw }),
-      });
-      let data = {};
-      try { data = await res.json(); } catch (e) { data = {}; }
-
-      if (!res.ok) {
-        throw new Error(data.detail || data.message || `HTTP ${res.status}`);
-      }
-      if (typeof data.exports_dir === 'string' && data.exports_dir) {
-        // The backend may normalise the path it was given, so trust its answer.
-        this.exportsDirCache = data.exports_dir;
-        if (this.inputExportsDir) this.inputExportsDir.value = data.exports_dir;
-      }
-      this.setExportsFeedback('✅ Export folder saved.', true);
-      this.showToast('📁 Export folder updated.');
-    } catch (err) {
-      let msg = (err && err.message) || 'Unknown error';
-      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        msg = 'Could not reach the local DubMate engine. Make sure the server is running.';
-      }
-      this.setExportsFeedback(`❌ ${msg}`, false);
-    } finally {
-      if (this.btnSaveExportsDir) this.btnSaveExportsDir.disabled = false;
-      if (this.btnSaveExportsDirText) this.btnSaveExportsDirText.innerText = 'Save';
-    }
-  }
-
-  setExportsFeedback(message, isSuccess) {
-    if (!this.exportsDirFeedback) return;
-    if (!message) {
-      this.exportsDirFeedback.style.display = 'none';
-      this.exportsDirFeedback.innerText = '';
-      return;
-    }
-    this.exportsDirFeedback.style.display = 'block';
-    this.exportsDirFeedback.className =
-      isSuccess ? 'audio-inline-feedback is-success' : 'audio-inline-feedback is-error';
-    this.exportsDirFeedback.innerText = message;
-  }
-
-  // Guard used by the record and calibration paths so the browser permission
-  // prompt is never the first thing a user sees.
-  async ensureMicReady() {
-    if (this.audioSetup.permission === 'granted' || this.audioSetup.setupComplete) return true;
-
-    let state = 'unknown';
-    try {
-      state = await this.audio.getMicPermissionState();
-    } catch (e) { }
-
-    if (state === 'granted') {
-      const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-      this.audioSetup.permission = 'granted';
-      this.audioSetup.setupComplete = true;
-      safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
-      this.updateAudioSettingsAffordance();
-      return true;
-    }
-
-    this.showToast('Set up your microphone before recording.');
-    this.openAudioSettings({ firstRun: true });
-    return false;
-  }
-
   async rescanPacksDirectory(silent = false) {
     if (this.isRescanningPacks) return;
     this.isRescanningPacks = true;
@@ -2724,18 +1803,11 @@ class DubMateApp {
     }
 
     try {
-      let dataPacks = [];
       const res = await fetch('/api/packs/rescan?t=' + Date.now(), { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        dataPacks = data.packs || [];
-      } else {
-        const resGet = await fetch('/api/packs?rescan=true&t=' + Date.now());
-        if (!resGet.ok) throw new Error(`HTTP ${resGet.status}`);
-        dataPacks = await resGet.json();
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
 
-      this.packs = dataPacks;
+      this.packs = data.packs || [];
       console.log(`[DubMate] Rescan complete. Loaded ${this.packs.length} packs.`);
       this.renderPacks();
       const count = (this.packs || []).length;
@@ -2913,7 +1985,7 @@ class DubMateApp {
 
     if (!filteredPacks.length) {
       this.selectedPackId = null;
-      const safeQuery = query.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const safeQuery = escapeHtml(query);
       this.packGrid.innerHTML = `
         <div class="empty-search-state glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
           <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
@@ -3048,7 +2120,6 @@ class DubMateApp {
           pack_id: this.selectedPackId,
           host_name: this.user.name,
           host_color: this.user.color,
-          app_version: window.__dubmate_app_version || '1.0.0',
         }),
       });
       const data = await res.json();
@@ -3069,63 +2140,17 @@ class DubMateApp {
   }
 
   initModeDropdown() {
-    const container = document.getElementById('logo-dropdown-container');
-    const btnDropdown = document.getElementById('btn-mode-dropdown');
-    const menu = document.getElementById('mode-dropdown-menu');
-    const optStudio = document.getElementById('mode-opt-studio');
-    if (!container || !btnDropdown || !menu) return;
-
-    const toggleMenu = (show) => {
-      const isCurrentlyOpen = container.classList.contains('open');
-      const target = (typeof show === 'boolean') ? show : !isCurrentlyOpen;
-      if (target) {
-        container.classList.add('open');
-        menu.style.display = 'flex';
-        btnDropdown.setAttribute('aria-expanded', 'true');
-      } else {
-        container.classList.remove('open');
-        menu.style.display = 'none';
-        btnDropdown.setAttribute('aria-expanded', 'false');
-      }
-    };
-
-    btnDropdown.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleMenu();
-    });
-
-    btnDropdown.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        toggleMenu(true);
-      }
-    });
-
-    if (optStudio) {
-      optStudio.addEventListener('click', (e) => {
+    initModeDropdown({
+      onStudioClick: (e, closeMenu) => {
         if (this.roomState) {
           e.preventDefault();
-          if (confirm('Leave current dubbing session and return to scenes?')) {
-            this.leaveRoom();
-            toggleMenu(false);
+          if (this.confirmLeaveRoom()) {
+            closeMenu();
           }
         } else {
-          toggleMenu(false);
+          closeMenu();
         }
-      });
-    }
-
-    document.addEventListener('click', (e) => {
-      if (!container.contains(e.target)) {
-        toggleMenu(false);
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && container.classList.contains('open')) {
-        toggleMenu(false);
-        btnDropdown.focus();
-      }
+      },
     });
   }
 
@@ -3189,91 +2214,6 @@ class DubMateApp {
     });
   }
 
-  initHostTransferModals() {
-    this.modalHostTransferConfirm = document.getElementById('modal-host-transfer-confirm');
-    this.modalHostTransferOverlay = document.getElementById('modal-host-transfer-overlay');
-    this.modalVersionMismatch = document.getElementById('modal-version-mismatch');
-    this.transferTargetNameSpan = document.getElementById('transfer-target-name');
-    this.btnConfirmTransfer = document.getElementById('btn-confirm-transfer');
-    this.btnCancelTransfer = document.getElementById('btn-cancel-transfer');
-    this.pendingTransferTargetId = null;
-
-    // Delegated click handler on document for "Make Host" buttons
-    document.addEventListener('click', (e) => {
-      const btn = e.target.closest('.btn-hand-off-host');
-      if (btn) {
-        const targetUserId = btn.dataset.userId;
-        const targetUserName = btn.dataset.userName || 'Cast Member';
-        this.openHostTransferConfirmModal(targetUserId, targetUserName);
-      }
-    });
-
-    if (this.btnCancelTransfer) {
-      this.btnCancelTransfer.addEventListener('click', () => {
-        this.closeHostTransferConfirmModal();
-      });
-    }
-
-    if (this.btnConfirmTransfer) {
-      this.btnConfirmTransfer.addEventListener('click', () => {
-        if (this.pendingTransferTargetId) {
-          this.socket.initiateTransfer(this.pendingTransferTargetId);
-          this.closeHostTransferConfirmModal();
-          this.showHostTransferOverlay('Transferring host role and migrating session...');
-        }
-      });
-    }
-
-    if (this.modalHostTransferConfirm) {
-      this.modalHostTransferConfirm.addEventListener('click', (e) => {
-        if (e.target === this.modalHostTransferConfirm) {
-          this.closeHostTransferConfirmModal();
-        }
-      });
-    }
-  }
-
-  openHostTransferConfirmModal(targetUserId, targetUserName) {
-    this.pendingTransferTargetId = targetUserId;
-    if (this.transferTargetNameSpan) {
-      this.transferTargetNameSpan.innerText = targetUserName;
-    }
-    if (this.modalHostTransferConfirm) {
-      this.modalHostTransferConfirm.style.display = 'flex';
-    }
-  }
-
-  closeHostTransferConfirmModal() {
-    this.pendingTransferTargetId = null;
-    if (this.modalHostTransferConfirm) {
-      this.modalHostTransferConfirm.style.display = 'none';
-    }
-  }
-
-  showHostTransferOverlay(msg) {
-    if (this.modalHostTransferOverlay) {
-      const desc = document.getElementById('transfer-overlay-desc');
-      if (desc && msg) desc.innerText = msg;
-      this.modalHostTransferOverlay.style.display = 'flex';
-    }
-  }
-
-  hideHostTransferOverlay() {
-    if (this.modalHostTransferOverlay) {
-      this.modalHostTransferOverlay.style.display = 'none';
-    }
-  }
-
-  showVersionMismatchModal(required, yours) {
-    if (this.modalVersionMismatch) {
-      const elReq = document.getElementById('version-mismatch-required');
-      const elYours = document.getElementById('version-mismatch-yours');
-      if (elReq) elReq.innerText = `v${required}`;
-      if (elYours) elYours.innerText = `v${yours}`;
-      this.modalVersionMismatch.style.display = 'flex';
-    }
-  }
-
   promptJoinRoom(roomId) {
     const cleanCode = (roomId || '').trim().toUpperCase();
     if (!cleanCode) {
@@ -3333,10 +2273,10 @@ class DubMateApp {
       this.modalJoinRoom.style.display = 'none';
     }
     this.pendingJoinRoomId = null;
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('room')) {
-      url.searchParams.delete('room');
-      window.history.pushState({}, '', url.pathname);
+    if (new URL(window.location.href).searchParams.has('room')) {
+      this.clearRoomQueryParam();
+      // Declined a host's room: don't stay behind on the host's home screen.
+      this.goHome();
     }
   }
 
@@ -3350,21 +2290,27 @@ class DubMateApp {
   }
 
   async joinRoom(roomId) {
+    this.resetRoomSession();
     const cleanCode = (roomId || '').trim().toUpperCase();
     try {
       let res = await fetch(`/api/rooms/${cleanCode}`);
       if (!res.ok) {
         // If room is not hosted on this local instance, resolve via dubmate.bkaproductions.com
         try {
-          const resolveResp = await fetch(`https://dubmate.bkaproductions.com/rooms/${encodeURIComponent(cleanCode)}/resolve`, {
+          const resolveResp = await fetch(`${REGISTRY_BASE}/rooms/${encodeURIComponent(cleanCode)}/resolve`, {
             headers: { 'Accept': 'application/json' }
           });
           if (resolveResp.ok) {
             const data = await resolveResp.json();
             if (data && data.tunnel_url) {
+              // Navigate to host's tunnel room session, carrying the member's own
+              // engine along so leaving the room can come back to it.
+              const target = new URL(data.tunnel_url);
+              target.searchParams.set('room', cleanCode);
+              const home = getHomeOrigin();
+              if (home) target.searchParams.set('home', home);
               this.showToast(`Connecting to host for room ${cleanCode}... 🚀`);
-              // Navigate to host's tunnel room session
-              window.location.href = `${data.tunnel_url}?room=${encodeURIComponent(cleanCode)}`;
+              this.navigateTo(target.toString());
               return;
             }
           }
@@ -3373,9 +2319,7 @@ class DubMateApp {
         }
 
         // Strip stale room parameter so user is returned cleanly to scene explorer
-        const url = new URL(window.location.href);
-        url.searchParams.delete('room');
-        window.history.pushState({}, '', url.pathname);
+        this.clearRoomQueryParam();
 
         this.showToast(`Room '${cleanCode}' not found or expired.`);
         this.showView('landing');
@@ -3414,9 +2358,7 @@ class DubMateApp {
         this.broadcastMyStatus('lobby');
       }
     } catch (err) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('room');
-      window.history.pushState({}, '', url.pathname);
+      this.clearRoomQueryParam();
       this.showToast(this.friendlyError(err, "Couldn't join that room. Please try again."));
       this.showView('landing');
     }
@@ -3452,7 +2394,7 @@ class DubMateApp {
 
   launchGroupPremiere() {
     if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id);
+    const isHost = this.isHost();
     if (!isHost) {
       this.showToast("Only the Room Host can launch the Group Premiere");
       return;
@@ -3473,7 +2415,7 @@ class DubMateApp {
   renderCastActivityHUD() {
     if (!this.roomState || !this.castActivityList) return;
     const users = Object.values(this.roomState.users || {}).filter(u => u.is_online);
-    const isHost = (this.user.id === this.roomState.host_id);
+    const isHost = this.isHost();
 
     let readyCount = 0;
     this.castActivityList.innerHTML = '';
@@ -3551,7 +2493,6 @@ class DubMateApp {
     const userSummary = users.map(u => `${u.id}:${u.name}:${u.is_online}:${u.color}`).join('|');
     if (this._lastUserSummary !== userSummary) {
       this._lastUserSummary = userSummary;
-      const amIHost = (this.roomState.host_id === this.user.id);
       if (this.lobbyCastList) {
         this.lobbyCastList.innerHTML = users.map(u => `
           <div class="user-pill lobby-user-item" style="justify-content: space-between;">
@@ -3560,11 +2501,6 @@ class DubMateApp {
               <span class="lobby-user-name">${escapeHtml(u.name)} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''} ${u.id === this.roomState.host_id ? '<span class="user-you-tag" style="color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.1);">Host</span>' : ''}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              ${(amIHost && u.id !== this.user.id && u.is_online) ? `
-                <button class="btn btn-xs btn-outline-amber btn-hand-off-host" data-user-id="${escapeHtml(u.id)}" data-user-name="${escapeHtml(u.name)}" title="Hand off host designation to ${escapeHtml(u.name)}" style="font-size: 10.5px; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; background: rgba(245, 158, 11, 0.08); cursor: pointer;">
-                  👑 Make Host
-                </button>
-              ` : ''}
               <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
                 <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
                 <span>${u.is_online ? 'Online' : 'Offline'}</span>
@@ -3582,9 +2518,6 @@ class DubMateApp {
       charCounts[l.character] = (charCounts[l.character] || 0) + 1;
     });
 
-    const userOptionsHtml = `<option value="">-- Unassigned (Original Voice) --</option>` +
-      users.map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.name)} ${u.id === this.user.id ? '(You)' : ''}</option>`).join('');
-
     const usersChanged = (this._lastUserOptionsSummary !== userSummary);
     this._lastUserOptionsSummary = userSummary;
 
@@ -3593,7 +2526,6 @@ class DubMateApp {
     if (existingRows.length === this.roomState.pack.characters.length && !usersChanged) {
       // IN-PLACE UPDATE: Do not recreate DOM elements to avoid closing active <select> dropdowns
       this.roomState.pack.characters.forEach((char) => {
-        const safeCharId = char.replace(/\s+/g, '-').toLowerCase();
         const tr = this.castingTbody.querySelector(`tr[data-character="${char}"]`);
         if (!tr) return;
 
@@ -3689,6 +2621,51 @@ class DubMateApp {
     });
   }
 
+  /**
+   * Strict by default: only the real host. allowDummy also accepts the legacy
+   * 'host' placeholder id that rooms restored from disk can carry.
+   */
+  isHost({ allowDummy = false } = {}) {
+    const hostId = this.roomState?.host_id;
+    return this.user.id === hostId || (allowDummy && hostId === 'host');
+  }
+
+  /**
+   * True when this page is served by an engine on this same computer (the desktop
+   * app's loopback origin), so renders already land in this user's export folder.
+   * False for anyone reaching the engine through a tunnel or LAN address.
+   */
+  isEngineLocal() {
+    return isLoopbackOrigin(window.location.origin);
+  }
+
+  /** Your assigned character, or any line when nobody is cast and you host. */
+  canRecordLine(line) {
+    const myAssignedChars = this.getMyAssignedCharacters();
+    return !line || myAssignedChars.includes(line.character)
+      || (myAssignedChars.length === 0 && this.isHost({ allowDummy: true }));
+  }
+
+  /** Reference + take waveforms for a line, padded past the line's end. */
+  setWaveformForLine(line, take, origPeaks, takePeaks) {
+    this.waveform.setData({
+      origPeaks,
+      takePeaks,
+      offsetMs: take ? (take.offset_ms || 0) : 0,
+      totalDuration: (line.duration || 3.0) + 0.8,
+    });
+  }
+
+  /** "Matched" vs "Scene Target" badge for the take's auto-gain against gainDb. */
+  renderGainMatchBadge(take, gainDb) {
+    if (!this.badgeGainMatch) return;
+    const matchVal = parseFloat(take.auto_gain_db);
+    const label = `${matchVal >= 0 ? '+' : ''}${matchVal} dB`;
+    const isMatched = Math.abs(gainDb - matchVal) < 0.1;
+    this.badgeGainMatch.innerText = isMatched ? `✓ ${label} (Matched)` : `${label} (Scene Target)`;
+    this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+  }
+
   getMyAssignedCharacters() {
     if (!this.roomState) return [];
     return Object.keys(this.roomState.role_assignments || {}).filter((char) => {
@@ -3711,6 +2688,11 @@ class DubMateApp {
       clearTimeout(this.recordingTimeout);
       this.recordingTimeout = null;
     }
+    // An abandoned take must still stop the recorder and release the mic;
+    // stopAllPlayback() no longer does that while a recording is running.
+    if (this.audio && this.audio.isRecording) {
+      this.audio.stopRecording().catch(() => { });
+    }
     this.recordState = 'idle';
     if (this.videoOverlay) {
       this.videoOverlay.classList.add('hidden');
@@ -3722,12 +2704,20 @@ class DubMateApp {
     this.updateRecordButtonUI();
   }
 
+  // The cache is keyed by the pack's backing_url so a buffer from a previous
+  // room's scene is never reused, and a load that finishes after the user has
+  // left (or switched scenes) is dropped instead of being cached.
   async ensureBackingBuffer() {
-    if (this.backingBuffer) return this.backingBuffer;
-    if (!this.roomState?.pack?.backing_url) return null;
+    const url = this.roomState?.pack?.backing_url;
+    if (!url) return null;
+    if (this.backingBuffer && this.backingBufferUrl === url) return this.backingBuffer;
+    let buf = null;
     try {
-      this.backingBuffer = await this.audio.loadAudioBuffer(this.roomState.pack.backing_url);
+      buf = await this.audio.loadAudioBuffer(url);
     } catch (e) { }
+    if (this.roomState?.pack?.backing_url !== url) return null;
+    this.backingBuffer = buf || null;
+    this.backingBufferUrl = buf ? url : null;
     return this.backingBuffer;
   }
 
@@ -3759,8 +2749,7 @@ class DubMateApp {
 
     // Calculate your line numbering (e.g. Line 3 of 6)
     const myAssignedChars = this.getMyAssignedCharacters();
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    const isMyLine = myAssignedChars.includes(line.character) || (myAssignedChars.length === 0 && isHost);
+    const isMyLine = this.canRecordLine(line);
     const myAssignedLines = this.roomState.pack.lines.filter(l => myAssignedChars.includes(l.character));
     const myLinePos = myAssignedLines.findIndex(l => l.index === index) + 1;
 
@@ -3789,11 +2778,7 @@ class DubMateApp {
         if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'inline-flex';
         if (this.badgeGainMatch) {
           this.badgeGainMatch.style.display = 'inline-block';
-          const matchVal = parseFloat(take.auto_gain_db);
-          const currentGain = parseFloat(this.sliderGain.value) || 0;
-          const isMatched = Math.abs(currentGain - matchVal) < 0.1;
-          this.badgeGainMatch.innerText = isMatched ? `✓ ${matchVal >= 0 ? '+' : ''}${matchVal} dB (Matched)` : `${matchVal >= 0 ? '+' : ''}${matchVal} dB (Scene Target)`;
-          this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+          this.renderGainMatchBadge(take, parseFloat(this.sliderGain.value) || 0);
           this.badgeGainMatch.title = `Take Speech Loudness: ${take.speech_loudness_db || '-'} dBFS (Scene Target: ${take.target_loudness_db || '-'} dBFS)`;
         }
       } else {
@@ -3850,12 +2835,7 @@ class DubMateApp {
       }
     }
 
-    this.waveform.setData({
-      origPeaks,
-      takePeaks,
-      offsetMs: take ? (take.offset_ms || 0) : 0,
-      totalDuration: (line.duration || 3.0) + 0.8,
-    });
+    this.setWaveformForLine(line, take, origPeaks, takePeaks);
 
     this.renderTimelineChips();
 
@@ -3870,12 +2850,7 @@ class DubMateApp {
         this.origBuffer = origBuf;
         if ((!origPeaks || origPeaks.length === 0) && origBuf) {
           origPeaks = WaveformRenderer.extractPeaksFromBuffer(origBuf, 100);
-          this.waveform.setData({
-            origPeaks,
-            takePeaks,
-            offsetMs: take ? (take.offset_ms || 0) : 0,
-            totalDuration: (line.duration || 3.0) + 0.8,
-          });
+          this.setWaveformForLine(line, take, origPeaks, takePeaks);
         }
       } catch (e) {
         console.warn("[App] Error loading reference audio:", e);
@@ -3893,12 +2868,7 @@ class DubMateApp {
             if (this.roomState?.takes?.[index]) {
               this.roomState.takes[index].peaks = takePeaks;
             }
-            this.waveform.setData({
-              origPeaks,
-              takePeaks,
-              offsetMs: take.offset_ms || 0,
-              totalDuration: (line.duration || 3.0) + 0.8,
-            });
+            this.setWaveformForLine(line, take, origPeaks, takePeaks);
           }
         } catch (e) {
           console.warn("[App] Error loading take audio:", e);
@@ -3964,10 +2934,8 @@ class DubMateApp {
       take = this.roomState?.takes?.[this.currentLineIndex];
     }
 
-    const myAssignedChars = this.getMyAssignedCharacters();
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    const isHost = (this.user.id === this.roomState?.host_id) || (this.roomState?.host_id === 'host');
-    const isMyLine = !line || myAssignedChars.includes(line.character) || (myAssignedChars.length === 0 && isHost);
+    const isMyLine = this.canRecordLine(line);
 
     if (!isMyLine) {
       this.btnRecordMain.className = 'btn-big-record locked';
@@ -4183,7 +3151,6 @@ class DubMateApp {
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
     const lowcut = this.checkLowcut.checked;
-    const comp = this.checkCompressor.checked;
 
     const startAudioTime = performance.now();
     const previewDurationSec = Math.max(line.duration || 3.0, (this.currentTakeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
@@ -4211,7 +3178,6 @@ class DubMateApp {
       reverbWet: reverb,
       gainDb: gain,
       enableLowCut: lowcut,
-      enableCompressor: comp,
       onEnded: () => {
         if (token === this.activePlaybackToken) {
           this.isPlayingTake = false;
@@ -4230,9 +3196,9 @@ class DubMateApp {
   setABMode(state) {
     this.audio.setABState(state);
     if (state === 'A') {
-      this.labelABState.innerHTML = `<span style="color: var(--primary); font-weight: 700;">[ A: Your Dub ]</span> <span style="color: var(--text-dim);">⇄ B: Orig</span>`;
+      this.labelABState.innerHTML = `<span style="color: var(--primary); font-weight: 700;">[ A: Your Dub ]</span> <span style="color: var(--foreground-dim);">⇄ B: Orig</span>`;
     } else {
-      this.labelABState.innerHTML = `<span style="color: var(--text-dim);">A: Dub ⇄</span> <span style="color: var(--accent-brass); font-weight: 700;">[ B: Original ]</span>`;
+      this.labelABState.innerHTML = `<span style="color: var(--foreground-dim);">A: Dub ⇄</span> <span style="color: var(--accent-brass); font-weight: 700;">[ B: Original ]</span>`;
     }
   }
 
@@ -4490,24 +3456,24 @@ class DubMateApp {
         let origPeaks = line.peaks || [];
         let takePeaks = take ? (take.peaks || []) : [];
 
-        this.waveform.setData({
-          origPeaks,
-          takePeaks,
-          offsetMs: take ? (take.offset_ms || 0) : 0,
-          totalDuration: (line.duration || 3.0) + 0.8,
-        });
+        this.setWaveformForLine(line, take, origPeaks, takePeaks);
+
+        // The server re-matches gain for the swapped audio; show the take's new level.
+        if (take) {
+          const gainDb = parseFloat(take.gain_db) || 0;
+          this.sliderGain.value = gainDb;
+          this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
+          this.audio.setGain(gainDb);
+          this.updateKnobsVisuals();
+          if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
+        }
 
         if (take && take.url) {
           const newBuf = await this.audio.loadAudioBuffer(take.url, true);
           this.currentTakeBuffer = newBuf;
           if (newBuf && (!takePeaks || takePeaks.length === 0)) {
             takePeaks = WaveformRenderer.extractPeaksFromBuffer(newBuf, 100);
-            this.waveform.setData({
-              origPeaks,
-              takePeaks,
-              offsetMs: take.offset_ms || 0,
-              totalDuration: (line.duration || 3.0) + 0.8,
-            });
+            this.setWaveformForLine(line, take, origPeaks, takePeaks);
           }
         }
       }
@@ -4521,10 +3487,8 @@ class DubMateApp {
 
   async toggleRecording() {
     if (!this.roomState) return;
-    const myAssignedChars = this.getMyAssignedCharacters();
     const line = this.roomState.pack.lines[this.currentLineIndex];
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    const isMyLine = !line || myAssignedChars.includes(line.character) || (myAssignedChars.length === 0 && isHost);
+    const isMyLine = this.canRecordLine(line);
     if (!isMyLine) {
       this.showToast(`🔒 Line ${this.currentLineIndex + 1} is assigned to ${line.character}. You cannot record over it.`);
       return;
@@ -4744,8 +3708,8 @@ class DubMateApp {
       return;
     }
 
-    this.currentTakeBlob = res.blob;
-    await this.uploadTake(this.currentLineIndex, this.currentTakeBlob, res.audioBuffer);
+    const currentTakeBlob = res.blob;
+    await this.uploadTake(this.currentLineIndex, currentTakeBlob, res.audioBuffer);
   }
 
   async uploadTake(lineIndex, blob, recordedBuffer = null) {
@@ -4753,6 +3717,11 @@ class DubMateApp {
     const pitch = parseFloat(this.sliderPitch.value);
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
+    // Ask the server to apply this take's scene-matched gain unless the slider was moved
+    // off 0 / off the previous take's auto gain (the slider still shows that take's level).
+    const prevTake = this.roomState?.takes?.[lineIndex];
+    const prevAuto = prevTake ? parseFloat(prevTake.auto_gain_db) : NaN;
+    const autoGain = gain === 0 || (!Number.isNaN(prevAuto) && Math.abs(gain - prevAuto) < 0.05);
 
     const formData = new FormData();
     formData.append('file', blob, `take_${lineIndex}.webm`);
@@ -4763,6 +3732,7 @@ class DubMateApp {
     formData.append('reverb_wet', reverb);
     formData.append('gain_db', gain);
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
+    formData.append('auto_gain', autoGain ? 'true' : 'false');
 
     try {
       const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}`, {
@@ -4776,14 +3746,6 @@ class DubMateApp {
       if (data.take) {
         if (!this.roomState.takes) this.roomState.takes = {};
         this.roomState.takes[lineIndex] = data.take;
-        // If gain wasn't manually altered away from 0, auto-apply the calculated scene gain
-        if (gain === 0 && data.take.auto_gain_db !== undefined && data.take.auto_gain_db !== 0) {
-          data.take.gain_db = data.take.auto_gain_db;
-          this.sliderGain.value = data.take.auto_gain_db;
-          this.valGain.innerText = (data.take.auto_gain_db > 0 ? '+' : '') + data.take.auto_gain_db + ' dB';
-          this.audio.setGain(data.take.auto_gain_db);
-          this.syncTakeParams();
-        }
       }
       this.audio.evictTakeCache(lineIndex);
       if (recordedBuffer) {
@@ -4842,7 +3804,7 @@ class DubMateApp {
       this.showToast("🎉 You're marked Ready for the Premiere! 🍿");
     }
 
-    const isHost = (this.user.id === this.roomState?.host_id) || (this.roomState?.host_id === 'host');
+    const isHost = this.isHost({ allowDummy: true });
     if (isHost) {
       const users = Object.values(this.roomState?.users || {}).filter(u => u.is_online);
       const readyCount = users.filter(u => u.is_ready).length;
@@ -4866,938 +3828,15 @@ class DubMateApp {
       this.loadBoothLine(this.currentLineIndex);
     }
   }
-
-  // --- Finale Screening & Host Sync Logic ---
-
-  async setupScreeningView() {
-    if (!this.roomState) return;
-
-    const presenceVal = parseFloat(this.roomState.master_dialogue_presence_db ?? 0.0);
-    this.masterDialoguePresence = presenceVal;
-    if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = presenceVal;
-    if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (presenceVal === 0) ? '0.0 dB (Scene Default)' : ((presenceVal > 0 ? '+' : '') + presenceVal.toFixed(1) + ' dB');
-    }
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      const btnVal = parseFloat(btn.dataset.presence || '0');
-      btn.classList.toggle('active', Math.abs(btnVal - presenceVal) < 0.1);
-    });
-
-    if (this.roomState.has_export && (this.roomState.export_video_url || this.roomState.download_url)) {
-      this.applyExportedVideoToTheater();
-    } else {
-      this.applyLiveMixToTheater();
-    }
-
-    this.updateScreeningControls();
-
-    // Preload screening audio in parallel non-blocking queue
-    this.preloadScreeningAudio();
-  }
-
-  applyExportedVideoToTheater(directUrl = null) {
-    if (!this.roomState || !this.screeningVideo) return;
-    this.isUsingExportedVideo = true;
-    this.audio.stopAllPlayback();
-    this.stopScreeningSyncMonitor();
-
-    const videoUrl = directUrl || this.roomState.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-    if (!this.screeningVideo.src.endsWith(videoUrl) && this.screeningVideo.getAttribute('src') !== videoUrl) {
-      this.screeningVideo.src = videoUrl;
-    }
-    try {
-      if (this.screeningVideo.readyState >= 1) {
-        this.screeningVideo.currentTime = 0;
-      } else {
-        this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) { }
-        }, { once: true });
-      }
-    } catch (e) { }
-
-    this.screeningVideo.muted = false;
-    this.screeningVideo.volume = 1.0;
-
-    if (this.screeningMasterBadge) {
-      this.screeningMasterBadge.style.display = 'inline-flex';
-    }
-    if (this.screeningPlayIcon) {
-      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play Dub' : '⏸ Pause Dub';
-    }
-  }
-
-  applyLiveMixToTheater() {
-    if (!this.roomState || !this.screeningVideo) return;
-    this.isUsingExportedVideo = false;
-    this.audio.stopAllPlayback();
-    this.stopScreeningSyncMonitor();
-
-    const packVideoUrl = this.roomState.pack.video_url;
-    if (!this.screeningVideo.src.endsWith(packVideoUrl) && this.screeningVideo.getAttribute('src') !== packVideoUrl) {
-      this.screeningVideo.src = packVideoUrl;
-    }
-    try {
-      if (this.screeningVideo.readyState >= 1) {
-        this.screeningVideo.currentTime = 0;
-      } else {
-        this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) { }
-        }, { once: true });
-      }
-    } catch (e) { }
-
-    this.screeningVideo.muted = true;
-    this.screeningVideo.volume = 0;
-
-    if (this.screeningMasterBadge) {
-      this.screeningMasterBadge.style.display = 'none';
-    }
-    if (this.screeningPlayIcon) {
-      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play Dub' : '⏸ Pause Dub';
-    }
-  }
-
-  isScreeningBuffersReady() {
-    if (!this.roomState) return true;
-    if (this.roomState.pack.backing_url && !this.screeningBuffers.has(this.roomState.pack.backing_url)) {
-      return false;
-    }
-    for (const line of this.roomState.pack.lines) {
-      const take = this.roomState.takes[line.index];
-      const targetUrl = (take && take.url) ? take.url : line.audio_url;
-      if (targetUrl && !this.screeningBuffers.has(targetUrl)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  async preloadScreeningAudio() {
-    if (!this.roomState || this.isPreloadingScreening) return;
-    this.isPreloadingScreening = true;
-
-    try {
-      const loadTasks = [];
-
-      // 1. Backing track in parallel
-      if (this.roomState.pack.backing_url && !this.screeningBuffers.has(this.roomState.pack.backing_url)) {
-        loadTasks.push(
-          this.audio.loadAudioBuffer(this.roomState.pack.backing_url)
-            .then(b => {
-              if (b) this.screeningBuffers.set(this.roomState.pack.backing_url, b);
-            })
-            .catch(() => { })
-        );
-      }
-
-      // 2. Dialogue lines & takes in parallel
-      for (const line of this.roomState.pack.lines) {
-        const take = this.roomState.takes[line.index];
-        if (take && take.url) {
-          if (!this.screeningBuffers.has(take.url)) {
-            loadTasks.push(
-              this.audio.loadAudioBuffer(take.url)
-                .then(b => {
-                  if (b) {
-                    this.screeningBuffers.set(take.url, b);
-                    // Pre-cache pitch-shifted buffer in background for 0ms instant playback
-                    if (Math.abs(take.pitch_semitones || 0) > 0.05) {
-                      try { this.audio.pitchShiftBuffer(b, take.pitch_semitones); } catch (e) { }
-                    }
-                  }
-                })
-                .catch(() => { })
-            );
-          }
-        } else if (line.audio_url && !this.screeningBuffers.has(line.audio_url)) {
-          loadTasks.push(
-            this.audio.loadAudioBuffer(line.audio_url)
-              .then(b => {
-                if (b) this.screeningBuffers.set(line.audio_url, b);
-              })
-              .catch(() => { })
-          );
-        }
-      }
-
-      await Promise.allSettled(loadTasks);
-    } catch (e) {
-      console.warn("Screening preloading warning:", e);
-    } finally {
-      this.isPreloadingScreening = false;
-    }
-  }
-
-  setScreeningBalance(val) {
-    this.screeningBalance = Math.max(0, Math.min(100, val));
-    if (this.valScreeningBalance) {
-      if (this.screeningBalance === 50) {
-        this.valScreeningBalance.innerText = 'Balanced (50/50)';
-      } else if (this.screeningBalance < 50) {
-        const musicBoost = (50 - this.screeningBalance) * 2;
-        this.valScreeningBalance.innerText = `Music Heavy (+${musicBoost}%)`;
-      } else {
-        const vocalBoost = (this.screeningBalance - 50) * 2;
-        this.valScreeningBalance.innerText = `Vocals Heavy (+${vocalBoost}%)`;
-      }
-    }
-    if (this.sliderScreeningBalance) {
-      this.sliderScreeningBalance.setAttribute('aria-valuenow', this.screeningBalance);
-      this.sliderScreeningBalance.setAttribute('aria-valuetext', `${this.screeningBalance} percent`);
-    }
-
-    const { backingGain, vocalGain } = this.getScreeningStemGains();
-    if (this.screeningBackingGainNode && this.audio.ctx) {
-      this.screeningBackingGainNode.gain.setValueAtTime(backingGain, this.audio.ctx.currentTime);
-    }
-    if (this.screeningVocalGainNode && this.audio.ctx) {
-      this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
-    }
-  }
-
-  setMasterDialoguePresence(val) {
-    this.masterDialoguePresence = Math.max(-12.0, Math.min(12.0, val));
-    if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (this.masterDialoguePresence === 0)
-        ? '0.0 dB (Scene Default)'
-        : ((this.masterDialoguePresence > 0 ? '+' : '') + this.masterDialoguePresence.toFixed(1) + ' dB');
-    }
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      const btnVal = parseFloat(btn.dataset.presence || '0');
-      btn.classList.toggle('active', Math.abs(btnVal - this.masterDialoguePresence) < 0.1);
-    });
-
-    if (this.screeningVocalGainNode && this.audio?.ctx) {
-      const { vocalGain } = this.getScreeningStemGains();
-      this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
-    }
-
-    // Reset pre-rendered export cache since dialogue presence changed
-    if (this.roomState) {
-      this.roomState.has_export = false;
-      this.roomState.master_dialogue_presence_db = this.masterDialoguePresence;
-      this.isUsingExportedVideo = false;
-      if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
-    }
-
-    if (this.socket) {
-      this.socket.send('set_dialogue_presence', {
-        presence_db: this.masterDialoguePresence
-      });
-    }
-  }
-
-  getScreeningStemGains() {
-    // 0 = Backing Dominant, 50 = Balanced (0.65 backing / 0.95 vocals), 100 = Vocals Dominant
-    const balanceNorm = (this.screeningBalance - 50) / 50.0; // -1.0 to +1.0
-    let backingGain = 0.65;
-    let vocalGain = 0.95;
-
-    if (balanceNorm <= 0) {
-      // Shifting towards backing track
-      backingGain = 0.65 + (-balanceNorm) * 0.35; // 0.65 up to 1.00
-      vocalGain = 0.95 * (1.0 + balanceNorm * 0.80); // 0.95 down to 0.19
-    } else {
-      // Shifting towards vocal dub takes
-      backingGain = 0.65 * (1.0 - balanceNorm * 0.75); // 0.65 down to 0.16
-      vocalGain = 0.95 + balanceNorm * 0.35; // 0.95 up to 1.30
-    }
-
-    const presenceMult = Math.pow(10.0, (this.masterDialoguePresence || 0.0) / 20.0);
-    vocalGain *= presenceMult;
-
-    return { backingGain, vocalGain };
-  }
-
-  updateScreeningControls() {
-    if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    this.screeningHostBadge.style.display = isHost ? 'inline-block' : 'none';
-    this.screeningStatusDesc.innerText = isHost
-      ? "You are the Host. Control playback to sync everyone in the room."
-      : "Watching Live. Host controls playback (or use Space/Replay for local preview).";
-  }
-
-  async handleScreeningPlayPause() {
-    if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    if (!isHost) {
-      // Local preview playback fallback if not host
-      if (this.screeningVideo.paused) {
-        this.startScreeningPlayback(this.screeningVideo.currentTime || 0.0);
-      } else {
-        this.pauseScreeningPlayback();
-      }
-      return;
-    }
-
-    const nextAction = this.screeningVideo.paused ? 'play' : 'pause';
-    this.socket.send('screening_control', {
-      action: nextAction,
-      timestamp: this.screeningVideo.currentTime,
-    });
-  }
-
-  async handleScreeningReplay() {
-    if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    if (!isHost) {
-      this.screeningVideo.currentTime = 0.0;
-      this.startScreeningPlayback(0.0);
-      return;
-    }
-
-    this.socket.send('screening_control', {
-      action: 'seek',
-      timestamp: 0.0,
-    });
-    this.socket.send('screening_control', {
-      action: 'play',
-      timestamp: 0.0,
-    });
-  }
-
-  async handleIncomingScreeningSync(payload) {
-    if (!payload || !this.views.screening.classList.contains('active')) return;
-    const { action, timestamp } = payload;
-
-    if (action === 'seek') {
-      this.screeningVideo.currentTime = timestamp || 0.0;
-      if (!this.screeningVideo.paused) {
-        this.startScreeningPlayback(timestamp || 0.0);
-      }
-    } else if (action === 'play') {
-      this.startScreeningPlayback(timestamp !== undefined ? timestamp : this.screeningVideo.currentTime);
-    } else if (action === 'pause') {
-      this.pauseScreeningPlayback();
-    }
-  }
-
-  async startScreeningPlayback(timestamp = 0.0) {
-    this.stopScreeningSyncMonitor();
-    this.audio.stopAllPlayback();
-
-    this.screeningPlayIcon.innerText = '⏸ Pause Dub';
-
-    if (this.isUsingExportedVideo) {
-      // Using Master Rendered MP4: native embedded audio is 100% in hardware sync
-      this.screeningVideo.muted = false;
-      this.screeningVideo.volume = 1.0;
-      this.screeningVideo.currentTime = timestamp;
-      try {
-        await this.screeningVideo.play();
-      } catch (err) {
-        console.warn("Screening video play error:", err);
-      }
-      return;
-    }
-
-    // Live Web Audio Rehearsal / Preview Mode
-    this.screeningVideo.muted = true;
-    this.screeningVideo.volume = 0;
-    this.audio.initContext();
-
-    // Ensure buffers are preloaded before starting
-    if (!this.isScreeningBuffersReady()) {
-      await this.preloadScreeningAudio();
-    }
-
-    // Set video currentTime to exact timestamp
-    this.screeningVideo.currentTime = timestamp;
-
-    // Schedule audio with minimal lead-time (5ms)
-    const scheduleLead = 0.005;
-    const audioCtxStart = this.audio.ctx.currentTime + scheduleLead;
-
-    this.scheduleScreeningAudioNodes(timestamp, audioCtxStart);
-
-    try {
-      await this.screeningVideo.play();
-    } catch (err) {
-      console.warn("Screening video play error:", err);
-    }
-
-    // Start sync drift monitor loop
-    this.startScreeningSyncMonitor(timestamp, audioCtxStart);
-  }
-
-  pauseScreeningPlayback() {
-    this.stopScreeningSyncMonitor();
-    this.screeningPlayIcon.innerText = '▶ Play Dub';
-    this.screeningVideo.pause();
-    if (!this.isUsingExportedVideo) {
-      this.audio.stopAllPlayback();
-    }
-  }
-
-  startScreeningSyncMonitor(startTime, audioCtxStart) {
-    this.stopScreeningSyncMonitor();
-    this.screeningSyncRafId = null;
-
-    let lastCheckTime = performance.now();
-    const checkSync = () => {
-      if (this.screeningVideo.paused || this.isUsingExportedVideo) {
-        return;
-      }
-
-      const now = performance.now();
-      if (now - lastCheckTime >= 250) {
-        lastCheckTime = now;
-        const elapsedAudio = this.audio.ctx.currentTime - audioCtxStart;
-        if (elapsedAudio > 0) {
-          const expectedVideoTime = startTime + elapsedAudio;
-          const currentVideoTime = this.screeningVideo.currentTime;
-          const drift = currentVideoTime - expectedVideoTime; // positive = video is ahead, negative = video is behind
-
-          // Micro-adjust video playbackRate instead of seeking to eliminate video decoder stalls
-          if (Math.abs(drift) > 0.05 && Math.abs(drift) < 0.35) {
-            if (drift > 0) {
-              this.screeningVideo.playbackRate = 0.96; // Gently slow down video
-            } else {
-              this.screeningVideo.playbackRate = 1.04; // Gently speed up video
-            }
-          } else if (Math.abs(drift) >= 0.35 && !this.screeningVideo.seeking) {
-            // Large drift: perform smooth hard seek
-            try { this.screeningVideo.currentTime = expectedVideoTime; } catch (e) { }
-            this.screeningVideo.playbackRate = 1.0;
-          } else {
-            this.screeningVideo.playbackRate = 1.0;
-          }
-        }
-      }
-
-      this.screeningSyncRafId = requestAnimationFrame(checkSync);
-    };
-
-    this.screeningSyncRafId = requestAnimationFrame(checkSync);
-  }
-
-  stopScreeningSyncMonitor() {
-    if (this.screeningSyncRafId) {
-      cancelAnimationFrame(this.screeningSyncRafId);
-      this.screeningSyncRafId = null;
-    }
-    if (this.screeningVideo) {
-      this.screeningVideo.playbackRate = 1.0;
-    }
-  }
-
-  // Sample-Accurate Lightweight Master Screening Audio Pipeline
-  scheduleScreeningAudioNodes(startTime = 0.0, audioCtxStart = 0.0) {
-    const { backingGain, vocalGain } = this.getScreeningStemGains();
-
-    // 1. Backing track
-    if (this.roomState.pack.backing_url && this.screeningBuffers.has(this.roomState.pack.backing_url)) {
-      const backingBuf = this.screeningBuffers.get(this.roomState.pack.backing_url);
-      const backingSource = this.audio.ctx.createBufferSource();
-      backingSource.buffer = backingBuf;
-      const gainNode = this.audio.ctx.createGain();
-      gainNode.gain.value = backingGain;
-      backingSource.connect(gainNode);
-      gainNode.connect(this.audio.ctx.destination);
-
-      backingSource.start(audioCtxStart, Math.max(0, startTime));
-      this.audio.currentPlayingNodes.push(backingSource);
-      this.screeningBackingGainNode = gainNode;
-    } else {
-      this.screeningBackingGainNode = null;
-    }
-
-    // 2. Shared Master Vocal Mix Bus
-    const masterVocalGain = this.audio.ctx.createGain();
-    masterVocalGain.gain.value = vocalGain;
-    masterVocalGain.connect(this.audio.ctx.destination);
-    this.screeningVocalGainNode = masterVocalGain;
-
-    // 3. Schedule dialogue takes & unassigned original character clips
-    for (const line of this.roomState.pack.lines) {
-      const take = this.roomState.takes[line.index];
-
-      if (take && take.url && this.screeningBuffers.has(take.url)) {
-        const offsetSec = (take.offset_ms || 0) / 1000.0;
-        const linePlayTime = line.start + offsetSec;
-        const rawBuf = this.screeningBuffers.get(take.url);
-        const takeDuration = rawBuf.duration || 3.0;
-
-        // Line is audible if its sound ends after startTime
-        if (linePlayTime + takeDuration > startTime) {
-          const shifted = (Math.abs(take.pitch_semitones || 0) > 0.05)
-            ? this.audio.pitchShiftBuffer(rawBuf, take.pitch_semitones)
-            : rawBuf;
-
-          const source = this.audio.ctx.createBufferSource();
-          source.buffer = shifted;
-
-          const dsp = this.audio.buildVocalDSPChain({
-            pitchSemitones: take.pitch_semitones || 0,
-            reverbWet: take.reverb_wet || 0,
-            gainDb: take.gain_db || 0,
-            enableLowCut: true,
-            enableCompressor: true,
-          });
-
-          source.connect(dsp.input);
-          dsp.output.connect(masterVocalGain);
-
-          if (linePlayTime >= startTime) {
-            const delta = linePlayTime - startTime;
-            source.start(audioCtxStart + delta, 0);
-          } else {
-            // Already started prior to startTime (e.g. negative offset or seeking mid-line)
-            const offsetIntoSample = startTime - linePlayTime;
-            source.start(audioCtxStart, offsetIntoSample);
-          }
-          this.audio.currentPlayingNodes.push(source);
-        }
-      } else if (line.audio_url && this.screeningBuffers.has(line.audio_url)) {
-        // Unassigned or unrecorded line: Play original character voice
-        const origBuf = this.screeningBuffers.get(line.audio_url);
-        const duration = origBuf.duration || 3.0;
-        if (line.start + duration > startTime) {
-          const source = this.audio.ctx.createBufferSource();
-          source.buffer = origBuf;
-          source.connect(masterVocalGain);
-
-          if (line.start >= startTime) {
-            const delta = line.start - startTime;
-            source.start(audioCtxStart + delta, 0);
-          } else {
-            const offsetIntoSample = startTime - line.start;
-            source.start(audioCtxStart, offsetIntoSample);
-          }
-          this.audio.currentPlayingNodes.push(source);
-        }
-      }
-    }
-  }
-
-  openExportModal() {
-    this.isRenderingExport = true;
-    if (this.modalExportRendering) {
-      this.modalExportRendering.style.display = 'flex';
-    }
-    if (this.btnModalCloseX) {
-      this.btnModalCloseX.style.display = 'none';
-    }
-    if (this.exportModalBadge) {
-      this.exportModalBadge.className = 'badge-render-live';
-      this.exportModalBadge.innerText = 'PROCESSING';
-    }
-    if (this.exportModalTitle) {
-      this.exportModalTitle.innerText = 'Master Dub Rendering';
-    }
-    if (this.exportModalReassurance) {
-      this.exportModalReassurance.style.display = 'flex';
-    }
-    if (this.exportModalActions) {
-      this.exportModalActions.style.display = 'none';
-    }
-    // Hidden until this render finishes, so a re-render never leaves the previous
-    // "Saved to ..." line sitting under a progress bar.
-    if (this.exportSavedPath) {
-      this.exportSavedPath.classList.remove('is-visible');
-    }
-    this.updateExportModalStep(1, 25, "Applying vocal EQ, studio compression & acoustic room reverb...");
-    this.pauseScreeningPlayback();
-    this.lockScreeningUI(true);
-  }
-
-  updateExportModalStep(step, percent, statusText) {
-    if (this.exportModalStatusText) {
-      this.exportModalStatusText.innerText = statusText;
-    }
-    if (this.exportModalProgressBar) {
-      this.exportModalProgressBar.style.width = `${percent}%`;
-    }
-    if (this.modalStepDsp && this.modalStepMux && this.modalStepReady) {
-      this.modalStepDsp.className = 'modal-step-item' + (step > 1 ? ' completed' : (step === 1 ? ' active' : ''));
-      this.modalStepMux.className = 'modal-step-item' + (step > 2 ? ' completed' : (step === 2 ? ' active' : ''));
-      this.modalStepReady.className = 'modal-step-item' + (step >= 3 ? ' active' : '');
-    }
-    if (this.connectorDspMux) {
-      this.connectorDspMux.className = 'step-connector' + (step > 1 ? ' completed' : '');
-    }
-    if (this.connectorMuxReady) {
-      this.connectorMuxReady.className = 'step-connector' + (step > 2 ? ' completed' : '');
-    }
-  }
-
-  handleExportSuccess(data) {
-    this.isUsingExportedVideo = true;
-    this.isRenderingExport = false;
-    if (this.roomState) {
-      this.roomState.has_export = true;
-      this.roomState.export_video_url = data.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-      this.roomState.download_url = data.download_url || data.download_url_16_9;
-    }
-
-    this.updateExportModalStep(3, 100, "✅ Master Dubbed Video Rendered Successfully!");
-
-    if (this.modalStepReady) {
-      this.modalStepReady.className = 'modal-step-item completed';
-    }
-    if (this.connectorMuxReady) {
-      this.connectorMuxReady.className = 'step-connector completed';
-    }
-    if (this.exportModalBadge) {
-      this.exportModalBadge.className = 'badge-render-live ready';
-      this.exportModalBadge.innerText = 'READY';
-    }
-    if (this.exportModalTitle) {
-      this.exportModalTitle.innerText = 'Master Dub Video Ready!';
-    }
-    if (this.exportModalReassurance) {
-      this.exportModalReassurance.style.display = 'none';
-    }
-    if (this.btnModalCloseX) {
-      this.btnModalCloseX.style.display = 'flex';
-    }
-
-    const download169 = data.download_url_16_9 || data.download_url || `/api/rooms/${this.roomState?.room_id}/export/download?aspect_ratio=16:9`;
-    const download916 = data.download_url_9_16 || `/api/rooms/${this.roomState?.room_id}/export/download?aspect_ratio=9:16`;
-
-    if (this.btnModalDownload169) {
-      this.btnModalDownload169.href = download169;
-    }
-    if (this.btnModalDownload916) {
-      this.btnModalDownload916.href = download916;
-    }
-    if (this.exportModalActions) {
-      this.exportModalActions.style.display = 'flex';
-    }
-
-    // Fire and forget: the render is already on disk, this only names where.
-    this.showExportSavedPath();
-
-    // Also update legacy inline panel if displayed
-    if (this.exportProgressBox) {
-      this.exportProgressBox.style.display = 'block';
-    }
-    if (this.exportProgressFill) {
-      this.exportProgressFill.style.transform = 'scaleX(1)';
-    }
-    if (this.stepDsp) { this.stepDsp.className = 'step-item completed'; }
-    if (this.stepMux) { this.stepMux.className = 'step-item completed'; }
-    if (this.stepReady) { this.stepReady.className = 'step-item active'; }
-    if (this.exportStatusText) {
-      this.exportStatusText.innerText = "✅ Master Dubbed Video Rendered Successfully!";
-    }
-    if (this.btnDownloadLink) {
-      this.btnDownloadLink.href = download169;
-    }
-    if (this.btnDownloadLink916) {
-      this.btnDownloadLink916.href = download916;
-    }
-    if (this.exportDownloadContainer) {
-      this.exportDownloadContainer.style.display = 'flex';
-    }
-
-    this.applyExportedVideoToTheater(data.export_video_url);
-    this.lockScreeningUI(false);
-  }
-
-  closeExportModal() {
-    if (this.modalExportRendering) {
-      this.modalExportRendering.style.display = 'none';
-    }
-    this.isRenderingExport = false;
-    this.lockScreeningUI(false);
-  }
-
-  /**
-   * Releases the export modal so the user can leave it.
-   *
-   * While `isRenderingExport` is true the close button is hidden and Esc, the
-   * backdrop, Leave Room and Back to Booth are all disabled. Any path that stops
-   * the render MUST come through here, or the user is sealed inside a modal with
-   * a page reload as their only way out.
-   */
-  releaseExportModal() {
-    this.isRenderingExport = false;
-    if (this.btnModalCloseX) this.btnModalCloseX.style.display = 'flex';
-    if (this.exportModalActions) this.exportModalActions.style.display = 'flex';
-    this.lockScreeningUI(false);
-  }
-
-  failExport(err) {
-    const message = this.friendlyError(err, "The export didn't finish. Please try again.");
-    this.releaseExportModal();
-    this.updateExportModalStep(1, 0, `❌ ${message}`);
-    if (this.exportModalBadge) {
-      this.exportModalBadge.innerText = 'FAILED';
-    }
-    this.showToast(message);
-  }
-
-  lockScreeningUI(isLocked) {
-    const controls = [
-      this.btnScreeningPlayPause,
-      this.btnScreeningReplay,
-      this.btnAspect169,
-      this.btnAspect916,
-      this.btnExportVideo,
-      this.btnToolbarProjectZip,
-      this.btnBackBooth,
-      this.sliderScreeningBalance,
-      this.btnLeaveRoom,
-      this.navStepLobby,
-      this.navStepBooth
-    ];
-    controls.forEach((el) => {
-      if (el) {
-        el.disabled = isLocked;
-        el.classList.toggle('ui-interaction-locked', isLocked);
-      }
-    });
-  }
-
-  async exportFinalVideo() {
-    if (!this.roomState) return;
-    this.openExportModal();
-
-    try {
-      const presenceParam = encodeURIComponent(this.masterDialoguePresence || 0.0);
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${this.selectedAspectRatio}&presence=${presenceParam}`, {
-        method: 'POST',
-      });
-
-      if (!res.ok) {
-        throw new Error(`Server returned HTTP ${res.status}`);
-      }
-      const data = await res.json();
-
-      if (data.status === 'ok' || data.status === 'ready') {
-        this.handleExportSuccess(data);
-        return;
-      }
-
-      // If background rendering in progress, update step 2 and poll until ready
-      this.updateExportModalStep(2, 65, "Encoding multi-track audio & video stems in frame-accurate sync...");
-
-      const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${this.selectedAspectRatio}`;
-      let attempts = 0;
-      const maxAttempts = 90; // up to 3 minutes
-
-      const pollInterval = setInterval(async () => {
-        attempts++;
-        // Decided inside the try, acted on outside it. Throwing from in here used
-        // to be caught by this function's own catch two lines down, which left
-        // isRenderingExport true and sealed the user inside the modal forever.
-        let failure = null;
-        try {
-          const pollRes = await fetch(pollUrl);
-          if (pollRes.ok) {
-            const pollData = await pollRes.json();
-            if (pollData.status === 'ready' || pollData.status === 'ok') {
-              clearInterval(pollInterval);
-              this.handleExportSuccess(pollData);
-              return;
-            }
-            if (String(pollData.status).startsWith('failed')) {
-              failure = pollData.status;
-            }
-          }
-        } catch (e) {
-          // A single dropped poll is not a failure; the next tick retries.
-          console.warn("[ExportPoll] Polling update:", e);
-        }
-
-        if (failure !== null) {
-          clearInterval(pollInterval);
-          this.failExport(failure);
-          return;
-        }
-
-        if (attempts >= maxAttempts) {
-          // Rendering a long scene legitimately takes minutes. Stop holding the
-          // user hostage, but keep watching so the video still appears if it
-          // lands -- the old code stopped polling and told them to "check back",
-          // which nothing in the app let them do.
-          this.releaseExportModal();
-          this.updateExportModalStep(2, 85,
-            "Still rendering — long scenes can take several minutes. " +
-            "You can close this and keep working; the video will appear here when it's done.");
-          if (attempts >= maxAttempts * 4) {
-            clearInterval(pollInterval);
-            this.failExport("timed out");
-          }
-        }
-      }, 2000);
-
-    } catch (err) {
-      this.failExport(err);
-    }
-  }
-
-  /**
-   * Pulls a file from the backend and hands the finished blob to the browser.
-   *
-   * Everything that used to be an `<a download href>` goes through here: an anchor
-   * navigates on click, so an endpoint that answers errors as JSON tore down the
-   * studio (and its websocket) to render `{"detail":"..."}` as a page, and a
-   * successful save was completely silent. Mirrors downloadFullProjectZip():
-   * check res.ok, blob, click a throwaway anchor, revoke late.
-   *
-   * Returns true only if the file actually reached the browser.
-   */
-  async saveRemoteFile(url, filename, options = {}) {
-    const {
-      control = null,
-      busyText = 'Preparing…',
-      startMessage = '',
-      doneMessage = '✅ Download saved.',
-      errorText = "Couldn't download that file. Please try again.",
-    } = options;
-
-    if (!url) {
-      this.showToast(errorText);
-      return false;
-    }
-    // A second click mid-transfer would render and save the file twice.
-    if (control && control.dataset.downloading === '1') return false;
-
-    const label = control ? control.querySelector('span') : null;
-    const originalText = label ? label.innerText : '';
-    if (control) {
-      control.dataset.downloading = '1';
-      control.setAttribute('aria-busy', 'true');
-      // Anchors ignore `disabled`, so keyboard users need aria-disabled instead.
-      if (control.tagName === 'A') control.setAttribute('aria-disabled', 'true');
-      else control.disabled = true;
-      if (label) label.innerText = busyText;
-    }
-    if (startMessage) this.showToast(startMessage);
-
-    let objectUrl = null;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          detail = (await res.json())?.detail || detail;
-        } catch { /* not JSON; the status is all we have */ }
-        throw new Error(detail);
-      }
-
-      const blob = await res.blob();
-      objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = objectUrl;
-      a.setAttribute('download', filename);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      this.showToast(doneMessage);
-      return true;
-    } catch (err) {
-      this.showToast(`❌ ${this.friendlyError(err, errorText)}`);
-      return false;
-    } finally {
-      if (objectUrl) {
-        // Revoked late so the browser has definitely started the save.
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-      }
-      if (control) {
-        delete control.dataset.downloading;
-        control.removeAttribute('aria-busy');
-        if (control.tagName === 'A') control.removeAttribute('aria-disabled');
-        else control.disabled = false;
-        if (label) label.innerText = originalText;
-      }
-    }
-  }
-
-  /**
-   * Saves a second copy of the rendered master wherever the browser puts downloads.
-   * The render itself already sits in the user's Render & Export folder; only the
-   * webview decides where this copy lands, which is why the settings copy says so.
-   */
-  async downloadExportVideo(aspectRatio, control) {
-    const href = control ? control.getAttribute('href') : '';
-    const roomId = this.roomState?.room_id;
-    // handleExportSuccess fills the href; fall back to the canonical route so a
-    // reconnect that never replayed the export event still downloads.
-    const url = (href && href !== '#')
-      ? href
-      : (roomId ? `/api/rooms/${roomId}/export/download?aspect_ratio=${encodeURIComponent(aspectRatio)}` : '');
-    if (!url) {
-      this.showToast('Render the dubbed video first, then download it.');
-      return false;
-    }
-
-    const packName = (this.roomState?.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const suffix = aspectRatio === '9:16' ? '9x16' : '16x9';
-    return this.saveRemoteFile(url, `DubMate_${packName}_${suffix}.mp4`, {
-      control,
-      busyText: '⏳ Preparing…',
-      startMessage: '⏳ Preparing your download…',
-      doneMessage: '✅ Video downloaded.',
-      errorText: "Couldn't download that video. Please try again.",
-    });
-  }
-
-  async downloadFullProjectZip() {
-    if (!this.roomState?.room_id) {
-      this.showToast("No active session to export.");
-      return;
-    }
-    const roomId = this.roomState.room_id;
-    const packName = (this.roomState.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const zipUrl = `/api/rooms/${roomId}/export/project_zip?v=${Date.now()}`;
-
-    this.showToast("📦 Packaging Full Project ZIP (MP3 Stems, Takes & Video)... Download starting!");
-
-    const labelToolbar = document.getElementById('label-toolbar-project-zip');
-    const labelContainer = document.getElementById('label-download-project-zip');
-    if (labelToolbar) labelToolbar.innerText = "⏳ Generating ZIP...";
-    if (labelContainer) labelContainer.innerText = "⏳ Generating ZIP...";
-
-    // Fetched rather than navigated to. The endpoint answers errors as JSON, so
-    // window.location.assign() rendered "{"detail":"Room not found"}" as a page --
-    // unloading the studio, dropping the websocket and throwing the host out of
-    // their own session over a failed download.
-    let objectUrl = null;
-    try {
-      const res = await fetch(zipUrl);
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          detail = (await res.json())?.detail || detail;
-        } catch { /* not JSON; the status is all we have */ }
-        throw new Error(detail);
-      }
-
-      const blob = await res.blob();
-      objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = objectUrl;
-      a.setAttribute('download', `DubMate_Project_${packName}_${roomId}.zip`);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      this.showToast("📦 Project ZIP downloaded.");
-    } catch (err) {
-      this.showToast(`❌ ${this.friendlyError(err, "Couldn't build the project ZIP. Please try again.")}`);
-    } finally {
-      if (objectUrl) {
-        // Revoked late so the browser has definitely started the save.
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-      }
-      setTimeout(() => {
-        if (labelToolbar) labelToolbar.innerText = "📦 Download Full Project (.zip)";
-        if (labelContainer) labelContainer.innerText = "📦 Download Full Project (.zip)";
-      }, 3000);
-    }
-  }
 }
+
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    window.app = new DubMateApp();
+    new DubMateApp();
   });
 } else {
-  window.app = new DubMateApp();
+  new DubMateApp();
 }

@@ -8,11 +8,11 @@ Extracts character roles, timestamps, captions, backing tracks, cover art, and h
 import os
 import sys
 import re
-import glob
 import json
 import shutil
 import subprocess
 import tempfile
+import threading
 import urllib.parse
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -271,6 +271,64 @@ PROHIBITED_EXTENSIONS = (
     ".sys", ".drv", ".cpl", ".inf", ".ins", ".isp", ".lnk", ".url", ".desktop"
 )
 
+_IGNORABLE_BASENAMES = (".ds_store", "thumbs.db", "desktop.ini", ".gitkeep")
+_DISGUISED_EXEC_EXTS = (".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".sh", ".py")
+
+
+def _is_ignorable_member(rel_path: str) -> bool:
+    """True for OS metadata (a '__MACOSX' path segment, or .DS_Store-style basenames)."""
+    segments = rel_path.replace("\\", "/").lower().rstrip().split("/")
+    return any(seg == "__macosx" for seg in segments) or segments[-1] in _IGNORABLE_BASENAMES
+
+
+def _member_violation(rel_path: str, extra_allowed: tuple = ()) -> Optional[str]:
+    """
+    Shared pack-member policy ('prohibited wins'). Returns the security message for a
+    disallowed member, or None if it may be imported. Order: prohibited extension,
+    disguised double extension, ignorable metadata, extension allowlist.
+    Paths ending in '/' are directories and skip the allowlist.
+    """
+    low_name = rel_path.replace("\\", "/").lower().rstrip()
+    base_name = os.path.basename(low_name)
+
+    # Block all prohibited executable, script, and system extensions
+    if any(low_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
+        return f"Security Alert: Prohibited executable or script file detected in archive: '{base_name}'"
+
+    # Block disguised executable extensions e.g. 'video.mp4.exe' or 'line.wav.bat'
+    if any(ext + "." in low_name for ext in _DISGUISED_EXEC_EXTS):
+        return f"Security Alert: Disguised executable detected in archive: '{base_name}'"
+
+    if _is_ignorable_member(rel_path):
+        return None
+
+    # Check strict whitelist for non-directory files
+    if not low_name.endswith("/"):
+        _, ext = os.path.splitext(base_name)
+        # An empty ext must be rejected, not skipped: os.path.splitext("payload")
+        # returns "", so extension-less binaries previously bypassed this
+        # allowlist AND the PROHIBITED_EXTENSIONS blocklist (all dotted).
+        if not ext or ext not in ALLOWED_PACK_EXTS + tuple(extra_allowed):
+            return (
+                f"Security Alert: Disallowed file extension '{ext or chr(40) + 'none' + chr(41)}' in '{base_name}'. "
+                f"DubMate packs only accept audio ({', '.join(AUDIO_EXTS)}), "
+                f"video ({', '.join(VIDEO_EXTS)}), images, and text/ini subtitle files."
+            )
+    return None
+
+
+def _looks_like_pack_root(filenames: List[str]) -> bool:
+    """True if a directory listing holds both a scene video and dialogue audio clips."""
+    has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
+    has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
+    return has_video and has_clips
+
+
+def safe_folder_name(title: str, fallback: str) -> str:
+    """Strips a pack title down to a filesystem-safe folder name (A-Z, 0-9, space, _ and -)."""
+    return re.sub(r'[^A-Za-z0-9 _\-]+', '', title).strip() or fallback
+
+
 # Archive extraction security limits
 MAX_ARCHIVE_SIZE_BYTES = 500 * 1024 * 1024       # 500 MB max zip upload
 MAX_UNCOMPRESSED_SIZE_BYTES = 1200 * 1024 * 1024  # 1.2 GB max uncompressed total
@@ -288,9 +346,28 @@ class PackValidationError(Exception):
 # Memory cache for fast pack indexing: full_path -> (mtime, PackInfo)
 PACK_OBJECT_CACHE: Dict[str, tuple[float, Any]] = {}
 PACK_INDEX_CACHE_FILE = os.path.join(CACHE_DIR, "pack_index.json")
-DURATION_CACHE: Dict[str, float] = {}
+# (path, mtime) -> duration in seconds; a rewritten file gets a fresh probe.
+DURATION_CACHE: Dict[Tuple[str, float], float] = {}
 
 _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
+
+# Explicit subprocess timeouts (seconds) so a wedged ffmpeg/DeepFilterNet process can never
+# block a request thread forever. Tuned generously for slow media work while still bounded.
+SUBPROCESS_TIMEOUT_PROBE = 60      # tiny clips / 1s noise-profile samples
+SUBPROCESS_TIMEOUT_PROCESS = 180   # per-take transcodes, filter chains, denoise passes
+SUBPROCESS_TIMEOUT_RENDER = 300    # full mix renders, video export, project zip encoding
+
+
+def run_subprocess(cmd, timeout: float, context: str = "ffmpeg", **kwargs):
+    """Runs a subprocess (ffmpeg / DeepFilterNet / etc.) with an explicit timeout so a wedged
+    child process can never block the calling thread forever. Converts subprocess.TimeoutExpired
+    into a clear, loggable RuntimeError instead of leaving it as an opaque bare-except case."""
+    try:
+        return subprocess.run(cmd, check=True, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as ex:
+        msg = "[AudioProcessor] " + context + " timed out after " + str(timeout) + "s (cmd: " + str(cmd[0] if cmd else "?") + ")"
+        print(msg)
+        raise RuntimeError(msg) from ex
 
 
 def _tool_search_dirs() -> List[str]:
@@ -336,15 +413,8 @@ def get_ffprobe_path() -> str:
 
 
 def get_deep_filter_path() -> Optional[str]:
-    """Finds deep-filter binary in project-local tools folder or system PATH."""
-    for name in ("deep-filter.exe", "deep-filter"):
-        local_tool = os.path.join(BASE_DIR, "tools", name)
-        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
-            return local_tool
-    tool = shutil.which("deep-filter")
-    if tool:
-        return tool
-    return None
+    """Finds deep-filter in the bundled tool dirs, then system PATH."""
+    return _find_media_tool("deep-filter")
 
 
 import wave
@@ -354,14 +424,18 @@ def probe_duration(file_path: str) -> float:
     if not file_path or not os.path.exists(file_path):
         return 0.0
 
-    if file_path in DURATION_CACHE:
-        return DURATION_CACHE[file_path]
+    try:
+        cache_key = (file_path, os.path.getmtime(file_path))
+    except OSError:
+        return 0.0
+    if cache_key in DURATION_CACHE:
+        return DURATION_CACHE[cache_key]
 
     if file_path.lower().endswith(".wav"):
         try:
             with wave.open(file_path, "rb") as w:
                 dur = round(w.getnframes() / float(w.getframerate()), 3)
-                DURATION_CACHE[file_path] = dur
+                DURATION_CACHE[cache_key] = dur
                 return dur
         except Exception:
             pass
@@ -374,7 +448,7 @@ def probe_duration(file_path: str) -> float:
         ]
         out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True, timeout=2.0).strip()
         dur = round(float(out), 3)
-        DURATION_CACHE[file_path] = dur
+        DURATION_CACHE[cache_key] = dur
         return dur
     except Exception:
         return 0.0
@@ -385,6 +459,26 @@ try:
     os.makedirs(PEAKS_CACHE_DIR, exist_ok=True)
 except Exception:
     pass
+
+
+def compute_waveform_peaks(data: "np.ndarray", columns: int = 120) -> List[Tuple[float, float]]:
+    """Calculates min/max peak pairs for rendering waveforms."""
+    import numpy as np  # lazy: pack_loader must stay cheap to import
+    n = len(data)
+    if n == 0 or columns <= 0:
+        return []
+    step = n / float(columns)
+    arr = np.asarray(data, dtype=np.float32)
+    peaks = []
+    for c in range(columns):
+        a = int(c * step)
+        b = max(a + 1, int((c + 1) * step))
+        chunk = arr[a:b]
+        if len(chunk) > 0:
+            peaks.append((round(float(chunk.min()), 3), round(float(chunk.max()), 3)))
+        else:
+            peaks.append((0.0, 0.0))
+    return peaks
 
 
 def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List[List[float]]:
@@ -415,19 +509,7 @@ def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List
                     samples = np.frombuffer(raw, dtype=dtype).astype(np.float32) / scale
                     if n_channels > 1:
                         samples = samples[::n_channels]
-                    
-                    n = len(samples)
-                    step = n / float(columns)
-                    peaks = []
-                    for c in range(columns):
-                        a = int(c * step)
-                        b = max(a + 1, int((c + 1) * step))
-                        chunk = samples[a:b]
-                        if len(chunk) > 0:
-                            peaks.append([round(float(chunk.min()), 3), round(float(chunk.max()), 3)])
-                        else:
-                            peaks.append([0.0, 0.0])
-                    return peaks
+                    return [list(p) for p in compute_waveform_peaks(samples, columns)]
         except Exception:
             pass
 
@@ -444,18 +526,7 @@ def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List
         if proc.returncode == 0 and len(raw) > 0:
             import numpy as np
             samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-            n = len(samples)
-            step = n / float(columns)
-            peaks = []
-            for c in range(columns):
-                a = int(c * step)
-                b = max(a + 1, int((c + 1) * step))
-                chunk = samples[a:b]
-                if len(chunk) > 0:
-                    peaks.append([round(float(chunk.min()), 3), round(float(chunk.max()), 3)])
-                else:
-                    peaks.append([0.0, 0.0])
-            return peaks
+            return [list(p) for p in compute_waveform_peaks(samples, columns)]
     except Exception:
         pass
 
@@ -487,19 +558,30 @@ def get_cached_line_peaks(pack_id: str, filename: str, file_path: str, columns: 
     return peaks
 
 
-def get_cached_line_loudness(pack_id: str, filename: str, file_path: str) -> float:
-    """Retrieves cached speech loudness or returns standard broadcast target (-21.0 dB)."""
-    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', f"{pack_id}_{filename}") + "_loudness.json"
-    cache_path = os.path.join(PEAKS_CACHE_DIR, safe_name)
-    try:
-        if os.path.isfile(cache_path):
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, (int, float)):
-                return float(data)
-    except Exception:
-        pass
-    return -21.0
+# (abs path, mtime, size) -> measured speech-gated loudness of a pack line.
+_LINE_LOUDNESS_CACHE: Dict[Tuple[str, float, int], float] = {}
+_LINE_LOUDNESS_LOCK = threading.Lock()
+
+
+def measure_line_loudness(file_path: str) -> float:
+    """Speech-gated loudness (dBFS gated RMS) of an original pack line.
+
+    Measured lazily (on take upload, not at pack load) and memoised in memory by
+    path, mtime and size, so an edited or re-imported line is measured again.
+    Raises OSError if the file is missing or unreadable.
+    """
+    abs_path = os.path.abspath(file_path)
+    st = os.stat(abs_path)
+    key = (abs_path, st.st_mtime, st.st_size)
+    with _LINE_LOUDNESS_LOCK:
+        cached = _LINE_LOUDNESS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    import audio_processor  # lazy: keeps pack_loader importable without the DSP stack
+    loudness = float(audio_processor.calculate_speech_gated_loudness(audio_processor.read_wav_mono(abs_path)))
+    with _LINE_LOUDNESS_LOCK:
+        _LINE_LOUDNESS_CACHE[key] = loudness
+    return loudness
 
 
 def timestamp_from_filename(filename: str) -> Optional[float]:
@@ -720,14 +802,9 @@ def extract_character_and_caption(caption_text: str, filename: str) -> tuple[str
     return char_name, display_cap
 
 
-def extract_character_from_caption_or_name(caption: str, filename: str) -> str:
-    """Extracts character name safely supporting nested brackets and fallbacks."""
-    char_name, _ = extract_character_and_caption(caption, filename)
-    return char_name
-
-
-_DETECTED_ENCODER: Optional[str] = None
-_CACHED_ENCODER_INFO: Optional[Dict[str, Any]] = None
+# Probed once per process; get_h264_encoder_args derives the encoder name from it.
+_ENCODER_INFO: Optional[Dict[str, Any]] = None
+_ENCODER_LOCK = threading.Lock()
 
 
 def preflight_probe_hardware_encoder() -> Dict[str, Any]:
@@ -735,61 +812,68 @@ def preflight_probe_hardware_encoder() -> Dict[str, Any]:
     Probes system video encoding capabilities and caches optimal hardware encoder settings.
     Logs clear diagnostics and ensures zero-latency runtime exports.
     """
-    global _DETECTED_ENCODER, _CACHED_ENCODER_INFO
-    if _CACHED_ENCODER_INFO is not None:
-        return _CACHED_ENCODER_INFO
+    global _ENCODER_INFO
+    with _ENCODER_LOCK:
+        if _ENCODER_INFO is not None:
+            return _ENCODER_INFO
 
-    ff = get_ffmpeg_path()
-    candidates = [
-        ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"], "NVIDIA NVENC (GeForce / RTX)", "NVIDIA", True),
-        ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"], "AMD AMF (Radeon RX)", "AMD", True),
-        ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"], "Intel QuickSync (Arc / Core iGPU)", "Intel", True),
-        ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"], "Apple Silicon VideoToolbox (M1/M2/M3/M4)", "Apple", True),
-    ]
+        ff = get_ffmpeg_path()
+        candidates = [
+            ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"], "NVIDIA NVENC (GeForce / RTX)", "NVIDIA", True),
+            ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"], "AMD AMF (Radeon RX)", "AMD", True),
+            ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"], "Intel QuickSync (Arc / Core iGPU)", "Intel", True),
+            ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"], "Apple Silicon VideoToolbox (M1/M2/M3/M4)", "Apple", True),
+        ]
 
-    detected = None
-    for name, probe_args, desc, vendor, is_hw in candidates:
-        try:
-            test_cmd = [
-                ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
-                *probe_args, "-f", "null", "-"
-            ]
-            res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if res.returncode == 0:
-                detected = {
-                    "encoder": name,
-                    "description": desc,
-                    "vendor": vendor,
-                    "is_hardware": is_hw,
-                }
-                _DETECTED_ENCODER = name
-                break
-        except Exception:
-            continue
+        detected = None
+        for name, probe_args, desc, vendor, is_hw in candidates:
+            try:
+                test_cmd = [
+                    ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
+                    *probe_args, "-f", "null", "-"
+                ]
+                res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if res.returncode == 0:
+                    detected = {
+                        "encoder": name,
+                        "description": desc,
+                        "vendor": vendor,
+                        "is_hardware": is_hw,
+                    }
+                    break
+            except Exception:
+                continue
 
-    if detected is None:
-        cpu_cores = os.cpu_count() or 4
-        threads = max(1, min(cpu_cores, 8))
-        detected = {
-            "encoder": "libx264",
-            "description": f"Universal Multi-Core CPU (libx264 - {threads} threads)",
-            "vendor": "CPU",
-            "is_hardware": False,
-            "threads": threads,
-        }
-        _DETECTED_ENCODER = "libx264"
+        if detected is None:
+            cpu_cores = os.cpu_count() or 4
+            threads = max(1, min(cpu_cores, 8))
+            detected = {
+                "encoder": "libx264",
+                "description": f"Universal Multi-Core CPU (libx264 - {threads} threads)",
+                "vendor": "CPU",
+                "is_hardware": False,
+                "threads": threads,
+            }
 
-    _CACHED_ENCODER_INFO = detected
-    badge = "[Hardware Accelerated]" if detected["is_hardware"] else "[Multi-Core CPU]"
-    print(f"[DubMate Acceleration] {badge} {detected['description']}")
-    return _CACHED_ENCODER_INFO
+        _ENCODER_INFO = detected
+        badge = "[Hardware Accelerated]" if detected["is_hardware"] else "[Multi-Core CPU]"
+        print(f"[DubMate Acceleration] {badge} {detected['description']}")
+        return _ENCODER_INFO
 
 
 def get_hardware_encoder_info() -> Dict[str, Any]:
     """Returns cached hardware encoder info, running pre-flight probe if needed."""
-    if _CACHED_ENCODER_INFO is None:
+    info = _ENCODER_INFO
+    if info is None:
         return preflight_probe_hardware_encoder()
-    return _CACHED_ENCODER_INFO
+    return info
+
+
+def cpu_h264_args(crf: int, preset: str) -> List[str]:
+    """libx264 arguments using 1..8 threads (bounded by the available cores)."""
+    cpu_cores = os.cpu_count() or 4
+    threads = str(max(1, min(cpu_cores, 8)))
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", threads]
 
 
 def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
@@ -801,33 +885,28 @@ def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
     4. Apple Silicon VideoToolbox (macOS M1/M2/M3/M4)
     5. Universal Multi-Threaded CPU (libx264 scaled to available cores)
     """
-    global _DETECTED_ENCODER
-    if _DETECTED_ENCODER is None:
-        preflight_probe_hardware_encoder()
+    encoder = get_hardware_encoder_info()["encoder"]
 
     # Hardware-specific parameters
-    if _DETECTED_ENCODER == "h264_nvenc":
+    if encoder == "h264_nvenc":
         preset = "p2" if usage == "web_preview" else "p4"
         return ["-c:v", "h264_nvenc", "-preset", preset, "-b:v", "4000k" if usage == "web_preview" else "6000k"]
 
-    if _DETECTED_ENCODER == "h264_amf":
+    if encoder == "h264_amf":
         quality = "speed" if usage == "web_preview" else "quality"
         bitrate = "2500k" if usage == "web_preview" else "5000k"
         return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", quality, "-rc", "cbr", "-b:v", bitrate]
 
-    if _DETECTED_ENCODER == "h264_qsv":
+    if encoder == "h264_qsv":
         preset = "faster" if usage == "web_preview" else "veryfast"
         return ["-c:v", "h264_qsv", "-preset", preset, "-b:v", "3000k" if usage == "web_preview" else "5000k"]
 
-    if _DETECTED_ENCODER == "h264_videotoolbox":
+    if encoder == "h264_videotoolbox":
         bitrate = "3000k" if usage == "web_preview" else "5000k"
         return ["-c:v", "h264_videotoolbox", "-b:v", bitrate]
 
-    # Universal multi-threaded CPU fallback (dynamically scales to 50%-75% of available CPU cores, max 8)
-    cpu_cores = os.cpu_count() or 4
-    threads = str(max(1, min(cpu_cores, 8)))
-    preset = "faster" if usage == "web_preview" else "veryfast"
-    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", threads]
+    # Universal multi-threaded CPU fallback
+    return cpu_h264_args(crf, "faster" if usage == "web_preview" else "veryfast")
 
 
 def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
@@ -835,7 +914,13 @@ def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
     pack_name = os.path.basename(pack_folder)
     cached_mp4 = os.path.join(CACHE_DIR, f"{pack_name}_web.mp4")
     if os.path.isfile(cached_mp4) and os.path.getsize(cached_mp4) > 1000:
-        return cached_mp4
+        # The cache is stale once the source video is replaced.
+        try:
+            fresh = os.path.getmtime(cached_mp4) >= os.path.getmtime(orig_video_path)
+        except (OSError, TypeError):
+            fresh = True  # source unreadable: nothing to re-transcode from
+        if fresh:
+            return cached_mp4
     if transcode_to_mp4(orig_video_path, cached_mp4):
         return cached_mp4
     return orig_video_path
@@ -845,50 +930,34 @@ def transcode_to_mp4(orig_video_path: str, target_mp4_path: str) -> bool:
     """Transcodes a video to lightweight 720p 30fps H.264 MP4 without audio for fast web streaming."""
     ffmpeg = get_ffmpeg_path()
     tmp_target = target_mp4_path + ".tmp.mp4"
-    encoder_args = get_h264_encoder_args(crf=25, usage="web_preview")
-    
-    # 1. Attempt with primary detected encoder
-    try:
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", orig_video_path,
-            "-vf", "scale='min(1280,iw)':-2",
-            "-r", "30",
-            *encoder_args,
-            "-pix_fmt", "yuv420p",
-            "-an",  # Strip audio track completely so reference video cannot bleed
-            "-movflags", "+faststart",
-            tmp_target
-        ]
-        subprocess.run(cmd, check=True)
-        if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
-            os.replace(tmp_target, target_mp4_path)
-            return True
-    except Exception as ex:
-        print(f"[transcode_to_mp4] Primary encoder failed on {orig_video_path}: {ex}. Trying CPU libx264...")
+    primary_args = get_h264_encoder_args(crf=25, usage="web_preview")
+    cpu_args = cpu_h264_args(25, "faster")
+    # Retry on CPU libx264 only when the primary encoder is something else.
+    attempts = [primary_args] if primary_args == cpu_args else [primary_args, cpu_args]
 
-    # 2. Fallback to CPU libx264
     try:
-        cpu_cores = os.cpu_count() or 4
-        threads = str(max(1, min(cpu_cores, 8)))
-        fallback_args = ["-c:v", "libx264", "-crf", "25", "-preset", "faster", "-threads", threads]
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", orig_video_path,
-            "-vf", "scale='min(1280,iw)':-2",
-            "-r", "30",
-            *fallback_args,
-            "-pix_fmt", "yuv420p",
-            "-an",
-            "-movflags", "+faststart",
-            tmp_target
-        ]
-        subprocess.run(cmd, check=True)
-        if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
-            os.replace(tmp_target, target_mp4_path)
-            return True
-    except Exception as ex:
-        print(f"[transcode_to_mp4] Fallback CPU transcode failed on {orig_video_path}: {ex}")
+        for encoder_args in attempts:
+            try:
+                cmd = [
+                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", orig_video_path,
+                    "-vf", "scale='min(1280,iw)':-2",
+                    "-r", "30",
+                    *encoder_args,
+                    "-pix_fmt", "yuv420p",
+                    "-an",  # Strip audio track completely so reference video cannot bleed
+                    "-movflags", "+faststart",
+                    tmp_target
+                ]
+                run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="transcode_to_mp4 of " + repr(orig_video_path))
+                if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
+                    os.replace(tmp_target, target_mp4_path)
+                    return True
+            except Exception as ex:
+                if encoder_args is attempts[-1]:
+                    print(f"[transcode_to_mp4] Fallback CPU transcode failed on {orig_video_path}: {ex}")
+                else:
+                    print(f"[transcode_to_mp4] Primary encoder failed on {orig_video_path}: {ex}. Trying CPU libx264...")
     finally:
         if os.path.exists(tmp_target):
             try:
@@ -921,14 +990,11 @@ class PackInfo:
 
     def ensure_web_ready(self):
         """Ensures the web video is converted to web-ready MP4."""
-        cached = os.path.join(CACHE_DIR, f"{self.pack_id}_web.mp4")
-        if not os.path.isfile(cached) or os.path.getsize(cached) < 1000:
-            if transcode_to_mp4(self.video_path, cached):
-                self.web_video_path = cached
+        self.web_video_path = get_web_video_path(self.folder, self.video_path)
 
     def to_dict(self) -> Dict[str, Any]:
         quoted_id = urllib.parse.quote(self.pack_id)
-        has_icon = bool(self.icon_path and os.path.isfile(self.icon_path))
+        has_icon = self.has_icon
         return {
             "id": self.pack_id,
             "name": self.name,
@@ -945,7 +1011,7 @@ class PackInfo:
             "video_url": f"/api/packs/{quoted_id}/video",
             "backing_url": f"/api/packs/{quoted_id}/backing" if self.backing_track_path else None,
             "export_url": f"/api/packs/{quoted_id}/export",
-            "mean_vocal_loudness_db": getattr(self, "mean_vocal_loudness_db", -21.0),
+            "mean_vocal_loudness_db": self.mean_vocal_loudness_db,
             "lines": self.lines,
         }
 
@@ -1034,34 +1100,49 @@ def find_pack_icon(folder: str, icon_hint: Optional[str] = None) -> Optional[str
     return None
 
 
+def format_raw_caption(character: str, caption: str) -> str:
+    """'[Character] caption', or just '[Character]' when the caption is empty."""
+    return f"[{character}] {caption}" if caption else f"[{character}]"
+
+
+def write_caption_files(folder: str, title: str, lines: List[Dict[str, Any]], note: str, overwrite: bool = True):
+    """
+    Writes _captions.json and _TIMESTAMPS.txt for `lines` (dicts with filename, start,
+    character, caption). With overwrite=False, a file that already exists is left alone.
+    """
+    captions_path = os.path.join(folder, "_captions.json")
+    if overwrite or not os.path.isfile(captions_path):
+        captions_map = {}
+        for l in lines:
+            cap = (l.get("caption") or "").strip()
+            captions_map[l["filename"]] = format_raw_caption(l["character"], cap)
+        with open(captions_path, "w", encoding="utf-8") as f:
+            json.dump(captions_map, f, ensure_ascii=False, indent=2)
+
+    ts_path = os.path.join(folder, "_TIMESTAMPS.txt")
+    if overwrite or not os.path.isfile(ts_path):
+        lines_out = [
+            f"# {title}",
+            f"# {note}",
+            "# File | start time (s) | subtitle\n"
+        ]
+        for l in lines:
+            cap = (l.get("caption") or "").strip()
+            sub = format_raw_caption(l["character"], cap)
+            lines_out.append(f"{l['filename']:<40} {l['start']:>10.3f}s   | {sub}")
+        with open(ts_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines_out) + "\n")
+
+
 def ensure_pack_compatibility(pack_folder: str, pack: PackInfo):
     """
     Auto-generates standard _captions.json and _TIMESTAMPS.txt for Choicer Voicer packs
     so they are 100% compatible with DubMate native format.
     """
     try:
-        captions_path = os.path.join(pack_folder, "_captions.json")
-        if not os.path.isfile(captions_path) and pack.lines:
-            captions_map = {}
-            for l in pack.lines:
-                cap = (l.get("caption") or "").strip()
-                captions_map[l["filename"]] = f"[{l['character']}] {cap}" if cap else f"[{l['character']}]"
-            with open(captions_path, "w", encoding="utf-8") as f:
-                json.dump(captions_map, f, ensure_ascii=False, indent=2)
-
-        ts_path = os.path.join(pack_folder, "_TIMESTAMPS.txt")
-        if not os.path.isfile(ts_path) and pack.lines:
-            lines_out = [
-                f"# {pack.name}",
-                "# Auto-generated DubMate timestamps and subtitle map",
-                "# File | start time (s) | subtitle\n"
-            ]
-            for l in pack.lines:
-                cap = (l.get("caption") or "").strip()
-                sub = f"[{l['character']}] {cap}" if cap else f"[{l['character']}]"
-                lines_out.append(f"{l['filename']:<40} {l['start']:>10.3f}s   | {sub}")
-            with open(ts_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines_out) + "\n")
+        if pack.lines:
+            write_caption_files(pack_folder, pack.name, pack.lines,
+                                "Auto-generated DubMate timestamps and subtitle map", overwrite=False)
     except Exception as ex:
         print(f"[pack_loader] Could not write compatibility files for {pack_folder}: {ex}")
 
@@ -1203,7 +1284,6 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         audio_full_path = os.path.join(pack_folder, filename)
         line_duration = probe_duration(audio_full_path)
         peaks = get_cached_line_peaks(pack_id, filename, audio_full_path, 100)
-        ref_loudness = get_cached_line_loudness(pack_id, filename, audio_full_path)
 
         quoted_pack_id = urllib.parse.quote(pack_id)
         quoted_filename = urllib.parse.quote(filename)
@@ -1216,19 +1296,15 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
             "duration": round(line_duration, 3),
             "end": round(start_ts + line_duration, 3),
             "caption": caption_text,
-            "raw_caption": f"[{char_name}] {caption_text}" if caption_text else f"[{char_name}]",
+            "raw_caption": format_raw_caption(char_name, caption_text),
             "audio_url": f"/api/packs/{quoted_pack_id}/audio/{quoted_filename}",
             "peaks": peaks,
-            "reference_loudness_db": ref_loudness,
             "image": entry.get("image"),
         })
 
     pack.lines = lines
     if pack.duration <= 0.0 and lines:
         pack.duration = max(l["end"] for l in lines)
-    valid_loudness = [l["reference_loudness_db"] for l in lines if l.get("reference_loudness_db") is not None and l.get("reference_loudness_db") > -55.0]
-    import numpy as np
-    pack.mean_vocal_loudness_db = round(float(np.mean(valid_loudness)), 1) if valid_loudness else -21.0
 
     char_counts = {}
     for l in lines:
@@ -1240,6 +1316,37 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
     ensure_pack_compatibility(pack_folder, pack)
 
     return pack
+
+
+def _install_pack_root(pack_root: str, fallback_title: str) -> Optional[PackInfo]:
+    """
+    Copies a validated pack root into PACKS_DIRS[0] under a sanitized folder name
+    (replacing any existing install), loads it and caches it. Returns None if the
+    copied folder does not parse as a pack. Raises PackSecurityError if the
+    destination would escape the packs directory.
+    """
+    meta = parse_pack_info(pack_root)
+    base_title = meta.get("title") or fallback_title
+    folder_name = safe_folder_name(base_title, "Imported_Pack")
+
+    target_base = PACKS_DIRS[0]
+    os.makedirs(target_base, exist_ok=True)
+    dest_folder = os.path.join(target_base, folder_name)
+
+    # Ensure dest_folder resolves strictly within target_base
+    if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
+        raise PackSecurityError("Invalid destination folder name.")
+
+    if os.path.exists(dest_folder):
+        shutil.rmtree(dest_folder)
+
+    shutil.copytree(pack_root, dest_folder)
+    loaded = load_pack(dest_folder)
+    if loaded:
+        folder_mtime = os.path.getmtime(dest_folder)
+        PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
+        print(f"[pack_loader] Successfully installed pack '{loaded.name}' into {dest_folder}")
+    return loaded
 
 
 def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pack.zip") -> Optional[PackInfo]:
@@ -1288,6 +1395,7 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
 
             # 3. Path Traversal & Malware / Prohibited File Extension Verification
             canonical_tmp_dir = os.path.abspath(tmp_extract_dir)
+            members_to_extract = []
             for info in infolist:
                 norm_name = info.filename.replace("\\", "/")
                 
@@ -1300,46 +1408,20 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
                 if not dest_path.startswith(canonical_tmp_dir + os.sep) and dest_path != canonical_tmp_dir:
                     raise PackSecurityError(f"Zip-slip path traversal attempt: '{info.filename}'")
 
-                low_name = norm_name.lower().rstrip()
-                base_name = os.path.basename(low_name)
-                
-                # Skip macOS metadata or harmless system files
-                if base_name in (".ds_store", "thumbs.db", "desktop.ini", ".gitkeep") or "__macosx" in low_name:
-                    continue
+                violation = _member_violation(norm_name)
+                if violation:
+                    raise PackSecurityError(violation)
+                if not _is_ignorable_member(norm_name):
+                    members_to_extract.append(info)
 
-                # Block all prohibited executable, script, and system extensions
-                if any(low_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
-                    raise PackSecurityError(f"Security Alert: Prohibited executable or script file detected in archive: '{base_name}'")
-
-                # Block disguised executable extensions e.g. 'video.mp4.exe' or 'line.wav.bat'
-                if any(ext + "." in low_name for ext in (".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".sh", ".py")):
-                    raise PackSecurityError(f"Security Alert: Disguised executable detected in archive: '{base_name}'")
-
-                # Check strict whitelist for non-directory files
-                if not info.is_dir() and not low_name.endswith("/"):
-                    _, ext = os.path.splitext(base_name)
-                    # An empty ext must be rejected, not skipped: os.path.splitext("payload")
-                    # returns "", so extension-less binaries previously bypassed this
-                    # allowlist AND the PROHIBITED_EXTENSIONS blocklist (all dotted).
-                    if ext not in ALLOWED_PACK_EXTS:
-                        raise PackSecurityError(
-                            f"Security Alert: Disallowed file extension '{ext or chr(40) + 'none' + chr(41)}' in '{base_name}'. "
-                            f"DubMate packs only accept audio ({', '.join(AUDIO_EXTS)}), "
-                            f"video ({', '.join(VIDEO_EXTS)}), images, and text/ini subtitle files."
-                        )
-
-            # 4. Safe Sandboxed Extraction
-            for info in infolist:
-                if "__MACOSX" in info.filename or os.path.basename(info.filename).lower() in (".ds_store", "thumbs.db"):
-                    continue
+            # 4. Safe Sandboxed Extraction (OS metadata such as __MACOSX/.DS_Store is skipped)
+            for info in members_to_extract:
                 z.extract(info, tmp_extract_dir)
 
         # 5. Pack Root Detection & Structure Verification
         pack_root = None
         for dirpath, _dirnames, filenames in os.walk(tmp_extract_dir):
-            has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
-            has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
-            if has_video and has_clips:
+            if _looks_like_pack_root(filenames):
                 pack_root = dirpath
                 break
 
@@ -1350,27 +1432,8 @@ def import_pack_archive(archive_path_or_bytes: Any, archive_filename: str = "pac
             )
 
         # 6. Safe Destination Sanitization & Installation
-        meta = parse_pack_info(pack_root)
-        base_title = meta.get("title") or os.path.splitext(os.path.basename(archive_filename))[0]
-        safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
-
-        target_base = PACKS_DIRS[0]
-        os.makedirs(target_base, exist_ok=True)
-        dest_folder = os.path.join(target_base, safe_folder_name)
-
-        # Ensure dest_folder resolves strictly within target_base
-        if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
-            raise PackSecurityError("Invalid destination folder name.")
-
-        if os.path.exists(dest_folder):
-            shutil.rmtree(dest_folder)
-
-        shutil.copytree(pack_root, dest_folder)
-        loaded = load_pack(dest_folder)
+        loaded = _install_pack_root(pack_root, os.path.splitext(os.path.basename(archive_filename))[0])
         if loaded:
-            folder_mtime = os.path.getmtime(dest_folder)
-            PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
-            print(f"[pack_loader] Successfully validated, security-cleared, and imported pack '{loaded.name}' into {dest_folder}")
             return loaded
 
         raise PackValidationError("Pack files extracted but could not be parsed into a playable studio scene.")
@@ -1436,8 +1499,12 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
             if ".." in norm_path.split(os.sep):
                 continue
 
-            base_name = os.path.basename(norm_path).lower()
-            if any(base_name.endswith(ext) for ext in PROHIBITED_EXTENSIONS):
+            # Same member policy as archive import ('prohibited wins'); nested .zip packs are allowed
+            violation = _member_violation(norm_path, extra_allowed=(".zip",))
+            if violation:
+                errors.append({"filename": os.path.basename(norm_path), "error": violation})
+                continue
+            if _is_ignorable_member(norm_path):
                 continue
 
             dest = os.path.abspath(os.path.join(tmp_stage_dir, norm_path))
@@ -1464,9 +1531,7 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
         # 3. Discover all distinct unpacked scene pack root directories in the staged tree
         discovered_pack_roots = []
         for dirpath, _dirnames, filenames in os.walk(tmp_stage_dir):
-            has_video = any(f.lower().startswith("dub_video.") or any(f.lower().endswith(ext) for ext in VIDEO_EXTS) for f in filenames)
-            has_clips = any(f.lower().endswith(AUDIO_EXTS) for f in filenames)
-            if has_video and has_clips:
+            if _looks_like_pack_root(filenames):
                 # Ensure we don't pick subdirectories if parent is already a pack root
                 is_sub = False
                 for p_root in discovered_pack_roots:
@@ -1477,29 +1542,11 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
                     discovered_pack_roots.append(dirpath)
 
         # 4. Install each discovered unpacked pack
-        target_base = PACKS_DIRS[0]
-        os.makedirs(target_base, exist_ok=True)
-
         for pack_root in discovered_pack_roots:
             try:
-                meta = parse_pack_info(pack_root)
-                base_title = meta.get("title") or os.path.basename(pack_root)
-                safe_folder_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', base_title).strip() or "Imported_Pack"
-                dest_folder = os.path.join(target_base, safe_folder_name)
-
-                if not os.path.abspath(dest_folder).startswith(os.path.abspath(target_base) + os.sep):
-                    continue
-
-                if os.path.exists(dest_folder):
-                    shutil.rmtree(dest_folder)
-
-                shutil.copytree(pack_root, dest_folder)
-                loaded = load_pack(dest_folder)
+                loaded = _install_pack_root(pack_root, os.path.basename(pack_root))
                 if loaded:
-                    folder_mtime = os.path.getmtime(dest_folder)
-                    PACK_OBJECT_CACHE[dest_folder] = (folder_mtime, loaded)
                     imported_packs.append(loaded)
-                    print(f"[pack_loader] Successfully installed unpacked pack '{loaded.name}' into {dest_folder}")
             except Exception as ex:
                 errors.append({"filename": os.path.basename(pack_root), "error": str(ex)})
 
@@ -1564,39 +1611,19 @@ def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
     return packs
 
 
-def export_pack_archive(pack_id_or_folder: str, output_zip_path: Optional[str] = None) -> str:
+def export_pack_archive(pack_folder: str, output_zip_path: str) -> str:
     """
     Packages an entire scene pack folder into a clean, portable .zip archive.
-    Returns the absolute path to the generated .zip file.
+    Returns the path to the generated .zip file.
     """
     import zipfile
 
-    # 1. Resolve pack folder
-    pack_folder = None
-    if os.path.isdir(pack_id_or_folder):
-        pack_folder = os.path.abspath(pack_id_or_folder)
-    else:
-        for base in PACKS_DIRS:
-            candidate = os.path.join(base, pack_id_or_folder)
-            if os.path.isdir(candidate):
-                pack_folder = os.path.abspath(candidate)
-                break
+    if not os.path.isdir(pack_folder):
+        raise FileNotFoundError(f"Pack folder not found for '{pack_folder}'")
+    pack_folder = os.path.abspath(pack_folder)
+    os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
 
-    if not pack_folder or not os.path.isdir(pack_folder):
-        raise FileNotFoundError(f"Pack folder not found for '{pack_id_or_folder}'")
-
-    pack_name = os.path.basename(os.path.normpath(pack_folder))
-    safe_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', pack_name).strip() or "scene_pack"
-
-    # 2. Determine destination zip path
-    if not output_zip_path:
-        exports_dir = os.path.join(CACHE_DIR, "exports", "packs")
-        os.makedirs(exports_dir, exist_ok=True)
-        output_zip_path = os.path.join(exports_dir, f"{safe_name}.zip")
-    else:
-        os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
-
-    # 3. Create zip archive containing all pack assets at the root of the archive
+    # Create zip archive containing all pack assets at the root of the archive
     with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(pack_folder):
             dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith("__")]

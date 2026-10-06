@@ -20,6 +20,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 import audio_processor
 import pack_loader
 import app
+from dubmate import rooms
 
 
 def generate_synthetic_wav_bytes(duration_sec: float = 1.5, sr: int = 44100, add_noise: bool = True) -> bytes:
@@ -52,7 +53,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.client.__exit__(None, None, None)
-        app.prune_sessions(keep_room_id="NONE")
+        rooms.prune_sessions(keep_room_id="NONE")
 
     def test_01_apply_noise_reduction_filters(self):
         """Verifies that apply_noise_reduction processes audio and preserves signal without clipping."""
@@ -205,7 +206,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertGreater(len(res_audio.content), 1000)
 
         finally:
-            app.prune_sessions(keep_room_id="NONE")
+            rooms.prune_sessions(keep_room_id="NONE")
 
 
 if __name__ == "__main__":

@@ -110,6 +110,13 @@ if (Test-Path $StaticDest) {
 if (Test-Path $StaticSrc) {
     Copy-Item $StaticSrc $StaticDest -Recurse -Force
 }
+$DubmateSrc = Join-Path $ProjectRoot "dubmate"
+$DubmateDest = Join-Path $ResourceDir "dubmate"
+if (Test-Path $DubmateDest) {
+    Remove-Item $DubmateDest -Recurse -Force
+}
+Copy-Item $DubmateSrc $DubmateDest -Recurse -Force
+Get-ChildItem $DubmateDest -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
 $PyTargetResource = Join-Path $ResourceDir "python-runtime"
 if (Test-Path $PyTargetResource) {

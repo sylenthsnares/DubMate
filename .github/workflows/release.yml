@@ -62,11 +62,20 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg -qq
 
+      # 22.12+ for --experimental-strip-types (worker suite) and default ESM
+      # syntax detection in `node --check`.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+
+      # The runner generates its own fixture packs; ffmpeg comes from the step above.
       - name: Run tests
         run: |
+          npm ci --prefix tests
           pip install -r requirements.txt -q
           pip install httpx fastapi pytest -q
-          python tests/test_host_transfer.py
+          python tests/run_all_tests.py
 
       - name: Create app bundle zip
         run: |
@@ -75,10 +84,12 @@ jobs:
             audio_processor.py \
             pack_loader.py \
             pack_builder.py \
+            dubmate/ \
             static/ \
             VERSION \
             requirements.txt \
-            requirements_builder.txt
+            requirements_builder.txt \
+            -x '*__pycache__*'
 
       - name: Extract release notes for this version
         run: |
@@ -161,6 +172,24 @@ jobs:
       - name: Stage Sidecars (macOS)
         if: matrix.platform == 'macos-latest'
         run: bash tauri/scripts/stage-sidecars.sh
+
+      # Proves the staged layout resolves the engine and its package before an
+      # installer is built around it. Windows resolves the resources dir through
+      # the '..' entry the staging script adds to the embedded runtime's ._pth;
+      # macOS mirrors main.rs (cwd and PYTHONPATH = the app dir).
+      - name: Import smoke on staged engine (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd tauri/src-tauri/resources
+          ./python-runtime/python.exe -c "import app, dubmate.common"
+
+      - name: Import smoke on staged engine (macOS)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          cd tauri/src-tauri/resources
+          PYTHONPATH="$PWD" ./python-runtime/bin/python3 -c "import app, dubmate.common"
 
       - name: Download release notes
         uses: actions/download-artifact@v4
