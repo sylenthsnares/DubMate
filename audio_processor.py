@@ -7,6 +7,7 @@ Matching filter chain for time-invariant pitch shifting, room acoustics, dynamic
 
 import os
 import re
+import math
 import wave
 import json
 import time
@@ -108,6 +109,23 @@ def _ffmpeg_to_mono_wav(src: str, dst: str, sr: int, timeout: float, context: st
         cmd += ["-af", af]
     cmd += ["-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", dst]
     _run_subprocess(cmd, timeout=timeout, context=context)
+
+
+def _write_active_take(source_wav: str, target_wav: str, stretch: float = 1.0) -> None:
+    """Writes a take's active audio: source_wav (its raw or cleaned file) played at `stretch`
+    speed (an atempo factor; 1.0 is a plain copy). Goes through <stem>.tmp.wav and os.replace,
+    so a failed pass leaves the previous active file intact."""
+    tmp = os.path.splitext(target_wav)[0] + ".tmp.wav"
+    try:
+        if abs(stretch - 1.0) <= 0.0005:
+            shutil.copy2(source_wav, tmp)
+        else:
+            _ffmpeg_to_mono_wav(source_wav, tmp, SR, SUBPROCESS_TIMEOUT_PROCESS, "take fitting",
+                                af=f"atempo={stretch:.4f}")
+        os.replace(tmp, target_wav)
+    except Exception:
+        _remove_quietly(tmp)
+        raise
 
 
 def _transcode_upload(audio_bytes: bytes, filename_hint: str, dst_wav: str, timeout: float, context: str) -> None:
@@ -421,6 +439,147 @@ def calculate_take_auto_gain(
     }
 
 
+# --- Take timing alignment (pure numpy; see documentation/design/recording-timing.md) ---
+_ENV_WIN_MS = 20
+_ENV_HOP_MS = 5
+_ENV_FLOOR_DB = 50.0
+_VOICED_DB = 35.0
+_SPAN_PAD_MS = 100
+
+
+def _snap5(ms: float) -> int:
+    return int(5 * round(float(ms) / 5.0))
+
+
+def _timing_envelope(audio: np.ndarray, sr: int) -> np.ndarray:
+    """RMS in 20 ms windows every 5 ms, in dB, floored 50 dB below its own peak.
+    Returns an empty array when the signal is too short or silent."""
+    x = np.asarray(audio, dtype=np.float64).ravel()
+    win = int(sr * _ENV_WIN_MS / 1000)
+    hop = int(sr * _ENV_HOP_MS / 1000)
+    if win <= 0 or hop <= 0 or len(x) < win:
+        return np.zeros(0)
+    x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+    csum = np.concatenate(([0.0], np.cumsum(x * x)))
+    starts = np.arange(0, len(x) - win + 1, hop)
+    power = np.maximum((csum[starts + win] - csum[starts]) / win, 0.0)
+    peak = float(power.max()) if len(power) else 0.0
+    if peak <= 0.0:
+        return np.zeros(0)
+    db = 10.0 * np.log10(np.maximum(power, peak * 1e-12))
+    return np.maximum(db, db.max() - _ENV_FLOOR_DB)
+
+
+def _voiced_span(env: np.ndarray) -> Optional[Tuple[int, int]]:
+    """First..last frame within 35 dB of the peak, padded 100 ms, clipped. End exclusive."""
+    if len(env) == 0:
+        return None
+    voiced = np.nonzero(env >= env.max() - _VOICED_DB)[0]
+    if len(voiced) == 0:
+        return None
+    pad = _SPAN_PAD_MS // _ENV_HOP_MS
+    return max(0, int(voiced[0]) - pad), min(len(env), int(voiced[-1]) + 1 + pad)
+
+
+def _offset_scores(take_seg: np.ndarray, take_start: int, ref_seg: np.ndarray, ref_start: int,
+                   offsets_ms: np.ndarray) -> np.ndarray:
+    """Pearson correlation of take vs reference envelope for each offset (ms, multiples of 5).
+    Take frame i lands on reference frame i + offset/5. Offsets whose overlap is under half
+    the shorter span score 0 (no evidence)."""
+    min_overlap = max(2, min(len(take_seg), len(ref_seg)) // 2)
+    scores = np.zeros(len(offsets_ms))
+    for n, off in enumerate(offsets_ms):
+        k = int(off) // _ENV_HOP_MS
+        # take segment index a -> reference segment index a + shift
+        shift = take_start + k - ref_start
+        a0 = max(0, -shift)
+        a1 = min(len(take_seg), len(ref_seg) - shift)
+        if a1 - a0 < min_overlap:
+            continue
+        t = take_seg[a0:a1] - take_seg[a0:a1].mean()
+        r = ref_seg[a0 + shift:a1 + shift] - ref_seg[a0 + shift:a1 + shift].mean()
+        denom = np.sqrt(np.dot(t, t) * np.dot(r, r))
+        scores[n] = np.dot(t, r) / denom if denom > 0 else np.nan
+    return scores
+
+
+def align_take_timing(take: np.ndarray, reference: np.ndarray, start_offset_ms: int,
+                      sr: int = SR, allow_stretch: bool = True) -> Dict[str, Any]:
+    """Match a take's timing to the original line's voice by envelope correlation.
+
+    offset_ms is where the take's sample 0 sits relative to line.start, so a take whose
+    voice is D ms late gets -D. Returns {auto_offset_ms, timing_score, stretch, aligned};
+    stretch is an atempo factor (above 1 speeds the take up). Never returns NaN.
+    """
+    start = _snap5(start_offset_ms)
+    not_measured = {"auto_offset_ms": start, "timing_score": None, "stretch": 1.0, "aligned": False}
+
+    take_env = _timing_envelope(take, sr)
+    ref_env = _timing_envelope(reference, sr)
+    take_span = _voiced_span(take_env)
+    ref_span = _voiced_span(ref_env)
+    if take_span is None or ref_span is None:
+        return not_measured
+    take_seg = take_env[take_span[0]:take_span[1]]
+    ref_seg = ref_env[ref_span[0]:ref_span[1]]
+    ratio = len(take_seg) / len(ref_seg)
+    if not (0.75 <= ratio <= 1.33):
+        return not_measured
+    if float(np.std(take_seg)) < 1e-9 or float(np.std(ref_seg)) < 1e-9:
+        return not_measured
+
+    lo = max(-800, start - 500)
+    hi = min(800, start + 500)
+    if hi < lo:
+        return not_measured
+    offsets = np.arange(lo, hi + 1, _ENV_HOP_MS)
+
+    def best_of(seg, seg_start):
+        scores = _offset_scores(seg, seg_start, ref_seg, ref_span[0], offsets)
+        if not np.all(np.isfinite(scores)):
+            return None
+        return scores, int(np.argmax(scores))
+
+    plain = best_of(take_seg, take_span[0])
+    if plain is None:
+        return not_measured
+    scores, b = plain
+    stretch = 1.0
+
+    if allow_stretch and not (0.97 <= ratio <= 1.03):
+        factor = float(np.clip(ratio, 0.92, 1.08))
+        n_out = max(2, int(round(len(take_seg) / factor)))
+        stretched = np.interp(np.arange(n_out) * factor, np.arange(len(take_seg)), take_seg)
+        cand = best_of(stretched, int(round(take_span[0] / factor)))
+        if cand is not None and cand[0][cand[1]] >= scores[b] + 0.05:
+            scores, b = cand
+            stretch = round(factor, 3)
+
+    start_idx = int(np.argmin(np.abs(offsets - start)))
+    best_ms = int(offsets[b])
+    if scores[b] < 0.5 or best_ms - lo <= 10 or hi - best_ms <= 10:
+        # Uncorrelated or inverted envelopes score 0: the score runs 0 to 1.
+        score = min(1.0, max(0.0, float(plain[0][start_idx])))
+        return {"auto_offset_ms": start,
+                "timing_score": round(score, 2) + 0.0 if math.isfinite(score) else None,
+                "stretch": 1.0, "aligned": False}
+
+    # Parabolic refinement around the grid peak, then snap back to the 5 ms grid.
+    refined = float(best_ms)
+    if 0 < b < len(scores) - 1:
+        y0, y1, y2 = scores[b - 1], scores[b], scores[b + 1]
+        denom = y0 - 2.0 * y1 + y2
+        if denom < 0:
+            refined += 0.5 * (y0 - y2) / denom * _ENV_HOP_MS
+    auto_ms = _snap5(refined)
+    idx = int(np.clip((auto_ms - lo) // _ENV_HOP_MS, 0, len(scores) - 1))
+    score = float(scores[idx])
+    if not math.isfinite(score):
+        return not_measured
+    return {"auto_offset_ms": int(offsets[idx]), "timing_score": round(score, 2) + 0.0,
+            "stretch": stretch, "aligned": True}
+
+
 def apply_noise_reduction(
     input_wav: str,
     output_wav: str,
@@ -506,6 +665,19 @@ def apply_noise_reduction(
         return output_wav
 
 
+def match_take_timing(audio: np.ndarray, reference_wav: str, start_offset_ms: int,
+                      allow_stretch: bool = True) -> Dict[str, Any]:
+    """align_take_timing against the original line's audio file. A missing or unreadable
+    reference means "not measured": the starting offset, no score, no stretch."""
+    try:
+        reference = read_wav_mono(reference_wav)
+    except Exception as ex:
+        print(f"[Timing] Could not read reference line {reference_wav!r}: {ex}")
+        start = _snap5(start_offset_ms)
+        return {"auto_offset_ms": start, "timing_score": None, "stretch": 1.0, "aligned": False}
+    return align_take_timing(audio, reference, start_offset_ms, sr=SR, allow_stretch=allow_stretch)
+
+
 def save_uploaded_take(
     room_id: str,
     take_dir: str,
@@ -515,13 +687,21 @@ def save_uploaded_take(
     enable_noise_reduction: bool = False,
     user_id: Optional[str] = None,
     target_loudness_db: Optional[float] = None,
+    reference_wav: Optional[str] = None,
+    start_offset_ms: int = 0,
+    align: bool = True,
 ) -> Dict[str, Any]:
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
     Writes <take_dir>/<stem>.wav (active), preserves pristine raw audio (<stem>_raw.wav) and
     generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested.
     Calculates speech-gated loudness and smart auto-gain calibration against scene target.
-    Returns active path, duration, waveform peaks, auto_gain_db, and noise reduction status.
+    When align and reference_wav (the original line's audio) are given, matches the take's
+    timing to it from start_offset_ms (match_take_timing); a clearly faster or slower take is
+    also fitted, so the active file is the raw or cleaned audio at that stretch. Otherwise the
+    timing is "not measured" and the active file is a plain copy.
+    Returns active path, duration, waveform peaks, auto_gain_db, noise reduction status,
+    start_offset_ms (snapped to 5 ms) and the align_take_timing keys.
     """
     if not audio_bytes or len(audio_bytes) < 32:
         raise ValueError("Uploaded audio stream is empty or incomplete.")
@@ -550,12 +730,29 @@ def save_uploaded_take(
     if enable_noise_reduction:
         apply_noise_reduction(raw_wav, denoised_wav, profile_path)
         _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
-        shutil.copy2(denoised_wav, target_wav)
+        source_wav = denoised_wav
     else:
         _remove_old_denoised_takes(take_dir, stem)
-        shutil.copy2(raw_wav, target_wav)
+        source_wav = raw_wav
+
+    # Timing is matched on the source (trim, stretch, offset), then the active file is
+    # written at the chosen stretch.
+    start_offset_ms = _snap5(start_offset_ms)
+    if align and reference_wav:
+        timing = match_take_timing(read_wav_mono(source_wav), reference_wav, start_offset_ms)
+    else:
+        timing = {"auto_offset_ms": start_offset_ms, "timing_score": None, "stretch": 1.0, "aligned": False}
+    _write_active_take(source_wav, target_wav, timing["stretch"])
 
     audio_data = read_wav_mono(target_wav)
+    if timing["stretch"] != 1.0:
+        # atempo starts its output about 20 ms early, so the offset found on the ideal
+        # stretched envelope is off by that much: measure it again on the written file.
+        refit = match_take_timing(audio_data, reference_wav, start_offset_ms, allow_stretch=False)
+        if refit["aligned"]:
+            timing["auto_offset_ms"] = refit["auto_offset_ms"]
+            timing["timing_score"] = refit["timing_score"]
+
     duration = len(audio_data) / float(SR)
     peaks = compute_waveform_peaks(audio_data, 100)
 
@@ -574,6 +771,8 @@ def save_uploaded_take(
         "speech_loudness_db": gain_match["take_loudness_db"],
         "target_loudness_db": gain_match["target_loudness_db"],
         "auto_gain_db": gain_match["auto_gain_db"],
+        "start_offset_ms": start_offset_ms,
+        **timing,
     }
 
 
@@ -584,11 +783,13 @@ def toggle_take_noise_reduction(
     enable_noise_reduction: bool,
     user_id: Optional[str] = None,
     target_loudness_db: Optional[float] = None,
+    stretch: float = 1.0,
 ) -> Dict[str, Any]:
     """
     Instantly toggles a take between pristine raw and denoised audio.
-    Generates denoised audio on-demand if missing, and re-measures the
-    swapped audio's loudness and auto gain against target_loudness_db.
+    Generates denoised audio on-demand if missing, writes the active file at the take's
+    stretch (so a fitted take stays fitted), and re-measures the swapped audio's loudness
+    and auto gain against target_loudness_db.
     """
     target_wav = os.path.join(take_dir, f"{stem}.wav")
     raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
@@ -614,9 +815,9 @@ def toggle_take_noise_reduction(
         if not os.path.exists(denoised_wav) or os.path.getsize(denoised_wav) < 100:
             apply_noise_reduction(raw_wav, denoised_wav, profile_path)
             _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
-        shutil.copy2(denoised_wav, target_wav)
+        _write_active_take(denoised_wav, target_wav, stretch)
     else:
-        shutil.copy2(raw_wav, target_wav)
+        _write_active_take(raw_wav, target_wav, stretch)
 
     audio_data = read_wav_mono(target_wav)
     duration = len(audio_data) / float(SR)
@@ -1163,6 +1364,7 @@ def build_project_zip(
                 "assigned_actors": [],
                 "take_file": None,
                 "offset_ms": 0,
+                "stretch": 1.0,
                 "pitch_semitones": 0.0,
                 "reverb_wet": 0.0,
                 "gain_db": 0.0,
@@ -1207,6 +1409,8 @@ def build_project_zip(
                 line_entry["take_id"] = take_info.get("take_id")
                 line_entry["actor_name"] = actor_name
                 line_entry["offset_ms"] = offset_ms
+                # The take file is already fitted at this speed (1.0 = as recorded).
+                line_entry["stretch"] = float(take_info.get("stretch", 1.0))
                 line_entry["pitch_semitones"] = pitch
                 line_entry["reverb_wet"] = reverb
                 line_entry["gain_db"] = gain

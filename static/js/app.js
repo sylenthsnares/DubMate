@@ -8,6 +8,7 @@ import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
 import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
+import { MicSyncMethods } from './studio/mic_sync.js';
 import { PackMethods } from './studio/packs.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
@@ -34,6 +35,7 @@ class DubMateApp {
 
     // Countdown & Recording Mutex
     this.recordState = 'idle'; // 'idle' | 'countdown' | 'recording' | 'processing'
+    this.recordingGuideVoice = false; // guide-voice checkbox as it was when the current take started
     this.countdownSessionId = 0;
     this.recordingTimeout = null;
     this.filterMyLinesOnly = true;
@@ -220,6 +222,8 @@ class DubMateApp {
     this.btnPreviewTake = document.getElementById('btn-preview-take');
     this.sliderNudge = document.getElementById('slider-nudge');
     this.nudgeDisplay = document.getElementById('nudge-display');
+    this.timingCaption = document.getElementById('timing-caption');
+    this.btnOriginalSpeed = document.getElementById('btn-original-speed');
     this.sliderPitch = document.getElementById('slider-pitch');
     this.valPitch = document.getElementById('val-pitch');
     this.sliderReverb = document.getElementById('slider-reverb');
@@ -303,6 +307,13 @@ class DubMateApp {
     this.btnRemovePackBuilderText = document.getElementById('btn-remove-packbuilder-text');
     this.btnCancelRemovePackBuilder = document.getElementById('btn-cancel-remove-packbuilder');
     this.btnConfirmRemovePackBuilder = document.getElementById('btn-confirm-remove-packbuilder');
+    this.micSyncStatus = document.getElementById('mic-sync-status');
+    this.btnMicSync = document.getElementById('btn-mic-sync');
+    this.micSyncPanel = document.getElementById('mic-sync-panel');
+    this.micSyncMessage = document.getElementById('mic-sync-message');
+    this.btnStartMicSync = document.getElementById('btn-start-mic-sync');
+    this.btnStartClapping = document.getElementById('btn-start-clapping');
+    this.btnCancelMicSync = document.getElementById('btn-cancel-mic-sync');
 
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
@@ -699,7 +710,9 @@ class DubMateApp {
       btn.addEventListener('click', () => {
         const val = btn.dataset.nudge;
         if (val === 'reset') {
-          this.setNudgeValue(0, true);
+          // Auto: back to the take's automatic timing (0 for takes from before it existed).
+          const autoMs = this.takeForLine(this.currentLineIndex)?.auto_offset_ms;
+          this.setNudgeValue(typeof autoMs === 'number' ? autoMs : 0, true);
         } else {
           const current = parseInt(this.sliderNudge.value, 10);
           this.setNudgeValue(current + parseInt(val, 10), true);
@@ -781,6 +794,7 @@ class DubMateApp {
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
     this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
+    this.btnOriginalSpeed?.addEventListener('click', () => this.playAtOriginalSpeed());
 
     // Studio Noise Reduction Synchronization & Calibration Listeners
     const onNoiseToggleChange = (e) => {
@@ -816,6 +830,7 @@ class DubMateApp {
     }
 
     this.initAudioSettingsEvents();
+    this.initMicSyncEvents();
 
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
@@ -1232,6 +1247,7 @@ class DubMateApp {
     captureHomeOriginParam();
     this.pointHomeLinksAtOwnEngine();
     await this.fetchPacks();
+    this.loadEngineMicSync();
 
     // First-run audio setup / remembered device routing. Deliberately not
     // awaited so a slow permissions query cannot stall the router.
@@ -1522,7 +1538,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, PackMethods, LobbyMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, PackMethods, LobbyMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

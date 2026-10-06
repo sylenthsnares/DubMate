@@ -1,5 +1,6 @@
 // audio_engine.js - High-Performance Voice DSP Engine, Lightweight Pitch Shifting & Shared Mix Busses
 import { takeAudioKey } from './studio/takes.js';
+import { clickTrainSamples } from './studio/timing.js';
 
 export class AudioEngine {
   constructor() {
@@ -232,6 +233,26 @@ export class AudioEngine {
 
     osc.start(now);
     osc.stop(now + 0.09);
+  }
+
+  // Mic sync: schedules one short click per time at ctx.currentTime + leadSec + t
+  // on the chosen output. Returns the context time the last click ends.
+  playClickTrain(times, leadSec) {
+    this.initContext();
+    const ctx = this.ctx;
+    const data = clickTrainSamples(ctx.sampleRate, [0]);
+    const click = ctx.createBuffer(1, data.length, ctx.sampleRate);
+    const channel = click.getChannelData(0);
+    for (let i = 0; i < data.length; i++) channel[i] = data[i] * 0.5;
+    const start = ctx.currentTime + leadSec;
+    for (const t of times) {
+      const source = ctx.createBufferSource();
+      source.buffer = click;
+      source.connect(ctx.destination);
+      source.start(start + t);
+      this.currentPlayingNodes.push(source);
+    }
+    return start + (times.length ? Math.max(...times) : 0) + data.length / ctx.sampleRate;
   }
 
   // --- 4. Device Enumeration & Routing ---

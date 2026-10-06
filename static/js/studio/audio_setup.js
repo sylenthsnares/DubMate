@@ -19,7 +19,7 @@ const METER_PEAK_DECAY_DB_PER_FRAME = 0.45;
 
 // localStorage/sessionStorage throw in some locked-down webviews and in
 // private-mode Safari, so every access goes through these guards.
-function safeStorageGet(store, key) {
+export function safeStorageGet(store, key) {
   try {
     return store ? store.getItem(key) : null;
   } catch (e) {
@@ -27,7 +27,7 @@ function safeStorageGet(store, key) {
   }
 }
 
-function safeStorageSet(store, key, value) {
+export function safeStorageSet(store, key, value) {
   try {
     if (store) store.setItem(key, value);
   } catch (e) { }
@@ -307,6 +307,7 @@ export class AudioSetupMethods {
     if (this.modalAudioSettings) {
       this.modalAudioSettings.style.display = 'none';
     }
+    this.cancelMicSync();
     this.audioSetup.firstRunMode = false;
     this.setExportsFeedback('', null);
     this.showPackBuilderRemoveConfirm(false);
@@ -417,6 +418,7 @@ export class AudioSetupMethods {
       );
       this.renderDeviceNote(this.audioOutputNote, outputResult, devices, 'output device');
     }
+    this.renderMicSyncRow();
 
     return devices;
   }
@@ -500,6 +502,7 @@ export class AudioSetupMethods {
       safeStorageRemove(ls, AUDIO_INPUT_DEVICE_KEY);
     }
     this.audio.setPreferredInputDevice(next || null);
+    this.renderMicSyncRow();
 
     // Re-point the meter at the newly selected capture device.
     if (this.isAudioSettingsOpen()) {
@@ -516,6 +519,7 @@ export class AudioSetupMethods {
     } else {
       safeStorageRemove(ls, AUDIO_OUTPUT_DEVICE_KEY);
     }
+    this.renderMicSyncRow();
 
     let routed = { ok: false, reason: 'unsupported' };
     try {
