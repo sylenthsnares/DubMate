@@ -4521,3 +4521,39 @@ svg {
     align-items: stretch;
   }
 }
+
+/* Tooltips: any element with data-tip. Positioned by initTooltips() in ui_common.js. */
+.dm-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  max-width: 260px;
+  padding: 7px 10px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.dm-tip.is-visible {
+  visibility: visible;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dm-tip { transition: none; }
+}
