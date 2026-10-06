@@ -14,11 +14,16 @@ import json
 import time
 import datetime
 import shutil
+import hashlib
 import threading
+import importlib.util
 import subprocess
 from typing import Dict, List, Optional, Tuple, Any
 
+import numpy as np
+
 import pack_loader
+import audio_processor
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -120,6 +125,9 @@ class BuildProgress:
         # Non-fatal notice, e.g. neural separation unavailable and a basic filter
         # was used instead. Shown alongside a successful result.
         self.warning: Optional[str] = None
+        # Whether real separation ran, so the editor knows if there is a voice track to play.
+        # None until separation has run.
+        self.voices_separated: Optional[bool] = None
         self.segments: List[Dict[str, Any]] = []
         self.characters: List[str] = []
         self.device_info: Dict[str, Any] = {}
@@ -151,6 +159,7 @@ class BuildProgress:
                 "error": self.error,
                 "error_code": self.error_code,
                 "warning": self.warning,
+                "voices_separated": self.voices_separated,
                 "segments": self.segments,
                 "characters": self.characters,
                 "device_info": self.device_info,
@@ -882,16 +891,454 @@ def parse_vtt(vtt_content: str) -> List[Dict[str, Any]]:
     return parse_srt(content)
 
 
-def assign_speakers_to_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+# Non-verbal lines (grunts, efforts, screams, laughs) found from voice activity on
+# the separated voice stem. Every threshold lives here so tuning is one place.
+NONVERBAL_FRAME_S = 0.02                 # analysis frame length (20 ms)
+NONVERBAL_FLOOR_PERCENTILE = 20          # noise floor: this percentile of all frame levels
+NONVERBAL_DIALOGUE_PERCENTILE = 75       # dialogue level: this percentile of frames inside transcribed lines
+NONVERBAL_DIALOGUE_PERCENTILE_NO_LINES = 99  # ...or of all frames when there are no lines
+NONVERBAL_ABOVE_FLOOR_DB = 15            # an active frame is at least this far above the floor
+NONVERBAL_BELOW_DIALOGUE_DB = 30         # ...and no more than this far below dialogue
+NONVERBAL_MIN_CONTRAST_DB = 20           # dialogue minus floor below this: too noisy to judge, find nothing
+NONVERBAL_MERGE_GAP_S = 0.25             # active frames closer than this join one region
+NONVERBAL_MIN_LEN_S = 0.3                # shorter regions are clicks or breaths
+NONVERBAL_MAX_LEN_S = 8.0                # longer regions are music, tones or crowd
+NONVERBAL_PEAK_WITHIN_DB = 10            # loudest frame within this of dialogue: foreground, not walla
+NONVERBAL_LINE_MARGIN_S = 0.2            # keep this far from every transcribed line
+NONVERBAL_PAD_S = 0.08                   # padding added around a kept region
+
+
+def find_nonverbal_segments(samples: np.ndarray, sr: int, transcribed: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Applies heuristic character grouping to segments based on conversational turn gaps.
-    If no character names were found in subtitles, assigns Speaker 1, Speaker 2, etc.
+    Finds clear vocal activity on the voice stem that no transcribed line covers.
+
+    Returns new lines {start, end, text: "", character: "", nonverbal: True}. The
+    rules are deliberately conservative: a missed grunt is one click to add, while
+    a flood of breath and crowd lines is a chore to delete.
+    """
+    frame_len = int(round(NONVERBAL_FRAME_S * sr))
+    n_frames = len(samples) // frame_len if frame_len > 0 else 0
+    if n_frames == 0:
+        return []
+    frame_s = frame_len / float(sr)
+    clip_end = len(samples) / float(sr)
+
+    frames = np.asarray(samples[:n_frames * frame_len], dtype=np.float64).reshape(n_frames, frame_len)
+    rms = np.sqrt(np.mean(frames * frames, axis=1))
+    level_db = 20.0 * np.log10(np.maximum(rms, 1e-10))
+
+    lines = sorted(
+        (float(s["start"]), float(s.get("end", s["start"]))) for s in transcribed
+    )
+    centers = (np.arange(n_frames) + 0.5) * frame_s
+    in_lines = np.zeros(n_frames, dtype=bool)
+    for start, end in lines:
+        in_lines |= (centers >= start) & (centers <= end)
+
+    floor_db = float(np.percentile(level_db, NONVERBAL_FLOOR_PERCENTILE))
+    if in_lines.any():
+        dialogue_db = float(np.percentile(level_db[in_lines], NONVERBAL_DIALOGUE_PERCENTILE))
+    else:
+        dialogue_db = float(np.percentile(level_db, NONVERBAL_DIALOGUE_PERCENTILE_NO_LINES))
+    if dialogue_db - floor_db < NONVERBAL_MIN_CONTRAST_DB:
+        return []
+    threshold_db = max(floor_db + NONVERBAL_ABOVE_FLOOR_DB, dialogue_db - NONVERBAL_BELOW_DIALOGUE_DB)
+
+    active = np.flatnonzero(level_db >= threshold_db)
+    if active.size == 0:
+        return []
+    # Split the active frames wherever the silent gap reaches the merge gap.
+    breaks = np.flatnonzero((np.diff(active) - 1) * frame_s >= NONVERBAL_MERGE_GAP_S)
+    run_starts = np.concatenate(([0], breaks + 1))
+    run_ends = np.concatenate((breaks, [active.size - 1]))
+
+    found = []
+    for a, b in zip(run_starts, run_ends):
+        first, last = int(active[a]), int(active[b])
+        start, end = first * frame_s, (last + 1) * frame_s
+        if not (NONVERBAL_MIN_LEN_S <= end - start <= NONVERBAL_MAX_LEN_S):
+            continue
+        if float(level_db[first:last + 1].max()) < dialogue_db - NONVERBAL_PEAK_WITHIN_DB:
+            continue
+        if any(start < l_end + NONVERBAL_LINE_MARGIN_S and end > l_start - NONVERBAL_LINE_MARGIN_S
+               for l_start, l_end in lines):
+            continue
+        lo = max([0.0] + [l_end for _, l_end in lines if l_end <= start])
+        hi = min([clip_end] + [l_start for l_start, _ in lines if l_start >= end])
+        found.append({
+            "start": round(max(lo, start - NONVERBAL_PAD_S), 3),
+            "end": round(min(hi, end + NONVERBAL_PAD_S), 3),
+            "text": "",
+            "character": "",
+            "nonverbal": True,
+        })
+    return found
+
+
+def add_nonverbal_segments(segments: List[Dict[str, Any]], vocals_wav: str, duration: float) -> List[Dict[str, Any]]:
+    """
+    Adds the voice stem's non-verbal lines to the transcribed ones, sorted by start.
+    Any failure keeps the lines as they were: this is a bonus, never a reason to fail.
+    """
+    try:
+        samples = audio_processor.read_wav_mono(vocals_wav, sr=16000)
+        found = find_nonverbal_segments(samples, 16000, segments)
+        if duration and duration > 0:
+            found = [s for s in found if s["start"] < duration]
+            for s in found:
+                s["end"] = round(min(s["end"], float(duration)), 3)
+        print(f"[PackBuilder] Found {len(found)} non-verbal lines on the voice track.")
+        return sorted(list(segments) + found, key=lambda s: s["start"])
+    except Exception as ex:
+        print(f"[PackBuilder] Non-verbal line detection failed, keeping the transcribed lines: {ex}")
+        return segments
+
+
+SPEAKER_CLUSTER_THRESHOLD = 0.5   # lower splits voices more eagerly, higher merges them
+SPEAKER_SEGMENTATION_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/"
+    "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+)
+SPEAKER_SEGMENTATION_ARCHIVE_SHA256 = "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488"
+# (file name, url, sha256 of the file or None, member of the archive at url or None).
+# The LICENSE has no pin of its own: it is read from the checksummed archive.
+SPEAKER_MODELS = (
+    ("pyannote-segmentation-3-0.onnx", SPEAKER_SEGMENTATION_URL,
+     "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
+     "sherpa-onnx-pyannote-segmentation-3-0/model.onnx"),
+    ("pyannote-segmentation-3-0.LICENSE", SPEAKER_SEGMENTATION_URL, None,
+     "sherpa-onnx-pyannote-segmentation-3-0/LICENSE"),
+    ("campplus-sv-zh-en-16k-common-advanced.onnx",
+     # "recongition" is the real release tag name.
+     "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/"
+     "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx",
+     "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2",
+     None),
+)
+# The package comes with the Pack Builder (requirements_builder.txt); the engine never installs it.
+SPEAKER_NOTICE_NOT_INSTALLED_DESKTOP = (
+    "Speaker detection isn't installed, so speakers were guessed from pauses. To add it, remove "
+    "Pack Builder in Audio settings, then run the DubMate installer again and tick Pack Builder."
+)
+SPEAKER_NOTICE_NOT_INSTALLED_SOURCE = (
+    "Speaker detection isn't installed, so speakers were guessed from pauses. To add it, run "
+    "update.bat (Windows) or update.sh (macOS and Linux), then restart DubMate."
+)
+SPEAKER_NOTICE_NO_DOWNLOAD = "Couldn't download speaker detection, so speakers were guessed from pauses. Check who says each line."
+SPEAKER_NOTICE_NO_VOICES = "Speaker detection couldn't tell the voices apart, so speakers were guessed from pauses. Check who says each line."
+SPEAKER_NOTICE_FAILED = "Speaker detection couldn't run, so speakers were guessed from pauses. Check who says each line."
+SPEAKER_DOWNLOAD_MESSAGE = "Downloading speaker detection (about 35 MB, first time only)"
+
+_SPEAKER_LOCK = threading.Lock()
+
+
+def _addon_dir() -> Optional[str]:
+    """
+    The installed Pack Builder add-on folder, found the way the desktop app hands it over:
+    the first sys.path entry named 'ai-packages' that holds the '.install-complete' marker.
+    Not get_install_root(): on macOS the add-on and the engine sit in different folders.
+    None for source installs.
+    """
+    for p in sys.path:
+        if not p:
+            continue
+        if os.path.basename(os.path.normpath(p)).lower() == "ai-packages" and os.path.isfile(os.path.join(p, ".install-complete")):
+            return p
+    return None
+
+
+def _speaker_models_dir() -> str:
+    """Inside the add-on folder when there is one, so removing the Pack Builder removes the models too."""
+    addon = _addon_dir()
+    if addon:
+        return os.path.join(addon, "dubmate-models", "speakers")
+    return os.path.join(pack_loader.CACHE_DIR, "models", "speakers")
+
+
+def _speaker_not_installed_notice() -> str:
+    """How to get speaker detection: through the Pack Builder add-on on desktop, the update script otherwise."""
+    return SPEAKER_NOTICE_NOT_INSTALLED_DESKTOP if _addon_dir() else SPEAKER_NOTICE_NOT_INSTALLED_SOURCE
+
+
+def _download_to(url: str, path: str) -> str:
+    """Streams url into path and returns its SHA-256 hex digest."""
+    import urllib.request
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=60) as resp, open(path, "wb") as out:
+        for chunk in iter(lambda: resp.read(1 << 20), b""):
+            out.write(chunk)
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _ensure_speaker_models(on_progress=None) -> bool:
+    """
+    Downloads any missing speaker model into _speaker_models_dir(). Every file is written
+    to '<file>.part', checked against its pinned SHA-256 and only then moved into place.
+    on_progress(fraction) reports the files done out of the files missing. Returns False
+    on any failure; the next build tries again.
+    """
+    import tarfile
+    with _SPEAKER_LOCK:
+        folder = _speaker_models_dir()
+        missing = [m for m in SPEAKER_MODELS if not os.path.isfile(os.path.join(folder, m[0]))]
+        if not missing:
+            return True
+        archives: Dict[str, str] = {}
+        try:
+            os.makedirs(folder, exist_ok=True)
+            for done, (name, url, sha256, member) in enumerate(missing):
+                if on_progress:
+                    on_progress(done / len(missing))
+                target = os.path.join(folder, name)
+                part = target + ".part"
+                try:
+                    if member:
+                        if url not in archives:
+                            archives[url] = os.path.join(folder, os.path.basename(url) + ".part")
+                            if _download_to(url, archives[url]) != SPEAKER_SEGMENTATION_ARCHIVE_SHA256:
+                                raise ValueError(f"checksum mismatch for {url}")
+                        digest = hashlib.sha256()
+                        # Only the named member's bytes are read; nothing is extracted by path.
+                        with tarfile.open(archives[url], "r:bz2") as tar:
+                            src = tar.extractfile(tar.getmember(member))
+                            if src is None:
+                                raise ValueError(f"{member} is not a file")
+                            with src, open(part, "wb") as out:
+                                for chunk in iter(lambda: src.read(1 << 20), b""):
+                                    out.write(chunk)
+                                    digest.update(chunk)
+                        got = digest.hexdigest()
+                    else:
+                        got = _download_to(url, part)
+                    if sha256 and got != sha256:
+                        raise ValueError(f"checksum mismatch for {name}")
+                    os.replace(part, target)
+                except Exception:
+                    _remove_quietly(part)
+                    raise
+            if on_progress:
+                on_progress(1.0)
+            return True
+        except Exception as ex:
+            print(f"[PackBuilder] Downloading speaker detection failed: {ex}")
+            return False
+        finally:
+            for archive in archives.values():
+                _remove_quietly(archive)
+
+
+# Speaker detection runs in a child Python process. Demucs (torch) and onnxruntime each ship
+# their own OpenMP runtime, and loading both into one process can abort it on macOS, which no
+# try/except can catch. A crashed, stuck or garbled child only costs the speaker guess.
+SPEAKER_TIMEOUT_S = 1800          # scenes are at most 30 minutes; detection takes a few on CPU
+_SPEAKER_EXIT_NOT_INSTALLED = 3
+_SPEAKER_PROGRESS_PREFIX = "DUBMATE_SPEAKER_PROGRESS "
+_SPEAKER_TURNS_PREFIX = "DUBMATE_SPEAKER_TURNS "
+# The embedded Windows runtime ignores PYTHONPATH (it has a ._pth file) and puts neither the
+# script folder nor the working folder on sys.path, so the child is handed the engine's own
+# sys.path, in the engine's order, before it imports anything.
+_SPEAKER_CHILD_BOOT = (
+    "import json, sys; "
+    "paths = json.loads(sys.argv[1]); "
+    "sys.path[:] = paths + [p for p in sys.path if p not in paths]; "
+    "import pack_builder; "
+    "sys.exit(pack_builder._speaker_turns_child(sys.argv[2], sys.argv[3]))"
+)
+
+
+def _speaker_package_present() -> bool:
+    """Whether sherpa_onnx can be found, without loading it (and its OpenMP) into the engine."""
+    try:
+        return importlib.util.find_spec("sherpa_onnx") is not None
+    except ValueError:
+        return True  # already loaded without a spec
+    except ImportError:
+        return False
+
+
+def _speaker_turns_child(vocals_wav: str, folder: str) -> int:
+    """
+    Entry point of the speaker detection child process. Prints progress lines, then one line
+    of JSON turns [[start, end, speaker_id], ...], each with its own prefix, to stdout.
+    Returns the exit code: 0 on success, _SPEAKER_EXIT_NOT_INSTALLED without the package.
+    Any other error raises, so the process exits non-zero.
+    """
+    try:
+        import sherpa_onnx
+    except ImportError as ex:
+        print(f"[PackBuilder] Speaker detection isn't installed: {ex}", flush=True)
+        return _SPEAKER_EXIT_NOT_INSTALLED
+
+    config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                model=os.path.join(folder, SPEAKER_MODELS[0][0]),
+                window_shift_ratio=0.1,
+            ),
+        ),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=os.path.join(folder, SPEAKER_MODELS[2][0])),
+        clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SPEAKER_CLUSTER_THRESHOLD),
+        min_duration_on=0.3,
+        min_duration_off=0.5,
+    )
+    if not config.validate():
+        raise RuntimeError("speaker detection config is not valid")
+    sd = sherpa_onnx.OfflineSpeakerDiarization(config)
+    if sd.sample_rate != 16000:
+        raise RuntimeError(f"unexpected sample rate {sd.sample_rate}")
+    samples = np.ascontiguousarray(audio_processor.read_wav_mono(vocals_wav, sr=16000), dtype=np.float32)
+
+    def _callback(done: int, total: int) -> int:
+        print(f"{_SPEAKER_PROGRESS_PREFIX}{min(1.0, done / max(1, total)):.4f}", flush=True)
+        return 0
+
+    result = sd.process(samples, callback=_callback)
+    turns = [[float(seg.start), float(seg.end), int(seg.speaker)] for seg in result.sort_by_start_time()]
+    print(_SPEAKER_TURNS_PREFIX + json.dumps(turns), flush=True)
+    return 0
+
+
+def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+    """
+    Runs _speaker_turns_child in the same interpreter and returns (turns, notice) like
+    detect_speaker_turns. A non-zero exit (a native abort included), a timeout, or output
+    that isn't a list of turns all return (None, SPEAKER_NOTICE_FAILED).
+    """
+    paths = [BASE_DIR] + [os.path.abspath(p) if p else os.getcwd() for p in sys.path]
+    paths = list(dict.fromkeys(paths))
+    cmd = [sys.executable, "-c", _SPEAKER_CHILD_BOOT, json.dumps(paths), vocals_wav, folder]
+    try:
+        # stderr joins stdout, so native log lines can never fill a pipe nobody reads.
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as ex:
+        print(f"[PackBuilder] Speaker detection couldn't start: {ex}")
+        return None, SPEAKER_NOTICE_FAILED
+
+    timed_out = threading.Event()
+
+    def _stop() -> None:
+        timed_out.set()
+        proc.kill()
+
+    timer = threading.Timer(SPEAKER_TIMEOUT_S, _stop)
+    timer.daemon = True
+    timer.start()
+    turns_json, tail = None, []
+    try:
+        for line in proc.stdout:
+            line = line.rstrip("\r\n")
+            if line.startswith(_SPEAKER_PROGRESS_PREFIX):
+                try:
+                    done = float(line[len(_SPEAKER_PROGRESS_PREFIX):])
+                except ValueError:
+                    continue
+                if on_progress:
+                    on_progress(0.90 + 0.08 * max(0.0, min(1.0, done)), "")
+            elif line.startswith(_SPEAKER_TURNS_PREFIX):
+                turns_json = line[len(_SPEAKER_TURNS_PREFIX):]
+            elif line.strip():
+                tail = (tail + [line])[-8:]
+        code = proc.wait()
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+
+    if timed_out.is_set():
+        print(f"[PackBuilder] Speaker detection took longer than {SPEAKER_TIMEOUT_S} s, guessing from pauses.")
+        return None, SPEAKER_NOTICE_FAILED
+    if code == _SPEAKER_EXIT_NOT_INSTALLED:
+        return None, _speaker_not_installed_notice()
+    if code != 0 or turns_json is None:
+        detail = "\n".join(tail)
+        print(f"[PackBuilder] Speaker detection failed (exit {code}), guessing from pauses.\n{detail}")
+        return None, SPEAKER_NOTICE_FAILED
+    try:
+        turns = sorted((float(a), float(b), int(c)) for a, b, c in json.loads(turns_json))
+    except (ValueError, TypeError) as ex:
+        print(f"[PackBuilder] Speaker detection returned unreadable turns, guessing from pauses: {ex}")
+        return None, SPEAKER_NOTICE_FAILED
+    if not turns:
+        return None, SPEAKER_NOTICE_NO_VOICES
+    print(f"[PackBuilder] Found {len({t[2] for t in turns})} voices in {len(turns)} turns.")
+    return turns, ""
+
+
+def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+    """
+    Finds who speaks when on the voice stem: ([(start, end, speaker_id), ...] by start, "").
+    On any failure the turns are None and the notice says speakers were guessed from pauses.
+    on_progress(fraction, message) runs 0.88-0.90 while downloading (first time only, with
+    the download message) and 0.90-0.98 while detecting (message "").
+    The models download here; detection itself runs in a child process (_run_speaker_child).
+    """
+    try:
+        if not _speaker_package_present():
+            print("[PackBuilder] Speaker detection isn't installed.")
+            return None, _speaker_not_installed_notice()
+
+        if not _ensure_speaker_models((lambda f: on_progress(0.88 + 0.02 * f, SPEAKER_DOWNLOAD_MESSAGE)) if on_progress else None):
+            return None, SPEAKER_NOTICE_NO_DOWNLOAD
+
+        if on_progress:
+            on_progress(0.90, "")
+        return _run_speaker_child(vocals_wav, _speaker_models_dir(), on_progress)
+    except Exception as ex:
+        print(f"[PackBuilder] Speaker detection failed, guessing from pauses: {ex}")
+        return None, SPEAKER_NOTICE_FAILED
+
+
+def _turn_speaker(start: float, end: float, turns: List[Tuple[float, float, int]], previous: Optional[int]) -> int:
+    """Largest overlap, else the nearest turn within 1 s, else the previous line's speaker, else the nearest turn."""
+    best, best_overlap = None, 0.0
+    for t_start, t_end, speaker in turns:
+        overlap = min(end, t_end) - max(start, t_start)
+        if overlap > best_overlap:
+            best, best_overlap = speaker, overlap
+    if best is not None:
+        return best
+    gap = lambda t: max(t[0] - end, start - t[1], 0.0)
+    nearest = min(turns, key=gap)
+    if gap(nearest) <= 1.0 or previous is None:
+        return nearest[2]
+    return previous
+
+
+def assign_speakers_to_segments(segments: List[Dict[str, Any]], turns: Optional[List[Tuple[float, float, int]]] = None) -> List[Dict[str, Any]]:
+    """
+    Names the speakers when the subtitles didn't. With detected speaker turns each line
+    takes the voice it overlaps most; without them speakers alternate on pauses over 1.5 s.
+    Either way the names are "Speaker 1", "Speaker 2", ... and a person corrects them.
     """
     if not segments:
         return []
 
     distinct_chars = {s.get("character") for s in segments if s.get("character") and s.get("character") != "Actor"}
     if distinct_chars:
+        return segments
+
+    if turns:
+        names: Dict[int, str] = {}
+        previous = None
+        for seg in segments:
+            start = float(seg["start"])
+            end = max(start, float(seg.get("end", start)))
+            previous = _turn_speaker(start, end, turns, previous)
+            if previous not in names:
+                names[previous] = f"Speaker {len(names) + 1}"
+            seg["character"] = names[previous]
         return segments
 
     current_speaker_idx = 1

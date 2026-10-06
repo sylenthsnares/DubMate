@@ -10,3 +10,5 @@ pykakasi>=2.3.0
 # Released wheel, not the master sdist: the embedded Python cannot run PEP 517
 # build backends, and a source install of yt-dlp fails with BackendUnavailable.
 yt-dlp>=2025.1.1
+# Speaker detection (who says each line), CPU only, Apache-2.0. Models download on first use.
+sherpa-onnx==1.13.8

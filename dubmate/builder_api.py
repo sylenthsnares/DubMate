@@ -262,6 +262,10 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
         session["vocals_path"] = stem_results["vocals"]
         session["backing_path"] = stem_results["backing"]
+        # The basic filter writes a copy of the full mix as vocals.wav, so only a
+        # real separation may be played back as "voices only".
+        session["voices_separated"] = not stem_results.get("used_fallback")
+        progress.voices_separated = session["voices_separated"]
         # Say so when the neural model was unavailable. Silently substituting the
         # crude filter meant the user was promised AI isolation and never told they
         # did not get it.
@@ -273,6 +277,7 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
 
         # Step 3: Speech-to-Text Transcription via Whisper (60% -> 90%)
         existing_subtitles = session.get("subtitle_segments") or progress.segments
+        from_whisper = False
         if existing_subtitles and len(existing_subtitles) > 0:
             progress.update("transcribing", 0.85, f"Using {len(existing_subtitles)} lines from your subtitles", stage="transcription")
             segments = existing_subtitles
@@ -280,9 +285,27 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             progress.update("transcribing", 0.70, "Writing out the dialogue", stage="transcription")
             is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
             segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
-        
-        # Step 4: Speaker Turn Heuristics (90% -> 100%)
-        if segments:
+            from_whisper = True
+
+        # Whisper drops grunts, screams and laughs; find them on the voice stem.
+        # Only on a real separation: the basic filter's stem is the full mix.
+        if from_whisper and session.get("voices_separated"):
+            segments = pack_builder.add_nonverbal_segments(segments, session["vocals_path"], session.get("duration", 0))
+
+        # Step 4: who speaks (88% -> 98%). Only when the subtitles named nobody, so
+        # named subtitles never trigger the first-time download.
+        named = any(s.get("character") and s.get("character") != "Actor" for s in segments or [])
+        if segments and not named:
+            progress.update("detecting_speakers", 0.88, "Detecting who speaks", stage="speakers")
+
+            def _on_speaker_progress(fraction: float, message: str = "") -> None:
+                progress.update("detecting_speakers", fraction, message or "Detecting who speaks", stage="speakers")
+
+            turns, notice = pack_builder.detect_speaker_turns(session["vocals_path"], on_progress=_on_speaker_progress)
+            if notice:
+                progress.warning = f"{progress.warning} {notice}" if progress.warning else notice
+            segments = pack_builder.assign_speakers_to_segments(segments, turns)
+        elif segments:
             segments = pack_builder.assign_speakers_to_segments(segments)
         else:
             # If no speech detected, create 1 initial default segment
@@ -295,7 +318,12 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             }]
 
         progress.characters = sorted(list({s["character"] for s in segments}))
-        progress.update("transcribed", 1.0, f"Found {len(segments)} lines", stage="complete", segments=segments)
+        total = len(segments)
+        no_words = sum(1 for s in segments if s.get("nonverbal"))
+        summary = f"Found {total} line{'' if total == 1 else 's'}"
+        if no_words:
+            summary += f", {no_words} without words"
+        progress.update("transcribed", 1.0, summary, stage="complete", segments=segments)
 
     except pack_builder.MissingPipelineError as missing:
         print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {missing}")
@@ -443,12 +471,15 @@ async def builder_update_segments(session_id: str, payload: Dict[str, Any]):
             end = min(max_dur, float(s["end"]))
             if end <= start:
                 end = min(max_dur, start + 0.5)
-            valid_segments.append({
+            seg = {
                 "start": round(start, 3),
                 "end": round(end, 3),
                 "text": str(s.get("text", "")).strip(),
                 "character": str(s.get("character", "Actor")).strip() or "Actor",
-            })
+            }
+            if s.get("nonverbal"):
+                seg["nonverbal"] = True
+            valid_segments.append(seg)
         except (ValueError, KeyError, TypeError):
             continue
 
@@ -625,6 +656,24 @@ async def builder_serve_video(session_id: str, request: Request):
         session["video_path"],
         request,
         media_type="video/mp4",
+        cache_control="no-cache"
+    )
+
+
+@router.get("/api/builder/{session_id}/audio/{track}")
+async def builder_serve_audio_track(session_id: str, track: str, request: Request):
+    """Streams the separated voice stem for voices-only preview in the editor."""
+    session = BUILDER_SESSIONS.get(session_id)
+    not_ready = HTTPException(status_code=404, detail="This audio isn't ready yet.")
+    if track != "vocals" or not session or not session.get("voices_separated"):
+        raise not_ready
+    path = common.safe_join(session["folder"], "stems", "vocals.wav")
+    if not os.path.isfile(path):
+        raise not_ready
+    return common.range_stream_file(
+        path,
+        request,
+        media_type="audio/wav",
         cache_control="no-cache"
     )
 

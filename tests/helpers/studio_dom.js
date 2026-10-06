@@ -6,8 +6,10 @@
  * imports, so a missing import fails the suite with a ReferenceError instead of
  * being masked by one shared concatenated scope.
  *
- * buildStudioBundle() only returns a JS source string. Each suite still creates
- * its own JSDOM, installs its own stubs and decides when to evaluate it.
+ * buildStudioBundle(entry) bundles static/js/app.js by default, or another entry
+ * path (absolute or relative to the project root). It only returns a JS source
+ * string. Each suite still creates its own JSDOM, installs its own stubs and
+ * decides when to evaluate it.
  */
 const fs = require("fs");
 const path = require("path");
@@ -31,7 +33,7 @@ function splitNames(list, file) {
   return names;
 }
 
-function buildStudioBundle() {
+function buildStudioBundle(entry = ENTRY) {
   const visited = new Set();
   const chunks = [];
 
@@ -64,7 +66,7 @@ function buildStudioBundle() {
     chunks.push(`__mods['${rel(file)}'] = (function(){\n${body}\n return { ${exported.join(", ")} }; })();`);
   }
 
-  visit(ENTRY);
+  visit(path.resolve(PROJECT_ROOT, entry));
   return `(function() {\nconst __mods = {};\n${chunks.join("\n")}\n})();\n`;
 }
 
