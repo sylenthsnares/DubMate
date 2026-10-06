@@ -1,6 +1,6 @@
 /**
  * test_launcher_ui.js
- * JSDOM coverage for the desktop launcher's Pack Builder install card.
+ * JSDOM coverage for the desktop launcher's Pack Builder install card and update card.
  *
  * The regression this guards: the install used to show raw pip output ("Collecting
  * nvidia-cublas-cu12==12.4.5.8") against a bar pinned at 100%, which reads as either
@@ -45,6 +45,8 @@ function bootLauncher() {
   window.eval(`${launcherJs}
     window.__test = {
       renderBuilderProgress,
+      renderUpdateStage,
+      updateFailureMessage,
       BUILDER_STAGE_ORDER,
     };
   `);
@@ -152,6 +154,36 @@ console.log("\n  [+] Launcher: Pack Builder install card");
     doc.getElementById("builder-stages").style.display === "none"
       && doc.getElementById("tech-details").style.display === "none"
   );
+  dom.window.close();
+}
+
+// --- Installing what an update needs, and when that fails -------------------
+{
+  const { dom, doc, api } = bootLauncher();
+  doc.getElementById("progress-percent").innerText = "100%";
+  api.renderUpdateStage({ headline: "Installing the update", detail: "Downloading the parts it needs" });
+  check("the stage headline replaces the download one",
+    doc.getElementById("progress-headline").innerText === "Installing the update");
+  check("the stage detail is shown", doc.getElementById("progress-text").innerText === "Downloading the parts it needs");
+  check("no percentage while the step has no byte count",
+    doc.getElementById("progress-percent").innerText === "");
+  check("a full, moving bar",
+    doc.getElementById("progress-fill").style.width === "100%"
+      && !doc.getElementById("progress-bar").classList.contains("is-idle"));
+
+  const update = { latest_version: "1.2.0", current_version: "1.1.3" };
+  const failed = api.updateFailureMessage(update,
+    "DubMate couldn't download the parts this update needs. Check your internet connection.\n\nDetails: pip exited with 1\nERROR: No matching distribution");
+  check("the plain reason is in the message, the pip output only in the details",
+    failed.message === "The update to version 1.2.0 didn't install. DubMate couldn't download the parts this update needs. "
+      + "Check your internet connection. DubMate is still on version 1.1.3. Click Try again to open it."
+      && failed.detail === "pip exited with 1\nERROR: No matching distribution",
+    JSON.stringify(failed));
+  const plain = api.updateFailureMessage(update, "Corrupt zip archive: bad");
+  check("an error without a plain reason keeps the usual message and goes to the details",
+    plain.message === "The update to version 1.2.0 didn't install. DubMate is still on version 1.1.3. Click Try again to open it."
+      && plain.detail === "Corrupt zip archive: bad",
+    JSON.stringify(plain));
   dom.window.close();
 }
 

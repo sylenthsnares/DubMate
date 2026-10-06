@@ -140,13 +140,8 @@ async function init() {
             console.error("[Updater] Update failed:", e);
             isUpdating = false;
             builderCheckPending = false;
-            showError(
-              `The update to version ${payload.data.latest_version} didn't install. ` +
-              `DubMate is still on version ${payload.data.current_version}. ` +
-              `Click Try again to open it.`,
-              "Update failed",
-              e
-            );
+            const failure = updateFailureMessage(payload.data, e);
+            showError(failure.message, "Update failed", failure.detail);
           }
         } else {
           // No update pending, so this is the right moment to settle the optional
@@ -186,6 +181,11 @@ async function init() {
             if (progressText) progressText.innerText = `${receivedMb} MB`;
           }
         }
+      });
+
+      // A step after the download with no byte count (installing what the update needs)
+      listen("update-stage", (event) => {
+        renderUpdateStage(event.payload);
       });
 
       // Listen for update completion
@@ -235,6 +235,39 @@ async function init() {
 
   // Active polling to transition into the studio the instant the engine responds
   pollAndEnterStudio();
+}
+
+/**
+ * Shows an `UpdateStagePayload` from Rust (a step with no byte count, such as
+ * installing what the new version needs): its headline and detail over a full bar
+ * with the moving sheen, and no percentage.
+ */
+function renderUpdateStage(payload) {
+  if (!payload) return;
+  if (builderStages) builderStages.style.display = "none";
+  if (techDetails) techDetails.style.display = "none";
+  if (progressHeadline) progressHeadline.innerText = payload.headline || "Finishing the update";
+  if (progressText) progressText.innerText = payload.detail || "";
+  if (progressBar) progressBar.classList.remove("is-idle");
+  if (progressFill) progressFill.style.width = "100%";
+  if (progressPercent) progressPercent.innerText = "";
+}
+
+/**
+ * The error card's text for a failed update. Rust puts the plain reason first and the
+ * technical part after "\n\nDetails: "; the reason joins the message and the rest stays
+ * behind Show details.
+ */
+function updateFailureMessage(update, error) {
+  const text = String(error ?? "");
+  const marker = "\n\nDetails: ";
+  const cut = text.indexOf(marker);
+  const reason = cut >= 0 ? `${text.slice(0, cut).trim()} ` : "";
+  return {
+    message: `The update to version ${update.latest_version} didn't install. ${reason}` +
+      `DubMate is still on version ${update.current_version}. Click Try again to open it.`,
+    detail: cut >= 0 ? text.slice(cut + marker.length) : error,
+  };
 }
 
 const BUILDER_STAGE_ORDER = ["preparing", "downloading", "installing", "finalizing"];

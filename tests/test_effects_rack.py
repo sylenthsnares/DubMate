@@ -485,12 +485,7 @@ class TestRenderRoute(RenderRoutesCase):
             res = self._render()
             self.assertEqual(res.status_code, 503)
             self.assertEqual(res.json(), {"effects_unavailable": True,
-                                          "message": audio_processor.EFFECTS_DOWNLOAD_MESSAGE})
-            with mock.patch.object(vocal_chain, "install_status", return_value="installing"):
-                res = self._render()
-            self.assertEqual(res.status_code, 503)
-            self.assertEqual(res.json(), {"effects_unavailable": True,
-                                          "message": "Getting voice effects ready. This happens once."})
+                                          "message": "Download and install the latest DubMate to use voice effects."})
 
 
 class TestSupersede(RenderRoutesCase):

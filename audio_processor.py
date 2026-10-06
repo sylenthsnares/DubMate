@@ -69,13 +69,16 @@ RENDER_CACHE_MAX_BYTES = 500 * 1024 * 1024
 RENDER_KEEP_RECENT_S = 600       # eviction never deletes a render used in the last 10 minutes
 RENDER_TMP_MAX_AGE_S = 3600      # stray temp files older than this are removed on eviction
 
-EFFECTS_DOWNLOAD_MESSAGE = "Voice effects need a one-time download. Check your connection and restart DubMate."
+EFFECTS_MISSING_MESSAGE = "Download and install the latest DubMate to use voice effects."
 
 
 class EffectsUnavailable(RuntimeError):
-    """The voice effects (pedalboard) aren't installed yet, so nothing can be rendered or exported."""
+    """The voice effects (pedalboard) aren't installed, so nothing can be rendered or exported.
+    Only an install that predates them gets here (a source checkout not yet updated, or a
+    desktop install updated by a launcher older than the dependency step); the engine
+    never installs packages itself."""
 
-    def __init__(self, message: str = EFFECTS_DOWNLOAD_MESSAGE):
+    def __init__(self, message: str = EFFECTS_MISSING_MESSAGE):
         super().__init__(message)
 
 

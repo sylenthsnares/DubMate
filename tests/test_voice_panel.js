@@ -273,14 +273,18 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     if (!dot.classList.contains("is-still") || !shown(dot)) fail("reduced motion: the dot isn't still");
     delete w.matchMedia;
     await tick(200);
-    answer({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Getting voice effects ready. This happens once." }) });
+    answer({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Download and install the latest DubMate to use voice effects." }) });
     await tick();
     if (app.voiceScheduler.state !== "unavailable" || shown(dot)) fail("pulse when effects are unavailable");
     const note = $("voice-effects-note");
-    if (!shown(note) || note.textContent !== "Getting voice effects ready. This happens once.") fail(`note: ${note.textContent}`);
+    if (!shown(note) || note.textContent !== "Download and install the latest DubMate to use voice effects.") fail(`note: ${note.textContent}`);
     if (!chips().every((c) => c.disabled) || !sw("gate").disabled || !dial("eq", "low_db").disabled
         || !$("btn-voice-use-character").disabled) fail("effect controls on without voice effects");
     if ($("slider-gain").disabled || $("check-noise-reduction").disabled) fail("Level or Clean up noise turned off with the effects");
+    // An engine that sends no message still gets the plain one, never a download promise.
+    app.voiceEffectsMessage = "";
+    app.refreshVoiceControls();
+    if (note.textContent !== "Download and install the latest DubMate to use voice effects.") fail(`fallback note: ${note.textContent}`);
     env.renderReply = null;
     app.voiceUnavailable = false;
     console.log("PASS: the pulse follows the scheduler (still under reduced motion); unavailable turns effects off with the message");

@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import pack_loader
-from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, vocal_chain
+from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -93,10 +93,6 @@ async def lifespan(app: FastAPI):
             print(f"[DubMate Acceleration] Startup probe warning: {ex}")
 
     threading.Thread(target=_probe_encoder, name="encoder-probe", daemon=True).start()
-
-    # Desktop in-place updates keep the old bundled runtime, which has no voice effects
-    # package; this installs it once in the background (no-op elsewhere).
-    vocal_chain.start_self_install(pack_loader.CACHE_DIR, os.path.join(BASE_DIR, "requirements.txt"))
 
     registry = packs_cache.refresh_packs()
     print(f"[DubMate] Loaded {len(registry)} packs into studio registry.")

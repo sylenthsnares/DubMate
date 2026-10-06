@@ -181,7 +181,7 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     h = harness();
     h.scheduler.want(chainA, {});
     await h.clock.advance(120);
-    h.requests[0].resolve({ status: 503, message: "Getting voice effects ready. This happens once." });
+    h.requests[0].resolve({ status: 503, message: "Download and install the latest DubMate to use voice effects." });
     await tick();
     if (h.ready.length || h.scheduler.state !== "unavailable") fail(`503: ${h.scheduler.state}`);
     h.scheduler.want(chainB, {});   // effects may have arrived since: it asks again
@@ -462,7 +462,7 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     app.stopBoothPlayback();
 
     // Voice effects not installed: 503, the raw take plays, controls off, message shown.
-    const message = "Getting voice effects ready. This happens once.";
+    const message = "Download and install the latest DubMate to use voice effects.";
     renderReply = () => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message }) });
     played.length = 0;
     await app.loadBoothLine(0);

@@ -308,56 +308,39 @@ class TestRender(unittest.TestCase):
         np.testing.assert_array_equal(dry, x)
 
 
-class TestSelfInstall(unittest.TestCase):
+class TestAvailability(unittest.TestCase):
+    """The engine only checks for pedalboard; installing it is the installer's and the
+    desktop updater's job (tauri/src-tauri/src/updater.rs), never the running engine's."""
 
     def setUp(self):
-        self._env = os.environ.pop("DUBMATE_TOOLS_DIR", None)
+        self._saved = (vc._pedalboard, vc._checked)
 
     def tearDown(self):
-        os.environ.pop("DUBMATE_TOOLS_DIR", None)
-        if self._env is not None:
-            os.environ["DUBMATE_TOOLS_DIR"] = self._env
-        vc._install_state = None
+        vc._pedalboard, vc._checked = self._saved
 
-    def test_pin_comes_from_requirements(self):
-        requirements = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "requirements.txt")
-        self.assertEqual(vc._pinned_version(requirements), "0.9.24")
-        self.assertIsNone(vc._pinned_version(os.path.join(os.path.dirname(requirements), "missing.txt")))
-
-    def test_source_installs_never_start_it(self):
+    def test_missing_pedalboard_means_unavailable_and_nothing_is_installed(self):
+        import builtins
+        import subprocess
         from unittest import mock
-        with mock.patch.object(vc.threading, "Thread") as thread:
-            vc.start_self_install("/tmp/cache", "requirements.txt")
-        thread.assert_not_called()
+        real_import = builtins.__import__
 
-    def test_desktop_installs_the_pin_into_the_cache(self):
-        import tempfile
-        from unittest import mock
-        os.environ["DUBMATE_TOOLS_DIR"] = "tools"
-        calls = []
-        imported = iter([False, True, True])  # before the install, after it, final status
+        def no_pedalboard(name, *args, **kwargs):
+            if name == "pedalboard":
+                raise ImportError("No module named 'pedalboard'")
+            return real_import(name, *args, **kwargs)
 
-        def fake_run(cmd, **kwargs):
-            calls.append((cmd, kwargs))
-            return mock.Mock(returncode=0, stdout="", stderr="")
+        vc._pedalboard, vc._checked = None, False
+        with mock.patch.dict(os.environ, {"DUBMATE_TOOLS_DIR": "tools"}),                 mock.patch.object(builtins, "__import__", no_pedalboard),                 mock.patch.object(subprocess, "run") as run,                 mock.patch.object(subprocess, "Popen") as popen:
+            self.assertFalse(vc.available())
+            with self.assertRaises(RuntimeError):
+                vc._pedalboard_module()
+        run.assert_not_called()
+        popen.assert_not_called()
 
-        with tempfile.TemporaryDirectory() as cache, \
-                mock.patch.object(vc, "available", lambda cache_dir=None: next(imported)), \
-                mock.patch.object(vc.subprocess, "run", fake_run), \
-                mock.patch.object(vc.threading, "Thread") as thread:
-            req = os.path.join(cache, "requirements.txt")
-            with open(req, "w", encoding="utf-8") as fh:
-                fh.write("numpy>=1.24.0\npedalboard==0.9.24\n")
-            vc.start_self_install(cache, req)
-            self.assertEqual(vc.install_status(), "installing")
-            thread.call_args.kwargs["target"]()  # run the worker inline
-            cmd, kwargs = calls[0]
-            target = os.path.join(cache, "engine-packages", f"py{sys.version_info[0]}{sys.version_info[1]}")
-            self.assertEqual(cmd, [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps",
-                                   "--target", target, "pedalboard==0.9.24"])
-            self.assertEqual(kwargs["timeout"], 300)
-            self.assertTrue(os.path.isdir(target))
-            self.assertEqual(vc._install_state, "ready")
+    def test_the_engine_has_no_package_installer(self):
+        source = open(vc.__file__, encoding="utf-8").read()
+        for word in ("pip", "subprocess", "start_self_install", "engine-packages"):
+            self.assertNotIn(word, source)
 
 
 if __name__ == "__main__":

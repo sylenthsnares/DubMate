@@ -600,7 +600,6 @@ async def set_room_voice(room_id: str, payload: Dict[str, Any]):
 # --- Voice chain renders (documentation/design/effects-rack.md, "API and WebSocket") ---
 _RENDER_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 _RENDER_CACHE_CONTROL = "public, max-age=31536000, immutable"   # a render key never changes content
-EFFECTS_INSTALLING_MESSAGE = "Getting voice effects ready. This happens once."
 
 
 class _RenderEngine:
@@ -699,10 +698,7 @@ async def render_take(room_id: str, line_id: str, take_id: str, payload: Dict[st
                     audio_processor.room_render_dir(room.room_id), until_s=until_s,
                     meta={"line_id": line_id, "take_id": take_id})
             except audio_processor.EffectsUnavailable as ex:
-                installing = vocal_chain.install_status() == "installing"
-                return JSONResponse(status_code=503, content={
-                    "effects_unavailable": True,
-                    "message": EFFECTS_INSTALLING_MESSAGE if installing else str(ex)})
+                return JSONResponse(status_code=503, content={"effects_unavailable": True, "message": str(ex)})
             finally:
                 engine.active -= 1
                 if engine.active == 0:

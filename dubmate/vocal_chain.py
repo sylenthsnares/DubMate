@@ -13,12 +13,7 @@ audio_processor (which imports the reverb helpers from here).
 """
 
 import copy
-import os
-import re
-import subprocess
-import sys
 import threading
-import importlib
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -311,54 +306,28 @@ def render(audio: np.ndarray, chain: Dict[str, Any], sr: int = SR, until_s: Opti
 
 
 # ---------------------------------------------------------------------------
-# pedalboard availability and the desktop self-install
+# pedalboard availability
 # ---------------------------------------------------------------------------
+# The engine never installs packages itself: the installer ships them in the bundled
+# runtime, and the desktop updater installs a new requirements.txt before it restarts
+# the engine (tauri/src-tauri/src/updater.rs). Source installs get them from update.bat
+# / update.sh.
 
 _pedalboard = None
 _checked = False
 _import_lock = threading.Lock()
-_install_state: Optional[str] = None   # None (never started), "installing", "ready", "failed"
 
 
-def _engine_packages_dir(cache_dir: str) -> str:
-    return os.path.join(cache_dir, "engine-packages", f"py{sys.version_info[0]}{sys.version_info[1]}")
-
-
-def _default_cache_dir() -> Optional[str]:
-    try:
-        from pack_loader import CACHE_DIR
-        return CACHE_DIR
-    except Exception:
-        return None
-
-
-def _try_import(cache_dir: Optional[str]):
-    try:
-        import pedalboard
-        return pedalboard
-    except ImportError:
-        pass
-    if not cache_dir:
-        return None
-    folder = _engine_packages_dir(cache_dir)
-    if not os.path.isdir(folder):
-        return None
-    if folder not in sys.path:
-        sys.path.append(folder)
-    importlib.invalidate_caches()
-    try:
-        import pedalboard
-        return pedalboard
-    except ImportError:
-        return None
-
-
-def available(cache_dir: Optional[str] = None) -> bool:
-    """True when pedalboard imports (from the install or the desktop's engine-packages folder). Cached."""
+def available() -> bool:
+    """True when pedalboard imports. Cached for the life of the engine."""
     global _pedalboard, _checked
     with _import_lock:
         if not _checked:
-            _pedalboard = _try_import(cache_dir or _default_cache_dir())
+            try:
+                import pedalboard
+                _pedalboard = pedalboard
+            except ImportError:
+                _pedalboard = None
             _checked = True
         return _pedalboard is not None
 
@@ -367,64 +336,3 @@ def _pedalboard_module():
     if not available():
         raise RuntimeError("Voice effects aren't installed.")
     return _pedalboard
-
-
-def install_status() -> str:
-    """'installing' while the desktop self-install runs, else 'ready' or 'failed'."""
-    if _install_state == "installing":
-        return "installing"
-    return "ready" if available() else "failed"
-
-
-def _pinned_version(requirements_path: str) -> Optional[str]:
-    try:
-        with open(requirements_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                match = re.match(r"\s*pedalboard\s*==\s*([0-9A-Za-z.\-+]+)", line)
-                if match:
-                    return match.group(1)
-    except OSError:
-        pass
-    return None
-
-
-def start_self_install(cache_dir: str, requirements_path: str) -> None:
-    """
-    Desktop only (DUBMATE_TOOLS_DIR set): when pedalboard doesn't import, because an
-    in-place update replaced the Python files but not the bundled runtime, install the
-    pinned version into <cache_dir>/engine-packages/py3XY in a background thread.
-    """
-    global _install_state, _checked
-    if not (os.environ.get("DUBMATE_TOOLS_DIR") or "").strip() or _install_state == "installing":
-        return
-    _install_state = "installing"
-
-    def _work():
-        global _install_state, _checked
-        try:
-            if available(cache_dir):
-                return
-            pin = _pinned_version(requirements_path)
-            if not pin:
-                print(f"[VoiceChain] No pedalboard pin in {requirements_path!r}; voice effects stay off.")
-                return
-            target = _engine_packages_dir(cache_dir)
-            os.makedirs(target, exist_ok=True)
-            print(f"[VoiceChain] Installing pedalboard=={pin} into {target!r}...")
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps", "--target", target, f"pedalboard=={pin}"],
-                capture_output=True, text=True, timeout=300,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode != 0:
-                print(f"[VoiceChain] pedalboard install failed: {(result.stderr or result.stdout).strip()[-500:]}")
-                return
-            with _import_lock:
-                _checked = False
-            print(f"[VoiceChain] pedalboard install {'finished' if available(cache_dir) else 'did not import'}.")
-        except Exception as ex:
-            print(f"[VoiceChain] pedalboard install failed: {ex}")
-        finally:
-            _install_state = "ready" if available(cache_dir) else "failed"
-
-    threading.Thread(target=_work, name="pedalboard-install", daemon=True).start()

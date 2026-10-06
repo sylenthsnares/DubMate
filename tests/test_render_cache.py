@@ -261,7 +261,7 @@ class TestEffectsUnavailable(RenderCase):
             with self.assertRaises(audio_processor.EffectsUnavailable) as caught:
                 audio_processor.render_take_cached(self.take, vocal_chain.CLEAN, self.render_dir)
         self.assertEqual(str(caught.exception),
-                         "Voice effects need a one-time download. Check your connection and restart DubMate.")
+                         "Download and install the latest DubMate to use voice effects.")
         self.assertFalse(os.path.exists(self.render_dir))
 
     def test_export_path_fails_instead_of_dropping_the_effects(self):
@@ -392,7 +392,7 @@ class TestRoomRoutes(UploadCase):
         self.assertIn("| Sound: Custom |", cues)
         self.assertIn("| Sound: Clean |", cues)
 
-    def test_exports_fail_with_the_download_message_without_effects(self):
+    def test_exports_fail_with_the_missing_effects_message(self):
         self._room()
         self._upload("t1000", speech_like(duration=1.0, lead=0.1))
         with mock.patch.object(vocal_chain, "available", return_value=False):
@@ -400,7 +400,7 @@ class TestRoomRoutes(UploadCase):
             video_res = self.client.get(f"/api/rooms/{self.ROOM}/export/download")
         for res in (zip_res, video_res):
             self.assertEqual(res.status_code, 503, res.text)
-            self.assertEqual(res.json()["detail"], audio_processor.EFFECTS_DOWNLOAD_MESSAGE)
+            self.assertEqual(res.json()["detail"], audio_processor.EFFECTS_MISSING_MESSAGE)
 
 
 if __name__ == "__main__":

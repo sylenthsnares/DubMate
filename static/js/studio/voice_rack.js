@@ -7,7 +7,7 @@ import { AudioEngine } from '../audio_engine.js';
 import { lineTakes } from './takes.js';
 import { CLEAN_CHAIN, resolveChain, editChain, presetLabel, eqCurveDb, createRenderScheduler } from './voice.js';
 
-const EFFECTS_DOWNLOAD_MESSAGE = "Voice effects need a one-time download. Check your connection and restart DubMate.";
+const EFFECTS_MISSING_MESSAGE = "Download and install the latest DubMate to use voice effects.";
 // A take's own sound is saved this long after the last change to it (and when a dial is let go).
 const VOICE_SAVE_QUIET_MS = 400;
 
@@ -126,7 +126,7 @@ export class VoiceRackMethods {
     if (res.status === 409 || res.status === 503) {
       let data = {};
       try { data = (await res.json()) || {}; } catch (e) { }
-      if (res.status === 503) this.voiceEffectsMessage = data.message || EFFECTS_DOWNLOAD_MESSAGE;
+      if (res.status === 503) this.voiceEffectsMessage = data.message || EFFECTS_MISSING_MESSAGE;
       return { ...data, status: res.status };
     }
     if (!res.ok) {
@@ -321,7 +321,7 @@ export class VoiceRackMethods {
       this.voiceStatusDot.classList.toggle('is-still', prefersReducedMotion());
     }
     if (this.voiceEffectsNote) {
-      this.voiceEffectsNote.textContent = this.voiceUnavailable ? (this.voiceEffectsMessage || EFFECTS_DOWNLOAD_MESSAGE) : '';
+      this.voiceEffectsNote.textContent = this.voiceUnavailable ? (this.voiceEffectsMessage || EFFECTS_MISSING_MESSAGE) : '';
       this.voiceEffectsNote.style.display = this.voiceUnavailable ? '' : 'none';
     }
   }

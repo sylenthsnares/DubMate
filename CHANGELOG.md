@@ -37,7 +37,8 @@
 - **Sound Changes Crossfade In**: when you change a sound or an effect, the take keeps playing and the new sound fades in as soon as it's ready. Presets are prepared in the background after you save a take, so switching between them is quick.
 - **Dialogue Presence**: dialogue presence now balances the voices against the music instead of changing the whole export's volume.
 - **Older Rooms Keep Their Sound**: takes recorded with pitch or reverb in earlier versions keep those settings. Pitch now sounds cleaner.
-- **Voice Effects After a Desktop Update**: after updating the desktop app in place, voice effects download once in the background. Recording works meanwhile; effects and export say when they're waiting for the download.
+- **Updates Bring What They Need**: when an update needs new parts, the desktop app downloads them while it installs the update, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
+- **Voice Effects on Older Desktop Installs**: a desktop app installed before this release updates without voice effects. Recording still works; the Voice panel and export ask you to download and install the latest DubMate.
 - **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
 
 ### Removed
