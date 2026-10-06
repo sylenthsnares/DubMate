@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import audio_processor
 import pack_loader
-from dubmate import packs_cache, rooms
+from dubmate import common, packs_cache, rooms
 
 
 class TestStableLineIds(unittest.TestCase):
@@ -314,7 +314,7 @@ class TestTakeHistory(RoomCase):
         self.assertIsNone(room.remove_take("t1000", "k300"))
         self.assertNotIn("t1000", room.takes)
         self.assertEqual(os.listdir(audio_processor.take_dir(self.ROOM, "t1000")), [])
-        self.assertNotIn("0", room.to_state_dict()["takes"])
+        self.assertNotIn("t1000", room.to_state_dict()["takes"])
         self.assertEqual(room.mix_takes(), {})
 
     def test_mix_takes_gives_picked_copies_with_wav_path(self):
@@ -335,17 +335,26 @@ class TestTakeHistory(RoomCase):
         self._add(room, "t1000", 300)
         self._add(room, "t99999", 400)
         self.assertEqual(room.mix_takes().keys(), {0})
-        self.assertEqual(set(room.to_state_dict()["takes"]), {"0"})
+        self.assertEqual(set(room.to_state_dict()["takes"]), {"t1000"})
         room._sync_save_to_disk()
         self.assertIn("t99999", self._reload().takes)
 
-    def test_state_keeps_todays_wire_format(self):
+    def test_state_payload_is_version_2(self):
         room = self._room()
-        self._add(room, "t3000", 300, audio_version=1234, noise_reduction=True)
-        wire = room.to_state_dict()["takes"]["1"]
-        self.assertEqual(wire["url"], f"/api/rooms/{self.ROOM}/takes/1/audio?v=k300-1234")
-        self.assertTrue(wire["noise_reduction"])
-        self.assertNotIn("take_id", wire)
+        self._add(room, "t3000", 300, audio_version=1234, noise_reduction=True, peaks=[[0.1, 0.2]])
+        self._add(room, "t3000", 400, audio_version=5, peaks=[[0.3, 0.4]])
+        state = room.to_state_dict()
+        self.assertEqual(state["state_version"], 2)
+        entry = state["takes"]["t3000"]
+        self.assertEqual((entry["picked"], entry["next_number"]), ("k400", 3))
+        older, newest = entry["takes"]
+        self.assertEqual(older["url"], f"/api/rooms/{self.ROOM}/lines/t3000/takes/k300/audio?v=1234")
+        self.assertEqual((older["take_id"], older["number"]), ("k300", 1))
+        self.assertTrue(older["noise_reduction"])
+        self.assertNotIn("peaks", older)
+        self.assertEqual(newest["peaks"], [[0.3, 0.4]])
+        self.assertEqual(room.find_take("t3000", "k300")["peaks"], [[0.1, 0.2]])
+        self.assertNotIn("url", room.find_take("t3000", "k300"))
 
     def test_v2_save_and_load_round_trip(self):
         room = self._room()
@@ -437,8 +446,8 @@ class TestOldRoomMigration(RoomCase):
         saved = self._load_state()
         self.assertEqual(saved["state_version"], 2)
         self.assertEqual(saved["takes"], json.loads(json.dumps(room.takes)))
-        self.assertEqual(room.to_state_dict()["takes"]["0"]["url"],
-                         f"/api/rooms/{self.ROOM}/takes/0/audio?v=take1-{take0['audio_version']}")
+        self.assertEqual(room.to_state_dict()["takes"]["t1000"]["takes"][0]["url"],
+                         f"/api/rooms/{self.ROOM}/lines/t1000/takes/take1/audio?v={take0['audio_version']}")
 
         before = self._snapshot()
         again = self._reload()
@@ -495,70 +504,210 @@ class TestTakeRoutes(RoomCase):
         from starlette.testclient import TestClient
         cls.client = TestClient(app.app)
 
-    def _upload(self, line_index, freq, **form):
-        data = {"user_id": "hostT", "user_name": "Ana", "noise_reduction": "false"}
+    def _url(self, line_id, take_id=None, tail=""):
+        url = f"/api/rooms/{self.ROOM}/lines/{line_id}/takes"
+        return url + (f"/{take_id}" if take_id else "") + tail
+
+    def _upload(self, line_id, freq, user_id="hostT", status=200, **form):
+        data = {"user_id": user_id, "user_name": "Ana", "noise_reduction": "false"}
         data.update(form)
         audio = self._wav(os.path.join(self.cache, f"upload_{freq}.wav"), freq, seconds=0.5)
-        res = self.client.post(f"/api/rooms/{self.ROOM}/takes/{line_index}",
-                               files={"file": ("take.wav", audio, "audio/wav")}, data=data)
-        self.assertEqual(res.status_code, 200, res.text)
-        return res.json()["take"]
+        res = self.client.post(self._url(line_id), files={"file": ("take.wav", audio, "audio/wav")}, data=data)
+        self.assertEqual(res.status_code, status, res.text)
+        return res.json().get("take")
+
+    def _pick(self, line_id, take_id, user_id="hostT"):
+        return self.client.post(self._url(line_id, take_id, "/pick"), json={"user_id": user_id})
+
+    def _delete(self, line_id, take_id, user_id="hostT"):
+        return self.client.delete(self._url(line_id, take_id), params={"user_id": user_id})
+
+    def _until(self, ws, msg_type):
+        while (msg := ws.receive_json())["type"] != msg_type:
+            pass
+        return msg
 
     def test_recording_twice_keeps_both_takes_and_serves_newest(self):
         room = self._room()
-        first = self._upload(0, 300)
-        second = self._upload(0, 600, offset_ms="25")
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+            first = self._upload("t1000", 300)
+            second = self._upload("t1000", 600, offset_ms="25")
+            msg = self._until(ws, "take_recorded")
+            msg = self._until(ws, "take_recorded")
         entry = room.line_entry("t1000")
         self.assertEqual([t["number"] for t in entry["takes"]], [1, 2])
         newest = entry["takes"][1]
         self.assertEqual(entry["picked"], newest["take_id"])
+        self.assertEqual(second["url"],
+                         f"/api/rooms/{self.ROOM}/lines/t1000/takes/{newest['take_id']}/audio?v={newest['audio_version']}")
         self.assertNotEqual(first["url"], second["url"])
-        self.assertIn(f"v={newest['take_id']}-", second["url"])
-        self.assertEqual(room.to_state_dict()["takes"]["0"]["url"], second["url"])
-        self.assertEqual(room.to_state_dict()["takes"]["0"]["offset_ms"], 25)
+        self.assertEqual(msg["payload"], {
+            "line_id": "t1000", "line_index": 0, "take_id": newest["take_id"], "url": second["url"],
+            "noise_reduction": False, "user_name": "Ana", "user_id": "hostT"})
+        wire = msg["state"]["takes"]["t1000"]
+        self.assertEqual(wire["picked"], newest["take_id"])
+        self.assertEqual(wire["takes"][1]["offset_ms"], 25)
         for take in entry["takes"]:
             self.assertTrue(os.path.isfile(audio_processor.take_wav_path(self.ROOM, "t1000", take["take_id"])))
         self.assertEqual([n for n in os.listdir(self.room_dir) if n.startswith("take_line")], [])
 
         res = self.client.get(second["url"])
         self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.headers["cache-control"], common.LONG_CACHE)
         self.assertEqual(res.content, self._read(audio_processor.take_wav_path(self.ROOM, "t1000", newest["take_id"])))
-        self.assertEqual(self.client.get(f"/api/rooms/{self.ROOM}/takes/1/audio").status_code, 404)
-        self.assertEqual(self.client.get(f"/api/rooms/{self.ROOM}/takes/9/peaks").status_code, 404)
+        part = self.client.get(second["url"], headers={"Range": "bytes=0-99"})
+        self.assertEqual(part.status_code, 206)
+        self.assertEqual(part.content, res.content[:100])
+        peaks = self.client.get(self._url("t1000", first["take_id"], "/peaks"))
+        self.assertEqual(peaks.status_code, 200)
+        self.assertEqual(peaks.json()["url"], first["url"])
+        self.assertTrue(peaks.json()["peaks"])
 
-    def test_noise_reduction_switch_acts_on_picked_take(self):
+    def test_state_sends_peaks_for_the_picked_take_only(self):
         room = self._room()
-        self._upload(0, 300)
-        self._upload(0, 600)
+        first = self._upload("t1000", 300)
+        self._upload("t1000", 600)
+        state = room.to_state_dict()
+        self.assertEqual(state["state_version"], 2)
+        older, newest = state["takes"]["t1000"]["takes"]
+        self.assertNotIn("peaks", older)
+        self.assertTrue(newest["peaks"])
+        self.assertTrue(room.find_take("t1000", first["take_id"])["peaks"])
+
+    def test_pick(self):
+        room = self._room()
+        first = self._upload("t1000", 300)
+        self._upload("t1000", 600)
+        room.exported_video_path = "old.mp4"
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+            res = self._pick("t1000", first["take_id"])
+            msg = self._until(ws, "take_picked")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(msg["payload"], {"line_id": "t1000", "line_index": 0,
+                                          "take_id": first["take_id"], "user_id": "hostT"})
+        self.assertEqual(room.picked_take("t1000")["take_id"], first["take_id"])
+        self.assertEqual(msg["state"]["takes"]["t1000"]["picked"], first["take_id"])
+        older, newest = msg["state"]["takes"]["t1000"]["takes"]
+        self.assertTrue(older["peaks"])
+        self.assertNotIn("peaks", newest)
+        self.assertIsNone(room.exported_video_path)
+        self.assertEqual(room.mix_takes()[0]["take_id"], first["take_id"])
+
+    def test_delete_falls_back_to_newest_and_removes_files(self):
+        room = self._room()
+        oldest = self._upload("t1000", 300)
+        middle = self._upload("t1000", 450)
+        newest = self._upload("t1000", 600)
+        d = audio_processor.take_dir(self.ROOM, "t1000")
+        room.exported_video_path = "old.mp4"
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+            self.assertEqual(self._pick("t1000", oldest["take_id"]).status_code, 200)
+            res = self._delete("t1000", oldest["take_id"])
+            msg = self._until(ws, "take_deleted")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["picked"], newest["take_id"])
+        self.assertEqual(msg["payload"], {"line_id": "t1000", "line_index": 0, "take_id": oldest["take_id"],
+                                          "picked": newest["take_id"], "user_id": "hostT"})
+        self.assertEqual(room.picked_take("t1000")["take_id"], newest["take_id"])
+        self.assertEqual([t["take_id"] for t in room.line_entry("t1000")["takes"]],
+                         [middle["take_id"], newest["take_id"]])
+        self.assertFalse([n for n in os.listdir(d) if n.startswith(oldest["take_id"])])
+        self.assertTrue(os.path.isfile(os.path.join(d, f"{middle['take_id']}.wav")))
+        self.assertIsNone(room.exported_video_path)
+        self.assertEqual(self.client.get(oldest["url"]).status_code, 404)
+
+    def test_delete_last_take(self):
+        room = self._room()
+        only = self._upload("t1000", 300)
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+            res = self._delete("t1000", only["take_id"])
+            msg = self._until(ws, "take_deleted")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertIsNone(msg["payload"]["picked"])
+        self.assertNotIn("t1000", room.takes)
+        self.assertNotIn("t1000", msg["state"]["takes"])
+        self.assertEqual(os.listdir(audio_processor.take_dir(self.ROOM, "t1000")), [])
+        self.assertEqual(room.mix_takes(), {})
+
+    def test_cast_line_is_closed_to_other_users(self):
+        room = self._room()
+        room.role_assignments["Ana"] = ["actorA"]
+        take = self._upload("t1000", 300, user_id="actorA")
+        self._upload("t1000", 400, user_id="guestB", status=403)
+        self.assertEqual(self._pick("t1000", take["take_id"], "guestB").status_code, 403)
+        self.assertEqual(self._delete("t1000", take["take_id"], "guestB").status_code, 403)
+        self.assertEqual(len(room.line_entry("t1000")["takes"]), 1)
+        self.assertTrue(os.path.isfile(audio_processor.take_wav_path(self.ROOM, "t1000", take["take_id"])))
+        # The host may still act on any line.
+        self.assertEqual(self._pick("t1000", take["take_id"], "hostT").status_code, 200)
+
+    def test_line_nobody_is_cast_on_is_open(self):
+        room = self._room()
+        self.assertEqual(room.role_assignments["Ben"], [])
+        first = self._upload("t3000", 300, user_id="guestB")
+        second = self._upload("t3000", 400, user_id="guestB")
+        self.assertEqual(self._pick("t3000", first["take_id"], "guestB").status_code, 200)
+        self.assertEqual(self._delete("t3000", second["take_id"], "guestB").status_code, 200)
+        self.assertEqual(room.picked_take("t3000")["take_id"], first["take_id"])
+
+    def test_unknown_lines_and_takes(self):
+        room = self._room()
+        take = self._upload("t1000", 300)
+        self._add(room, "t99999", 400)  # kept from an older pack, not in this one
+        res = self.client.post(self._url("t2000"), data={"user_id": "hostT"},
+                               files={"file": ("take.wav", b"RIFF", "audio/wav")})
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["detail"], "That line isn't in this scene.")
+        for line_id, take_id in (("t1000", "nope"), ("t2000", take["take_id"]), ("t99999", "k400")):
+            self.assertEqual(self._pick(line_id, take_id).status_code, 404)
+            self.assertEqual(self._delete(line_id, take_id).status_code, 404)
+            self.assertEqual(self.client.get(self._url(line_id, take_id, "/audio")).status_code, 404)
+            self.assertEqual(self.client.get(self._url(line_id, take_id, "/peaks")).status_code, 404)
+            self.assertEqual(self.client.post(self._url(line_id, take_id, "/noise_reduction"),
+                                              json={"noise_reduction": True}).status_code, 404)
+        self.assertIn("t99999", room.takes)
+
+    def test_noise_reduction_switch_acts_on_one_take(self):
+        room = self._room()
+        self._upload("t1000", 300)
+        self._upload("t1000", 600)
         older, newest = room.line_entry("t1000")["takes"]
         newest["audio_version"] = 1
-        with mock.patch.object(audio_processor, "apply_noise_reduction",
-                               side_effect=lambda src, dst, *a, **k: shutil.copy2(src, dst)):
-            res = self.client.post(f"/api/rooms/{self.ROOM}/takes/0/noise_reduction", json={"noise_reduction": True})
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+            with mock.patch.object(audio_processor, "apply_noise_reduction",
+                                   side_effect=lambda src, dst, *a, **k: shutil.copy2(src, dst)):
+                res = self.client.post(self._url("t1000", newest["take_id"], "/noise_reduction"),
+                                       json={"noise_reduction": True})
+            msg = self._until(ws, "take_params_updated")
         self.assertEqual(res.status_code, 200, res.text)
         self.assertTrue(newest["noise_reduction"])
         self.assertFalse(older["noise_reduction"])
         self.assertGreater(newest["audio_version"], 1)
-        self.assertIn(f"v={newest['take_id']}-{newest['audio_version']}", res.json()["take"]["url"])
+        url = res.json()["take"]["url"]
+        self.assertTrue(url.endswith(f"/takes/{newest['take_id']}/audio?v={newest['audio_version']}"))
+        self.assertEqual(msg["payload"], {"line_id": "t1000", "take_id": newest["take_id"],
+                                          "url": url, "noise_reduction": True})
 
-    def test_socket_edits_and_deletes_the_picked_take(self):
+    def test_socket_edits_one_take_by_id(self):
         room = self._room()
-        self._upload(0, 300)
-        self._upload(0, 600)
+        self._upload("t1000", 300)
+        self._upload("t1000", 600)
         older, newest = room.line_entry("t1000")["takes"]
         with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
-            ws.send_json({"type": "update_take_params", "payload": {"line_index": 0, "offset_ms": 80}})
-            while ws.receive_json()["type"] != "take_params_updated":
-                pass
-            self.assertEqual(newest["offset_ms"], 80)
-            self.assertEqual(older["offset_ms"], 0)
+            ws.send_json({"type": "update_take_params",
+                          "payload": {"line_id": "t1000", "take_id": older["take_id"], "offset_ms": 80}})
+            msg = self._until(ws, "take_params_updated")
+            self.assertEqual(msg["payload"], {"line_id": "t1000", "take_id": older["take_id"]})
+            # An old tab's index-keyed messages change nothing.
+            ws.send_json({"type": "update_take_params", "payload": {"line_index": 0, "offset_ms": 5}})
             ws.send_json({"type": "clear_take", "payload": {"line_index": 0}})
-            while (msg := ws.receive_json())["type"] != "take_cleared":
-                pass
-        self.assertEqual(msg["payload"], {"line_index": 0})
-        self.assertEqual(room.picked_take("t1000"), older)
-        self.assertFalse(os.path.exists(audio_processor.take_wav_path(self.ROOM, "t1000", newest["take_id"])))
-        self.assertEqual(msg["state"]["takes"]["0"]["url"], room.wire_take(0, older)["url"])
+            ws.send_json({"type": "update_take_params",
+                          "payload": {"line_id": "t1000", "take_id": newest["take_id"], "gain_db": -2.0}})
+            msg = self._until(ws, "take_params_updated")
+        self.assertEqual(msg["payload"]["take_id"], newest["take_id"])
+        self.assertEqual((older["offset_ms"], newest["offset_ms"]), (80, 0))
+        self.assertEqual(newest["gain_db"], -2.0)
+        self.assertEqual(len(room.line_entry("t1000")["takes"]), 2)
 
     def test_audio_route_serves_migrated_take(self):
         active = self._wav(os.path.join(self.room_dir, "take_line_0.wav"), 300)
@@ -569,13 +718,13 @@ class TestTakeRoutes(RoomCase):
                                        "wav_path": os.path.join(self.room_dir, "take_line_0.wav"),
                                        "url": "/old", "offset_ms": 0, "noise_reduction": False}}}, f)
         self._reload()
-        res = self.client.get(f"/api/rooms/{self.ROOM}/takes/0/audio")
+        res = self.client.get(self._url("t1000", "take1", "/audio"))
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.content, active)
 
     def test_project_manifest_names_line_and_take(self):
         room = self._room()
-        self._upload(1, 300)
+        self._upload("t3000", 300)
         self.pack.ensure_web_ready = lambda: None  # no scene video in this pack
         zip_path = audio_processor.build_project_zip(
             self.pack, room.mix_takes(), output_zip_path=os.path.join(self.cache, "p.zip"), room_id=self.ROOM)

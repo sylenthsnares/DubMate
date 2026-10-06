@@ -120,10 +120,33 @@ def _line_target_loudness(pack, line) -> float:
     return measured
 
 
-@router.post("/api/rooms/{room_id}/takes/{line_index}")
+def _require_line_actor(room, line, user_id: str) -> None:
+    """403 when the line's character has assigned actors and user_id is neither one of
+    them nor the host. Unassigned lines are open to everyone, and in a solo room
+    (host_id "host") everyone counts as host."""
+    char_name = line.get("character")
+    assigned_users = room.role_assignments.get(char_name, [])
+    is_host = (user_id == room.host_id) or (room.host_id == "host")
+    if assigned_users and user_id not in assigned_users and not is_host:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Line {line['index'] + 1} belongs to {char_name}. Only their actor can record it."
+        )
+
+
+def _take_or_404(room, line_id: str, take_id: str):
+    """(line, take) for a take of a line in the current pack, or 404."""
+    line = room.find_line(line_id)
+    take = room.find_take(line_id, take_id) if line else None
+    if not take:
+        raise HTTPException(status_code=404, detail="Take not found")
+    return line, take
+
+
+@router.post("/api/rooms/{room_id}/lines/{line_id}/takes")
 async def upload_take(
     room_id: str,
-    line_index: int,
+    line_id: str,
     file: UploadFile = File(...),
     user_id: str = Form(...),
     user_name: str = Form("Actor"),
@@ -137,21 +160,12 @@ async def upload_take(
     common.require_safe_identifier(user_id, "user_id")
     room = rooms.room_or_404(room_id)
 
-    if line_index < 0 or line_index >= len(room.pack.lines):
+    line = room.find_line(line_id)
+    if not line:
         raise HTTPException(status_code=400, detail="That line isn't in this scene.")
-
-    line = room.pack.lines[line_index]
-    char_name = line.get("character")
-    assigned_users = room.role_assignments.get(char_name, [])
-    is_host = (user_id == room.host_id) or (room.host_id == "host")
-    if assigned_users and user_id not in assigned_users and not is_host:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Line {line_index + 1} belongs to {char_name}. Only their actor can record it."
-        )
+    _require_line_actor(room, line, user_id)
 
     # Recording again adds a take next to the line's earlier ones; nothing is overwritten.
-    line_id = line["line_id"]
     take_id = uuid.uuid4().hex[:8]
     take_dir = audio_processor.take_dir(room.room_id, line_id)
     try:
@@ -171,7 +185,7 @@ async def upload_take(
                 target_loudness_db=target_loudness
             )
     except Exception as ex:
-        print(f"[UploadError] Error saving take for room {room_id} line {line_index}: {ex}")
+        print(f"[UploadError] Error saving take for room {room_id} line {line_id}: {ex}")
         audio_processor.delete_take_files(take_dir, take_id)
         raise HTTPException(status_code=400, detail=str(ex))
 
@@ -195,43 +209,76 @@ async def upload_take(
         "auto_gain_db": saved.get("auto_gain_db", 0.0),
         "recorded_at": time.time(),
     })
-    wire = room.wire_take(line_index, take)
+    wire = room.wire_take(line_id, take)
 
     room.invalidate_exports()
     await room.broadcast("take_recorded", {
-        "line_index": line_index,
+        "line_id": line_id,
+        "line_index": line["index"],
+        "take_id": take_id,
         "url": wire["url"],
         "noise_reduction": take["noise_reduction"],
         "user_name": user_name,
         "user_id": user_id,
     })
-    return {"status": "ok", "take": wire}
+    return {"status": "ok", "line_id": line_id, "take": wire, "line": room.wire_line(line_id)}
 
 
-def _picked_take_at(room, line_index: int):
-    """(line_id, picked take) of the line at line_index, or 404 if it has no take."""
-    if not 0 <= line_index < len(room.pack.lines):
-        raise HTTPException(status_code=404, detail="Take not found")
-    line_id = room.pack.lines[line_index]["line_id"]
-    take = room.picked_take(line_id)
-    if not take:
-        raise HTTPException(status_code=404, detail="Take not found")
-    return line_id, take
+@router.post("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/pick")
+async def pick_take(room_id: str, line_id: str, take_id: str, payload: Dict[str, Any]):
+    """Puts a take in the dub."""
+    room = rooms.room_or_404(room_id)
+    user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
+    line, _ = _take_or_404(room, line_id, take_id)
+    _require_line_actor(room, line, user_id)
+
+    room.pick_take(line_id, take_id)
+    room.invalidate_exports()
+    await room.broadcast("take_picked", {
+        "line_id": line_id,
+        "line_index": line["index"],
+        "take_id": take_id,
+        "user_id": user_id,
+    })
+    return {"status": "ok", "line_id": line_id, "line": room.wire_line(line_id)}
 
 
-@router.post("/api/rooms/{room_id}/takes/{line_index}/noise_reduction")
+@router.delete("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}")
+async def delete_take(room_id: str, line_id: str, take_id: str, user_id: str = ""):
+    """Deletes a take and its files. A deleted picked take falls back to the newest
+    remaining one; with none left the line plays the original voice again."""
+    room = rooms.room_or_404(room_id)
+    common.require_safe_identifier(user_id, "user_id")
+    line, _ = _take_or_404(room, line_id, take_id)
+    _require_line_actor(room, line, user_id)
+
+    async with room.processing_lock:
+        picked = room.remove_take(line_id, take_id)
+    room.invalidate_exports()
+    await room.broadcast("take_deleted", {
+        "line_id": line_id,
+        "line_index": line["index"],
+        "take_id": take_id,
+        "picked": picked,
+        "user_id": user_id,
+    })
+    return {"status": "ok", "line_id": line_id, "picked": picked, "line": room.wire_line(line_id)}
+
+
+@router.post("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/noise_reduction")
 async def toggle_take_noise_reduction_endpoint(
     room_id: str,
-    line_index: int,
+    line_id: str,
+    take_id: str,
     payload: Dict[str, Any]
 ):
     """Switches an existing take between raw and denoised audio without re-recording."""
     room = rooms.room_or_404(room_id)
-    line_id, take = _picked_take_at(room, line_index)
+    line, take = _take_or_404(room, line_id, take_id)
 
     enable = bool(payload.get("noise_reduction", False))
     user_id = take.get("user_id", "host")
-    target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, room.pack.lines[line_index])
+    target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
 
     try:
         async with room.processing_lock:
@@ -239,7 +286,7 @@ async def toggle_take_noise_reduction_endpoint(
                 audio_processor.toggle_take_noise_reduction,
                 room.room_id,
                 audio_processor.take_dir(room.room_id, line_id),
-                take["take_id"],
+                take_id,
                 enable_noise_reduction=enable,
                 user_id=user_id,
                 target_loudness_db=target_loudness,
@@ -256,38 +303,40 @@ async def toggle_take_noise_reduction_endpoint(
         take["speech_loudness_db"] = toggled["speech_loudness_db"]
         take["target_loudness_db"] = toggled["target_loudness_db"]
         take["auto_gain_db"] = toggled["auto_gain_db"]
-        wire = room.wire_take(line_index, take)
+        wire = room.wire_take(line_id, take)
         room.invalidate_exports()
         await room.broadcast("take_params_updated", {
-            "line_index": line_index,
+            "line_id": line_id,
+            "take_id": take_id,
             "url": wire["url"],
             "noise_reduction": enable
         })
-        return {"status": "ok", "take": wire}
+        return {"status": "ok", "line_id": line_id, "take": wire}
     except Exception as ex:
         print(f"[ToggleNoiseReductionError] {ex}")
         raise HTTPException(status_code=400, detail=str(ex))
 
 
-@router.get("/api/rooms/{room_id}/takes/{line_index}/peaks")
-async def get_take_peaks(room_id: str, line_index: int):
+@router.get("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/peaks")
+async def get_take_peaks(room_id: str, line_id: str, take_id: str):
     """Returns compact peaks waveform data for a specific take on-demand."""
     room = rooms.room_or_404(room_id)
-    _, take = _picked_take_at(room, line_index)
+    _, take = _take_or_404(room, line_id, take_id)
     return {
         "status": "ok",
-        "line_index": line_index,
+        "line_id": line_id,
+        "take_id": take_id,
         "peaks": take.get("peaks", []),
         "duration": take.get("duration", 0.0),
-        "url": room.wire_take(line_index, take)["url"],
+        "url": room.wire_take(line_id, take)["url"],
     }
 
 
-@router.get("/api/rooms/{room_id}/takes/{line_index}/audio")
-async def get_take_audio(room_id: str, line_index: int, request: Request):
+@router.get("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/audio")
+async def get_take_audio(room_id: str, line_id: str, take_id: str, request: Request):
     room = rooms.room_or_404(room_id)
-    line_id, take = _picked_take_at(room, line_index)
-    wav_path = audio_processor.take_wav_path(room.room_id, line_id, take["take_id"])
+    _take_or_404(room, line_id, take_id)
+    wav_path = audio_processor.take_wav_path(room.room_id, line_id, take_id)
     if not os.path.exists(wav_path):
         raise HTTPException(status_code=404, detail="Take not found")
 

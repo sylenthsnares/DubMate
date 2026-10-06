@@ -90,12 +90,16 @@ class Room:
         entry["picked"] = take["take_id"]
         return take
 
+    def find_take(self, line_id: str, take_id: str) -> Optional[Dict[str, Any]]:
+        """The line's take with this ID, or None."""
+        entry = self.takes.get(line_id)
+        return next((t for t in entry["takes"] if t["take_id"] == take_id), None) if entry else None
+
     def pick_take(self, line_id: str, take_id: str) -> Optional[Dict[str, Any]]:
         """Puts a take in the dub. Returns it, or None if the line has no such take."""
-        entry = self.takes.get(line_id)
-        take = next((t for t in entry["takes"] if t["take_id"] == take_id), None) if entry else None
+        take = self.find_take(line_id, take_id)
         if take:
-            entry["picked"] = take_id
+            self.takes[line_id]["picked"] = take_id
         return take
 
     def remove_take(self, line_id: str, take_id: str) -> Optional[str]:
@@ -128,26 +132,32 @@ class Room:
                 }
         return out
 
-    def wire_take(self, line_index: int, take: Dict[str, Any]) -> Dict[str, Any]:
-        """A take as the studio reads it today: keyed by line index, with an audio url that
-        changes whenever the audio does."""
+    def find_line(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """The current pack's line with this ID, or None."""
+        return next((l for l in self.pack.lines if l["line_id"] == line_id), None)
+
+    def wire_take(self, line_id: str, take: Dict[str, Any]) -> Dict[str, Any]:
+        """A take as clients read it: the stored fields plus an audio url that changes
+        whenever the audio does."""
         return {
-            "user_id": take.get("user_id"),
-            "user_name": take.get("user_name"),
-            "duration": take.get("duration"),
-            "peaks": take.get("peaks"),
-            "offset_ms": take.get("offset_ms", 0),
-            "pitch_semitones": take.get("pitch_semitones", 0.0),
-            "reverb_wet": take.get("reverb_wet", 0.0),
-            "gain_db": take.get("gain_db", 0.0),
-            "noise_reduction": take.get("noise_reduction", False),
-            "has_raw": take.get("has_raw", True),
-            "speech_loudness_db": take.get("speech_loudness_db"),
-            "target_loudness_db": take.get("target_loudness_db"),
-            "auto_gain_db": take.get("auto_gain_db", 0.0),
-            "url": f"/api/rooms/{self.room_id}/takes/{line_index}/audio?v={take['take_id']}-{take.get('audio_version', 0)}",
-            "recorded_at": take.get("recorded_at"),
+            **take,
+            "url": f"/api/rooms/{self.room_id}/lines/{line_id}/takes/{take['take_id']}/audio?v={take.get('audio_version', 0)}",
         }
+
+    def wire_line(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """The line's take history as clients read it. Only the picked take carries peaks,
+        so a line with many takes doesn't bloat every broadcast; the others are fetched on
+        demand."""
+        entry = self.takes.get(line_id)
+        if not entry:
+            return None
+        takes = []
+        for take in entry["takes"]:
+            wire = self.wire_take(line_id, take)
+            if take["take_id"] != entry["picked"]:
+                wire.pop("peaks", None)
+            takes.append(wire)
+        return {"picked": entry["picked"], "next_number": entry["next_number"], "takes": takes}
 
     def invalidate_exports(self):
         """Drops renders made from takes or mix settings that just changed.
@@ -238,15 +248,16 @@ class Room:
         has_export_16_9 = self.exported_video_path is not None and os.path.exists(self.exported_video_path)
         has_export = has_export_16_9
         return {
+            "state_version": STATE_VERSION,
             "room_id": self.room_id,
             "pack": self.pack.to_dict(),
             "host_id": self.host_id,
             "users": self.users,
             "role_assignments": self.role_assignments,
             "takes": {
-                str(line["index"]): self.wire_take(line["index"], take)
+                line["line_id"]: self.wire_line(line["line_id"])
                 for line in self.pack.lines
-                if (take := self.picked_take(line["line_id"]))
+                if line["line_id"] in self.takes
             },
             "status": self.status,
             "master_dialogue_presence_db": self.master_dialogue_presence_db,

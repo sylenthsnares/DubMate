@@ -2,7 +2,7 @@
 // waveform/nudge, A/B preview and noise reduction.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { WaveformRenderer } from '../waveform.js';
-import { pickedTake, takeCount } from './takes.js';
+import { pickedTake, lineTakes, takeCount } from './takes.js';
 
 export class BoothMethods {
   toggleFilterLines() {
@@ -194,18 +194,18 @@ export class BoothMethods {
 
     // Fallback: If take exists but peaks are not yet loaded in state, fetch on-demand or check cache
     if (take && (!takePeaks || takePeaks.length === 0)) {
-      if (this.takePeaksCache?.has(index)) {
-        takePeaks = this.takePeaksCache.get(index);
+      if (this.takePeaksCache?.has(take.take_id)) {
+        takePeaks = this.takePeaksCache.get(take.take_id);
       } else {
         // Asynchronously fetch compact peaks from dedicated endpoint
-        fetch(`/api/rooms/${this.roomState.room_id}/takes/${index}/peaks`)
+        fetch(`/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}/peaks`)
           .then(r => r.ok ? r.json() : null)
           .then(pData => {
             if (pData && pData.peaks && pData.peaks.length > 0 && currentSeq === this.loadLineSeq) {
               if (!this.takePeaksCache) this.takePeaksCache = new Map();
-              this.takePeaksCache.set(index, pData.peaks);
+              this.takePeaksCache.set(take.take_id, pData.peaks);
               const shownTake = this.takeForLine(index);
-              if (shownTake) shownTake.peaks = pData.peaks;
+              if (shownTake?.take_id === take.take_id) shownTake.peaks = pData.peaks;
               this.waveform.setData({ takePeaks: pData.peaks });
             }
           })
@@ -242,9 +242,9 @@ export class BoothMethods {
           if ((!takePeaks || takePeaks.length === 0) && takeBuf) {
             takePeaks = WaveformRenderer.extractPeaksFromBuffer(takeBuf, 100);
             if (!this.takePeaksCache) this.takePeaksCache = new Map();
-            this.takePeaksCache.set(index, takePeaks);
+            this.takePeaksCache.set(take.take_id, takePeaks);
             const shownTake = this.takeForLine(index);
-            if (shownTake) shownTake.peaks = takePeaks;
+            if (shownTake?.take_id === take.take_id) shownTake.peaks = takePeaks;
             this.setWaveformForLine(line, take, origPeaks, takePeaks);
           }
         } catch (e) {
@@ -340,7 +340,7 @@ export class BoothMethods {
       this.btnRecordMain.className = 'btn-big-record';
       if (take) {
         this.recordIcon.innerText = '↺';
-        this.recordStatusLabel.innerText = `Recorded by ${take.user_name} (${take.duration}s)`;
+        this.recordStatusLabel.innerText = `Take ${take.number} by ${take.user_name} (${take.duration}s)`;
       } else {
         this.recordIcon.innerText = '●';
         this.recordStatusLabel.innerText = 'Press Space to record';
@@ -602,14 +602,13 @@ export class BoothMethods {
     const gain = parseFloat(this.sliderGain.value);
 
     const take = this.roomState && this.takeForLine(lineIdx);
-    if (take) {
-      take.offset_ms = offsetMs;
-      take.pitch_semitones = pitch;
-      take.reverb_wet = reverb;
-      take.gain_db = gain;
-    }
+    if (!take) return;
+    take.offset_ms = offsetMs;
+    take.pitch_semitones = pitch;
+    take.reverb_wet = reverb;
+    take.gain_db = gain;
 
-    this.socket.updateTakeParams(lineIdx, {
+    this.socket.updateTakeParams(this.roomState.pack.lines[lineIdx].line_id, take.take_id, {
       offset_ms: offsetMs,
       pitch_semitones: pitch,
       reverb_wet: reverb,
@@ -806,12 +805,14 @@ export class BoothMethods {
   }
 
   async toggleTakeNoiseReduction(lineIndex, enable) {
-    if (!this.roomState || !this.takeForLine(lineIndex)) {
+    const target = this.roomState && this.takeForLine(lineIndex);
+    if (!target) {
       return;
     }
+    const lineId = this.roomState.pack.lines[lineIndex].line_id;
 
     try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}/noise_reduction`, {
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/lines/${lineId}/takes/${target.take_id}/noise_reduction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ noise_reduction: enable }),
@@ -822,8 +823,10 @@ export class BoothMethods {
       }
 
       const data = await res.json();
-      if (data.take) {
-        this.roomState.takes[lineIndex] = data.take;
+      const entryTakes = lineTakes(this.roomState.takes, this.roomState.pack.lines[lineIndex]);
+      const pos = data.take ? entryTakes.findIndex((t) => t.take_id === data.take.take_id) : -1;
+      if (pos >= 0) {
+        entryTakes[pos] = data.take;
       }
 
       this.audio.evictTakeCache(this.takeForLine(lineIndex));
@@ -1113,7 +1116,8 @@ export class BoothMethods {
     formData.append('auto_gain', autoGain ? 'true' : 'false');
 
     try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}`, {
+      const lineId = this.roomState.pack.lines[lineIndex].line_id;
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/lines/${lineId}/takes`, {
         method: 'POST',
         body: formData,
       });
@@ -1121,9 +1125,9 @@ export class BoothMethods {
         throw new Error(`Server returned status ${res.status}`);
       }
       const data = await res.json();
-      if (data.take) {
+      if (data.line) {
         if (!this.roomState.takes) this.roomState.takes = {};
-        this.roomState.takes[lineIndex] = data.take;
+        this.roomState.takes[lineId] = data.line;
       }
       this.audio.evictTakeCache(this.takeForLine(lineIndex));
       if (recordedBuffer) {
@@ -1196,14 +1200,38 @@ export class BoothMethods {
     }
   }
 
-  clearCurrentTake() {
+  /** Deletes the take in the dub; the line falls back to its newest other take. */
+  async clearCurrentTake() {
     if (this.isProcessingTake) return;
     this.cancelCurrentCountdown();
-    if (confirm("Delete this take?")) {
-      this.socket.clearTake(this.currentLineIndex);
-      this.audio.evictTakeCache(this.takeForLine(this.currentLineIndex));
-      delete this.roomState.takes[this.currentLineIndex];
-      this.loadBoothLine(this.currentLineIndex);
+    const lineIndex = this.currentLineIndex;
+    const line = this.roomState?.pack?.lines?.[lineIndex];
+    const take = this.takeForLine(lineIndex);
+    if (!line || !take) {
+      this.showToast("Record a take first");
+      return;
+    }
+    if (!confirm(`Delete take ${take.number}? This can't be undone.`)) return;
+
+    try {
+      const res = await fetch(
+        `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}?user_id=${encodeURIComponent(this.user.id)}`,
+        { method: 'DELETE' },
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      this.audio.evictTakeCache(take);
+      if (data.line) {
+        this.roomState.takes[line.line_id] = data.line;
+      } else {
+        delete this.roomState.takes[line.line_id];
+      }
+      this.showToast("Take deleted");
+      if (lineIndex === this.currentLineIndex) this.loadBoothLine(lineIndex);
+    } catch (err) {
+      this.showToast(this.friendlyError(err, "That take wasn't deleted. Try again."));
     }
   }
 }

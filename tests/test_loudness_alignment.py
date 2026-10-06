@@ -245,8 +245,9 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
     def _upload(self, room_id, line_index, level_db, **form):
         data = {"user_id": "hostb3", "user_name": "Host", "gain_db": "0.0", "noise_reduction": "false"}
         data.update(form)
+        line_id = rooms.ROOMS[room_id].pack.lines[line_index]["line_id"]
         res = self.client.post(
-            f"/api/rooms/{room_id}/takes/{line_index}",
+            f"/api/rooms/{room_id}/lines/{line_id}/takes",
             files={"file": ("take.wav", self._wav_bytes(level_db), "audio/wav")},
             data=data,
         )
@@ -273,7 +274,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         take = self._upload("LOUDB4", 0, -26.0, auto_gain="true", gain_db="6.0")
         self.assertNotEqual(take["auto_gain_db"], 0.0)
         self.assertEqual(take["gain_db"], take["auto_gain_db"])
-        self.assertEqual(room.to_state_dict()["takes"]["0"]["gain_db"], take["auto_gain_db"])
+        line_id = pack.lines[0]["line_id"]
+        self.assertEqual(room.picked_take(line_id)["gain_db"], take["auto_gain_db"])
 
         manual = self._upload("LOUDB4", 0, -26.0, auto_gain="false", gain_db="3.0")
         self.assertEqual(manual["gain_db"], 3.0)
@@ -307,7 +309,7 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
             return output_wav
 
         with mock.patch.object(audio_processor, "apply_noise_reduction", side_effect=half_level):
-            res = self.client.post("/api/rooms/LOUDB5/takes/0/noise_reduction", json={"noise_reduction": True})
+            res = self.client.post(take["url"].split("/audio")[0] + "/noise_reduction", json={"noise_reduction": True})
         self.assertEqual(res.status_code, 200, res.text)
         after = res.json()["take"]
         self.assertAlmostEqual(after["auto_gain_db"] - before, 6.0, delta=0.6)

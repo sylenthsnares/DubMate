@@ -19,19 +19,6 @@ from dubmate import common, rooms
 router = APIRouter()
 
 
-def _picked_take_at(room, raw_index):
-    """(line index, line_id, picked take) for a client-sent line index; take is None if
-    the index is not a line of this pack or the line has no take."""
-    try:
-        line_idx = int(raw_index)
-    except (TypeError, ValueError):
-        return None, None, None
-    if not 0 <= line_idx < len(room.pack.lines):
-        return line_idx, None, None
-    line_id = room.pack.lines[line_idx]["line_id"]
-    return line_idx, line_id, room.picked_take(line_id)
-
-
 @router.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     await websocket.accept()
@@ -100,22 +87,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     await room.broadcast("status_changed", {"status": new_status})
 
             elif msg_type == "update_take_params":
-                line_idx, line_id, take = _picked_take_at(room, payload.get("line_index"))
+                line_id = payload.get("line_id")
+                take_id = payload.get("take_id")
+                take = room.find_take(line_id, take_id) if isinstance(line_id, str) else None
                 if take:
                     for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
                         if key in payload:
                             take[key] = payload[key]
                     room.invalidate_exports()
-                    await room.broadcast("take_params_updated", {"line_index": line_idx})
-
-            elif msg_type == "clear_take":
-                # Deletes the take in the dub; the line falls back to its newest other take.
-                line_idx, line_id, take = _picked_take_at(room, payload.get("line_index"))
-                if take:
-                    async with room.processing_lock:
-                        room.remove_take(line_id, take["take_id"])
-                    room.invalidate_exports()
-                    await room.broadcast("take_cleared", {"line_index": line_idx})
+                    await room.broadcast("take_params_updated", {"line_id": line_id, "take_id": take_id})
 
             elif msg_type == "set_user_status":
                 if user_id in room.users:

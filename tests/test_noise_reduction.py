@@ -229,7 +229,8 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 "gain_db": "0.0",
                 "noise_reduction": "true",
             }
-            res_take = self.client.post(f"/api/rooms/{room_id}/takes/0", files=take_files, data=take_data)
+            line_id = room_data["state"]["pack"]["lines"][0]["line_id"]
+            res_take = self.client.post(f"/api/rooms/{room_id}/lines/{line_id}/takes", files=take_files, data=take_data)
             self.assertEqual(res_take.status_code, 200)
             take_resp = res_take.json()["take"]
             self.assertTrue(take_resp["noise_reduction"])
@@ -237,7 +238,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
 
             # 4. Toggle Take Noise Reduction to OFF via API
             res_toggle = self.client.post(
-                f"/api/rooms/{room_id}/takes/0/noise_reduction",
+                f"/api/rooms/{room_id}/lines/{line_id}/takes/{take_resp['take_id']}/noise_reduction",
                 json={"noise_reduction": False}
             )
             self.assertEqual(res_toggle.status_code, 200)
@@ -245,7 +246,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertFalse(toggled_take["noise_reduction"])
 
             # 5. Fetch take audio stream
-            res_audio = self.client.get(f"/api/rooms/{room_id}/takes/0/audio")
+            res_audio = self.client.get(f"/api/rooms/{room_id}/lines/{line_id}/takes/{take_resp['take_id']}/audio")
             self.assertIn(res_audio.status_code, (200, 206))
             self.assertGreater(len(res_audio.content), 1000)
 

@@ -78,8 +78,8 @@ const mockPacks = [
     duration: 38.5,
     characters: ["Deku", "Todoroki"],
     lines: [
-      { index: 0, character: "Deku", start: 1.2, end: 4.5, duration: 3.3, audio_url: "/api/packs/Deku_vs_Todoroki/audio/0.wav", text: "It is your power, isn't it?!" },
-      { index: 1, character: "Todoroki", start: 5.0, end: 9.0, duration: 4.0, audio_url: "/api/packs/Deku_vs_Todoroki/audio/1.wav", text: "My left side..." }
+      { index: 0, line_id: "t1200", character: "Deku", start: 1.2, end: 4.5, duration: 3.3, audio_url: "/api/packs/Deku_vs_Todoroki/audio/0.wav", text: "It is your power, isn't it?!" },
+      { index: 1, line_id: "t5000", character: "Todoroki", start: 5.0, end: 9.0, duration: 4.0, audio_url: "/api/packs/Deku_vs_Todoroki/audio/1.wav", text: "My left side..." }
     ]
   }
 ];
@@ -260,28 +260,31 @@ try {
       app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
       let sentForm = null;
       dom.window.fetch = (url, opts) => {
-        if (String(url).includes("/takes/0") && opts && opts.method === "POST") {
+        if (String(url) === "/api/rooms/B3ROOM/lines/t1200/takes" && opts && opts.method === "POST") {
           sentForm = opts.body;
           const autoGain = opts.body.get("auto_gain") === "true";
           const take = {
-            user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=2",
+            take_id: "new2", number: 2, user_id: app.user.id, url: "/api/rooms/B3ROOM/lines/t1200/takes/new2/audio?v=2",
             offset_ms: 0, pitch_semitones: 0, reverb_wet: 0,
             gain_db: autoGain ? -4 : parseFloat(opts.body.get("gain_db")),
             auto_gain_db: -4, speech_loudness_db: -17, target_loudness_db: -21,
           };
-          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", take }) });
+          const line = { picked: "new2", next_number: 3, takes: [{ ...prevTake }, take] };
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", line_id: "t1200", take, line }) });
         }
         return realFetch(url, opts);
       };
-      const prevTake = { user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=1", gain_db: 6, auto_gain_db: 6 };
-      const roomB3 = () => ({ room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0], takes: { 0: { ...prevTake } }, users: {} });
+      const prevTake = { take_id: "old1", number: 1, user_id: app.user.id, url: "/api/rooms/B3ROOM/lines/t1200/takes/old1/audio?v=1", gain_db: 6, auto_gain_db: 6 };
+      const roomB3 = () => ({ state_version: 2, room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0],
+        takes: { t1200: { picked: "old1", next_number: 2, takes: [{ ...prevTake }] } }, users: {} });
 
       // Slider still shows the previous take's auto gain: the new take must get its own.
       app.roomState = roomB3();
       app.sliderGain.value = "6";
       await app.uploadTake(0, new dom.window.Blob(["x"]));
       if (sentForm?.get("auto_gain") !== "true" || parseFloat(app.sliderGain.value) !== -4
-          || app.roomState.takes[0].gain_db !== -4) {
+          || app.takeForLine(0).gain_db !== -4 || app.takeForLine(0).take_id !== "new2"
+          || app.roomState.takes.t1200.takes.length !== 2) {
         console.error("FAIL: B3 re-take kept the old take's gain:", sentForm?.get("auto_gain"), app.sliderGain.value);
         process.exit(1);
       }
@@ -492,22 +495,24 @@ try {
       process.exit(1);
     }
 
-    // Test 8c: take helpers (static/js/studio/takes.js) over index-keyed room state.
+    // Test 8c: take helpers (static/js/studio/takes.js) over room state keyed by line ID.
     {
       const src = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "studio", "takes.js"), "utf8");
       const T = new Function(src.replace(/^export\s+/gm, "")
         + "\nreturn { pickedTake, lineTakes, takeCount, takeAudioKey, TAKE_STATE_VERSION };")();
-      const take0 = { url: "/api/rooms/R/takes/0/audio?v=7", user_name: "Ana" };
-      const takes = { 0: take0 };
+      const take1 = { take_id: "a1", number: 1, url: "/api/rooms/R/lines/t1200/takes/a1/audio?v=3", user_name: "Ana" };
+      const take0 = { take_id: "b2", number: 2, url: "/api/rooms/R/lines/t1200/takes/b2/audio?v=7", user_name: "Ana" };
+      const takes = { t1200: { picked: "b2", next_number: 3, takes: [take1, take0] } };
       const [l0, l1] = mockPacks[0].lines;
       const checks = [
         ["pickedTake finds the line's take", T.pickedTake(takes, l0) === take0],
+        ["pickedTake follows the pick", T.pickedTake({ t1200: { ...takes.t1200, picked: "a1" } }, l0) === take1],
         ["pickedTake is empty for a line with no take", T.pickedTake(takes, l1) === undefined],
         ["pickedTake tolerates missing state", T.pickedTake(undefined, l0) === undefined && T.pickedTake(takes, null) === undefined],
-        ["lineTakes lists the take", T.lineTakes(takes, l0).length === 1 && T.lineTakes(takes, l0)[0] === take0],
+        ["lineTakes lists every take, oldest first", T.lineTakes(takes, l0).length === 2 && T.lineTakes(takes, l0)[0] === take1],
         ["lineTakes is empty without a take", T.lineTakes(takes, l1).length === 0 && T.lineTakes(null, l0).length === 0],
-        ["takeCount counts", T.takeCount(takes, l0) === 1 && T.takeCount(takes, l1) === 0],
-        ["takeAudioKey drops ?v=", T.takeAudioKey(take0) === "/api/rooms/R/takes/0/audio"],
+        ["takeCount counts", T.takeCount(takes, l0) === 2 && T.takeCount(takes, l1) === 0],
+        ["takeAudioKey drops ?v=", T.takeAudioKey(take0) === "/api/rooms/R/lines/t1200/takes/b2/audio"],
         ["takeAudioKey without a url", T.takeAudioKey({}) === null && T.takeAudioKey(undefined) === null],
         ["TAKE_STATE_VERSION is 2", T.TAKE_STATE_VERSION === 2],
       ];
@@ -518,7 +523,7 @@ try {
       }
 
       // The studio reads the take through the same helper.
-      app.roomState = { room_id: "R", pack: mockPacks[0], takes, users: {} };
+      app.roomState = { state_version: 2, room_id: "R", pack: mockPacks[0], takes, users: {} };
       if (app.takeForLine(0) !== take0 || app.takeForLine(1) !== undefined || app.takeForLine(99) !== undefined) {
         console.error("FAIL: takeForLine did not return the line's take");
         process.exit(1);
@@ -527,17 +532,54 @@ try {
       // Evicting a take drops every cached version of its audio and nothing else.
       const cache = app.audio.bufferCache;
       cache.clear();
-      for (const k of ["/api/rooms/R/takes/0/audio?v=6", "/api/rooms/R/takes/0/audio?v=7",
-                       "/api/rooms/R/takes/1/audio?v=1", "/api/rooms/R/takes/10/audio?v=1"]) cache.set(k, {});
+      for (const k of ["/api/rooms/R/lines/t1200/takes/b2/audio?v=6", "/api/rooms/R/lines/t1200/takes/b2/audio?v=7",
+                       "/api/rooms/R/lines/t1200/takes/a1/audio?v=3", "/api/rooms/R/lines/t1200/takes/b22/audio?v=1"]) cache.set(k, {});
       app.audio.evictTakeCache(take0);
       app.audio.evictTakeCache(undefined);
       const left = [...cache.keys()].sort().join(",");
       cache.clear();
-      if (left !== "/api/rooms/R/takes/1/audio?v=1,/api/rooms/R/takes/10/audio?v=1") {
+      if (left !== "/api/rooms/R/lines/t1200/takes/a1/audio?v=3,/api/rooms/R/lines/t1200/takes/b22/audio?v=1") {
         console.error("FAIL: evictTakeCache left the wrong buffers:", left);
         process.exit(1);
       }
       console.log("PASS: take helpers read the picked take and evict only its audio!");
+    }
+
+    // Test 8d: socket state keeps peaks by take ID, and a tab left open across an update
+    // stops applying state and asks for a reload.
+    {
+      const lines = mockPacks[0].lines;
+      const withPeaks = { take_id: "a1", number: 1, url: "/api/rooms/R/lines/t1200/takes/a1/audio?v=1", peaks: [[0.1, 0.2]] };
+      app.roomState = { state_version: 2, room_id: "R", pack: mockPacks[0], users: {},
+        takes: { t1200: { picked: "a1", next_number: 2, takes: [withPeaks] } } };
+      // a1 is no longer picked, so the server sends it without peaks.
+      const applied = app.applyIncomingState({ state: { state_version: 2, room_id: "R", users: {}, takes: {
+        t1200: { picked: "b2", next_number: 3, takes: [
+          { take_id: "a1", number: 1, url: withPeaks.url },
+          { take_id: "b2", number: 2, url: "/api/rooms/R/lines/t1200/takes/b2/audio?v=1", peaks: [[0.5, 0.6]] },
+        ] } } } });
+      const merged = app.roomState.takes.t1200.takes;
+      if (!applied || merged[0].peaks[0][1] !== 0.2 || merged[1].peaks[0][1] !== 0.6 || app.takeForLine(0).take_id !== "b2") {
+        console.error("FAIL: state merge lost peaks or the pick:", JSON.stringify(app.roomState.takes));
+        process.exit(1);
+      }
+
+      const before = app.roomState;
+      const banner = dom.window.document.getElementById("connection-banner");
+      const bannerText = dom.window.document.getElementById("connection-banner-text");
+      app.socket.emit("take_deleted", { type: "take_deleted", payload: { line_index: 0, take_id: "b2" },
+        state: { room_id: "R", pack: mockPacks[0], users: {}, takes: { 0: { url: "/api/rooms/R/takes/0/audio" } } } });
+      const stale = app.applyIncomingState({ state: { state_version: 3, room_id: "R", takes: {} } });
+      app.renderConnectionState({ state: "open" });
+      if (stale !== false || app.roomState !== before || app.takeForLine(0)?.take_id !== "b2"
+          || banner.style.display !== "flex"
+          || bannerText.innerText !== "DubMate was updated. Reload this page to keep going.") {
+        console.error("FAIL: stale-tab notice:", stale, banner.style.display, bannerText.innerText);
+        process.exit(1);
+      }
+      app.isStaleTab = false;
+      banner.style.display = "none";
+      console.log("PASS: a tab from another DubMate version stops applying state and asks for a reload!");
     }
 
     // Test 8: Sample-Accurate Video Seek & Playback Stop helpers

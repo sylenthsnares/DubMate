@@ -150,6 +150,19 @@ console.log("\n  [+] RoomSocket: message delivery while opening");
       === RoomSocket.MAX_PENDING_MESSAGES + 24);
 }
 
+// --- Take edits are addressed by line and take ID ----------------------------
+{
+  const socket = new RoomSocket();
+  socket.connect("ABC123", "user1", "Tani", "#7c5cff");
+  FakeWebSocket.last.open();
+  socket.updateTakeParams("t44048", "9f3c1a2b", { offset_ms: 40 });
+  const sent = FakeWebSocket.last.sent.find((m) => m.type === "update_take_params");
+  check("update_take_params names the line and the take",
+    sent && sent.payload.line_id === "t44048" && sent.payload.take_id === "9f3c1a2b"
+      && sent.payload.offset_ms === 40 && !("line_index" in sent.payload), JSON.stringify(sent));
+  check("there is no socket message for deleting a take", typeof socket.clearTake === "undefined");
+}
+
 // --- Leaving a room must not replay into the next one ------------------------
 {
   const socket = new RoomSocket();
