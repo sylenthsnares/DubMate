@@ -196,7 +196,7 @@ try {
 
   // Evaluate the bundle only once jsdom has finished parsing. Dispatching
   // DOMContentLoaded by hand races jsdom's own event, which constructs the studio
-  // twice: window.app then points at an instance that owns none of the click
+  // twice: window.dubMateApp then points at an instance that owns none of the click
   // handlers, and every assertion about them silently measures the wrong object.
   const domReady = dom.window.document.readyState === "complete"
     ? Promise.resolve()
@@ -209,7 +209,7 @@ try {
 
   async function runSuite() {
     const doc = dom.window.document;
-    const app = dom.window.dubMateApp || dom.window.app;
+    const app = dom.window.dubMateApp;
     if (!app) fail("DubMateApp was not instantiated");
 
     const toasts = [];

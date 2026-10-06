@@ -1,5 +1,6 @@
 // pack_builder.js - High-Performance Pack Authoring Studio Controller
 // Handles Video Ingestion, Demucs/Whisper Progress SSE, Interactive Timeline & Cue Editor, and Pack Assembly
+import { escapeHtml, showToast, initModeDropdown } from './ui_common.js';
 
 const PALETTE = [
   '#d97706', // Vintage Amber
@@ -13,16 +14,6 @@ const PALETTE = [
   '#8b5cf6', // Purple Tone
   '#f59e0b', // Amber Glow
 ];
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
-}
 
 export class PackBuilderApp {
   constructor() {
@@ -1938,75 +1929,12 @@ export class PackBuilderApp {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
 
-  initModeDropdown() {
-    const container = document.getElementById('logo-dropdown-container');
-    const btnDropdown = document.getElementById('btn-mode-dropdown');
-    const menu = document.getElementById('mode-dropdown-menu');
-    if (!container || !btnDropdown || !menu) return;
+  initModeDropdown() { initModeDropdown(); }
 
-    const toggleMenu = (show) => {
-      const isCurrentlyOpen = container.classList.contains('open');
-      const target = (typeof show === 'boolean') ? show : !isCurrentlyOpen;
-      if (target) {
-        container.classList.add('open');
-        menu.style.display = 'flex';
-        btnDropdown.setAttribute('aria-expanded', 'true');
-      } else {
-        container.classList.remove('open');
-        menu.style.display = 'none';
-        btnDropdown.setAttribute('aria-expanded', 'false');
-      }
-    };
-
-    btnDropdown.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleMenu();
-    });
-
-    btnDropdown.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        toggleMenu(true);
-      }
-    });
-
-    document.addEventListener('click', (e) => {
-      if (!container.contains(e.target)) {
-        toggleMenu(false);
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && container.classList.contains('open')) {
-        toggleMenu(false);
-        btnDropdown.focus();
-      }
-    });
-  }
-
-  showToast(message) {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerText = message;
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-6px)';
-    toast.style.transition = 'opacity 160ms ease-out, transform 160ms ease-out';
-    container.appendChild(toast);
-    requestAnimationFrame(() => {
-      toast.style.opacity = '1';
-      toast.style.transform = 'translateY(0)';
-    });
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateY(-6px)';
-      setTimeout(() => toast.remove(), 180);
-    }, 3200);
-  }
+  showToast(message) { showToast(message); }
 }
 
 // Instantiate Pack Builder Studio
 document.addEventListener('DOMContentLoaded', () => {
-  window.packBuilderApp = new PackBuilderApp();
+  new PackBuilderApp();
 });

@@ -3,16 +3,7 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
-}
+import { escapeHtml, showToast, initModeDropdown } from './ui_common.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
 const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
@@ -1562,26 +1553,7 @@ class DubMateApp {
     return isTechnical ? fallback : raw;
   }
 
-  showToast(message) {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerText = message;
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-6px)';
-    toast.style.transition = 'opacity 160ms var(--ease-out), transform 160ms var(--ease-out)';
-    container.appendChild(toast);
-    requestAnimationFrame(() => {
-      toast.style.opacity = '1';
-      toast.style.transform = 'translateY(0)';
-    });
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateY(-6px)';
-      setTimeout(() => toast.remove(), 180);
-    }, 3200);
-  }
+  showToast(message) { showToast(message); }
 
   /**
    * Shows the connection banner while the room is not live.
@@ -3001,62 +2973,17 @@ class DubMateApp {
   }
 
   initModeDropdown() {
-    const container = document.getElementById('logo-dropdown-container');
-    const btnDropdown = document.getElementById('btn-mode-dropdown');
-    const menu = document.getElementById('mode-dropdown-menu');
-    const optStudio = document.getElementById('mode-opt-studio');
-    if (!container || !btnDropdown || !menu) return;
-
-    const toggleMenu = (show) => {
-      const isCurrentlyOpen = container.classList.contains('open');
-      const target = (typeof show === 'boolean') ? show : !isCurrentlyOpen;
-      if (target) {
-        container.classList.add('open');
-        menu.style.display = 'flex';
-        btnDropdown.setAttribute('aria-expanded', 'true');
-      } else {
-        container.classList.remove('open');
-        menu.style.display = 'none';
-        btnDropdown.setAttribute('aria-expanded', 'false');
-      }
-    };
-
-    btnDropdown.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleMenu();
-    });
-
-    btnDropdown.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        toggleMenu(true);
-      }
-    });
-
-    if (optStudio) {
-      optStudio.addEventListener('click', (e) => {
+    initModeDropdown({
+      onStudioClick: (e, closeMenu) => {
         if (this.roomState) {
           e.preventDefault();
           if (this.confirmLeaveRoom()) {
-            toggleMenu(false);
+            closeMenu();
           }
         } else {
-          toggleMenu(false);
+          closeMenu();
         }
-      });
-    }
-
-    document.addEventListener('click', (e) => {
-      if (!container.contains(e.target)) {
-        toggleMenu(false);
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && container.classList.contains('open')) {
-        toggleMenu(false);
-        btnDropdown.focus();
-      }
+      },
     });
   }
 
@@ -5588,8 +5515,8 @@ class DubMateApp {
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    window.app = new DubMateApp();
+    new DubMateApp();
   });
 } else {
-  window.app = new DubMateApp();
+  new DubMateApp();
 }
