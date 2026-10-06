@@ -600,6 +600,7 @@ async def set_room_voice(room_id: str, payload: Dict[str, Any]):
 # --- Voice chain renders (documentation/design/effects-rack.md, "API and WebSocket") ---
 _RENDER_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 _RENDER_CACHE_CONTROL = "public, max-age=31536000, immutable"   # a render key never changes content
+_TAKE_AUDIO_MISSING = "This take's recording is missing."
 
 
 class _RenderEngine:
@@ -664,9 +665,13 @@ async def _drain_preset_renders(engine: _RenderEngine) -> None:
 async def render_take(room_id: str, line_id: str, take_id: str, payload: Dict[str, Any]):
     """The take through a chain, rendered by the engine (the one sound for preview and
     export). A request still waiting for a render slot when a newer one arrives from the
-    same client for the same take returns 409 without rendering."""
+    same client for the same take returns 409 without rendering. A take whose recording
+    is gone returns 404."""
     room = rooms.room_or_404(room_id)
     _, take = _take_or_404(room, line_id, take_id)
+    wav_path = audio_processor.take_wav_path(room.room_id, line_id, take_id)
+    if not os.path.isfile(wav_path):
+        raise HTTPException(status_code=404, detail=_TAKE_AUDIO_MISSING)
     try:
         chain = vocal_chain.normalize_chain(payload.get("chain"))
     except ValueError as ex:
@@ -693,12 +698,13 @@ async def render_take(room_id: str, line_id: str, take_id: str, payload: Dict[st
             engine.idle.clear()
             try:
                 path, info = await asyncio.to_thread(
-                    audio_processor.render_take_cached,
-                    audio_processor.take_wav_path(room.room_id, line_id, take_id), chain,
+                    audio_processor.render_take_cached, wav_path, chain,
                     audio_processor.room_render_dir(room.room_id), until_s=until_s,
                     meta={"line_id": line_id, "take_id": take_id})
             except audio_processor.EffectsUnavailable as ex:
                 return JSONResponse(status_code=503, content={"effects_unavailable": True, "message": str(ex)})
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=_TAKE_AUDIO_MISSING)   # deleted meanwhile
             finally:
                 engine.active -= 1
                 if engine.active == 0:

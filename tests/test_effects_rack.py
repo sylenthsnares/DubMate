@@ -474,6 +474,21 @@ class TestRenderRoute(RenderRoutesCase):
         self.assertEqual(self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes/nope/render",
                                           json={"chain": PRESET["warm"]}).status_code, 404)
 
+    def test_take_without_its_recording_is_not_found(self):
+        self._rack_room()
+        os.remove(audio_processor.take_wav_path(self.ROOM, "t1000", self.take["take_id"]))
+        res = self._render()
+        self.assertEqual(res.status_code, 404, res.text)
+        self.assertEqual(res.json()["detail"], "This take's recording is missing.")
+
+    def test_recording_deleted_during_the_render_is_not_found(self):
+        self._rack_room()
+        with mock.patch.object(audio_processor, "render_take_cached", side_effect=FileNotFoundError("gone")):
+            res = self._render()
+        self.assertEqual(res.status_code, 404, res.text)
+        self.assertEqual(res.json()["detail"], "This take's recording is missing.")
+        self.assertEqual(self._render().status_code, 200)   # the render slot was freed
+
     def test_render_needs_no_permission(self):
         room = self._rack_room()
         self.assertEqual(room.role_assignments["Ana"], ["actorA"])
