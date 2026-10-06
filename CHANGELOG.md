@@ -77,6 +77,7 @@
 - **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
 - **Record Button Pulse**: the record button pulses while recording again.
+- **Bigger Timing Nudge on More Keyboards**: Shift with [ or ] nudges a take by 100 ms on keyboard layouts where Shift turns those keys into { and }.
 - **Stale State in Room Events**: room events are applied before they are handled, so a new take shows up right away; joining another room no longer carries over the previous room's line, takes or audio; and a render finishing mid-take no longer cuts the microphone.
 - **Pitch Shift Mix-Up**: two different takes of the same length could share one cached pitch-shifted version.
 - **Pack Import Safety**: archive entries disguised under `__MACOSX` names are now checked like every other file.
