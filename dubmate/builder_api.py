@@ -213,6 +213,10 @@ async def builder_import_url(payload: Dict[str, Any]):
     except ValueError as val_err:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(val_err))
+    except pack_builder.StaleYtDlpError as stale:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        # The message says how to update; the generic "check the link" would mislead.
+        raise HTTPException(status_code=500, detail=str(stale))
     except RuntimeError as run_err:
         shutil.rmtree(session_dir, ignore_errors=True)
         print(f"[Builder] URL import failed: {run_err}")
