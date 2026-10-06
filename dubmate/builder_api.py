@@ -276,6 +276,7 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
 
         # Step 3: Speech-to-Text Transcription via Whisper (60% -> 90%)
         existing_subtitles = session.get("subtitle_segments") or progress.segments
+        from_whisper = False
         if existing_subtitles and len(existing_subtitles) > 0:
             progress.update("transcribing", 0.85, f"Using {len(existing_subtitles)} lines from your subtitles", stage="transcription")
             segments = existing_subtitles
@@ -283,7 +284,13 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             progress.update("transcribing", 0.70, "Writing out the dialogue", stage="transcription")
             is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
             segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
-        
+            from_whisper = True
+
+        # Whisper drops grunts, screams and laughs; find them on the voice stem.
+        # Only on a real separation: the basic filter's stem is the full mix.
+        if from_whisper and session.get("voices_separated"):
+            segments = pack_builder.add_nonverbal_segments(segments, session["vocals_path"], session.get("duration", 0))
+
         # Step 4: Speaker Turn Heuristics (90% -> 100%)
         if segments:
             segments = pack_builder.assign_speakers_to_segments(segments)
@@ -446,12 +453,15 @@ async def builder_update_segments(session_id: str, payload: Dict[str, Any]):
             end = min(max_dur, float(s["end"]))
             if end <= start:
                 end = min(max_dur, start + 0.5)
-            valid_segments.append({
+            seg = {
                 "start": round(start, 3),
                 "end": round(end, 3),
                 "text": str(s.get("text", "")).strip(),
                 "character": str(s.get("character", "Actor")).strip() or "Actor",
-            })
+            }
+            if s.get("nonverbal"):
+                seg["nonverbal"] = True
+            valid_segments.append(seg)
         except (ValueError, KeyError, TypeError):
             continue
 

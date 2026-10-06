@@ -18,7 +18,10 @@ import threading
 import subprocess
 from typing import Dict, List, Optional, Tuple, Any
 
+import numpy as np
+
 import pack_loader
+import audio_processor
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -880,6 +883,109 @@ def parse_vtt(vtt_content: str) -> List[Dict[str, Any]]:
     content = re.sub(r"^WEBVTT[^\n]*\n", "", vtt_content, flags=re.IGNORECASE)
     content = re.sub(r"NOTE[^\n]*\n[^\n]*\n", "", content)
     return parse_srt(content)
+
+
+# Non-verbal lines (grunts, efforts, screams, laughs) found from voice activity on
+# the separated voice stem. Every threshold lives here so tuning is one place.
+NONVERBAL_FRAME_S = 0.02                 # analysis frame length (20 ms)
+NONVERBAL_FLOOR_PERCENTILE = 20          # noise floor: this percentile of all frame levels
+NONVERBAL_DIALOGUE_PERCENTILE = 75       # dialogue level: this percentile of frames inside transcribed lines
+NONVERBAL_DIALOGUE_PERCENTILE_NO_LINES = 99  # ...or of all frames when there are no lines
+NONVERBAL_ABOVE_FLOOR_DB = 15            # an active frame is at least this far above the floor
+NONVERBAL_BELOW_DIALOGUE_DB = 30         # ...and no more than this far below dialogue
+NONVERBAL_MIN_CONTRAST_DB = 20           # dialogue minus floor below this: too noisy to judge, find nothing
+NONVERBAL_MERGE_GAP_S = 0.25             # active frames closer than this join one region
+NONVERBAL_MIN_LEN_S = 0.3                # shorter regions are clicks or breaths
+NONVERBAL_MAX_LEN_S = 8.0                # longer regions are music, tones or crowd
+NONVERBAL_PEAK_WITHIN_DB = 10            # loudest frame within this of dialogue: foreground, not walla
+NONVERBAL_LINE_MARGIN_S = 0.2            # keep this far from every transcribed line
+NONVERBAL_PAD_S = 0.08                   # padding added around a kept region
+
+
+def find_nonverbal_segments(samples: np.ndarray, sr: int, transcribed: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Finds clear vocal activity on the voice stem that no transcribed line covers.
+
+    Returns new lines {start, end, text: "", character: "", nonverbal: True}. The
+    rules are deliberately conservative: a missed grunt is one click to add, while
+    a flood of breath and crowd lines is a chore to delete.
+    """
+    frame_len = int(round(NONVERBAL_FRAME_S * sr))
+    n_frames = len(samples) // frame_len if frame_len > 0 else 0
+    if n_frames == 0:
+        return []
+    frame_s = frame_len / float(sr)
+    clip_end = len(samples) / float(sr)
+
+    frames = np.asarray(samples[:n_frames * frame_len], dtype=np.float64).reshape(n_frames, frame_len)
+    rms = np.sqrt(np.mean(frames * frames, axis=1))
+    level_db = 20.0 * np.log10(np.maximum(rms, 1e-10))
+
+    lines = sorted(
+        (float(s["start"]), float(s.get("end", s["start"]))) for s in transcribed
+    )
+    centers = (np.arange(n_frames) + 0.5) * frame_s
+    in_lines = np.zeros(n_frames, dtype=bool)
+    for start, end in lines:
+        in_lines |= (centers >= start) & (centers <= end)
+
+    floor_db = float(np.percentile(level_db, NONVERBAL_FLOOR_PERCENTILE))
+    if in_lines.any():
+        dialogue_db = float(np.percentile(level_db[in_lines], NONVERBAL_DIALOGUE_PERCENTILE))
+    else:
+        dialogue_db = float(np.percentile(level_db, NONVERBAL_DIALOGUE_PERCENTILE_NO_LINES))
+    if dialogue_db - floor_db < NONVERBAL_MIN_CONTRAST_DB:
+        return []
+    threshold_db = max(floor_db + NONVERBAL_ABOVE_FLOOR_DB, dialogue_db - NONVERBAL_BELOW_DIALOGUE_DB)
+
+    active = np.flatnonzero(level_db >= threshold_db)
+    if active.size == 0:
+        return []
+    # Split the active frames wherever the silent gap reaches the merge gap.
+    breaks = np.flatnonzero((np.diff(active) - 1) * frame_s >= NONVERBAL_MERGE_GAP_S)
+    run_starts = np.concatenate(([0], breaks + 1))
+    run_ends = np.concatenate((breaks, [active.size - 1]))
+
+    found = []
+    for a, b in zip(run_starts, run_ends):
+        first, last = int(active[a]), int(active[b])
+        start, end = first * frame_s, (last + 1) * frame_s
+        if not (NONVERBAL_MIN_LEN_S <= end - start <= NONVERBAL_MAX_LEN_S):
+            continue
+        if float(level_db[first:last + 1].max()) < dialogue_db - NONVERBAL_PEAK_WITHIN_DB:
+            continue
+        if any(start < l_end + NONVERBAL_LINE_MARGIN_S and end > l_start - NONVERBAL_LINE_MARGIN_S
+               for l_start, l_end in lines):
+            continue
+        lo = max([0.0] + [l_end for _, l_end in lines if l_end <= start])
+        hi = min([clip_end] + [l_start for l_start, _ in lines if l_start >= end])
+        found.append({
+            "start": round(max(lo, start - NONVERBAL_PAD_S), 3),
+            "end": round(min(hi, end + NONVERBAL_PAD_S), 3),
+            "text": "",
+            "character": "",
+            "nonverbal": True,
+        })
+    return found
+
+
+def add_nonverbal_segments(segments: List[Dict[str, Any]], vocals_wav: str, duration: float) -> List[Dict[str, Any]]:
+    """
+    Adds the voice stem's non-verbal lines to the transcribed ones, sorted by start.
+    Any failure keeps the lines as they were: this is a bonus, never a reason to fail.
+    """
+    try:
+        samples = audio_processor.read_wav_mono(vocals_wav, sr=16000)
+        found = find_nonverbal_segments(samples, 16000, segments)
+        if duration and duration > 0:
+            found = [s for s in found if s["start"] < duration]
+            for s in found:
+                s["end"] = round(min(s["end"], float(duration)), 3)
+        print(f"[PackBuilder] Found {len(found)} non-verbal lines on the voice track.")
+        return sorted(list(segments) + found, key=lambda s: s["start"])
+    except Exception as ex:
+        print(f"[PackBuilder] Non-verbal line detection failed, keeping the transcribed lines: {ex}")
+        return segments
 
 
 def assign_speakers_to_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

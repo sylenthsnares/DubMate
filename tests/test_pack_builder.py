@@ -747,6 +747,157 @@ NOTE This is a test subtitle file
         finally:
             BUILDER_SESSIONS.pop(session_id, None)
 
+    def test_17_nonverbal_detection(self):
+        """Grunts away from the dialogue become lines; walla, clicks, tones and line tails don't."""
+        import numpy as np
+        sr = 16000
+        rng = np.random.default_rng(7)
+        samples = rng.normal(0.0, 1e-4, 40 * sr)  # about -80 dBFS noise floor
+
+        def tone(start, end, amp):
+            n = int(round((end - start) * sr))
+            t = np.arange(n) / sr
+            i = int(round(start * sr))
+            samples[i:i + n] += amp * np.sin(2 * np.pi * 220.0 * t)
+
+        tone(2.0, 4.0, 0.3)     # the transcribed line, dialogue level
+        tone(4.1, 4.5, 0.3)     # burst 0.1 s after the line: too close
+        tone(8.0, 8.6, 0.25)    # the grunt: near dialogue level, far from the line
+        tone(12.0, 17.0, 0.3 / 17.8)  # walla, about 25 dB below dialogue
+        tone(20.0, 20.1, 0.3)   # click: too short
+        tone(23.0, 35.0, 0.3)   # 12 s tone: too long
+        transcribed = [{"start": 2.0, "end": 4.0, "text": "Hello", "character": "Actor"}]
+
+        found = pack_builder.find_nonverbal_segments(samples.astype(np.float32), sr, transcribed)
+        self.assertEqual(len(found), 1, found)
+        self.assertAlmostEqual(found[0]["start"], 8.0 - pack_builder.NONVERBAL_PAD_S, delta=0.03)
+        self.assertAlmostEqual(found[0]["end"], 8.6 + pack_builder.NONVERBAL_PAD_S, delta=0.03)
+        self.assertIs(found[0]["nonverbal"], True)
+        self.assertEqual(found[0]["text"], "")
+
+        # A flat noisy stem has no contrast to judge by.
+        flat = rng.normal(0.0, 0.1, 10 * sr).astype(np.float32)
+        self.assertEqual(pack_builder.find_nonverbal_segments(flat, sr, []), [])
+
+    def test_18_pipeline_order(self):
+        """Non-verbal lines are added after Whisper and before speakers, only on a real separation."""
+        from dubmate import builder_api
+        calls = []
+        names = ("extract_audio_from_video", "separate_audio_stems", "transcribe_audio",
+                 "add_nonverbal_segments", "assign_speakers_to_segments")
+        originals = {n: getattr(pack_builder, n) for n in names}
+        state = {"used_fallback": False}
+        grunt = {"start": 5.0, "end": 5.6, "text": "", "character": "", "nonverbal": True}
+
+        def fake_extract(video, out):
+            calls.append("extract")
+            return out
+
+        def fake_separate(wav, out_dir):
+            calls.append("separate")
+            return {"vocals": os.path.join(out_dir, "vocals.wav"), "backing": os.path.join(out_dir, "backing.wav"),
+                    "used_fallback": state["used_fallback"], "fallback_notice": "basic filter"}
+
+        def fake_transcribe(wav, **kwargs):
+            calls.append("transcribe")
+            return [{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Actor"}]
+
+        def fake_nonverbal(segments, vocals_wav, duration):
+            calls.append("nonverbal")
+            return segments + [dict(grunt)]
+
+        def fake_assign(segments):
+            calls.append(("assign", any(s.get("nonverbal") for s in segments)))
+            return originals["assign_speakers_to_segments"](segments)
+
+        session_id = "test_pipeline_order"
+        try:
+            pack_builder.extract_audio_from_video = fake_extract
+            pack_builder.separate_audio_stems = fake_separate
+            pack_builder.transcribe_audio = fake_transcribe
+            pack_builder.add_nonverbal_segments = fake_nonverbal
+            pack_builder.assign_speakers_to_segments = fake_assign
+
+            def run(**extra):
+                calls.clear()
+                session = {"session_id": session_id, "folder": self.tmp_dir, "duration": 10.0,
+                           "progress": pack_builder.BuildProgress(session_id),
+                           "video_path": os.path.join(self.tmp_dir, "clip.mp4")}
+                session.update(extra)
+                BUILDER_SESSIONS[session_id] = session
+                builder_api._run_builder_pipeline_sync(session_id)
+                return session["progress"]
+
+            progress = run()
+            self.assertEqual(calls, ["extract", "separate", "transcribe", "nonverbal", ("assign", True)])
+            self.assertEqual(progress.status, "transcribed")
+            self.assertEqual(len(progress.segments), 2)
+            self.assertTrue(progress.segments[1]["nonverbal"])
+            self.assertTrue(progress.segments[1]["character"].startswith("Speaker"))
+
+            state["used_fallback"] = True
+            progress = run()
+            self.assertEqual(calls, ["extract", "separate", "transcribe", ("assign", False)])
+            self.assertEqual(progress.status, "transcribed")
+
+            state["used_fallback"] = False
+            progress = run(subtitle_segments=[{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Levi"}])
+            self.assertEqual(calls, ["extract", "separate", ("assign", False)])
+            self.assertEqual(progress.status, "transcribed")
+        finally:
+            for n, fn in originals.items():
+                setattr(pack_builder, n, fn)
+            BUILDER_SESSIONS.pop(session_id, None)
+
+    def test_19_nonverbal_put_and_pack_roundtrip(self):
+        """PUT /segments keeps the non-verbal flag; a line without words loads as an empty caption."""
+        session_id = "test_nonverbal_put"
+        BUILDER_SESSIONS[session_id] = {"session_id": session_id, "folder": self.tmp_dir, "duration": 10.0,
+                                        "progress": pack_builder.BuildProgress(session_id)}
+        try:
+            res = self.client.put(f"/api/builder/{session_id}/segments", json={"segments": [
+                {"start": 1.0, "end": 2.0, "text": "Hi", "character": "Speaker 1"},
+                {"start": 3.0, "end": 3.6, "text": "", "character": "Speaker 2", "nonverbal": True},
+                {"start": 4.0, "end": 4.5, "text": "", "character": "Speaker 2", "nonverbal": False},
+            ]})
+            self.assertEqual(res.status_code, 200)
+            segs = res.json()["segments"]
+            self.assertNotIn("nonverbal", segs[0])
+            self.assertIs(segs[1]["nonverbal"], True)
+            self.assertNotIn("nonverbal", segs[2])
+        finally:
+            BUILDER_SESSIONS.pop(session_id, None)
+
+        src_wav = os.path.join(self.tmp_dir, "source_audio.wav")
+        create_dummy_wav(src_wav, duration_sec=5.0)
+        video_dummy = os.path.join(self.tmp_dir, "dummy_video.mp4")
+        create_dummy_mp4(video_dummy, duration_sec=4.0)
+        segments = [
+            {"start": 0.500, "end": 1.800, "text": "Line Alpha", "character": "Speaker 1"},
+            {"start": 2.200, "end": 2.800, "text": "", "character": "Speaker 2", "nonverbal": True},
+        ]
+        line_slices = pack_builder.slice_audio_lines(src_wav, segments, os.path.join(self.tmp_dir, "slices"),
+                                                     "Nonverbal_Test_Pack")
+        pack_folder = pack_builder.assemble_pack(
+            pack_name="Nonverbal_Test_Pack",
+            video_source_path=video_dummy,
+            backing_source_path=src_wav,
+            line_slices=line_slices,
+            authors=["DubMate Tester"],
+            subtitle="Unit test non-verbal line",
+        )
+        try:
+            loaded = pack_loader.load_pack(pack_folder)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(len(loaded.lines), 2)
+            line = loaded.lines[1]
+            self.assertEqual(line["caption"], "")
+            self.assertEqual(line["character"], "Speaker 2")
+            self.assertAlmostEqual(line["start"], 2.2, places=2)
+        finally:
+            if os.path.isdir(pack_folder):
+                shutil.rmtree(pack_folder, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
