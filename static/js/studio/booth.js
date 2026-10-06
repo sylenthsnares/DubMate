@@ -1124,6 +1124,8 @@ export class BoothMethods {
     formData.append('gain_db', gain);
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
     formData.append('auto_gain', autoGain ? 'true' : 'false');
+    // The mic can pick up the guide voice, so the engine doesn't line those takes up.
+    formData.append('guide_voice', this.checkGuideVoice?.checked ? 'true' : 'false');
 
     try {
       const lineId = this.roomState.pack.lines[lineIndex].line_id;

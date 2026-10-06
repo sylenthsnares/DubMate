@@ -156,6 +156,7 @@ async def upload_take(
     gain_db: float = Form(0.0),
     noise_reduction: bool = Form(False),
     auto_gain: bool = Form(False),
+    guide_voice: bool = Form(False),
 ):
     common.require_safe_identifier(user_id, "user_id")
     room = rooms.room_or_404(room_id)
@@ -168,6 +169,9 @@ async def upload_take(
     # Recording again adds a take next to the line's earlier ones; nothing is overwritten.
     take_id = uuid.uuid4().hex[:8]
     take_dir = audio_processor.take_dir(room.room_id, line_id)
+    # offset_ms is the take's starting timing; snapped to the 5 ms nudge step so an
+    # untouched slider never reads as a nudge.
+    start_offset_ms = int(5 * round(offset_ms / 5.0))
     try:
         target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
 
@@ -182,7 +186,12 @@ async def upload_take(
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
                 user_id=user_id,
-                target_loudness_db=target_loudness
+                target_loudness_db=target_loudness,
+                # The original line's voice; a take recorded with the guide voice on can
+                # hear the guide itself, so it isn't lined up.
+                reference_wav=os.path.join(room.pack.folder, line["filename"]),
+                start_offset_ms=start_offset_ms,
+                align=not guide_voice,
             )
     except Exception as ex:
         print(f"[UploadError] Error saving take for room {room_id} line {line_id}: {ex}")
@@ -196,7 +205,12 @@ async def upload_take(
         "duration": saved["duration"],
         "peaks": saved["peaks"],
         "audio_version": int(time.time() * 1000),
-        "offset_ms": offset_ms,
+        "offset_ms": saved["auto_offset_ms"],
+        "start_offset_ms": saved["start_offset_ms"],
+        "auto_offset_ms": saved["auto_offset_ms"],
+        "aligned": saved["aligned"],
+        "stretch": saved["stretch"],
+        "timing_score": saved["timing_score"],
         "pitch_semitones": pitch_semitones,
         "reverb_wet": reverb_wet,
         # auto_gain: the client asked for the scene-matched level, applied here so the
@@ -245,8 +259,8 @@ async def pick_take(room_id: str, line_id: str, take_id: str, payload: Dict[str,
 
 @router.delete("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}")
 async def delete_take(room_id: str, line_id: str, take_id: str, user_id: str = ""):
-    """Deletes a take and its files. A deleted picked take falls back to the newest
-    remaining one; with none left the line plays the original voice again."""
+    """Deletes a take and its files. A deleted picked take falls back to the best-timed
+    remaining one (Room.remove_take); with none left the line plays the original voice again."""
     room = rooms.room_or_404(room_id)
     common.require_safe_identifier(user_id, "user_id")
     line, _ = _take_or_404(room, line_id, take_id)

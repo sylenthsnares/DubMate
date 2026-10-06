@@ -657,13 +657,20 @@ def save_uploaded_take(
     enable_noise_reduction: bool = False,
     user_id: Optional[str] = None,
     target_loudness_db: Optional[float] = None,
+    reference_wav: Optional[str] = None,
+    start_offset_ms: int = 0,
+    align: bool = True,
 ) -> Dict[str, Any]:
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
     Writes <take_dir>/<stem>.wav (active), preserves pristine raw audio (<stem>_raw.wav) and
     generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested.
     Calculates speech-gated loudness and smart auto-gain calibration against scene target.
-    Returns active path, duration, waveform peaks, auto_gain_db, and noise reduction status.
+    When align and reference_wav (the original line's audio) are given, matches the take's
+    timing to it from start_offset_ms (align_take_timing, no stretch); otherwise, or when the
+    reference can't be read, the timing is "not measured".
+    Returns active path, duration, waveform peaks, auto_gain_db, noise reduction status,
+    start_offset_ms (snapped to 5 ms) and the align_take_timing keys.
     """
     if not audio_bytes or len(audio_bytes) < 32:
         raise ValueError("Uploaded audio stream is empty or incomplete.")
@@ -705,6 +712,16 @@ def save_uploaded_take(
     effective_target_db = target_loudness_db if target_loudness_db is not None else DEFAULT_DIALOGUE_LOUDNESS_DB
     gain_match = calculate_take_auto_gain(audio_data, target_loudness_db=effective_target_db, sr=SR)
 
+    start_offset_ms = _snap5(start_offset_ms)
+    timing = {"auto_offset_ms": start_offset_ms, "timing_score": None, "stretch": 1.0, "aligned": False}
+    if align and reference_wav:
+        try:
+            reference = read_wav_mono(reference_wav)
+        except Exception as ex:
+            print(f"[Timing] Could not read reference line {reference_wav!r}: {ex}")
+        else:
+            timing = align_take_timing(audio_data, reference, start_offset_ms, sr=SR, allow_stretch=False)
+
     return {
         "wav_path": target_wav,
         "raw_path": raw_wav,
@@ -716,6 +733,8 @@ def save_uploaded_take(
         "speech_loudness_db": gain_match["take_loudness_db"],
         "target_loudness_db": gain_match["target_loudness_db"],
         "auto_gain_db": gain_match["auto_gain_db"],
+        "start_offset_ms": start_offset_ms,
+        **timing,
     }
 
 
