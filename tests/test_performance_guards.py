@@ -154,13 +154,31 @@ def test_api_responses_are_never_cached():
     print("[PASS] /api/ responses remain no-store")
 
 
+HEAVY_MODULES = ("scipy", "torch", "torchaudio", "demucs", "whisper", "faster_whisper", "df", "pykakasi", "yt_dlp")
+
+
 def test_engine_imports_stay_fast():
     """
-    A coarse ceiling, not a benchmark. Cold `import app` measured ~2.3s with scipy
-    eager and ~0.6s without; 1.5s catches a regression of that size without being
-    flaky on a loaded machine.
+    The regression this guards against is a heavy library creeping back to module
+    scope, so check that directly: it is deterministic, unlike wall-clock time,
+    which reads 2-3s for the same code on a busy machine (parallel test runs, a game).
+
+    The coarse wall-clock ceiling (cold `import app` measured ~2.3s with scipy eager
+    and ~0.6s without) only runs with DUBMATE_TIMING_GUARDS=1, on an idle machine.
     """
     import subprocess
+    probe = (
+        "import sys, app; "
+        "print('HEAVY', sorted({m.split('.')[0] for m in sys.modules} & set(%r)))" % (HEAVY_MODULES,)
+    )
+    res = subprocess.run([_sys.executable, "-c", probe], capture_output=True, text=True, cwd=PROJECT_ROOT)
+    assert res.returncode == 0, f"probe failed to import app:\n{res.stderr[-400:]}"
+    assert "HEAVY []" in res.stdout, f"heavy modules imported at startup: {res.stdout[-400:]}"
+    print("[PASS] no heavy modules in the startup import graph")
+
+    if _os.environ.get("DUBMATE_TIMING_GUARDS") != "1":
+        print("[SKIP] wall-clock import ceiling (set DUBMATE_TIMING_GUARDS=1 on an idle machine)")
+        return
     timings = []
     for _ in range(2):
         started = time.perf_counter()
