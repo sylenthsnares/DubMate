@@ -273,6 +273,26 @@ const rows = (w) => [...w.document.querySelectorAll("#recent-sessions-list .rece
     await b.app.joinRoom("DUB-AB12");
     if (order.join() !== "connect,line:2") fail(`joinRoom without a saved line opened ${order.join()}`);
     console.log("PASS: joinRoom opens the saved line in a recording room");
+
+    // Host cast as Carol, last on another character's line: Continue must not
+    // reopen a line they can't record; it opens their first own line instead.
+    const castLines = Array.from({ length: 10 }, (_, i) => ({ index: i, character: i >= 6 ? "Carol" : "A" }));
+    delete b.app.findFirstAssignedLine;
+    room.pack = { lines: castLines, characters: ["A", "Carol"] };
+    room.role_assignments = { Carol: [b.app.user.id] };
+    room.users = { [b.app.user.id]: { current_line: 3, location: "booth" } };
+    b.app.roomState = JSON.parse(JSON.stringify(room));
+    if (b.app.savedLineIndex() !== null) fail("savedLineIndex kept another character's line");
+    b.app.roomState.users[b.app.user.id].current_line = 8;
+    if (b.app.savedLineIndex() !== 8) fail("savedLineIndex dropped the user's own line");
+    order.length = 0;
+    await b.app.joinRoom("DUB-AB12");
+    if (order.join() !== "connect,line:6") fail(`joinRoom on someone else's line opened ${order.join()}`);
+    room.users = { [b.app.user.id]: { current_line: 7, location: "booth" } };
+    order.length = 0;
+    await b.app.joinRoom("DUB-AB12");
+    if (order.join() !== "connect,line:7") fail(`joinRoom on own line opened ${order.join()}`);
+    console.log("PASS: Continue skips a saved line that belongs to another character");
   }
 
   console.log("ALL RECENT SESSIONS TESTS PASSED");

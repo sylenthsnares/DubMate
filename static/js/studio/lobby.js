@@ -465,14 +465,16 @@ export class LobbyMethods {
   }
 
   /** The line this user was on when they last left this room, or null. Line 0 counts
-   * only if they were in the booth (it is also the default for someone who never was). */
+   * only if they were in the booth (it is also the default for someone who never was).
+   * A line they can't record (someone else's character) is not reopened. */
   savedLineIndex() {
     const me = this.roomState?.users?.[this.user.id];
     const lines = this.roomState?.pack?.lines;
     if (!me || !Array.isArray(lines)) return null;
     const line = me.current_line;
     if (!Number.isInteger(line) || line < 0 || line >= lines.length) return null;
-    return (line > 0 || me.location === 'booth') ? line : null;
+    if (line === 0 && me.location !== 'booth') return null;
+    return this.canRecordLine(lines[line]) ? line : null;
   }
 
   // --- Live Cast Activity HUD & Premiere Gate ---
