@@ -578,6 +578,18 @@ def get_reverb_impulse(decay_sec: float = 1.5, sr: int = SR) -> np.ndarray:
     return impulse
 
 
+def _fft_convolve(signal: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """
+    Full linear convolution (length len(signal) + len(kernel) - 1) through numpy's real FFT.
+    Replaces scipy.signal.fftconvolve, the only thing scipy was installed for. The FFT runs
+    in float64 and the result is float32, like fftconvolve gave for float32 input.
+    """
+    n = len(signal) + len(kernel) - 1
+    nfft = 1 << (n - 1).bit_length()
+    spectrum = np.fft.rfft(np.asarray(signal, dtype=np.float64), nfft) * np.fft.rfft(np.asarray(kernel, dtype=np.float64), nfft)
+    return np.fft.irfft(spectrum, nfft)[:n].astype(np.float32)
+
+
 def master_soft_limiter(audio: np.ndarray, ceiling_db: float = LIMITER_CEILING_DB) -> np.ndarray:
     """
     Transparent studio soft-knee limiter that prevents digital clipping
@@ -660,14 +672,8 @@ def apply_audio_effects(
     # 4. Studio Acoustic Room Convolution Reverb
     # Direct vocal stays at 100% punch; lush room reflections and natural reverb decay ring out seamlessly
     if reverb_wet > 0.02 and len(audio) > 0:
-        # Imported here, not at module scope. scipy.signal is used by this one line
-        # in the whole codebase, but importing it cost ~1.5s of engine cold start
-        # and ~67 MB of resident memory for every user, whether or not they ever
-        # applied reverb.
-        import scipy.signal
-
         impulse = get_reverb_impulse(decay_sec=1.5, sr=sr)
-        wet = scipy.signal.fftconvolve(audio, impulse)
+        wet = _fft_convolve(audio, impulse)
         out_audio = np.zeros(len(wet), dtype=np.float32)
         out_audio[:len(audio)] = audio
         out_audio += wet * np.float32(reverb_wet * 0.70)
