@@ -1,7 +1,7 @@
 // studio/packs.js - Pack library on the home screen: listing, search, pack cards,
 // import, rescan and the packs folder setting.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { escapeHtml, openDialog } from '../ui_common.js';
+import { escapeHtml, openDialog, joinLocalPath } from '../ui_common.js';
 
 export class PackMethods {
   /**
@@ -529,8 +529,7 @@ export class PackMethods {
       return;
     }
     try { fileName = decodeURIComponent(fileName); } catch { /* sent as is */ }
-    const sep = dir.includes('\\') ? '\\' : '/';
-    input.value = `${dir}${sep}packs${sep}${fileName}`;
+    input.value = joinLocalPath(dir, 'packs', fileName);
     const close = openDialog(overlay, { returnFocus });
     const copyBtn = document.getElementById('btn-share-pack-copy');
     const doneBtn = document.getElementById('btn-share-pack-done');

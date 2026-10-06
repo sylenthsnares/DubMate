@@ -151,6 +151,20 @@ const click = (w, el) => el.dispatchEvent(new w.MouseEvent("click", { bubbles: t
     if (!modal.hidden) fail("Done did not close the share window");
     if (w.document.activeElement !== chip) fail("focus did not return to the Share chip");
     console.log("PASS: Done closes the window and returns focus to Share");
+
+    // The path uses one separator throughout, whatever the export folder was saved with.
+    const paths = [
+      ["C:/Users/tani/DubMate Renders", `C:\\Users\\tani\\DubMate Renders\\packs\\${SAVED_NAME}`],
+      ["C:\\Users/tani\\DubMate Renders\\", `C:\\Users\\tani\\DubMate Renders\\packs\\${SAVED_NAME}`],
+      ["\\\\nas\\share/renders", `\\\\nas\\share\\renders\\packs\\${SAVED_NAME}`],
+      ["/home/tani/renders/", `/home/tani/renders/packs/${SAVED_NAME}`],
+    ];
+    for (const [dir, want] of paths) {
+      app.openSharePack(SAVED_NAME, dir, chip);
+      if (input.value !== want) fail(`share path for ${dir}: ${input.value}`);
+      w.document.getElementById("btn-share-pack-done").click();
+    }
+    console.log("PASS: the shared file's path uses the folder's own separator throughout");
   }
 
   // 2. Off the engine's computer, Share downloads with the send-to-a-friend toast.

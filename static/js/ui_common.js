@@ -1,5 +1,20 @@
 // ui_common.js - Small UI helpers shared by the studio (app.js) and the Pack Builder (pack_builder.js)
 
+/**
+ * Joins a folder on the engine's computer with names below it, using that computer's
+ * separator throughout: a Windows folder (drive letter or any backslash) gets
+ * backslashes only, anything else forward slashes.
+ */
+export function joinLocalPath(dir, ...names) {
+  const base = String(dir ?? '');
+  const windows = /^[A-Za-z]:/.test(base) || base.includes('\\');
+  const sep = windows ? '\\' : '/';
+  const fix = (p) => (windows ? String(p).replace(/\//g, sep) : String(p));
+  const head = fix(base).replace(/[\\/]+$/, '');
+  const rest = names.map((n) => fix(n).replace(/^[\\/]+|[\\/]+$/g, '')).filter(Boolean);
+  return [head, ...rest].join(sep);
+}
+
 export function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',
