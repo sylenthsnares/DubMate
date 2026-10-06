@@ -12,7 +12,6 @@ import ast
 import json
 import os
 import re
-import tomllib
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -95,12 +94,21 @@ def test_ffmpeg_pin_matches():
     print(f"[PASS] both Windows scripts pin {pins['download_tools.ps1'][0].rsplit('/', 1)[-1]} with one SHA-256")
 
 
+def _cargo_package_version(cargo_toml: str) -> str:
+    # tomllib is 3.11+; the project supports 3.10, and only [package].version is needed.
+    package = re.search(r"^\[package\]\s*$(.*?)(?=^\[|\Z)", cargo_toml, re.M | re.S)
+    assert package, "Cargo.toml has no [package] section"
+    version = re.search(r'^version\s*=\s*"([^"]+)"', package.group(1), re.M)
+    assert version, "Cargo.toml [package] has no version"
+    return version.group(1)
+
+
 def test_versions_consistent():
     versions = {
         "VERSION": _read("VERSION").strip(),
         "tauri.conf.json": json.loads(_read("tauri", "src-tauri", "tauri.conf.json"))["version"],
         "package.json": json.loads(_read("tauri", "package.json"))["version"],
-        "Cargo.toml": tomllib.loads(_read("tauri", "src-tauri", "Cargo.toml"))["package"]["version"],
+        "Cargo.toml": _cargo_package_version(_read("tauri", "src-tauri", "Cargo.toml")),
     }
     assert len(set(versions.values())) == 1, f"version mismatch: {versions}"
     print(f"[PASS] all versions are {versions['VERSION']}")
