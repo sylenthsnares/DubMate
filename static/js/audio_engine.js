@@ -18,9 +18,6 @@ export class AudioEngine {
 
     // Buffer Caches & In-Flight Request Deduplication
     this.bufferCache = new Map();
-    // Source AudioBuffer -> Map<semitones.toFixed(2), shifted AudioBuffer>. Keyed by
-    // buffer identity, so shifted copies die with their source buffer.
-    this.pitchShiftCache = new WeakMap();
     this.inFlightRequests = new Map();
 
     // Active Audio Nodes
@@ -35,9 +32,6 @@ export class AudioEngine {
     this.metronomeEnabled = true;
     this.metronomeVolume = 0.20; // Gentle -14dB
     this.backingVolume = 0.65;   // 65% calibrated DAW standard
-
-    // Shared reverb impulse of the premiere's browser chain (screening.js, until it plays renders)
-    this.reverbBuffer = null;
 
     // --- Device Routing (see setPreferredInputDevice / setPreferredOutputDevice) ---
     // preferredInputId is fed into the getUserMedia deviceId constraint.
@@ -82,135 +76,12 @@ export class AudioEngine {
             this.ctx = new AudioCtx({ sampleRate: 44100 });
           } catch (e2) {}
         }
-        if (this.ctx) {
-          this._generateReverbImpulse(1.5, 0.5, 20); // Default studio room
-        }
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
-  }
-
-  // --- 1. Algorithmic Acoustic Room Impulse Generator (premiere live playback only) ---
-  _generateReverbImpulse(decaySec = 1.5, roomSize = 0.5, preDelayMs = 20) {
-    if (!this.ctx) return null;
-    const rate = this.ctx.sampleRate;
-    const totalDuration = Math.min(2.0, Math.max(0.2, decaySec)); // Cap at 2.0s for zero CPU drag
-    const length = Math.floor(rate * totalDuration);
-    const preDelaySamples = Math.floor(rate * (preDelayMs / 1000.0));
-
-    const impulse = this.ctx.createBuffer(2, length, rate);
-    const left = impulse.getChannelData(0);
-    const right = impulse.getChannelData(1);
-
-    const decayConstant = 3.2 / Math.max(0.1, decaySec);
-    const diffusion = 0.5 + roomSize * 0.45;
-
-    let sumSqL = 0;
-    let sumSqR = 0;
-
-    for (let i = 0; i < length; i++) {
-      if (i < preDelaySamples) {
-        left[i] = 0;
-        right[i] = 0;
-        continue;
-      }
-
-      const t = (i - preDelaySamples) / rate;
-      const envelope = Math.exp(-decayConstant * t);
-
-      // Stereo decorrelated diffusion
-      const noiseL = (Math.random() * 2 - 1) * envelope;
-      const noiseR = (Math.random() * 2 - 1) * envelope;
-
-      const sL = noiseL * (1.0 - diffusion * 0.2) + noiseR * (diffusion * 0.2);
-      const sR = noiseR * (1.0 - diffusion * 0.2) + noiseL * (diffusion * 0.2);
-      left[i] = sL;
-      right[i] = sR;
-      sumSqL += sL * sL;
-      sumSqR += sR * sR;
-    }
-
-    // Normalize impulse response to unit L2 energy for exact mathematical parity with DSP render
-    const normL = Math.sqrt(sumSqL) || 1.0;
-    const normR = Math.sqrt(sumSqR) || 1.0;
-    for (let i = 0; i < length; i++) {
-      left[i] /= normL;
-      right[i] /= normR;
-    }
-
-    this.reverbBuffer = impulse;
-    return this.reverbBuffer;
-  }
-
-  // --- 2. High-Speed Time-Invariant Pitch Shifter (premiere live playback only) ---
-  // Pure time-invariant rotating overlap-add crossfader with linear sub-sample interpolation.
-  // Preserves 100% exact phrase duration, zero speed variation, with seamless phrase synchronicity.
-  pitchShiftBuffer(inputBuffer, pitchSemitones) {
-    if (!inputBuffer || Math.abs(pitchSemitones) < 0.05) {
-      return inputBuffer;
-    }
-
-    let shiftedBySemitones = this.pitchShiftCache.get(inputBuffer);
-    if (!shiftedBySemitones) {
-      shiftedBySemitones = new Map();
-      this.pitchShiftCache.set(inputBuffer, shiftedBySemitones);
-    }
-    const semitonesKey = pitchSemitones.toFixed(2);
-    if (shiftedBySemitones.has(semitonesKey)) {
-      return shiftedBySemitones.get(semitonesKey);
-    }
-
-    this.initContext();
-    const numChannels = inputBuffer.numberOfChannels;
-    const sampleRate = inputBuffer.sampleRate;
-    const inLength = inputBuffer.length;
-    const outBuffer = this.ctx.createBuffer(numChannels, inLength, sampleRate);
-
-    const pitchRatio = Math.max(0.25, Math.min(4.0, Math.pow(2.0, pitchSemitones / 12.0)));
-    // Optimal window size for human speech vocals (~46ms at 44.1k/48k)
-    const D = 2048.0;
-    const halfD = D / 2.0;
-    const twoPiOverD = (2.0 * Math.PI) / D;
-    const rateDiff = pitchRatio - 1.0;
-
-    for (let ch = 0; ch < numChannels; ch++) {
-      const inData = inputBuffer.getChannelData(ch);
-      const outData = outBuffer.getChannelData(ch);
-
-      for (let n = 0; n < inLength; n++) {
-        // Dual crossfading phases separated by 180 degrees (D / 2)
-        const phase1 = ((n * rateDiff) % D + D) % D;
-        const phase2 = (phase1 + halfD) % D;
-
-        // Raised-cosine / Hann windows (w1 + w2 = 1.0 strictly everywhere)
-        const w1 = 0.5 * (1.0 - Math.cos(phase1 * twoPiOverD));
-        const w2 = 0.5 * (1.0 - Math.cos(phase2 * twoPiOverD));
-
-        // Sub-sample linear interpolation for Reader 1
-        const f1 = n + phase1 - halfD;
-        const i1 = Math.floor(f1);
-        const frac1 = f1 - i1;
-        const i1_0 = Math.max(0, Math.min(inLength - 1, i1));
-        const i1_1 = Math.max(0, Math.min(inLength - 1, i1 + 1));
-        const s1 = (1.0 - frac1) * inData[i1_0] + frac1 * inData[i1_1];
-
-        // Sub-sample linear interpolation for Reader 2
-        const f2 = n + phase2 - halfD;
-        const i2 = Math.floor(f2);
-        const frac2 = f2 - i2;
-        const i2_0 = Math.max(0, Math.min(inLength - 1, i2));
-        const i2_1 = Math.max(0, Math.min(inLength - 1, i2 + 1));
-        const s2 = (1.0 - frac2) * inData[i2_0] + frac2 * inData[i2_1];
-
-        outData[n] = w1 * s1 + w2 * s2;
-      }
-    }
-
-    shiftedBySemitones.set(semitonesKey, outBuffer);
-    return outBuffer;
   }
 
   // --- 3. Gentle Metronome Acoustic Pip ---
@@ -745,8 +616,6 @@ export class AudioEngine {
         }
       }
     }
-    // pitchShiftCache needs no clearing: it is keyed by buffer identity, so
-    // shifted copies go when the evicted source buffer does.
   }
 
   async loadAudioBuffer(url, bypassCache = false) {
@@ -827,63 +696,6 @@ export class AudioEngine {
     this.activeTakeGain = null;
     this.activeOrigGain = null;
     this.takeVoice = null;
-  }
-
-  // --- 5. Premiere Vocal DSP Chain ---
-  // Used only by the premiere's live playback (screening.js) until it plays the
-  // engine's renders. The booth plays renders (previewTakeIsolated, crossfadeTo).
-  buildVocalDSPChain(options = {}) {
-    const {
-      reverbWet = 0,
-      gainDb = 0,
-      enableLowCut = true,
-    } = options;
-
-    const nodes = {};
-
-    // 1. High-Pass Filter (80Hz low-cut)
-    const highPass = this.ctx.createBiquadFilter();
-    highPass.type = 'highpass';
-    highPass.frequency.value = enableLowCut ? 80 : 10;
-    highPass.Q.value = 0.707;
-    nodes.input = highPass;
-
-    // 2. Volume Trim Gain Node
-    const gainNode = this.ctx.createGain();
-    gainNode.gain.value = Math.pow(10, gainDb / 20);
-    highPass.connect(gainNode);
-    nodes.gainNode = gainNode;
-
-    // 3. Reverb Sub-Mix
-    const submixGain = this.ctx.createGain();
-    if (reverbWet > 0.03 && this.reverbBuffer) {
-      const convolver = this.ctx.createConvolver();
-      convolver.buffer = this.reverbBuffer;
-
-      const dryGain = this.ctx.createGain();
-      const wetGain = this.ctx.createGain();
-
-      dryGain.gain.value = 1.0; // Keep vocal speech punchy and clear
-      wetGain.gain.value = reverbWet * 0.70;
-
-      gainNode.connect(dryGain);
-      gainNode.connect(convolver);
-      convolver.connect(wetGain);
-
-      dryGain.connect(submixGain);
-      wetGain.connect(submixGain);
-
-      // Tracked so stopAllPlayback() can fully tear down the reverb send/
-      // return chain instead of leaking it once the preview ends.
-      nodes.convolver = convolver;
-      nodes.dryGain = dryGain;
-      nodes.wetGain = wetGain;
-    } else {
-      gainNode.connect(submixGain);
-    }
-
-    nodes.output = submixGain;
-    return nodes;
   }
 
   /** The booth take's level, a gain after its render. */

@@ -42,6 +42,9 @@ class DubMateApp {
 
     // Screening & Premiere State
     this.screeningBuffers = new Map();
+    // Picked takes' renders for the live premiere, keyed by take audio + resolved chain.
+    this.screeningRenders = new Map();
+    this.screeningLineLevels = [];
     this.isPreloadingScreening = false;
     this.isReadyForScreening = false;
 
@@ -78,6 +81,7 @@ class DubMateApp {
     if (this.screeningBuffers) {
       this.screeningBuffers.clear();
     }
+    if (this.screeningRenders) this.screeningRenders.clear();
   }
 
   loadUser() {
@@ -1072,10 +1076,7 @@ class DubMateApp {
       const pres = parseFloat(data.payload?.presence_db ?? 0.0);
       this.masterDialoguePresence = pres;
       this.renderPresenceUI(pres);
-      if (this.screeningVocalGainNode && this.audio?.ctx) {
-        const { vocalGain } = this.getScreeningStemGains();
-        this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
-      }
+      this.applyScreeningPresence();
     });
   }
 
