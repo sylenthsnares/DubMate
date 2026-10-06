@@ -395,7 +395,7 @@ try {
     if (!/\.zip$/.test(savedFiles[savedFiles.length - 1].download || "")) {
       fail("the pack ZIP saved under the wrong filename", savedFiles[savedFiles.length - 1]);
     }
-    if (toastsMatching(/packaging/i).length === 0 || toastsMatching(/downloaded/i).length === 0) {
+    if (toastsMatching(/preparing/i).length === 0 || toastsMatching(/downloaded/i).length === 0) {
       fail("the pack ZIP download did not toast start + completion", toasts);
     }
     if (app.selectedPackId !== selectedBeforePack) {

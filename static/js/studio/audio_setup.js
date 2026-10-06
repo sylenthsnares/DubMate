@@ -216,23 +216,23 @@ export class AudioSetupMethods {
 
     if (this.audioSetupStatusPill) {
       if (step === 'devices') {
-        this.audioSetupStatusPill.innerText = 'MIC CONNECTED';
+        this.audioSetupStatusPill.innerText = 'MIC READY';
       } else if (step === 'denied') {
         this.audioSetupStatusPill.innerText = 'MIC BLOCKED';
       } else {
-        this.audioSetupStatusPill.innerText = 'MIC NOT CONNECTED';
+        this.audioSetupStatusPill.innerText = 'NO MIC';
       }
     }
     if (this.audioSetupSubtitle) {
       if (step === 'devices') {
         this.audioSetupSubtitle.innerText =
-          'Pick the microphone you record with and the headphones you monitor on.';
+          'Choose your microphone and headphones.';
       } else if (step === 'denied') {
         this.audioSetupSubtitle.innerText =
-          'Recording stays disabled until microphone access is restored.';
+          'Recording is off until DubMate can use your microphone.';
       } else {
         this.audioSetupSubtitle.innerText =
-          'A one-time setup so your first take does not get ambushed by a permission popup.';
+          'Set up your microphone before you record.';
       }
     }
   }
@@ -294,7 +294,7 @@ export class AudioSetupMethods {
     const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
     safeStorageSet(ss, AUDIO_SETUP_SKIP_KEY, '1');
     this.closeAudioSettings();
-    this.showToast('Audio setup skipped — reopen it any time from “Audio” in the header.');
+    this.showToast('You can set up audio later from Audio in the top bar.');
   }
 
   // The one place in the app that is allowed to trigger getUserMedia cold,
@@ -306,7 +306,7 @@ export class AudioSetupMethods {
     const restoreGrantBtn = () => {
       if (this.btnGrantMic) this.btnGrantMic.disabled = false;
       if (this.btnRetryMic) this.btnRetryMic.disabled = false;
-      if (this.btnGrantMicText) this.btnGrantMicText.innerText = '🎙️ Allow Microphone Access';
+      if (this.btnGrantMicText) this.btnGrantMicText.innerText = 'Allow microphone';
     };
 
     if (this.btnGrantMic) this.btnGrantMic.disabled = true;
@@ -327,7 +327,7 @@ export class AudioSetupMethods {
       this.showAudioSetupStep('devices');
       await this.refreshAudioDevices();
       await this.startInputMeter();
-      this.showToast('🎙️ Microphone connected. Pick your devices and check your level.');
+      this.showToast('Microphone connected');
     } catch (err) {
       const name = (err && err.name) || '';
       this.audioSetup.permission = (name === 'NotAllowedError' || name === 'SecurityError') ? 'denied' : 'error';
@@ -343,19 +343,19 @@ export class AudioSetupMethods {
   renderMicDenial(err) {
     const name = (err && err.name) || '';
     let heading = 'Microphone access was blocked';
-    let detail = 'The browser refused the request, so recording is disabled until access is restored.';
+    let detail = 'Recording is off until you allow microphone access.';
 
     if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       heading = 'No microphone was found';
-      detail = 'Windows reported no capture device. Plug in a microphone or headset, then press Try Again.';
+      detail = 'Plug in a microphone or headset, then press Try again.';
     } else if (name === 'NotReadableError' || name === 'TrackStartError') {
       heading = 'The microphone is in use by another app';
-      detail = 'Close Discord, OBS, Teams or any other app holding the microphone, then press Try Again.';
+      detail = 'Close Discord, OBS, Teams or any other app using the microphone, then press Try again.';
     } else if (name === 'OverconstrainedError') {
       heading = 'The saved microphone is no longer available';
-      detail = 'The device DubMate remembered has been unplugged. Press Try Again to fall back to the system default.';
+      detail = 'Your saved microphone was unplugged. Press Try again to use the system default.';
     } else if (name && name !== 'NotAllowedError' && name !== 'SecurityError') {
-      detail = `The browser reported ${name}. Recording is disabled until microphone access works.`;
+      detail = 'Recording is off until the microphone works. Check that it is plugged in and allowed, then press Try again.';
     }
 
     if (this.audioDeniedHeading) this.audioDeniedHeading.innerText = heading;
@@ -365,7 +365,7 @@ export class AudioSetupMethods {
   async rescanAudioDevices() {
     if (this.audioSetup.permission !== 'granted') return;
     await this.refreshAudioDevices();
-    this.showToast('Re-scanned connected audio devices.');
+    this.showToast('Device list updated');
   }
 
   // Labels only come back populated once permission has been granted, which is
@@ -379,7 +379,7 @@ export class AudioSetupMethods {
 
     const inputResult = this.populateDeviceSelect(
       this.selectAudioInput, devices.inputs, this.audioSetup.inputId,
-      'System Default Microphone', 'Microphone'
+      'System default', 'Microphone'
     );
     this.renderDeviceNote(this.audioInputNote, inputResult, devices, 'microphone');
 
@@ -390,7 +390,7 @@ export class AudioSetupMethods {
     if (outputSupported) {
       const outputResult = this.populateDeviceSelect(
         this.selectAudioOutput, devices.outputs, this.audioSetup.outputId,
-        'System Default Output', 'Output'
+        'System default', 'Output'
       );
       this.renderDeviceNote(this.audioOutputNote, outputResult, devices, 'output device');
     }
@@ -441,7 +441,7 @@ export class AudioSetupMethods {
     if (!devices.supported) {
       noteEl.style.display = 'block';
       noteEl.classList.add('is-error');
-      noteEl.innerText = 'This browser does not expose device enumeration.';
+      noteEl.innerText = "This browser can't list audio devices.";
       return;
     }
     if (result.count === 0) {
@@ -455,12 +455,12 @@ export class AudioSetupMethods {
       noteEl.classList.add('is-warning');
       // escapeHtml() because the remembered label is device-supplied text.
       noteEl.innerHTML =
-        `⚠️ Your saved ${escapeHtml(kindLabel)} isn’t connected right now — falling back to the system default.`;
+        `Your saved ${escapeHtml(kindLabel)} isn’t connected. Using the system default.`;
       return;
     }
     if (!devices.labelled) {
       noteEl.style.display = 'block';
-      noteEl.innerText = 'Device names appear once microphone permission has been granted.';
+      noteEl.innerText = 'Device names show after you allow microphone access.';
       return;
     }
     noteEl.style.display = 'none';
@@ -506,15 +506,15 @@ export class AudioSetupMethods {
       if (routed.ok) {
         this.audioOutputNote.style.display = 'block';
         this.audioOutputNote.innerText = next
-          ? '✓ Playback routed to the selected output device.'
-          : '✓ Playback follows the system default output.';
+          ? '✓ Using this output.'
+          : '✓ Using the system default.';
       } else if (routed.reason === 'unsupported') {
         this.audioOutputNote.style.display = 'none';
       } else {
         this.audioOutputNote.style.display = 'block';
         this.audioOutputNote.classList.add('is-error');
         this.audioOutputNote.innerText =
-          'Could not switch playback to that device. It may have been unplugged — falling back to the system default.';
+          "Couldn't switch to that device. Using the system default.";
       }
     }
   }
@@ -530,9 +530,9 @@ export class AudioSetupMethods {
     try {
       const info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
       if (info && info.didFallBack) {
-        this.setMeterHint('Saved microphone unavailable — monitoring the system default instead.', true);
+        this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
       } else {
-        this.setMeterHint('Speak your loudest line — aim for peaks around -12 to -6 dBFS.', false);
+        this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
       }
     } catch (err) {
       const name = (err && err.name) || '';
@@ -542,7 +542,7 @@ export class AudioSetupMethods {
         this.showAudioSetupStep('denied');
         return;
       }
-      this.setMeterHint('Could not open this input for monitoring. Try another device or press Rescan.', true);
+      this.setMeterHint("Can't read this microphone. Try another one or press Rescan.", true);
       return;
     }
 
@@ -585,7 +585,7 @@ export class AudioSetupMethods {
       this.levelMeterPeakTick.style.display = 'none';
       this.levelMeterPeakTick.classList.remove('is-clipping');
     }
-    if (this.levelMeterRms) this.levelMeterRms.innerText = '-∞ dBFS';
+    if (this.levelMeterRms) this.levelMeterRms.innerText = '-∞ dB';
     if (this.levelMeterPeakReadout) {
       this.levelMeterPeakReadout.innerText = 'PK -∞';
       this.levelMeterPeakReadout.classList.remove('is-clipping');
@@ -640,7 +640,7 @@ export class AudioSetupMethods {
       this.levelMeterPeakTick.classList.toggle('is-clipping', isClipping);
     }
     if (this.levelMeterRms) {
-      this.levelMeterRms.innerText = `${formatDbFS(rmsDb)} dBFS`;
+      this.levelMeterRms.innerText = `${formatDbFS(rmsDb)} dB`;
     }
     if (this.levelMeterPeakReadout) {
       this.levelMeterPeakReadout.innerText = `PK ${formatDbFS(this.audioSetup.peakDb)}`;
@@ -657,9 +657,9 @@ export class AudioSetupMethods {
     }
 
     if (isClipping) {
-      this.setMeterHint('Too hot — back off the mic or lower your input gain to keep peaks under -3 dBFS.', true);
+      this.setMeterHint('Too loud. Move back from the mic or turn down its input level.', true);
     } else if (this.audioSetup.peakDb > METER_AMBER_DB) {
-      this.setMeterHint('Good, strong level. Peaks are sitting in the hot amber zone.', false);
+      this.setMeterHint('Good level.', false);
     }
   }
 
@@ -714,15 +714,15 @@ export class AudioSetupMethods {
         this.exportsDirCache = data.exports_dir;
         if (this.inputExportsDir) this.inputExportsDir.value = data.exports_dir;
       }
-      this.setExportsFeedback('✅ Export folder saved.', true);
-      this.showToast('📁 Export folder updated.');
+      this.setExportsFeedback('Export folder saved.', true);
+      this.showToast('Export folder saved');
     } catch (err) {
       // Server details (unwritable folder) are shown as-is.
-      let msg = (err && err.message) || 'Unknown error';
+      let msg = (err && err.message) || "Couldn't save that folder.";
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
         msg = this.friendlyError(err);
       }
-      this.setExportsFeedback(`❌ ${msg}`, false);
+      this.setExportsFeedback(msg, false);
     } finally {
       if (this.btnSaveExportsDir) this.btnSaveExportsDir.disabled = false;
       if (this.btnSaveExportsDirText) this.btnSaveExportsDirText.innerText = 'Save';

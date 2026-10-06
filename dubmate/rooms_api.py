@@ -54,8 +54,7 @@ async def create_room(payload: Dict[str, Any]):
     room_registry._set_room_status(
         room_id,
         "publishing" if room_registry.ACTIVE_TUNNEL_URL else "waiting",
-        "Publishing room code to the registry..." if room_registry.ACTIVE_TUNNEL_URL
-        else "Waiting for the public tunnel to come up...",
+        "Getting your room code ready."
     )
     room_registry.schedule_registry_publish()
 
@@ -139,7 +138,7 @@ async def upload_take(
     room = rooms.room_or_404(room_id)
 
     if line_index < 0 or line_index >= len(room.pack.lines):
-        raise HTTPException(status_code=400, detail="Invalid line index")
+        raise HTTPException(status_code=400, detail="That line isn't in this scene.")
 
     line = room.pack.lines[line_index]
     char_name = line.get("character")
@@ -148,7 +147,7 @@ async def upload_take(
     if assigned_users and user_id not in assigned_users and not is_host:
         raise HTTPException(
             status_code=403,
-            detail=f"Line {line_index + 1} is assigned to {char_name}. Only assigned actors can record this line."
+            detail=f"Line {line_index + 1} belongs to {char_name}. Only their actor can record it."
         )
 
     try:
@@ -455,7 +454,7 @@ async def download_room_project_zip(room_id: str):
         )
     except Exception as ex:
         print(f"[ProjectZipError] Error generating project ZIP for {room_id}: {ex}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate project ZIP: {str(ex)}")
+        raise HTTPException(status_code=500, detail="Couldn't build the project files. Try again.")
 
     clean_name = audio_processor.sanitize_filename(room.pack.name)
     download_filename = f"DubMate_Project_{clean_name}_{room.room_id}.zip"

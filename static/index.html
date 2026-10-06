@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DubMate Studio Pro — Collaborative Scene Dubbing DAW</title>
+  <title>DubMate</title>
   <meta name="description"
-    content="Collaborative anime and scene dubbing multiplayer Digital Audio Workstation with warm analog tone, guitar amp voice DSP dials, waveform track syncing, and group premiere theater.">
+    content="Dub scenes with friends: pick a scene, record your lines, and watch the result together.">
 
   <!-- Preconnected Google Fonts for High Performance & Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,8 +45,8 @@
   <header class="app-header">
     <div class="header-left">
       <div class="logo-dropdown-container" id="logo-dropdown-container">
-        <div class="logo logo-with-dropdown" id="btn-mode-dropdown" title="Switch Studio Mode" role="button" tabindex="0"
-          aria-haspopup="true" aria-expanded="false" aria-label="Switch DubMate Studio Mode">
+        <div class="logo logo-with-dropdown" id="btn-mode-dropdown" role="button" tabindex="0"
+          aria-haspopup="true" aria-expanded="false" aria-label="Switch between Studio and Pack Builder">
           <div class="logo-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
@@ -56,7 +56,7 @@
             </svg>
           </div>
           <div class="logo-title">DUBMATE</div>
-          <span class="logo-badge">STUDIO PRO</span>
+          <span class="logo-badge">STUDIO</span>
           <svg class="logo-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
@@ -68,19 +68,19 @@
             <div class="mode-item-icon">🎙️</div>
             <div class="mode-item-content">
               <div class="mode-item-title-row">
-                <span class="mode-item-title">DubMate Studio Pro</span>
+                <span class="mode-item-title">DubMate Studio</span>
                 <span class="mode-active-pill">Active</span>
               </div>
-              <span class="mode-item-desc">Multiplayer Scene Dubbing DAW & Screening</span>
+              <span class="mode-item-desc">Record and watch dubs</span>
             </div>
           </a>
           <a href="/builder.html" class="mode-dropdown-item" id="mode-opt-builder">
             <div class="mode-item-icon">🎬</div>
             <div class="mode-item-content">
               <div class="mode-item-title-row">
-                <span class="mode-item-title">DubMate Pack Builder</span>
+                <span class="mode-item-title">Pack Builder</span>
               </div>
-              <span class="mode-item-desc">AI Vocal Isolation & Scene Pack Authoring</span>
+              <span class="mode-item-desc">Turn a video into a scene pack</span>
             </div>
           </a>
         </div>
@@ -88,9 +88,8 @@
 
       <!-- Studio Stage Breadcrumbs (Visible inside active room) -->
       <nav id="studio-breadcrumbs" class="studio-breadcrumbs" style="display: none;"
-        aria-label="Studio Stage Navigation">
-        <button id="nav-step-lobby" class="crumb-btn active" title="Casting Board & Room Lobby"
-          aria-label="Go to Casting Board Lobby">
+        aria-label="Session steps">
+        <button id="nav-step-lobby" class="crumb-btn active" aria-label="Go to lobby">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -99,7 +98,7 @@
           <span class="crumb-text">Lobby</span>
         </button>
         <span class="crumb-arrow" aria-hidden="true">›</span>
-        <button id="nav-step-booth" class="crumb-btn" title="Solo Recording Booth" aria-label="Go to Recording Booth">
+        <button id="nav-step-booth" class="crumb-btn" aria-label="Go to booth">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
@@ -109,8 +108,7 @@
           <span class="crumb-text">Booth</span>
         </button>
         <span class="crumb-arrow" aria-hidden="true">›</span>
-        <button id="nav-step-screening" class="crumb-btn" title="Finale Screening Room"
-          aria-label="Go to Premiere Screening">
+        <button id="nav-step-screening" class="crumb-btn" aria-label="Go to premiere">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <rect width="20" height="15" x="2" y="3" rx="2" />
@@ -118,7 +116,7 @@
             <path d="M8 22h8" />
           </svg>
           <span class="crumb-text">Premiere</span>
-          <span id="crumb-premiere-live" class="badge-live-dot" style="display: none;" title="Premiere is Live!"
+          <span id="crumb-premiere-live" class="badge-live-dot" style="display: none;"
             aria-hidden="true"></span>
         </button>
       </nav>
@@ -132,8 +130,8 @@
     </div>
 
     <div class="header-status">
-      <div id="header-room-badge" class="room-badge" style="display: none;" title="Click to copy invite link"
-        role="button" tabindex="0" aria-label="Copy Room Invite Link">
+      <div id="header-room-badge" class="room-badge" style="display: none;" data-tip="Click to copy an invite"
+        role="button" tabindex="0" aria-label="Copy invite">
         <span class="room-label">ROOM</span>
         <span id="header-room-code" class="room-code">------</span>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -147,7 +145,7 @@
         <span id="header-user-name" class="user-name">Actor</span>
       </div>
       <button id="btn-audio-settings" class="btn btn-ghost btn-sm btn-audio-settings" type="button"
-        title="Audio Devices & Studio Settings" aria-label="Open Audio Device Settings" aria-haspopup="dialog">
+        data-tip="Microphone, headphones and export folder" aria-label="Audio settings" aria-haspopup="dialog">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
           <line x1="4" x2="4" y1="21" y2="14" />
@@ -162,24 +160,23 @@
         </svg>
         <span class="audio-settings-btn-text">Audio</span>
         <span id="audio-settings-alert-dot" class="audio-settings-alert-dot" style="display: none;"
-          title="Microphone is not set up yet" aria-hidden="true"></span>
+          data-tip="Microphone isn't set up yet" aria-hidden="true"></span>
       </button>
-      <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;"
-        title="Leave Room and Return to Scenes" aria-label="Leave Studio Session">
+      <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;" aria-label="Leave room">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
           <polyline points="16 17 21 12 16 7" />
           <line x1="21" x2="9" y1="12" y2="12" />
         </svg>
-        <span>Exit</span>
+        <span>Leave</span>
       </button>
     </div>
   </header>
 
   <!-- Live Cast Activity HUD Ribbon -->
   <div id="cast-activity-bar" class="cast-activity-bar" style="display: none;" role="region"
-    aria-label="Live Cast Activity" aria-live="polite">
+    aria-label="Cast" aria-live="polite">
     <div class="cast-activity-header">
       <span class="cast-hud-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -189,9 +186,9 @@
           <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
-        CAST HUD
+        CAST
       </span>
-      <span id="premiere-status-summary" class="premiere-status-summary">0/0 Ready</span>
+      <span id="premiere-status-summary" class="premiere-status-summary">0/0 ready</span>
     </div>
     <div id="cast-activity-list" class="cast-activity-list">
       <!-- Live actor status cards populated dynamically -->
@@ -202,11 +199,10 @@
   <main class="app-container">
 
     <!-- 1. LANDING & SCENE EXPLORER VIEW -->
-    <section id="view-landing" class="view-section active" aria-label="Studio Setup & Scene Selection">
+    <section id="view-landing" class="view-section active" aria-label="Choose a scene">
       <div class="hero-banner">
-        <h1 class="hero-title">Dub Anime & Scenes <span class="hero-title-accent">Together with Friends</span></h1>
-        <p class="hero-subtitle">Cast iconic characters, record voice lines with tactile analog amp controls and visual
-          waveform sync, shape tracks with studio DSP, and screen your full master dub live.</p>
+        <h1 class="hero-title">Dub scenes <span class="hero-title-accent">with friends</span></h1>
+        <p class="hero-subtitle">Pick a scene, cast the characters, record your lines and watch the dub together.</p>
       </div>
 
       <div class="landing-grid">
@@ -220,27 +216,27 @@
                 <circle cx="12" cy="7" r="4" />
               </svg>
             </span>
-            <h3 class="panel-title">Actor Profile & Session</h3>
+            <h3 class="panel-title">Profile</h3>
           </div>
 
           <div class="form-group" style="margin-top: 16px;">
-            <label class="form-label" for="input-user-name">Your Actor Name</label>
+            <label class="form-label" for="input-user-name">Your name</label>
             <input type="text" id="input-user-name" class="form-input" placeholder="e.g. Levi Ackerman" maxlength="24"
               autocomplete="nickname">
           </div>
 
           <div class="form-group">
-            <label class="form-label">Avatar Color Theme</label>
-            <div class="color-palette" id="color-palette" role="radiogroup" aria-label="Avatar Color Selection">
-              <div class="color-option selected" data-color="#d97706" style="background: #d97706;" title="Vintage Amber"
+            <label class="form-label">Color</label>
+            <div class="color-palette" id="color-palette" role="radiogroup" aria-label="Color">
+              <div class="color-option selected" data-color="#d97706" style="background: #d97706;" data-tip="Amber"
                 role="radio" aria-checked="true" tabindex="0"></div>
-              <div class="color-option" data-color="#cca458" style="background: #cca458;" title="Walnut Gold"
+              <div class="color-option" data-color="#cca458" style="background: #cca458;" data-tip="Gold"
                 role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#dc2626" style="background: #dc2626;" title="Pilot Red" role="radio"
+              <div class="color-option" data-color="#dc2626" style="background: #dc2626;" data-tip="Red" role="radio"
                 aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#16a34a" style="background: #16a34a;" title="Studio Olive"
+              <div class="color-option" data-color="#16a34a" style="background: #16a34a;" data-tip="Green"
                 role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#b45309" style="background: #b45309;" title="Terracotta Bronze"
+              <div class="color-option" data-color="#b45309" style="background: #b45309;" data-tip="Bronze"
                 role="radio" aria-checked="false" tabindex="0"></div>
             </div>
           </div>
@@ -255,7 +251,7 @@
                 <path
                   d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
               </svg>
-              Create Room
+              New room
             </button>
             <button id="tab-btn-join" class="tab-pill" role="tab" aria-selected="false">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -264,24 +260,24 @@
                 <path d="m21 2-9.6 9.6" />
                 <path d="m15.5 7.5 3 3L22 7l-3-3" />
               </svg>
-              Join Code
+              Join room
             </button>
           </div>
 
           <div id="panel-create-room">
             <button id="btn-create-room" class="btn btn-primary btn-lg" style="width: 100%;">
-              <span>Launch Studio Room ›</span>
+              <span>Create room</span>
             </button>
           </div>
 
           <div id="panel-join-room" style="display: none;">
             <div class="form-group">
-              <label class="form-label" for="input-room-code">6-Character Room Code</label>
+              <label class="form-label" for="input-room-code">Room code</label>
               <input type="text" id="input-room-code" class="form-input code-input" placeholder="e.g. DUB789"
                 maxlength="6" autocomplete="off" spellcheck="false">
             </div>
             <button id="btn-join-room" class="btn btn-secondary btn-lg" style="width: 100%;">
-              <span>Join Session Room ›</span>
+              <span>Join room</span>
             </button>
           </div>
         </div>
@@ -303,41 +299,39 @@
                   <path d="M17 16.5h4" />
                 </svg>
               </span>
-              <h3 class="panel-title">Choose Scene Dub Pack</h3>
+              <h3 class="panel-title">Choose a scene</h3>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
               <a href="/builder.html" id="btn-open-builder" class="btn btn-primary btn-sm"
-                title="Create a custom scene dub pack from any video with AI vocal isolation"
-                aria-label="Open Pack Builder Studio" style="text-decoration: none;">
+                data-tip="Make a scene pack from your own video" style="text-decoration: none;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 20h9" />
                   <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
                 </svg>
-                <span>Create Pack</span>
+                <span>Create pack</span>
               </a>
               <button id="btn-import-pack" class="btn btn-secondary btn-sm"
-                title="Import scene pack (.zip from GameBanana or Pack Builder)" aria-label="Import Scene Pack ZIP">
+                data-tip="Add a scene pack .zip from Pack Builder or GameBanana" aria-label="Import pack">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                   <polyline points="17 8 12 3 7 8" />
                   <line x1="12" x2="12" y1="3" y2="15" />
                 </svg>
-                <span>Import .ZIP</span>
+                <span>Import</span>
               </button>
               <input type="file" id="input-pack-zip" accept=".zip" style="display: none;">
               <button id="btn-open-pack-folder" class="btn btn-secondary btn-sm"
-                title="Configure custom Scene Packs folder path on disk" aria-label="Configure Scene Packs Folder">
+                data-tip="Choose the folder DubMate loads scene packs from" aria-label="Packs folder">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
-                <span>📁 Packs Folder</span>
+                <span>Packs folder</span>
               </button>
               <button id="btn-rescan-packs" class="btn btn-secondary btn-sm"
-                title="Rescan Packs directory for newly added or updated scenes"
-                aria-label="Rescan Scene Packs Directory">
+                data-tip="Look for new or changed packs in your folder" aria-label="Rescan packs">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
@@ -355,7 +349,7 @@
                     <path d="M3 3v5h5" />
                     <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
                     <path d="M21 21v-5h-5" />
-                  </svg></span> Scanning...</span>
+                  </svg></span> Scanning…</span>
             </div>
           </div>
 
@@ -370,11 +364,11 @@
                 </svg>
               </span>
               <input type="text" id="input-pack-search" class="form-input search-input"
-                placeholder="Search scenes, characters, or dialogue keywords..." autocomplete="off" spellcheck="false"
-                aria-label="Search scene packs">
-              <button id="btn-clear-search" class="btn-clear-search" style="display: none;" title="Clear search"
-                aria-label="Clear search input">✕</button>
-              <kbd class="search-kbd" title="Press '/' to focus search">/</kbd>
+                placeholder="Search scenes, characters or lines" autocomplete="off" spellcheck="false"
+                aria-label="Search scenes">
+              <button id="btn-clear-search" class="btn-clear-search" style="display: none;"
+                aria-label="Clear search">✕</button>
+              <kbd class="search-kbd" data-tip="Press / to search">/</kbd>
             </div>
           </div>
 
@@ -387,13 +381,11 @@
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" x2="12" y1="3" y2="15" />
               </svg>
-              <div class="dropzone-title">Drop Choicer Voicer / GameBanana .ZIP Here</div>
-              <div class="dropzone-sub">DubMate will automatically verify security, unpack, index, and load it into your
-                studio</div>
+              <div class="dropzone-title">Drop a pack .zip to import it</div>
             </div>
           </div>
 
-          <div id="pack-grid" class="pack-grid" role="region" aria-label="Available Scene Dub Packs">
+          <div id="pack-grid" class="pack-grid" role="region" aria-label="Scenes">
             <!-- Initial Skeleton Shimmer Cards -->
             <div class="pack-card pack-card-skeleton">
               <div class="pack-card-thumb skeleton-thumb"></div>
@@ -435,38 +427,36 @@
 
 
     <!-- 2. ROOM CASTING LOBBY VIEW -->
-    <section id="view-lobby" class="view-section" aria-label="Casting Lobby">
+    <section id="view-lobby" class="view-section" aria-label="Lobby">
       <div class="lobby-header-card glass-card">
         <div class="lobby-title-group">
           <div class="lobby-badge-row">
-            <span class="badge-studio">DUBMATE SESSION</span>
-            <span id="lobby-line-count" class="char-tag">0 Lines</span>
+            <span class="badge-studio">LOBBY</span>
+            <span id="lobby-line-count" class="char-tag">0 lines</span>
           </div>
           <h2 id="lobby-pack-title" class="lobby-pack-title">Scene Title</h2>
-          <p class="lobby-desc">Assign characters to players below. Multiple characters can be voiced by the same actor.
-          </p>
+          <p class="lobby-desc">Give each character an actor. One actor can voice several characters.</p>
         </div>
         <div class="lobby-action-group">
-          <button id="btn-leave-room-lobby" class="btn btn-ghost"
-            aria-label="Leave Studio Session and Return to Scenes">
+          <button id="btn-leave-room-lobby" class="btn btn-ghost">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" />
               <line x1="21" x2="9" y1="12" y2="12" />
             </svg>
-            <span>← Leave Room</span>
+            <span>Leave room</span>
           </button>
-          <button id="btn-copy-invite" class="btn btn-secondary" aria-label="Copy Room Code to Clipboard">
+          <button id="btn-copy-invite" class="btn btn-secondary" data-tip="Copies the room code, or a direct link if the code isn't ready yet">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
               <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
             </svg>
-            <span>Copy Code</span>
+            <span>Copy invite</span>
           </button>
           <button id="btn-start-session" class="btn btn-primary btn-lg">
-            <span>Enter Recording Booth ›</span>
+            <span>Start recording ›</span>
           </button>
         </div>
       </div>
@@ -484,14 +474,14 @@
                 <path d="M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
             </span>
-            <h3 class="panel-title">Character Casting Board</h3>
+            <h3 class="panel-title">Casting</h3>
           </div>
           <table class="casting-table">
             <thead>
               <tr>
                 <th scope="col">Character</th>
-                <th scope="col">Scene Lines</th>
-                <th scope="col">Assigned Actor</th>
+                <th scope="col">Lines</th>
+                <th scope="col">Actor</th>
               </tr>
             </thead>
             <tbody id="casting-tbody">
@@ -562,15 +552,12 @@
                         <line x1="12" x2="12" y1="19" y2="22" />
                       </svg>
                     </span>
-                    <span class="lobby-noise-title">Studio Noise Reduction</span>
+                    <span class="lobby-noise-title">Noise reduction</span>
                   </div>
                   <input type="checkbox" id="check-lobby-noise-reduction" checked class="switch-checkbox"
-                    aria-label="Toggle Studio Noise Reduction">
+                    aria-label="Noise reduction"
+                    data-tip="Removes hiss, fan hum and room noise from your takes. Your original recording is kept, so you can turn this off later.">
                 </div>
-                <p class="lobby-noise-desc">
-                  Adaptive FFT spectral filter removes background mic hiss, fan hum, and room noise. Raw takes are
-                  always preserved so you can switch anytime.
-                </p>
               </div>
             </div>
           </div>
@@ -587,9 +574,9 @@
                     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
                 </span>
-                <h3 class="panel-title">Connected Cast</h3>
+                <h3 class="panel-title">Cast</h3>
               </div>
-              <span id="cast-online-count" class="badge-online">1 Online</span>
+              <span id="cast-online-count" class="badge-online">1 online</span>
             </div>
             <div id="lobby-cast-list" class="lobby-cast-list">
               <!-- Cast pills rendered here -->
@@ -601,15 +588,14 @@
 
 
     <!-- 3. RECORDING BOOTH & STUDIO VIEW -->
-    <section id="view-booth" class="view-section" aria-label="Solo Recording Booth" style="position: relative;">
+    <section id="view-booth" class="view-section" aria-label="Booth" style="position: relative;">
       <!-- Booth Voice Take Processing & Lockout Overlay -->
       <div id="booth-processing-overlay" class="booth-processing-overlay" style="display: none;" aria-live="polite">
         <div class="booth-processing-card">
           <div class="processing-spinner-ring"></div>
           <div class="processing-content">
-            <div id="booth-processing-title" class="processing-title">Processing Voice Take</div>
-            <div id="booth-processing-sub" class="processing-sub">Normalizing audio, computing waveform peaks & saving
-              to session...</div>
+            <div id="booth-processing-title" class="processing-title">Saving take…</div>
+            <div id="booth-processing-sub" class="processing-sub"></div>
           </div>
         </div>
       </div>
@@ -617,48 +603,47 @@
       <!-- Stage Navigation Bar -->
       <div class="stage-top-bar glass-card">
         <div class="stage-info-group">
-          <button id="btn-back-lobby" class="btn btn-ghost btn-sm" aria-label="Return to Lobby">‹ Lobby</button>
+          <button id="btn-back-lobby" class="btn btn-ghost btn-sm" aria-label="Back to lobby">‹ Lobby</button>
           <div class="line-progress-badge">
             <span id="booth-line-indicator" class="booth-line-text">Line 1 / 20</span>
           </div>
           <span id="booth-time-badge" class="time-badge">00:00.00 - 00:00.00</span>
           <button id="btn-toggle-filter-lines" class="btn btn-secondary btn-sm"
-            title="Toggle between all lines and your assigned lines" aria-label="Toggle My Lines Only">
+            data-tip="Switch between your lines and all lines">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
             </svg>
-            <span id="label-filter-lines">My Lines Only</span>
+            <span id="label-filter-lines">My lines</span>
           </button>
         </div>
 
         <div class="stage-action-group">
           <button id="btn-toggle-ready" class="btn btn-secondary btn-sm btn-ready-toggle"
-            aria-label="Toggle Ready for Premiere Status">
+            data-tip="Tells the host you're done recording">
             <svg class="btn-ready-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="9" />
               <path class="check-tick" d="m9 12 2 2 4-4" />
             </svg>
-            <span id="label-ready-state">Mark Ready</span>
+            <span id="label-ready-state">Mark ready</span>
           </button>
-          <button id="btn-jump-screening" class="btn btn-primary btn-sm" title="Enter the Finale Screening Theater"
-            aria-label="Enter Screening Theater">
+          <button id="btn-jump-screening" class="btn btn-primary btn-sm">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <rect width="20" height="15" x="2" y="3" rx="2" />
               <polyline points="12 18 12 22" />
               <path d="M8 22h8" />
             </svg>
-            <span>Screening Theater ›</span>
+            <span>Premiere ›</span>
           </button>
           <button id="btn-launch-premiere" class="btn btn-primary btn-sm" style="display: none;"
-            aria-label="Launch Premiere for Entire Cast">
+            data-tip="Renders the dub and plays it for everyone in the room">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
-            <span id="label-launch-premiere">Launch Premiere ›</span>
+            <span id="label-launch-premiere">Start premiere ›</span>
           </button>
         </div>
       </div>
@@ -670,15 +655,15 @@
           <!-- Cinema Video Monitor (Full Width in Main Stage) -->
           <div class="video-container">
             <video id="stage-video" muted defaultMuted playsinline preload="auto"
-              aria-label="Scene Reference Video"></video>
+              aria-label="Scene video"></video>
             <div id="video-overlay" class="video-overlay hidden" aria-live="polite">
               <div class="countdown-circle">
                 <div id="overlay-countdown" class="countdown-num">3</div>
               </div>
-              <div id="overlay-status-text" class="overlay-status-text">GET READY...</div>
+              <div id="overlay-status-text" class="overlay-status-text">GET READY</div>
             </div>
-            <button id="btn-expand-video" class="btn-video-expand" title="Expand / Collapse Video Monitor"
-              aria-label="Expand Video Monitor" aria-pressed="false">
+            <button id="btn-expand-video" class="btn-video-expand" data-tip="Expand video"
+              aria-pressed="false">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                 stroke-linecap="round" stroke-linejoin="round">
                 <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
@@ -689,8 +674,8 @@
           <!-- Subtitle / Caption Prompter with Smooth Splitter Resizer -->
           <div id="stage-caption-card" class="caption-card glass-card resizable-prompter" aria-live="polite">
             <div id="prompter-resize-handle" class="prompter-resize-handle" role="separator"
-              aria-orientation="horizontal" tabindex="0" title="Drag up/down to resize video (Double-click to reset)"
-              aria-label="Resize Video Viewport">
+              aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize the video. Double-click to reset."
+              aria-label="Resize video">
               <span class="resize-grip-pill"></span>
             </div>
             <div id="stage-caption-char" class="caption-char">CHARACTER</div>
@@ -702,17 +687,17 @@
             <div class="waveform-legend">
               <div class="legend-group">
                 <span class="legend-dot dot-orig" aria-hidden="true"></span>
-                <span class="legend-text">Original Reference (Lane 1)</span>
+                <span class="legend-text">Original</span>
               </div>
               <div class="legend-group">
                 <span class="legend-dot dot-take" aria-hidden="true"></span>
-                <span class="legend-text" id="waveform-take-legend">Your Take (Lane 2)</span>
+                <span class="legend-text" id="waveform-take-legend">Your take</span>
               </div>
               <span class="legend-offset-pill" id="waveform-offset-legend">Offset: 0 ms</span>
             </div>
             <div class="waveform-canvas-box">
               <canvas id="waveform-canvas"
-                aria-label="Dual Stacked Waveform ADR Sync Visualizer (Click & drag to align syllable timing)"></canvas>
+                aria-label="Waveforms. Drag your take to line it up with the original."></canvas>
             </div>
 
             <!-- Fine-Tuning Preset Nudge Bar -->
@@ -723,24 +708,19 @@
                   <circle cx="12" cy="12" r="10" />
                   <polyline points="12 6 12 12 16 14" />
                 </svg>
-                <span>Sync Nudge:</span>
-                <span class="shortcut-hint">([ ] keys or drag)</span>
+                <span>Timing</span>
               </div>
               <div class="nudge-buttons">
-                <button class="btn-nudge" data-nudge="-100" title="Shift 100ms earlier"
-                  aria-label="Nudge 100ms earlier">-100ms</button>
-                <button class="btn-nudge" data-nudge="-25" title="Shift 25ms earlier"
-                  aria-label="Nudge 25ms earlier">-25ms</button>
-                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" title="Reset offset to zero"
-                  aria-label="Reset offset to 0ms">0 ms</button>
-                <button class="btn-nudge" data-nudge="25" title="Shift 25ms later"
-                  aria-label="Nudge 25ms later">+25ms</button>
-                <button class="btn-nudge" data-nudge="100" title="Shift 100ms later"
-                  aria-label="Nudge 100ms later">+100ms</button>
+                <button class="btn-nudge" data-nudge="-100" data-tip="100 ms earlier">-100ms</button>
+                <button class="btn-nudge" data-nudge="-25" data-tip="25 ms earlier">-25ms</button>
+                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Reset timing">0 ms</button>
+                <button class="btn-nudge" data-nudge="25" data-tip="25 ms later">+25ms</button>
+                <button class="btn-nudge" data-nudge="100" data-tip="100 ms later">+100ms</button>
               </div>
               <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0"
-                aria-label="Fine-tuning timing offset slider" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0"
-                aria-valuetext="0 milliseconds">
+                aria-label="Timing offset" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0"
+                aria-valuetext="0 milliseconds"
+                data-tip="Move your take earlier or later. Shortcut: [ and ]. You can also drag your waveform.">
               <span id="nudge-display" class="nudge-value-readout">0 ms</span>
             </div>
           </div>
@@ -748,7 +728,7 @@
           <!-- Timeline Strip Chips (Scene Line Navigation Pills) -->
           <div class="timeline-chips-wrapper">
             <div class="timeline-chips-box glass-card" id="timeline-chips" role="region"
-              aria-label="Dialogue Line Timeline">
+              aria-label="Lines">
               <!-- Timeline line pills rendered dynamically -->
             </div>
           </div>
@@ -768,9 +748,8 @@
                   <path
                     d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
                 </svg>
-                <span>STUDIO MONITORING</span>
+                <span>MONITOR</span>
               </div>
-              <span class="lamp-indicator-gold" title="Studio Audio Engine Active">48kHz STEREO</span>
             </div>
 
             <!-- 3-Column Balanced Amp Section: Backing Dial | Click Rocker | Guide Rocker -->
@@ -779,17 +758,17 @@
               <div class="dsp-dial-channel amp-master-vol">
                 <span class="dsp-channel-title">BACKING</span>
                 <input type="range" id="slider-backing-vol" min="0" max="100" step="5" value="60"
-                  aria-label="Backing Track Volume (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="60"
-                  aria-valuetext="60 percent">
+                  aria-label="Backing volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="60"
+                  aria-valuetext="60 percent" data-tip="Volume of the scene's music and effects while you record">
                 <span id="val-backing-vol" class="dsp-channel-readout">60%</span>
               </div>
 
               <!-- Column 2: Metronome Click Analog Rocker Switch -->
               <div class="analog-rocker-channel">
                 <span class="dsp-channel-title">CLICK</span>
-                <label class="analog-rocker-unit" title="Toggle Metronome Count-In Click">
+                <label class="analog-rocker-unit" data-tip="Count-in beeps before each take">
                   <input type="checkbox" id="check-metronome" checked class="analog-rocker-input"
-                    aria-label="Enable Metronome count-in click">
+                    aria-label="Count-in click">
                   <div class="analog-rocker-housing">
                     <div class="rocker-paddle">
                       <span class="rocker-symbol rocker-i">I</span>
@@ -798,15 +777,15 @@
                     </div>
                   </div>
                 </label>
-                <span class="rocker-status-tag" id="tag-metronome">ACTIVE</span>
+                <span class="rocker-status-tag" id="tag-metronome">ON</span>
               </div>
 
               <!-- Column 3: Guide Voice Analog Rocker Switch -->
               <div class="analog-rocker-channel">
                 <span class="dsp-channel-title">GUIDE</span>
-                <label class="analog-rocker-unit" title="Toggle Reference Guide Dialogue in Headphones">
+                <label class="analog-rocker-unit" data-tip="Hear the original voice in your headphones while you record">
                   <input type="checkbox" id="check-guide-voice" class="analog-rocker-input"
-                    aria-label="Enable Reference Guide Voice in headphones">
+                    aria-label="Guide voice">
                   <div class="analog-rocker-housing">
                     <div class="rocker-paddle">
                       <span class="rocker-symbol rocker-i">I</span>
@@ -815,14 +794,13 @@
                     </div>
                   </div>
                 </label>
-                <span class="rocker-status-tag" id="tag-guide-voice">MUTED</span>
+                <span class="rocker-status-tag" id="tag-guide-voice">OFF</span>
               </div>
             </div>
 
             <!-- A/B Channel Selector Bar -->
             <div class="ab-switch-box">
-              <button id="btn-toggle-ab" class="btn-ab" title="Toggle between your dub and original voice"
-                aria-label="Toggle A/B Audio Comparison">
+              <button id="btn-toggle-ab" class="btn-ab" data-tip="Switch between your take and the original voice">
                 <span id="label-ab-state"><strong style="color: var(--primary);">[ A: Your Dub ]</strong> ⇄ B:
                   Orig</span>
               </button>
@@ -835,7 +813,7 @@
             <div class="record-console-header">
               <div class="record-track-tag">
                 <span class="rec-dot-live"></span>
-                <span>TRACK 1 • ADR DUB</span>
+                <span>RECORD</span>
               </div>
               <span class="record-mode-badge" id="record-engine-badge">ARMED</span>
             </div>
@@ -843,30 +821,28 @@
             <!-- Center Record Pilot Lamp Button -->
             <div class="record-bezel-wrapper">
               <div class="record-halo-ring"></div>
-              <button id="btn-record-main" class="btn-big-record" title="Press Spacebar or Click to Record"
-                aria-label="Punch-In Record (Spacebar)">
+              <button id="btn-record-main" class="btn-big-record" data-tip="Record (Space)">
                 <span id="record-icon" aria-hidden="true">●</span>
               </button>
             </div>
 
             <!-- Tape Transport Status Readout Strip -->
-            <div id="record-status-label" class="record-status-label">PRESS SPACEBAR TO RECORD</div>
+            <div id="record-status-label" class="record-status-label">Press Space to record</div>
 
             <!-- Full-Width Audition / Playback Transport Controls -->
             <div class="listen-btn-group full-width-transport">
-              <button id="btn-play-orig" class="btn btn-secondary btn-transport-full"
-                title="Listen to original clip (Reference)" aria-label="Play Original Voice Reference">
+              <button id="btn-play-orig" class="btn btn-secondary btn-transport-full" data-tip="Play the original line">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="5 3 19 12 5 21 5 3" />
                 </svg>
-                <span>Original Ref</span>
+                <span>Original</span>
               </button>
               <button id="btn-preview-take" class="btn btn-primary btn-transport-full"
-                title="Preview your take with backing track" aria-label="Preview Take with Backing Track">
+                data-tip="Play your take over the scene's music">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="5 3 19 12 5 21 5 3" />
                 </svg>
-                <span>Preview Take</span>
+                <span>Preview</span>
               </button>
             </div>
           </div>
@@ -887,7 +863,7 @@
                   <path d="M2 12h4" />
                   <path d="M18 12h4" />
                 </svg>
-                <span>VOICE DSP AMPLIFIER</span>
+                <span>VOICE EFFECTS</span>
               </div>
               <button id="btn-toggle-advanced-rack" class="amp-advanced-btn" aria-expanded="false"
                 aria-controls="advanced-vocal-rack">Advanced ▾</button>
@@ -899,7 +875,7 @@
               <div class="dsp-dial-channel">
                 <span class="dsp-channel-title">PITCH</span>
                 <input type="range" id="slider-pitch" min="-12" max="12" step="1" value="0"
-                  aria-label="Voice Pitch Shift (Semitones)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
+                  aria-label="Pitch (semitones)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
                   aria-valuetext="0 semitones">
                 <span id="val-pitch" class="dsp-channel-readout">0 st</span>
               </div>
@@ -908,7 +884,7 @@
               <div class="dsp-dial-channel">
                 <span class="dsp-channel-title">REVERB</span>
                 <input type="range" id="slider-reverb" min="0" max="100" step="5" value="0"
-                  aria-label="Acoustic Reverb Wet Mix (Percent)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                  aria-label="Reverb" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
                   aria-valuetext="0 percent">
                 <span id="val-reverb" class="dsp-channel-readout">0%</span>
               </div>
@@ -918,8 +894,7 @@
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                   <span class="dsp-channel-title">BOOST</span>
                   <button id="btn-auto-match-gain" class="btn btn-ghost btn-xs btn-auto-match"
-                    title="Auto-calibrate gain to match original scene dialogue level"
-                    aria-label="Auto-Match Scene Vocal Level" style="display: none;">
+                    data-tip="Match your take's loudness to the original dialogue" style="display: none;">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                       stroke-linecap="round" stroke-linejoin="round">
                       <path d="m2 15 5-5 5 5 10-10" />
@@ -929,13 +904,12 @@
                   </button>
                 </div>
                 <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0"
-                  aria-label="Vocal Boost Gain (Decibels)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
+                  aria-label="Boost (dB)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
                   aria-valuetext="0 decibels">
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                   <span id="val-gain" class="dsp-channel-readout">0 dB</span>
                   <span id="badge-gain-match" class="badge-calibrated uncalibrated"
-                    style="font-size: 8.5px; padding: 1px 4px; display: none;"
-                    title="Auto-matched to original scene vocal level">Scene Match</span>
+                    style="font-size: 8.5px; padding: 1px 4px; display: none;">Match</span>
                 </div>
               </div>
             </div>
@@ -947,9 +921,9 @@
                 <div class="advanced-rocker-grid">
                   <div class="analog-rocker-channel">
                     <span class="dsp-channel-title">CLEANER</span>
-                    <label class="analog-rocker-unit" title="AI Voice Cleaner (DeepFilterNet 3)">
+                    <label class="analog-rocker-unit" data-tip="Removes background noise from your take">
                       <input type="checkbox" id="check-noise-reduction" checked class="analog-rocker-input"
-                        aria-label="Toggle AI Voice Cleaner">
+                        aria-label="Noise reduction">
                       <div class="analog-rocker-housing">
                         <div class="rocker-paddle">
                           <span class="rocker-symbol rocker-i">I</span>
@@ -958,13 +932,13 @@
                         </div>
                       </div>
                     </label>
-                    <span class="rocker-status-tag" id="tag-noise-cleaner">DFN3</span>
+                    <span class="rocker-status-tag" id="tag-noise-cleaner">ON</span>
                   </div>
 
                   <div class="analog-rocker-channel">
                     <span class="dsp-channel-title">LOW-CUT</span>
-                    <label class="analog-rocker-unit" title="80Hz Low-Cut Filter (De-Hum)">
-                      <input type="checkbox" id="check-lowcut" checked class="analog-rocker-input">
+                    <label class="analog-rocker-unit" data-tip="Cuts low rumble and hum">
+                      <input type="checkbox" id="check-lowcut" checked class="analog-rocker-input" aria-label="Low cut">
                       <div class="analog-rocker-housing">
                         <div class="rocker-paddle">
                           <span class="rocker-symbol rocker-i">I</span>
@@ -982,7 +956,7 @@
                   <div class="dsp-dial-channel">
                     <span class="dsp-channel-title">DECAY</span>
                     <input type="range" id="slider-decay" min="0.2" max="4.0" step="0.2" value="1.5"
-                      aria-label="Reverb Decay Time (Seconds)" aria-valuemin="0.2" aria-valuemax="4.0"
+                      aria-label="Reverb decay (seconds)" aria-valuemin="0.2" aria-valuemax="4.0"
                       aria-valuenow="1.5" aria-valuetext="1.5 seconds">
                     <span id="val-decay" class="dsp-channel-readout">1.5s</span>
                   </div>
@@ -990,7 +964,7 @@
                   <div class="dsp-dial-channel">
                     <span class="dsp-channel-title">PRE-DELAY</span>
                     <input type="range" id="slider-predelay" min="0" max="60" step="5" value="20"
-                      aria-label="Reverb Pre-Delay Time (Milliseconds)" aria-valuemin="0" aria-valuemax="60"
+                      aria-label="Reverb pre-delay (ms)" aria-valuemin="0" aria-valuemax="60"
                       aria-valuenow="20" aria-valuetext="20 milliseconds">
                     <span id="val-predelay" class="dsp-channel-readout">20ms</span>
                   </div>
@@ -1002,9 +976,8 @@
           <!-- Deck 4: Line Step Navigation Deck -->
           <div class="booth-nav-group">
             <button id="btn-prev-line" class="btn btn-secondary btn-sm" style="flex: 1;"
-              aria-label="Go to Previous Line">‹ Prev</button>
-            <button id="btn-clear-take" class="btn btn-ghost btn-sm" title="Clear current take"
-              aria-label="Clear Current Voice Take">
+              aria-label="Previous line">‹ Prev</button>
+            <button id="btn-clear-take" class="btn btn-ghost btn-sm" data-tip="Delete this take">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 6h18" />
@@ -1012,8 +985,7 @@
                 <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
               </svg>
             </button>
-            <button id="btn-next-line" class="btn btn-primary btn-sm" style="flex: 2;" aria-label="Go to Next Line">Next
-              Line ›</button>
+            <button id="btn-next-line" class="btn btn-primary btn-sm" style="flex: 2;">Next line ›</button>
           </div>
 
         </div>
@@ -1022,7 +994,7 @@
 
 
     <!-- 4. FINALE SCREENING & EXPORT VIEW -->
-    <section id="view-screening" class="view-section" aria-label="Finale Screening Theater">
+    <section id="view-screening" class="view-section" aria-label="Premiere">
       <div class="screening-header-card glass-card">
         <div class="screening-title-row">
           <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -1034,13 +1006,13 @@
                 <path d="M8 22h8" />
               </svg>
             </span>
-            <h2 class="screening-title">Finale Screening Theater</h2>
+            <h2 class="screening-title">Premiere</h2>
             <span id="screening-host-badge" class="badge-host">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round">
                 <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
               </svg>
-              <span>Host Controller</span>
+              <span>Host</span>
             </span>
             <span id="screening-master-badge" class="badge-master" style="display: none;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1048,22 +1020,21 @@
                 <path
                   d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
               </svg>
-              <span>Master Rendered MP4</span>
+              <span>Final video</span>
             </span>
           </div>
-          <button id="btn-back-booth" class="btn btn-secondary btn-sm" aria-label="Return to Recording Booth">
-            <span>‹ Return to Recording Booth</span>
+          <button id="btn-back-booth" class="btn btn-secondary btn-sm">
+            <span>‹ Booth</span>
           </button>
         </div>
-        <p id="screening-status-desc" class="screening-desc">Host controls synchronized playback for all connected
-          friends.</p>
+        <p id="screening-status-desc" class="screening-desc">The host controls playback for everyone.</p>
       </div>
 
       <div class="screening-theater-box">
         <div class="video-container theater-player">
-          <video id="screening-video" playsinline preload="auto" aria-label="Dubbed Scene Finale Video"></video>
-          <button id="btn-expand-theater-video" class="btn-video-expand" title="Expand / Collapse Theater Video"
-            aria-label="Expand Theater Video" aria-pressed="false">
+          <video id="screening-video" playsinline preload="auto" aria-label="Dubbed scene"></video>
+          <button id="btn-expand-theater-video" class="btn-video-expand" data-tip="Expand video"
+            aria-pressed="false">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
@@ -1073,18 +1044,17 @@
       </div>
 
       <!-- Synchronized Master Playback Controls -->
-      <div class="screening-controls-bar glass-card" role="toolbar" aria-label="Screening Transport Controls">
+      <div class="screening-controls-bar glass-card" role="toolbar" aria-label="Playback">
         <button id="btn-screening-play-pause" class="btn btn-primary btn-lg" style="min-width: 160px;"
-          aria-label="Play or Pause Dubbed Scene">
-          <span id="screening-play-icon">▶ Play Dub</span>
+          aria-label="Play or pause">
+          <span id="screening-play-icon">▶ Play</span>
         </button>
-        <button id="btn-screening-replay" class="btn btn-secondary btn-lg" aria-label="Replay Dubbed Scene">↺
-          Replay</button>
+        <button id="btn-screening-replay" class="btn btn-secondary btn-lg">↺ Replay</button>
 
         <!-- Aspect Ratio Selector Pill -->
-        <div class="aspect-ratio-toggle-group" role="radiogroup" aria-label="Export Video Aspect Ratio">
+        <div class="aspect-ratio-toggle-group" role="radiogroup" aria-label="Video shape">
           <button id="btn-aspect-16-9" class="btn btn-aspect active" role="radio" aria-checked="true"
-            title="16:9 Cinema Landscape">
+            data-tip="Landscape">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <rect width="20" height="14" x="2" y="5" rx="2" />
@@ -1092,28 +1062,27 @@
             <span>16:9</span>
           </button>
           <button id="btn-aspect-9-16" class="btn btn-aspect" role="radio" aria-checked="false"
-            title="9:16 Vertical (Shorts / Reels / TikTok with Letterboxing)">
+            data-tip="Vertical, for Shorts, Reels and TikTok. The scene sits in the middle with bars above and below.">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <rect width="14" height="20" x="5" y="2" rx="2" />
             </svg>
-            <span>9:16 Shorts</span>
+            <span>9:16</span>
           </button>
         </div>
 
-        <button id="btn-export-video" class="btn btn-success btn-lg" aria-label="Export Master MP4 Video">
+        <button id="btn-export-video" class="btn btn-success btn-lg">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" x2="12" y1="15" y2="3" />
           </svg>
-          <span id="label-export-btn">Export Master MP4</span>
+          <span id="label-export-btn">Export video</span>
         </button>
 
         <button id="btn-toolbar-project-zip" type="button" class="btn btn-project-zip btn-lg"
-          aria-label="Download Full Project ZIP with Stems, Video and Cuesheet"
-          title="Download NLE-ready multi-track bundle (MP3 stems, clean video, takes, timeline cues)">
+          data-tip="A .zip with the video without dialogue, the music track and every take as its own file, for editing in other software">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <path
@@ -1121,13 +1090,13 @@
             <path d="m3.3 7 8.7 5 8.7-5" />
             <path d="M12 22V12" />
           </svg>
-          <span id="label-toolbar-project-zip">Download Full Project (.zip)</span>
+          <span id="label-toolbar-project-zip">Project files</span>
         </button>
       </div>
 
       <!-- Master Audio Stem Balance Mixer Deck -->
       <div class="screening-stem-mixer glass-card rack-wood-frame" role="region"
-        aria-label="Screening Audio Stem Balance">
+        aria-label="Mix">
         <div class="stem-mixer-header">
           <div class="stem-title-group">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1142,9 +1111,9 @@
               <circle cx="12" cy="8" r="2" />
               <circle cx="20" cy="16" r="2" />
             </svg>
-            <span>MASTER STEM BALANCE</span>
+            <span>MIX</span>
           </div>
-          <span id="val-screening-balance" class="stem-val-badge">Balanced (50/50)</span>
+          <span id="val-screening-balance" class="stem-val-badge">Even</span>
         </div>
         <div class="stem-slider-row">
           <span class="stem-tag stem-tag-music">
@@ -1154,10 +1123,10 @@
               <circle cx="6" cy="18" r="3" />
               <circle cx="18" cy="16" r="3" />
             </svg>
-            <span>Backing Stem</span>
+            <span>Music</span>
           </span>
           <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1" value="50"
-            aria-label="Master Audio Stem Balance (Backing Track vs Vocal Dub Takes)" aria-valuemin="0"
+            aria-label="Music and voice balance" aria-valuemin="0"
             aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 percent balanced">
           <span class="stem-tag stem-tag-vocals">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1166,13 +1135,13 @@
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" x2="12" y1="19" y2="22" />
             </svg>
-            <span>Vocal Takes</span>
+            <span>Voices</span>
           </span>
         </div>
         <div class="stem-scale-row" aria-hidden="true">
-          <span>Backing Heavy (0%)</span>
-          <span style="color: var(--primary);">● 50/50 Balanced</span>
-          <span>Vocals Heavy (100%)</span>
+          <span>More music</span>
+          <span style="color: var(--primary);">● Even</span>
+          <span>More voice</span>
         </div>
 
         <!-- Master Dialogue Prominence / Vocal Mix Presence Deck -->
@@ -1186,66 +1155,59 @@
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               </svg>
               <span
-                style="font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--accent-brass);">MASTER
-                DIALOGUE PROMINENCE</span>
+                style="font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--accent-brass);">DIALOGUE LEVEL</span>
             </div>
-            <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (Scene
-              Default)</span>
+            <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (default)</span>
           </div>
           <div class="stem-slider-row" style="margin-top: 4px;">
             <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">-6dB</span>
             <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5" value="0"
-              aria-label="Master Dialogue Presence Offset in Decibels" aria-valuemin="-6" aria-valuemax="8"
-              aria-valuenow="0" aria-valuetext="0.0 dB scene default">
+              aria-label="Dialogue level (dB)" aria-valuemin="-6" aria-valuemax="8"
+              aria-valuenow="0" aria-valuetext="0.0 dB, default">
             <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">+8dB</span>
           </div>
           <div class="presence-preset-pills" style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">Scene
-              Default (0dB)</button>
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="2.5">Cinematic
-              (+2.5dB)</button>
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="5.0">Vocal Forward
-              (+5dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">Default</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="2.5">Cinematic (+2.5 dB)</button>
+            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="5.0">Voices up (+5 dB)</button>
           </div>
         </div>
       </div>
 
       <div id="export-progress-box" class="export-progress-box glass-card" style="display: none;" aria-live="polite">
         <div class="export-progress-header">
-          <div id="export-status-text" class="export-status-text">Rendering final dubbed scene with studio DSP...</div>
+          <div id="export-status-text" class="export-status-text">Rendering…</div>
         </div>
         <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="export-progress-fill" class="progress-fill"></div>
         </div>
         <div id="export-progress-steps" class="export-steps-list" aria-hidden="true">
-          <span class="step-item active" id="step-dsp">DSP Mastering</span>
-          <span class="step-item" id="step-mux">Video Muxing</span>
+          <span class="step-item active" id="step-dsp">Mix audio</span>
+          <span class="step-item" id="step-mux">Make video</span>
           <span class="step-item" id="step-ready">Ready</span>
         </div>
         <div id="export-download-container"
           style="display: none; margin-top: 16px; text-align: center; gap: 12px; justify-content: center; flex-wrap: wrap;">
-          <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download
-            aria-label="Download 16:9 Cinema MP4">
+          <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" x2="12" y1="15" y2="3" />
             </svg>
-            <span>Download 16:9 Cinema MP4</span>
+            <span>Download 16:9</span>
           </a>
-          <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download
-            aria-label="Download 9:16 Vertical Shorts MP4">
+          <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" x2="12" y1="15" y2="3" />
             </svg>
-            <span>Download 9:16 Shorts MP4</span>
+            <span>Download 9:16</span>
           </a>
           <button id="btn-download-project-zip" type="button" class="btn btn-project-zip btn-lg"
-            aria-label="Download Full Project ZIP with Stems, Video and Cuesheet">
+            data-tip="A .zip with the video without dialogue, the music track and every take as its own file, for editing in other software">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <path
@@ -1253,7 +1215,7 @@
               <path d="m3.3 7 8.7 5 8.7-5" />
               <path d="M12 22V12" />
             </svg>
-            <span id="label-download-project-zip">Download Full Project (.zip)</span>
+            <span id="label-download-project-zip">Project files</span>
           </button>
         </div>
       </div>
@@ -1269,8 +1231,8 @@
     aria-labelledby="export-modal-title" aria-describedby="export-modal-status-text">
     <div class="studio-modal-card">
       <!-- Top-Right Close Button -->
-      <button id="btn-modal-close-x" class="modal-close-btn" style="display: none;" title="Close Popup"
-        aria-label="Close Master Dub Popup">✕</button>
+      <button id="btn-modal-close-x" class="modal-close-btn" style="display: none;"
+        aria-label="Close">✕</button>
 
       <div class="render-animation-container">
         <div class="render-film-reel">
@@ -1292,12 +1254,11 @@
 
       <div class="modal-header-content">
         <div class="modal-badge-row">
-          <span class="badge-studio">DUBMATE ENGINE</span>
-          <span class="badge-render-live" id="export-modal-badge">PROCESSING</span>
+          <span class="badge-studio">EXPORT</span>
+          <span class="badge-render-live" id="export-modal-badge">RENDERING</span>
         </div>
-        <h2 id="export-modal-title" class="modal-title">Master Dub Rendering</h2>
-        <p id="export-modal-status-text" class="modal-status-text">Applying studio DSP, vocal EQ, and frame-accurate
-          timeline muxing...</p>
+        <h2 id="export-modal-title" class="modal-title">Rendering your dub</h2>
+        <p id="export-modal-status-text" class="modal-status-text">Mixing your takes with the scene…</p>
       </div>
 
       <!-- 3-Stage Progress Steps -->
@@ -1305,24 +1266,21 @@
         <div class="modal-step-item active" id="modal-step-dsp">
           <div class="step-num">1</div>
           <div class="step-info">
-            <div class="step-title">DSP Mastering</div>
-            <div class="step-sub">Vocal EQ & Reverb</div>
+            <div class="step-title">Mix audio</div>
           </div>
         </div>
         <div class="step-connector" id="connector-dsp-mux"></div>
         <div class="modal-step-item" id="modal-step-mux">
           <div class="step-num">2</div>
           <div class="step-info">
-            <div class="step-title">Video Muxing</div>
-            <div class="step-sub">FFmpeg Multi-Track</div>
+            <div class="step-title">Make video</div>
           </div>
         </div>
         <div class="step-connector" id="connector-mux-ready"></div>
         <div class="modal-step-item" id="modal-step-ready">
           <div class="step-num">3</div>
           <div class="step-info">
-            <div class="step-title">Final Package</div>
-            <div class="step-sub">Cinema & Shorts</div>
+            <div class="step-title">Finish</div>
           </div>
         </div>
       </div>
@@ -1339,8 +1297,7 @@
           <line x1="12" x2="12" y1="8" y2="12" />
           <line x1="12" x2="12.01" y1="16" y2="16" />
         </svg>
-        <span>Please do not close this window or navigate away while rendering is in progress. Controls are locked to
-          ensure rendering integrity.</span>
+        <span>Keep this window open until rendering finishes.</span>
       </div>
 
       <!-- Where the render landed on disk. Filled from GET /api/config -> exports_dir
@@ -1356,10 +1313,10 @@
             <polyline points="12 18 12 22" />
             <path d="M8 22h8" />
           </svg>
-          <span>Watch in Theater</span>
+          <span>Watch</span>
         </button>
         <button id="btn-modal-dismiss" class="btn btn-ghost btn-lg" type="button">
-          <span>✕ Close</span>
+          <span>Close</span>
         </button>
         <a id="btn-modal-download-169" href="#" class="btn btn-secondary btn-lg" download>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1368,7 +1325,7 @@
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" x2="12" y1="15" y2="3" />
           </svg>
-          <span>Download 16:9 MP4</span>
+          <span>Download 16:9</span>
         </a>
         <a id="btn-modal-download-916" href="#" class="btn btn-secondary btn-lg" download>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1377,7 +1334,7 @@
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" x2="12" y1="15" y2="3" />
           </svg>
-          <span>Download 9:16 Shorts</span>
+          <span>Download 9:16</span>
         </a>
       </div>
     </div>
@@ -1397,9 +1354,8 @@
         </div>
         <div class="reel-pulse-ring"></div>
       </div>
-      <h3 id="import-modal-title" class="modal-title" style="margin-top: 16px;">Verifying & Importing Scene Pack</h3>
-      <p class="modal-status-text" id="import-modal-status-text">Checking the pack file
-        and indexing audio stems...</p>
+      <h3 id="import-modal-title" class="modal-title" style="margin-top: 16px;">Importing pack</h3>
+      <p class="modal-status-text" id="import-modal-status-text">Checking the file…</p>
       <div class="modal-progress-track">
         <div class="modal-progress-fill indeterminate"></div>
       </div>
@@ -1430,17 +1386,16 @@
       <div class="modal-header-content" style="text-align: center; margin-top: 12px;">
         <div class="modal-badge-row" style="justify-content: center;">
           <span class="badge-studio">MIC CALIBRATION</span>
-          <span class="badge-render-live" id="calib-modal-badge">PRE-ROLL (1s)</span>
+          <span class="badge-render-live" id="calib-modal-badge">GET READY</span>
         </div>
-        <h3 id="calib-modal-title" class="modal-title" style="margin-top: 8px;">Microphone Room Calibration</h3>
-        <p id="calib-modal-status" class="modal-status-text">Get ready... Releasing mouse click and preparing room tone
-          sample.</p>
+        <h3 id="calib-modal-title" class="modal-title" style="margin-top: 8px;">Mic calibration</h3>
+        <p id="calib-modal-status" class="modal-status-text">Stay quiet for a few seconds.</p>
       </div>
 
       <!-- Live Dual-Phase Countdown & Progress Visualizer -->
       <div class="calib-meter-box">
         <div class="calib-timer-readout" id="calib-timer-text">1.0s</div>
-        <div class="calib-phase-indicator" id="calib-phase-text">Phase 1: Pre-Roll Delay (Mouse Release)</div>
+        <div class="calib-phase-indicator" id="calib-phase-text">Get ready</div>
         <div class="modal-progress-track" style="margin-top: 10px;">
           <div id="calib-progress-bar" class="modal-progress-fill" style="width: 0%;"></div>
         </div>
@@ -1453,12 +1408,12 @@
           <line x1="12" x2="12" y1="8" y2="12" />
           <line x1="12" x2="12.01" y1="16" y2="16" />
         </svg>
-        <span>Please stay quiet and avoid clicking or moving. Popup will close automatically.</span>
+        <span>Stay quiet and still. This closes on its own.</span>
       </div>
 
       <div class="modal-actions" style="margin-top: 16px; justify-content: center;">
-        <button id="btn-cancel-calibration" class="btn btn-ghost btn-sm" type="button" aria-label="Cancel Calibration">
-          <span>✕ Cancel</span>
+        <button id="btn-cancel-calibration" class="btn btn-ghost btn-sm" type="button">
+          <span>Cancel</span>
         </button>
       </div>
     </div>
@@ -1470,35 +1425,35 @@
     <div class="studio-modal-card join-modal-card">
       <div class="modal-header-content" style="text-align: center; margin-top: 6px;">
         <div class="modal-badge-row" style="justify-content: center;">
-          <span class="badge-studio">CAST CHECK-IN</span>
+          <span class="badge-studio">JOIN</span>
           <span class="badge-render-live" id="join-modal-room-badge">ROOM: ----</span>
         </div>
-        <h3 id="join-modal-title" class="modal-title" style="margin-top: 10px; font-size: 18px;">Join Dubbing Stage</h3>
-        <p class="modal-status-text" id="join-modal-subtitle">Choose your actor name and mic color before entering the studio.</p>
+        <h3 id="join-modal-title" class="modal-title" style="margin-top: 10px; font-size: 18px;">Join room</h3>
+        <p class="modal-status-text" id="join-modal-subtitle">Pick a name and a color.</p>
       </div>
 
       <div class="join-modal-form" style="margin-top: 20px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display: flex; align-items: center; gap: 14px; background: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border-wood);">
           <div id="join-modal-avatar-preview" class="join-modal-avatar-preview" style="background-color: var(--primary);">A</div>
           <div style="flex: 1; min-width: 0;">
-            <label for="input-join-actor-name" style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; display: block;">Actor / Cast Name</label>
-            <input type="text" id="input-join-actor-name" class="form-input" placeholder="e.g. John Doe, Spike, Lucy" maxlength="28" style="width: 100%; font-size: 14px; font-weight: 600; padding: 7px 10px;" autocomplete="off" autocorrect="off">
+            <label for="input-join-actor-name" style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; display: block;">Name</label>
+            <input type="text" id="input-join-actor-name" class="form-input" placeholder="e.g. Spike" maxlength="28" style="width: 100%; font-size: 14px; font-weight: 600; padding: 7px 10px;" autocomplete="off" autocorrect="off">
           </div>
         </div>
 
         <div class="form-group" style="text-align: left;">
-          <label style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">Presence Color</label>
+          <label style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">Color</label>
           <div id="join-color-palette" class="color-palette" style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <div class="color-option selected" data-color="#d97706" style="background-color: #d97706;" title="Vintage Amber" role="radio" aria-checked="true" tabindex="0"></div>
-            <div class="color-option" data-color="#cca458" style="background-color: #cca458;" title="Walnut Gold" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#dc2626" style="background-color: #dc2626;" title="Pilot Red" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#16a34a" style="background-color: #16a34a;" title="Studio Olive" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#b45309" style="background-color: #b45309;" title="Terracotta Bronze" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#7c5cff" style="background-color: #7c5cff;" title="Electric Violet" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#ec4899" style="background-color: #ec4899;" title="Magenta Neon" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#06b6d4" style="background-color: #06b6d4;" title="Cyan Console" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#8b5cf6" style="background-color: #8b5cf6;" title="Purple Tone" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#f59e0b" style="background-color: #f59e0b;" title="Amber Glow" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option selected" data-color="#d97706" style="background-color: #d97706;" data-tip="Amber" role="radio" aria-checked="true" tabindex="0"></div>
+            <div class="color-option" data-color="#cca458" style="background-color: #cca458;" data-tip="Gold" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#dc2626" style="background-color: #dc2626;" data-tip="Red" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#16a34a" style="background-color: #16a34a;" data-tip="Green" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#b45309" style="background-color: #b45309;" data-tip="Bronze" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#7c5cff" style="background-color: #7c5cff;" data-tip="Violet" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#ec4899" style="background-color: #ec4899;" data-tip="Pink" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#06b6d4" style="background-color: #06b6d4;" data-tip="Cyan" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#8b5cf6" style="background-color: #8b5cf6;" data-tip="Purple" role="radio" aria-checked="false" tabindex="0"></div>
+            <div class="color-option" data-color="#f59e0b" style="background-color: #f59e0b;" data-tip="Yellow" role="radio" aria-checked="false" tabindex="0"></div>
           </div>
         </div>
       </div>
@@ -1506,7 +1461,7 @@
       <div class="modal-actions" style="margin-top: 22px; justify-content: flex-end; gap: 10px;">
         <button id="btn-cancel-join-modal" class="btn btn-ghost btn-md" type="button">Cancel</button>
         <button id="btn-confirm-join-modal" class="btn btn-primary btn-md" type="button">
-          <span>🎙️ Enter Studio</span>
+          <span>Join</span>
         </button>
       </div>
     </div>
@@ -1517,21 +1472,21 @@
     <div class="studio-modal-card" style="max-width: 540px; text-align: left;">
       <div class="modal-header-content">
         <div class="modal-badge-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-          <span class="badge-studio" style="color: #f59e0b; border-color: rgba(245, 158, 11, 0.4);">SCENE PACKS STORAGE</span>
-          <span class="badge-render-live" id="web-config-active-count" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border-color: rgba(16, 185, 129, 0.3);">0 Packs Loaded</span>
+          <span class="badge-studio" style="color: #f59e0b; border-color: rgba(245, 158, 11, 0.4);">PACKS FOLDER</span>
+          <span class="badge-render-live" id="web-config-active-count" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border-color: rgba(16, 185, 129, 0.3);">0 packs</span>
         </div>
-        <h3 id="config-modal-title" class="modal-title" style="margin-top: 6px; font-size: 18px;">Configure Scene Packs Location</h3>
+        <h3 id="config-modal-title" class="modal-title" style="margin-top: 6px; font-size: 18px;">Packs folder</h3>
         <p class="modal-status-text" style="margin-top: 4px; font-size: 12px; color: var(--foreground-muted); line-height: 1.5;">
-          Point DubMate to the folder where your Scene Packs are saved. This location is permanently saved to <code style="color: #fbbf24;">~/.dubmate/config.json</code> and remembered on every launch.
+          Choose the folder that holds your scene packs.
         </p>
       </div>
 
       <div style="margin-top: 16px;">
         <label for="web-input-pack-path" style="display: block; font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; color: var(--foreground-muted); margin-bottom: 6px;">
-          Scene Packs Folder Path (Full Disk Path)
+          Folder path
         </label>
         <div style="display: flex; gap: 8px;">
-          <input type="text" id="web-input-pack-path" class="form-input" placeholder="e.g. C:\MyScenePacks or D:\Games\DubPacks" spellcheck="false" style="font-family: monospace; font-size: 12px; flex: 1; padding: 10px 12px;">
+          <input type="text" id="web-input-pack-path" class="form-input" placeholder="e.g. D:\DubPacks" spellcheck="false" style="font-family: monospace; font-size: 12px; flex: 1; padding: 10px 12px;">
         </div>
         <div id="web-config-feedback" style="display: none; margin-top: 10px; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.4;"></div>
       </div>
@@ -1539,7 +1494,7 @@
       <div class="modal-actions" style="margin-top: 22px; justify-content: flex-end; gap: 10px;">
         <button id="btn-close-pack-config" class="btn btn-ghost btn-md" type="button">Cancel</button>
         <button id="btn-save-pack-config" class="btn btn-primary btn-md" type="button">
-          <span id="web-save-config-text">📁 Scan & Save Location</span>
+          <span id="web-save-config-text">Save</span>
         </button>
       </div>
     </div>
@@ -1557,12 +1512,11 @@
       <div class="modal-header-content" style="text-align: left; margin-bottom: 18px;">
         <div class="modal-badge-row" style="justify-content: flex-start;">
           <span class="badge-studio">AUDIO SETUP</span>
-          <span id="audio-setup-status-pill" class="badge-render-live">MIC NOT CONNECTED</span>
+          <span id="audio-setup-status-pill" class="badge-render-live">NO MIC</span>
         </div>
-        <h3 id="audio-setup-title" class="modal-title" style="margin-top: 10px; font-size: 19px;">Studio Audio Devices
-        </h3>
+        <h3 id="audio-setup-title" class="modal-title" style="margin-top: 10px; font-size: 19px;">Audio settings</h3>
         <p id="audio-setup-subtitle" class="modal-status-text" style="margin-top: 4px;">
-          Pick the microphone you record with and the headphones you monitor on.
+          Choose your microphone and headphones.
         </p>
       </div>
 
@@ -1579,32 +1533,20 @@
           </div>
           <div class="audio-intro-copy">
             <h4 class="audio-intro-title">DubMate needs your microphone</h4>
-            <p class="audio-intro-desc">
-              Every dub take is recorded locally from your mic and mixed against the scene's backing track. Without
-              microphone access the recording booth cannot capture anything.
-            </p>
           </div>
         </div>
 
         <ul class="audio-fact-list">
           <li>
             <span class="audio-fact-icon">🎙️</span>
-            <span>Your browser will now ask for permission. Choose <strong>Allow</strong>.</span>
-          </li>
-          <li>
-            <span class="audio-fact-icon">💾</span>
-            <span>Takes stay on this machine and are only shared with your room when you save them.</span>
-          </li>
-          <li>
-            <span class="audio-fact-icon">🎚️</span>
-            <span>Afterwards you can pick the exact input and output device and check your levels.</span>
+            <span>Your browser will ask for permission. Choose <strong>Allow</strong>.</span>
           </li>
         </ul>
 
         <div class="modal-actions" style="margin-top: 20px; justify-content: space-between; gap: 10px;">
           <button id="btn-skip-audio-setup" class="btn btn-ghost btn-md" type="button">Skip for now</button>
           <button id="btn-grant-mic" class="btn btn-primary btn-lg" type="button">
-            <span id="btn-grant-mic-text">🎙️ Allow Microphone Access</span>
+            <span id="btn-grant-mic-text">Allow microphone</span>
           </button>
         </div>
       </div>
@@ -1617,7 +1559,7 @@
             <span id="audio-denied-heading">Microphone access was blocked</span>
           </div>
           <p id="audio-denied-detail" class="audio-denied-detail">
-            The browser refused the request, so recording is disabled until access is restored.
+            Recording is off until you allow microphone access.
           </p>
         </div>
 
@@ -1627,7 +1569,7 @@
             <ol class="audio-recovery-list">
               <li>Click the padlock / sliders icon in the address bar.</li>
               <li>Set <strong>Microphone</strong> to <strong>Allow</strong>.</li>
-              <li>Reload the page, then press <strong>Try Again</strong> below.</li>
+              <li>Reload the page, then press <strong>Try again</strong>.</li>
             </ol>
           </div>
           <div class="audio-recovery-card">
@@ -1636,12 +1578,10 @@
               <li>Open <strong>Settings → Privacy &amp; security → Microphone</strong>.</li>
               <li>Turn on <strong>Microphone access</strong> and <strong>Let desktop apps access your
                   microphone</strong>.</li>
-              <li>Restart DubMate Studio so the desktop window re-asks.</li>
+              <li>Restart DubMate.</li>
             </ol>
             <p class="audio-recovery-note">
-              The DubMate desktop build runs inside a system webview, so Windows can block the mic even when the browser
-              permission looks fine. On macOS the equivalent is <strong>System Settings → Privacy &amp; Security →
-                Microphone</strong>.
+              On a Mac: <strong>System Settings → Privacy &amp; Security → Microphone</strong>.
             </p>
           </div>
         </div>
@@ -1649,7 +1589,7 @@
         <div class="modal-actions" style="margin-top: 18px; justify-content: space-between; gap: 10px;">
           <button id="btn-dismiss-audio-denied" class="btn btn-ghost btn-md" type="button">Continue without mic</button>
           <button id="btn-retry-mic" class="btn btn-primary btn-md" type="button">
-            <span>↺ Try Again</span>
+            <span>Try again</span>
           </button>
         </div>
       </div>
@@ -1659,12 +1599,12 @@
 
         <div class="audio-device-row">
           <div class="audio-device-label-row">
-            <label class="form-label" for="select-audio-input" style="margin-bottom: 0;">Input · Microphone</label>
+            <label class="form-label" for="select-audio-input" style="margin-bottom: 0;">Microphone</label>
             <button id="btn-refresh-audio-devices" class="btn-link-sm" type="button"
-              title="Re-scan connected audio devices">↺ Rescan</button>
+              data-tip="Look for newly connected devices">↺ Rescan</button>
           </div>
           <select id="select-audio-input" class="form-input device-select" aria-describedby="audio-input-note">
-            <option value="">System Default Microphone</option>
+            <option value="">System default</option>
           </select>
           <p id="audio-input-note" class="audio-device-note" style="display: none;"></p>
         </div>
@@ -1677,13 +1617,13 @@
               INPUT LEVEL
             </span>
             <span class="level-meter-readouts">
-              <span class="level-meter-readout" id="level-meter-rms" title="Current RMS level">-∞ dBFS</span>
+              <span class="level-meter-readout" id="level-meter-rms" data-tip="Current level">-∞ dB</span>
               <span class="level-meter-readout level-meter-readout-peak" id="level-meter-peak-readout"
-                title="Peak hold">PK -∞</span>
+                data-tip="Loudest recent peak">PK -∞</span>
             </span>
           </div>
 
-          <div class="level-meter-track" id="level-meter-track" role="meter" aria-label="Microphone input level in dBFS"
+          <div class="level-meter-track" id="level-meter-track" role="meter" aria-label="Microphone level"
             aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-valuetext="-infinity dBFS">
             <div class="level-meter-mask" id="level-meter-mask" style="width: 100%;"></div>
             <div class="level-meter-gridline" style="left: 80%;" aria-hidden="true"></div>
@@ -1702,19 +1642,18 @@
           </div>
 
           <div class="level-meter-legend">
-            <span class="level-zone-key"><i class="zone-swatch zone-green"></i>Healthy · below -12</span>
-            <span class="level-zone-key"><i class="zone-swatch zone-amber"></i>Hot · -12 to -3</span>
-            <span class="level-zone-key"><i class="zone-swatch zone-red"></i>Clipping · above -3</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-green"></i>Quiet</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-amber"></i>Good</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-red"></i>Too loud</span>
           </div>
 
-          <p class="level-meter-hint" id="level-meter-hint">Speak your loudest line — aim for peaks around -12 to -6
-            dBFS.</p>
+          <p class="level-meter-hint" id="level-meter-hint">Say your loudest line. Aim for the amber zone.</p>
         </div>
 
         <div class="audio-device-row" id="audio-output-row">
-          <label class="form-label" for="select-audio-output">Output · Monitoring</label>
+          <label class="form-label" for="select-audio-output">Output</label>
           <select id="select-audio-output" class="form-input device-select" aria-describedby="audio-output-note">
-            <option value="">System Default Output</option>
+            <option value="">System default</option>
           </select>
           <p id="audio-output-note" class="audio-device-note" style="display: none;"></p>
         </div>
@@ -1722,18 +1661,17 @@
         <div class="audio-device-row audio-unsupported-box" id="audio-output-unsupported" style="display: none;">
           <div class="audio-unsupported-title">
             <span aria-hidden="true">🎧</span>
-            <span>Output device selection is unavailable</span>
+            <span>You can't choose an output here</span>
           </div>
           <p class="audio-unsupported-desc">
-            This browser does not implement <code>setSinkId()</code>, so DubMate cannot re-route playback itself.
-            Choose your headphones as the default output device in your operating system's sound settings instead.
+            Set your headphones as the default output in your system's sound settings.
           </p>
         </div>
 
         <!-- Export folder (backed by GET/POST /api/config -> exports_dir).
              Hidden entirely when the running backend does not report the key. -->
         <div class="audio-device-row" id="audio-exports-row" style="display: none;">
-          <label class="form-label" for="input-exports-dir">Render &amp; Export Folder</label>
+          <label class="form-label" for="input-exports-dir">Export folder</label>
           <div class="audio-path-row">
             <input type="text" id="input-exports-dir" class="form-input audio-path-input" spellcheck="false"
               autocomplete="off" placeholder="e.g. C:\Users\You\Videos\DubMate Exports">
@@ -1743,14 +1681,13 @@
           </div>
           <div id="exports-dir-feedback" class="audio-inline-feedback" style="display: none;"></div>
           <p class="audio-device-note">
-            Finished videos are saved here, once, on this computer. People who join your room from another
-            computer get their copy through their browser's downloads instead.
+            Finished videos are saved here. Guests on other computers get theirs through their browser's downloads.
           </p>
         </div>
 
         <div class="modal-actions" style="margin-top: 20px; justify-content: flex-end; gap: 10px;">
           <button id="btn-audio-settings-done" class="btn btn-primary btn-md" type="button">
-            <span>✓ Done</span>
+            <span>Done</span>
           </button>
         </div>
       </div>

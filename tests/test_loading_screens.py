@@ -157,12 +157,12 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         # Root index
         resp = client.get("/")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("DubMate Studio Pro", resp.text)
+        self.assertIn("<title>DubMate</title>", resp.text)
 
         # /index.html
         resp_idx = client.get("/index.html")
         self.assertEqual(resp_idx.status_code, 200)
-        self.assertIn("DubMate Studio Pro", resp_idx.text)
+        self.assertIn("<title>DubMate</title>", resp_idx.text)
 
         # /builder.html
         resp_bld = client.get("/builder.html")

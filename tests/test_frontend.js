@@ -324,16 +324,16 @@ try {
     await app.loadBoothLine(0);
     const btnNext = dom.window.document.getElementById("btn-next-line");
     const firstText = btnNext.textContent || btnNext.innerHTML;
-    if (firstText.includes("Next Line")) {
-      console.log("PASS: First line shows 'Next Line ›'");
+    if (firstText.includes("Next line")) {
+      console.log("PASS: First line shows 'Next line ›'");
     }
 
     await app.loadBoothLine(1); // Last line of mockPack
     const lastText = btnNext.textContent || btnNext.innerHTML;
-    if (lastText.includes("Finished") && btnNext.classList.contains("btn-finished-pulse")) {
-      console.log("PASS: Last line correctly transforms to '✨ I\\'m Finished ✓'!");
+    if (lastText.includes("Finish ✓") && btnNext.classList.contains("btn-finished-pulse")) {
+      console.log("PASS: Last line correctly transforms to 'Finish ✓'!");
     } else {
-      console.error("FAIL: Last line did not transform to 'I'm Finished':", lastText);
+      console.error("FAIL: Last line did not transform to 'Finish ✓':", lastText);
       process.exit(1);
     }
 

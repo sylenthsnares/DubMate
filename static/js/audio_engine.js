@@ -381,7 +381,7 @@ export class AudioEngine {
       this.releaseMicrophone();
     }
     if (!this._hasMediaDevices()) {
-      throw new Error('This browser does not expose microphone capture (navigator.mediaDevices).');
+      throw new Error("This browser can't record from a microphone.");
     }
 
     const wanted = this.preferredInputId || null;
@@ -418,12 +418,12 @@ export class AudioEngine {
   async startInputMonitor(deviceId = undefined) {
     this.stopInputMonitor();
     this.initContext();
-    if (!this.ctx) throw new Error('Web Audio is unavailable in this browser.');
+    if (!this.ctx) throw new Error("This browser can't play DubMate's audio.");
     if (typeof this.ctx.createMediaStreamSource !== 'function' || typeof this.ctx.createAnalyser !== 'function') {
-      throw new Error('Web Audio analyser nodes are unavailable in this browser.');
+      throw new Error("This browser can't show a level meter.");
     }
     if (!this._hasMediaDevices()) {
-      throw new Error('This browser does not expose microphone capture (navigator.mediaDevices).');
+      throw new Error("This browser can't record from a microphone.");
     }
 
     const wanted = (deviceId === undefined) ? (this.preferredInputId || null) : (deviceId || null);

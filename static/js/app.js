@@ -3,7 +3,7 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-import { escapeHtml, showToast, initModeDropdown, mixin } from './ui_common.js';
+import { escapeHtml, showToast, initModeDropdown, initTooltips, mixin } from './ui_common.js';
 import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
 import { ScreeningMethods } from './studio/screening.js';
@@ -447,8 +447,7 @@ class DubMateApp {
         el.classList.toggle('video-expanded');
         const expanded = el.classList.contains('video-expanded');
         btn.setAttribute('aria-pressed', String(expanded));
-        btn.setAttribute('aria-label',
-          expanded ? 'Collapse Video Monitor' : 'Expand Video Monitor');
+        btn.dataset.tip = expanded ? 'Collapse video' : 'Expand video';
         // Update icon to collapse arrows when expanded
         btn.innerHTML = expanded
           ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v5H3M21 8h-5V3M3 16h5v5M16 21v-5h5"/></svg>`
@@ -461,6 +460,7 @@ class DubMateApp {
     this.initVideoPrompterSplitter();
     this.initVideoExpand();
     this.initModeDropdown();
+    initTooltips();
     this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
@@ -716,13 +716,13 @@ class DubMateApp {
     this.checkMetronome.addEventListener('change', (e) => {
       this.audio.metronomeEnabled = e.target.checked;
       const tag = document.getElementById('tag-metronome');
-      if (tag) tag.innerText = e.target.checked ? 'ACTIVE' : 'MUTED';
+      if (tag) tag.innerText = e.target.checked ? 'ON' : 'OFF';
     });
 
     if (this.checkGuideVoice) {
       this.checkGuideVoice.addEventListener('change', (e) => {
         const tag = document.getElementById('tag-guide-voice');
-        if (tag) tag.innerText = e.target.checked ? 'ACTIVE' : 'MUTED';
+        if (tag) tag.innerText = e.target.checked ? 'ON' : 'OFF';
       });
     }
 
@@ -775,7 +775,7 @@ class DubMateApp {
           this.audio.setGain(targetGain);
           this.syncTakeParams();
           this.renderGainMatchBadge(take, targetGain);
-          this.showToast(`Vocal gain calibrated to scene dialogue target (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
+          this.showToast(`Level matched to the original (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
         }
       });
     }
@@ -832,7 +832,7 @@ class DubMateApp {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
       this.checkNoiseReduction.addEventListener('change', (e) => {
         const tag = document.getElementById('tag-noise-cleaner');
-        if (tag) tag.innerText = e.target.checked ? 'DFN3' : 'OFF';
+        if (tag) tag.innerText = e.target.checked ? 'ON' : 'OFF';
         this.syncTakeParams();
         onNoiseToggleChange(e);
       });
@@ -931,7 +931,7 @@ class DubMateApp {
     this.socket.on('send_failed', () => {
       if (this._sendFailureToastAt && Date.now() - this._sendFailureToastAt < 5000) return;
       this._sendFailureToastAt = Date.now();
-      this.showToast("You're offline — that change wasn't saved to the room.");
+      this.showToast("You're offline. That change wasn't saved.");
     });
 
     // Socket events
@@ -997,9 +997,9 @@ class DubMateApp {
 
       const userName = data.payload?.user_name || this.roomState?.takes?.[lineIdx]?.user_name || 'Cast member';
       if (data.payload?.user_id === this.user.id) {
-        this.showToast("Take recorded & saved! 🎙️");
+        this.showToast("Take saved");
       } else {
-        this.showToast(`🎙️ ${userName} recorded their take for Line ${(lineIdx !== undefined ? lineIdx + 1 : '')}!`);
+        this.showToast(`${userName} recorded line ${(lineIdx !== undefined ? lineIdx + 1 : '')}`);
       }
     });
 
@@ -1020,7 +1020,7 @@ class DubMateApp {
       if (newStatus === 'recording' && this.currentView === 'lobby') {
         this.showView('booth');
         this.loadBoothLine(this.findFirstAssignedLine());
-        this.showToast("🎙️ Session started! Entering recording booth.");
+        this.showToast("Recording has started");
       } else if (newStatus === 'screening' && this.currentView !== 'screening') {
         this.showView('screening');
         this.setupScreeningView();
@@ -1036,7 +1036,7 @@ class DubMateApp {
       this.showView('screening');
       this.setupScreeningView();
       this.broadcastMyStatus('screening');
-      this.showToast("🍿 The Cast Premiere is Starting!");
+      this.showToast("The premiere is starting");
     });
 
     this.socket.on('screening_sync', (data) => {
@@ -1050,7 +1050,7 @@ class DubMateApp {
       if (this.views.screening.classList.contains('active')) {
         // Someone else started this render: show it, but leave the modal closable.
         this.openExportModal({ locked: false });
-        this.updateExportModalStep(1, 30, "Applying vocal EQ, studio compression & acoustic room reverb...");
+        this.updateExportModalStep(1, 30, "Mixing your takes with the scene…");
       }
     });
 
@@ -1059,7 +1059,7 @@ class DubMateApp {
       const payload = data.payload || data;
       if (payload && (payload.download_url || payload.export_video_url || payload.download_url_16_9)) {
         this.handleExportSuccess(payload);
-        this.showToast("🎬 Master Dubbed Video is ready for the Cast!");
+        this.showToast("The dubbed video is ready");
       }
     });
 
@@ -1208,7 +1208,7 @@ class DubMateApp {
       e.preventDefault();
       videoContainer.style.removeProperty('--video-h');
       localStorage.removeItem('dubmate_video_height');
-      this.showToast('Video size reset to default');
+      this.showToast('Video size reset');
     });
 
     // Keyboard navigation (Arrow keys on handle)
@@ -1232,7 +1232,7 @@ class DubMateApp {
       } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Home') {
         videoContainer.style.removeProperty('--video-h');
         localStorage.removeItem('dubmate_video_height');
-        this.showToast('Video size reset to default');
+        this.showToast('Video size reset');
         handled = true;
       }
 
@@ -1340,7 +1340,7 @@ class DubMateApp {
 
   /** Asks first; returns true only if the user actually left. */
   confirmLeaveRoom() {
-    if (!confirm('Leave current dubbing session and return to scenes?')) return false;
+    if (!confirm('Leave this room?')) return false;
     this.leaveRoom();
     return true;
   }
@@ -1382,7 +1382,7 @@ class DubMateApp {
     if (this.castActivityBar) this.castActivityBar.style.display = 'none';
 
     this.showView('landing');
-    this.showToast('Left studio session room.');
+    this.showToast('You left the room');
   }
 
   navigateTo(url) {
@@ -1421,7 +1421,7 @@ class DubMateApp {
    * and "HTTP 500" in front of people who want to dub anime clips. The raw text is
    * still logged, just not shown.
    */
-  friendlyError(err, fallback = "Something went wrong. Please try again.") {
+  friendlyError(err, fallback = "Something went wrong. Try again.") {
     const raw = String(err?.message ?? err ?? '').trim();
     if (raw) console.warn('[DubMate] Underlying error:', raw);
     if (!raw) return fallback;
@@ -1432,7 +1432,7 @@ class DubMateApp {
       [/failed to fetch|networkerror|load failed|err_connection/i,
         "Couldn't reach DubMate. Check your connection and try again."],
       [/timed out|timeout|etimedout/i,
-        "That took longer than expected. Please try again."],
+        "That took too long. Try again."],
       [/room not found|no active session|session has ended/i,
         "That session has ended. Start a new room to continue."],
       [/not found|404/i,
@@ -1440,11 +1440,11 @@ class DubMateApp {
       [/no space|disk full|enospc/i,
         "Your disk is full. Free up some space and try again."],
       [/permission|denied|eacces|not allowed/i,
-        "DubMate doesn't have permission to do that."],
+        "DubMate doesn't have permission to do that. Check that the folder or file isn't read-only."],
       [/zip.?slip|path traversal|compression ratio|zip bomb/i,
         "That pack file looks corrupted or unsafe, so it wasn't imported."],
       [/yt-dlp|requirements_builder|pip install/i,
-        "The Pack Builder tools aren't installed yet. Install them from the app's start-up screen."],
+        "Pack Builder isn't installed. Run the DubMate installer again and tick Pack Builder."],
     ];
     for (const [pattern, message] of known) {
       if (pattern.test(raw)) return message;
@@ -1491,11 +1491,11 @@ class DubMateApp {
     banner.style.display = 'flex';
     if (state === 'reconnecting') {
       const seconds = Math.max(1, Math.round((retryInMs || 2000) / 1000));
-      text.innerText = `Reconnecting in ${seconds}s — changes aren't being saved`;
+      text.innerText = `Reconnecting in ${seconds}s. Changes aren't saved until then.`;
     } else if (state === 'connecting') {
       text.innerText = 'Connecting…';
     } else {
-      text.innerText = "Disconnected — you're no longer in the room";
+      text.innerText = "Disconnected. You're no longer in the room.";
     }
   }
 
@@ -1526,9 +1526,9 @@ class DubMateApp {
     const share = this.roomShare;
     if (!this.headerRoomBadge || !share) return;
     this.headerRoomBadge.classList.toggle('room-badge-unpublished', !share.code_is_live);
-    this.headerRoomBadge.title = share.code_is_live
-      ? 'Room code is live — click to copy it'
-      : `${share.message || 'Room code is not published yet.'} Click to copy an invite link.`;
+    this.headerRoomBadge.dataset.tip = share.code_is_live
+      ? 'Click to copy the room code'
+      : `${share.message || "Your room code isn't ready yet."} Click to copy an invite link.`;
   }
 
   /**
@@ -1555,11 +1555,11 @@ class DubMateApp {
           if (share.state === 'tunnel_unavailable') {
             // The shell told the engine the tunnel failed, so say what went wrong
             // rather than implying it is still on its way.
-            this.showToast(share.message || "Couldn't open a public connection — only people on your network can join.");
+            this.showToast(share.message || "Couldn't go online. Only people on your network can join.");
           } else {
             this.showToast(share.direct_url
-              ? 'Room code is not public yet — use Copy Code for a direct invite link.'
-              : 'Room code is local only — guests on other networks cannot join yet.');
+              ? "Your room code isn't ready yet. Use Copy invite to share a direct link."
+              : 'Your room code only works on your network for now.');
           }
         }
       }
@@ -1585,13 +1585,13 @@ class DubMateApp {
     // to the direct tunnel link so the session is still shareable rather than the
     // host copying a code that nobody can redeem.
     let text = code;
-    let message = `Room code ${code} copied! 📋`;
+    let message = `Room code ${code} copied`;
     if (share && !share.code_is_live) {
       if (share.direct_url) {
         text = share.direct_url;
-        message = 'Room code is not public yet — direct invite link copied instead. 🔗';
+        message = "Room code isn't ready yet, so the invite link was copied instead.";
       } else {
-        message = `Room code ${code} copied — local network only for now.`;
+        message = `Room code ${code} copied. It only works on your network for now.`;
       }
     }
 
@@ -1612,7 +1612,7 @@ class DubMateApp {
   renderSkeletonPacks() {
     if (!this.packGrid) return;
     if (this.packCountBadge) {
-      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning...`;
+      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning…`;
     }
     this.packGrid.innerHTML = `
       <div class="pack-card pack-card-skeleton">
@@ -1674,14 +1674,13 @@ class DubMateApp {
       if (this.packGrid) {
         this.packGrid.innerHTML = `
           <div style="color: var(--foreground-muted); padding: 32px 24px; text-align: center; grid-column: 1 / -1;">
-            <div style="font-size: 32px; margin-bottom: 8px;">🔌</div>
-            <p style="margin-bottom: 8px; font-weight: 600; color: #fca5a5;">Could not connect to DubMate Engine</p>
+            <p style="margin-bottom: 8px; font-weight: 600; color: #fca5a5;">Can't reach DubMate</p>
             <p style="font-size: 12px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px;">
-              The studio could not reach <code>${escapeHtml(window.location.origin)}</code>. Please ensure the DubMate engine is running.
+              Make sure DubMate is still running, then retry.
             </p>
             <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
-              <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.fetchPacks()">↺ Retry Connection</button>
-              <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">📁 Configure Packs Folder</button>
+              <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.fetchPacks()">Retry</button>
+              <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">Packs folder</button>
             </div>
           </div>
         `;
@@ -1707,7 +1706,7 @@ class DubMateApp {
           this.webInputPackPath.value = data.packs_dir || '';
         }
         if (this.webConfigActiveCount) {
-          this.webConfigActiveCount.innerText = `${data.pack_count || 0} Packs Loaded`;
+          this.webConfigActiveCount.innerText = `${data.pack_count || 0} packs`;
         }
       }
     } catch (err) {
@@ -1728,14 +1727,14 @@ class DubMateApp {
   async savePackConfig() {
     const rawPath = this.webInputPackPath ? this.webInputPackPath.value.trim() : '';
     if (!rawPath) {
-      this.showWebConfigFeedback("Please enter a valid directory path.", false);
+      this.showWebConfigFeedback("Enter a folder path.", false);
       return;
     }
 
     if (this.btnSavePackConfig) {
       this.btnSavePackConfig.disabled = true;
       const textSpan = document.getElementById('web-save-config-text');
-      if (textSpan) textSpan.innerText = 'Scanning & Saving...';
+      if (textSpan) textSpan.innerText = 'Saving…';
     }
 
     try {
@@ -1747,16 +1746,16 @@ class DubMateApp {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.detail || data.message || "Failed to update directory");
+        throw new Error(data.detail || data.message || "Couldn't save that folder.");
       }
 
       this.packs = data.packs || [];
       this.renderPacks();
-      this.showWebConfigFeedback(`✅ ${data.message || `Loaded ${data.pack_count} scene packs!`}`, true);
-      this.showToast(`✨ ${data.message || `Loaded ${data.pack_count} scene packs!`}`);
+      this.showWebConfigFeedback(data.message || `Loaded ${data.pack_count} packs.`, true);
+      this.showToast(data.message || `Loaded ${data.pack_count} packs.`);
 
       if (this.webConfigActiveCount) {
-        this.webConfigActiveCount.innerText = `${data.pack_count || 0} Packs Loaded`;
+        this.webConfigActiveCount.innerText = `${data.pack_count || 0} packs`;
       }
 
       setTimeout(() => {
@@ -1764,16 +1763,16 @@ class DubMateApp {
       }, 1200);
     } catch (err) {
       // Server details (bad path, unreadable folder) are shown as-is.
-      let errMsg = err.message || "Unknown error";
+      let errMsg = err.message || "Couldn't save that folder.";
       if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
         errMsg = this.friendlyError(err);
       }
-      this.showWebConfigFeedback(`❌ ${errMsg}`, false);
+      this.showWebConfigFeedback(errMsg, false);
     } finally {
       if (this.btnSavePackConfig) {
         this.btnSavePackConfig.disabled = false;
         const textSpan = document.getElementById('web-save-config-text');
-        if (textSpan) textSpan.innerText = '📁 Scan & Save Location';
+        if (textSpan) textSpan.innerText = 'Save';
       }
     }
   }
@@ -1796,10 +1795,10 @@ class DubMateApp {
     if (this.btnRescanPacks) {
       this.btnRescanPacks.disabled = true;
       const textSpan = this.btnRescanPacks.querySelector('span');
-      if (textSpan) textSpan.innerText = 'Scanning...';
+      if (textSpan) textSpan.innerText = 'Scanning…';
     }
     if (this.packCountBadge) {
-      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning...`;
+      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning…`;
     }
 
     try {
@@ -1812,12 +1811,12 @@ class DubMateApp {
       this.renderPacks();
       const count = (this.packs || []).length;
       if (!silent) {
-        this.showToast(`✨ Rescan complete: ${count} scene pack${count === 1 ? '' : 's'} indexed!`);
+        this.showToast(`Found ${count} pack${count === 1 ? '' : 's'}`);
       }
     } catch (err) {
       console.error("Error during pack rescan:", err);
       if (!silent) {
-        this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't rescan your packs folder.")}`);
+        this.showToast(this.friendlyError(err, "Couldn't rescan your packs folder."));
       }
     } finally {
       this.isRescanningPacks = false;
@@ -1825,7 +1824,7 @@ class DubMateApp {
       if (this.btnRescanPacks) {
         this.btnRescanPacks.disabled = false;
         const textSpan = this.btnRescanPacks.querySelector('span');
-        if (textSpan) textSpan.innerText = 'Rescan Packs';
+        if (textSpan) textSpan.innerText = 'Rescan';
       }
     }
   }
@@ -1833,12 +1832,12 @@ class DubMateApp {
   async uploadPackZip(file) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.zip')) {
-      this.showToast("⚠️ Security Check: Only valid .zip pack archives are supported.");
+      this.showToast("Choose a .zip file.");
       return;
     }
 
     if (file.size > 500 * 1024 * 1024) {
-      this.showToast("⚠️ Pack archive exceeds maximum 500 MB upload limit.");
+      this.showToast("That file is over the 500 MB limit.");
       return;
     }
 
@@ -1846,14 +1845,14 @@ class DubMateApp {
     const origHtml = btn ? btn.innerHTML : '';
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = `<span class="spinning" style="display:inline-block;">⚙️</span> <span>Importing...</span>`;
+      btn.innerHTML = `<span class="spinning" style="display:inline-block;">⚙️</span> <span>Importing…</span>`;
     }
 
-    this.showToast(`🛡️ Verifying & importing pack "${file.name}"...`);
+    this.showToast(`Importing "${file.name}"…`);
     if (this.modalImportLoading) {
       const statusText = document.getElementById('import-modal-status-text');
       if (statusText) {
-        statusText.innerText = "Checking the pack file and loading its audio...";
+        statusText.innerText = "Checking the file…";
       }
       this.modalImportLoading.style.display = 'flex';
     }
@@ -1886,10 +1885,10 @@ class DubMateApp {
         }
       }
 
-      this.showToast(`✨ Pack "${importedPack?.name || file.name}" verified & imported successfully!`);
+      this.showToast(`Imported "${importedPack?.name || file.name}"`);
     } catch (err) {
       console.error("Pack import error:", err);
-      this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't import that pack. Please check the file and try again.")}`);
+      this.showToast(this.friendlyError(err, "Couldn't import that pack. Check the file and try again."));
     } finally {
       if (this.modalImportLoading) {
         this.modalImportLoading.style.display = 'none';
@@ -1946,18 +1945,17 @@ class DubMateApp {
     if (!allPacks.length) {
       this.selectedPackId = null;
       if (this.packCountBadge) {
-        this.packCountBadge.innerText = '0 Packs';
+        this.packCountBadge.innerText = '0 packs';
       }
       this.packGrid.innerHTML = `
         <div class="empty-packs-guide glass-card" style="grid-column: 1 / -1; padding: 36px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
-          <div style="font-size: 38px; margin-bottom: 12px;">📦</div>
-          <h3 style="font-size: 17px; font-weight: 700; margin-bottom: 8px; color: var(--foreground);">No Scene Packs Loaded</h3>
+          <h3 style="font-size: 17px; font-weight: 700; margin-bottom: 8px; color: var(--foreground);">No scene packs yet</h3>
           <p style="font-size: 13px; color: var(--foreground-muted); max-width: 500px; margin: 0 auto 18px; line-height: 1.6;">
-            Select your Scene Packs folder on disk, import a .zip pack from GameBanana, or create a new pack with Pack Builder.
+            Choose your packs folder, import a pack .zip, or make one in Pack Builder.
           </p>
           <div style="display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
-            <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">📁 Set Scene Packs Folder</button>
-            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('input-pack-zip').click()">Import .ZIP Pack</button>
+            <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">Choose folder</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('input-pack-zip').click()">Import pack</button>
             <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Rescan</button>
           </div>
         </div>
@@ -1977,9 +1975,9 @@ class DubMateApp {
 
     if (this.packCountBadge) {
       if (query) {
-        this.packCountBadge.innerText = `${filteredPacks.length} of ${allPacks.length} Packs`;
+        this.packCountBadge.innerText = `${filteredPacks.length} of ${allPacks.length} packs`;
       } else {
-        this.packCountBadge.innerText = `${allPacks.length} Packs`;
+        this.packCountBadge.innerText = `${allPacks.length} packs`;
       }
     }
 
@@ -1988,12 +1986,8 @@ class DubMateApp {
       const safeQuery = escapeHtml(query);
       this.packGrid.innerHTML = `
         <div class="empty-search-state glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
-          <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
-          <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 6px; color: var(--foreground);">No Scenes Matching "${safeQuery}"</h3>
-          <p style="font-size: 13px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px; line-height: 1.5;">
-            Try searching for another character name, author, scene title, or spoken dialogue keyword.
-          </p>
-          <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.clearPackSearch()">✕ Clear Search</button>
+          <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 12px; color: var(--foreground);">No scenes match "${safeQuery}"</h3>
+          <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.clearPackSearch()">Clear search</button>
         </div>
       `;
       return;
@@ -2030,8 +2024,8 @@ class DubMateApp {
 
       const isCV = (pack.pack_type === 'choicer_voicer');
       const formatBadge = isCV
-        ? `<span class="badge-format cv" title="Choicer Voicer Native Format">CV Pack</span>`
-        : `<span class="badge-format dubmate" title="DubMate Standard Format">DubMate</span>`;
+        ? `<span class="badge-format cv" data-tip="Choicer Voicer pack">CV Pack</span>`
+        : `<span class="badge-format dubmate">DubMate</span>`;
 
       const thumbImg = (pack.has_icon && pack.icon_url)
         ? `<div class="pack-card-thumb"><img src="${escapeHtml(pack.icon_url)}" alt="${escapeHtml(rawTitle)} cover" loading="lazy"></div>`
@@ -2065,7 +2059,7 @@ class DubMateApp {
               ${formatBadge}
               ${authorsHtml}
               <span class="pack-line-badge">${lineCount} lines</span>
-              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" title="Download ${escapeHtml(rawTitle)} (.zip)" download>
+              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" data-tip="Download this pack" aria-label="Download ${escapeHtml(rawTitle)}" download>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 <span>ZIP</span>
               </a>
@@ -2089,9 +2083,9 @@ class DubMateApp {
           this.saveRemoteFile(packZipLink.getAttribute('href'), `${safeName}.zip`, {
             control: packZipLink,
             busyText: '…', // the button is a 10px icon; anything longer reflows the row
-            startMessage: `⏳ Packaging "${rawTitle}"…`,
-            doneMessage: `✅ "${rawTitle}" downloaded.`,
-            errorText: "Couldn't download that pack. Please try again.",
+            startMessage: `Preparing "${rawTitle}"…`,
+            doneMessage: `Downloaded "${rawTitle}"`,
+            errorText: "Couldn't download that pack. Try again.",
           });
         });
       }
@@ -2108,7 +2102,7 @@ class DubMateApp {
 
   async createRoom() {
     if (!this.selectedPackId) {
-      this.showToast("Please select a dub pack first!");
+      this.showToast("Choose a scene first.");
       return;
     }
 
@@ -2135,7 +2129,7 @@ class DubMateApp {
 
       this.joinRoom(data.room_id);
     } catch (err) {
-      this.showToast(this.friendlyError(err, "Couldn't create the room. Please try again."));
+      this.showToast(this.friendlyError(err, "Couldn't create the room. Try again."));
     }
   }
 
@@ -2217,7 +2211,7 @@ class DubMateApp {
   promptJoinRoom(roomId) {
     const cleanCode = (roomId || '').trim().toUpperCase();
     if (!cleanCode) {
-      this.showToast("Please enter a room code!");
+      this.showToast("Enter a room code.");
       return;
     }
     this.pendingJoinRoomId = cleanCode;
@@ -2283,7 +2277,7 @@ class DubMateApp {
   joinRoomFromInput() {
     const code = (this.inputRoomCode?.value || '').trim().toUpperCase();
     if (!code) {
-      this.showToast("Please enter a room code!");
+      this.showToast("Enter a room code.");
       return;
     }
     this.promptJoinRoom(code);
@@ -2309,7 +2303,7 @@ class DubMateApp {
               target.searchParams.set('room', cleanCode);
               const home = getHomeOrigin();
               if (home) target.searchParams.set('home', home);
-              this.showToast(`Connecting to host for room ${cleanCode}... 🚀`);
+              this.showToast(`Connecting to room ${cleanCode}…`);
               this.navigateTo(target.toString());
               return;
             }
@@ -2321,7 +2315,7 @@ class DubMateApp {
         // Strip stale room parameter so user is returned cleanly to scene explorer
         this.clearRoomQueryParam();
 
-        this.showToast(`Room '${cleanCode}' not found or expired.`);
+        this.showToast(`Room ${cleanCode} wasn't found. Check the code or ask the host for a new one.`);
         this.showView('landing');
         return;
       }
@@ -2359,7 +2353,7 @@ class DubMateApp {
       }
     } catch (err) {
       this.clearRoomQueryParam();
-      this.showToast(this.friendlyError(err, "Couldn't join that room. Please try again."));
+      this.showToast(this.friendlyError(err, "Couldn't join that room. Try again."));
       this.showView('landing');
     }
   }
@@ -2378,11 +2372,11 @@ class DubMateApp {
   toggleMyReadiness() {
     this.isReadyForScreening = !this.isReadyForScreening;
     if (this.isReadyForScreening) {
-      if (this.labelReadyState) this.labelReadyState.innerText = "Ready for Premiere";
+      if (this.labelReadyState) this.labelReadyState.innerText = "Ready";
       this.btnToggleReady.className = "btn btn-success btn-sm btn-ready-toggle ready";
-      this.showToast("Marked READY for the Premiere");
+      this.showToast("You're marked ready");
     } else {
-      if (this.labelReadyState) this.labelReadyState.innerText = "Mark Ready";
+      if (this.labelReadyState) this.labelReadyState.innerText = "Mark ready";
       this.btnToggleReady.className = "btn btn-secondary btn-sm btn-ready-toggle";
     }
     if (this.roomState && this.roomState.users && this.roomState.users[this.user.id]) {
@@ -2396,20 +2390,20 @@ class DubMateApp {
     if (!this.roomState) return;
     const isHost = this.isHost();
     if (!isHost) {
-      this.showToast("Only the Room Host can launch the Group Premiere");
+      this.showToast("Only the host can start the premiere");
       return;
     }
-    this.showToast("Mastering Dubbed Video & Launching Premiere for the Cast...");
+    this.showToast("Starting the premiere…");
     this.socket.send('launch_premiere', {});
   }
 
   toggleFilterLines() {
     this.filterMyLinesOnly = !this.filterMyLinesOnly;
     if (this.labelFilterLines) {
-      this.labelFilterLines.innerText = this.filterMyLinesOnly ? "My Lines Only" : "All Scene Lines";
+      this.labelFilterLines.innerText = this.filterMyLinesOnly ? "My lines" : "All lines";
     }
     this.renderTimelineChips();
-    this.showToast(this.filterMyLinesOnly ? "Filtering timeline to your assigned lines" : "Showing all scene lines");
+    this.showToast(this.filterMyLinesOnly ? "Showing your lines" : "Showing all lines");
   }
 
   renderCastActivityHUD() {
@@ -2448,7 +2442,7 @@ class DubMateApp {
         }
       }
 
-      const loc = u.location === 'screening' ? 'Screening' : (u.location === 'lobby' ? 'Lobby' : `Line ${(u.current_line || 0) + 1}`);
+      const loc = u.location === 'screening' ? 'Premiere' : (u.location === 'lobby' ? 'Lobby' : `Line ${(u.current_line || 0) + 1}`);
 
       chip.innerHTML = `
         <div class="actor-hud-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
@@ -2464,14 +2458,14 @@ class DubMateApp {
     });
 
     if (this.premiereStatusSummary) {
-      this.premiereStatusSummary.innerText = `${readyCount}/${users.length} Cast Ready`;
+      this.premiereStatusSummary.innerText = `${readyCount}/${users.length} ready`;
     }
 
     // Host Premiere Button Visibility
     if (this.btnLaunchPremiere) {
       if (isHost) {
         this.btnLaunchPremiere.style.display = 'inline-flex';
-        this.btnLaunchPremiere.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> <span>Launch Premiere (${readyCount}/${users.length} Ready) ›</span>`;
+        this.btnLaunchPremiere.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> <span>Start premiere (${readyCount}/${users.length} ready) ›</span>`;
       } else {
         this.btnLaunchPremiere.style.display = 'none';
       }
@@ -2484,10 +2478,10 @@ class DubMateApp {
     if (!this.roomState) return;
 
     if (this.lobbyPackTitle) this.lobbyPackTitle.innerText = this.roomState.pack.name;
-    if (this.lobbyLineCount) this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} Lines`;
+    if (this.lobbyLineCount) this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} lines`;
 
     const users = Object.values(this.roomState.users || {});
-    if (this.castOnlineCount) this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} Online`;
+    if (this.castOnlineCount) this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} online`;
 
     // Only update lobby cast list if user list changed
     const userSummary = users.map(u => `${u.id}:${u.name}:${u.is_online}:${u.color}`).join('|');
@@ -2580,7 +2574,7 @@ class DubMateApp {
       tr.innerHTML = `
         <td>
           <div class="char-badge-cell">
-            <span class="char-badge">🎭 ${escapeHtml(char)}</span>
+            <span class="char-badge">${escapeHtml(char)}</span>
             ${isAssignedToMe ? '<span class="your-role-badge">YOUR ROLE</span>' : ''}
           </div>
         </td>
@@ -2662,7 +2656,7 @@ class DubMateApp {
     const matchVal = parseFloat(take.auto_gain_db);
     const label = `${matchVal >= 0 ? '+' : ''}${matchVal} dB`;
     const isMatched = Math.abs(gainDb - matchVal) < 0.1;
-    this.badgeGainMatch.innerText = isMatched ? `✓ ${label} (Matched)` : `${label} (Scene Target)`;
+    this.badgeGainMatch.innerText = isMatched ? `✓ Matched` : `Match: ${label}`;
     this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
   }
 
@@ -2754,14 +2748,14 @@ class DubMateApp {
     const myLinePos = myAssignedLines.findIndex(l => l.index === index) + 1;
 
     this.boothLineIndicator.innerText = isMyLine
-      ? (myAssignedLines.length > 0 ? `Your Line ${myLinePos} / ${myAssignedLines.length} (Scene Line ${index + 1})` : `Scene Line ${index + 1} / ${this.roomState.pack.lines.length}`)
-      : `Scene Line ${index + 1} / ${this.roomState.pack.lines.length} (Locked)`;
+      ? (myAssignedLines.length > 0 ? `Your line ${myLinePos}/${myAssignedLines.length} (line ${index + 1})` : `Line ${index + 1}/${this.roomState.pack.lines.length}`)
+      : `Line ${index + 1}/${this.roomState.pack.lines.length} (locked)`;
 
     const lineDur = (line.duration !== undefined ? line.duration : Math.max(0.5, (line.end || 0) - (line.start || 0)));
     this.boothTimeBadge.innerText = `${(line.start || 0).toFixed(2)}s - ${(line.end || 0).toFixed(2)}s (${lineDur.toFixed(2)}s)`;
     this.stageCaptionChar.innerText = isMyLine ? line.character.toUpperCase() : `${line.character.toUpperCase()} (LOCKED)`;
     const lineCap = (line.caption || line.text || '').trim();
-    this.stageCaptionText.innerText = lineCap ? `“${lineCap}”` : `(${line.character} vocal line)`;
+    this.stageCaptionText.innerText = lineCap ? `“${lineCap}”` : `(${line.character}, no subtitle)`;
 
     const take = this.roomState.takes[index];
     if (take) {
@@ -2779,7 +2773,6 @@ class DubMateApp {
         if (this.badgeGainMatch) {
           this.badgeGainMatch.style.display = 'inline-block';
           this.renderGainMatchBadge(take, parseFloat(this.sliderGain.value) || 0);
-          this.badgeGainMatch.title = `Take Speech Loudness: ${take.speech_loudness_db || '-'} dBFS (Scene Target: ${take.target_loudness_db || '-'} dBFS)`;
         }
       } else {
         if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'none';
@@ -2899,13 +2892,13 @@ class DubMateApp {
 
     if (this.btnNextLine) {
       if (isLast) {
-        this.btnNextLine.innerHTML = '<span>I\'m Finished ✓</span>';
+        this.btnNextLine.innerHTML = '<span>Finish ✓</span>';
         this.btnNextLine.className = 'btn btn-success btn-sm btn-finished-pulse';
-        this.btnNextLine.setAttribute('title', "All lines reviewed! Mark yourself ready for Premiere");
+        this.btnNextLine.dataset.tip = "Marks you ready for the premiere";
       } else {
-        this.btnNextLine.innerHTML = '<span>Next Line ›</span>';
+        this.btnNextLine.innerHTML = '<span>Next line ›</span>';
         this.btnNextLine.className = 'btn btn-primary btn-sm';
-        this.btnNextLine.setAttribute('title', "Go to next dialogue line");
+        this.btnNextLine.removeAttribute('data-tip');
       }
     }
   }
@@ -2942,23 +2935,23 @@ class DubMateApp {
       this.recordIcon.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
-      const actorText = assignedNames.length > 0 ? assignedNames.join(', ') : 'Another actor';
-      this.recordStatusLabel.innerText = `Assigned to ${line?.character} (${actorText}) — Read Only`;
+      const actorText = assignedNames.length > 0 ? assignedNames.join(', ') : 'another actor';
+      this.recordStatusLabel.innerText = `${line?.character} is voiced by ${actorText}`;
       return;
     }
 
     if (this.recordState === 'recording') {
       this.btnRecordMain.className = 'btn-big-record recording';
       this.recordIcon.innerText = '■';
-      this.recordStatusLabel.innerText = "Recording Live... Click or Space to Stop";
+      this.recordStatusLabel.innerText = "Recording. Press Space to stop";
     } else if (this.recordState === 'countdown') {
       this.btnRecordMain.className = 'btn-big-record';
       this.recordIcon.innerText = '✕';
-      this.recordStatusLabel.innerText = "Counting in... Click to Cancel";
+      this.recordStatusLabel.innerText = "Counting in. Click to cancel";
     } else if (this.recordState === 'processing') {
       this.btnRecordMain.className = 'btn-big-record';
       this.recordIcon.innerHTML = `<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>`;
-      this.recordStatusLabel.innerText = "Saving take...";
+      this.recordStatusLabel.innerText = "Saving take…";
     } else {
       this.btnRecordMain.className = 'btn-big-record';
       if (take) {
@@ -2966,7 +2959,7 @@ class DubMateApp {
         this.recordStatusLabel.innerText = `Recorded by ${take.user_name} (${take.duration}s)`;
       } else {
         this.recordIcon.innerText = '●';
-        this.recordStatusLabel.innerText = 'Click or Press Space to Record';
+        this.recordStatusLabel.innerText = 'Press Space to record';
       }
     }
   }
@@ -2987,7 +2980,7 @@ class DubMateApp {
       const isActive = idx === this.currentLineIndex;
 
       chip.className = `chip-item ${isActive ? 'active' : ''} ${hasTake ? 'done' : ''} ${isMyLine ? 'my-line' : ''}`;
-      chip.title = `Line ${idx + 1}: ${l.character} (${l.start}s - ${l.end}s) ${hasTake ? '✓ Take Recorded' : ''}`;
+      chip.dataset.tip = `Line ${idx + 1}: ${l.character}${hasTake ? ' · recorded' : ''}`;
       chip.innerText = String(idx + 1);
 
       chip.addEventListener('click', () => {
@@ -3114,7 +3107,7 @@ class DubMateApp {
     const take = this.roomState?.takes?.[this.currentLineIndex];
 
     if (!take || !take.url) {
-      this.showToast("No take recorded yet for this line!");
+      this.showToast("Record a take first");
       return;
     }
 
@@ -3128,7 +3121,7 @@ class DubMateApp {
     }
 
     if (!this.currentTakeBuffer) {
-      this.showToast("⏳ Loading take audio... Please retry in a moment.");
+      this.showToast("The take is still loading. Try again in a moment.");
       return;
     }
 
@@ -3264,7 +3257,7 @@ class DubMateApp {
   async calibrateMicNoiseProfile() {
     if (this.isCalibratingMic) return;
     if (!this.roomState) {
-      this.showToast("Please join or create a session before calibrating.");
+      this.showToast("Join or create a room first.");
       return;
     }
     if (!(await this.ensureMicReady())) return;
@@ -3272,23 +3265,23 @@ class DubMateApp {
     this.isCalibratingMic = true;
     const btn = this.btnCalibrateMic;
     const origIcon = this.calibrateIcon ? this.calibrateIcon.innerText : '🎯';
-    const origLabel = this.calibrateLabel ? this.calibrateLabel.innerText : 'Calibrate Mic (3s Quiet)';
+    const origLabel = this.calibrateLabel ? this.calibrateLabel.innerText : 'Calibrate mic';
 
     if (btn) {
       btn.disabled = true;
       btn.classList.add('calibrating-pulse');
     }
     if (this.calibrateIcon) this.calibrateIcon.innerText = '🤫';
-    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrating...';
+    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrating…';
 
     // 1. Open the Calibration Modal
     if (this.modalMicCalibration) {
       this.modalMicCalibration.style.display = 'flex';
-      if (this.calibModalBadge) this.calibModalBadge.innerText = 'PRE-ROLL (1s)';
-      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Microphone Room Calibration';
-      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Get ready... Releasing mouse click and preparing room tone sample.';
+      if (this.calibModalBadge) this.calibModalBadge.innerText = 'GET READY';
+      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Mic calibration';
+      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Stay quiet for a few seconds.';
       if (this.calibTimerText) this.calibTimerText.innerText = '1.0s';
-      if (this.calibPhaseText) this.calibPhaseText.innerText = 'Phase 1: Pre-Roll Delay (Mouse Release)';
+      if (this.calibPhaseText) this.calibPhaseText.innerText = 'Get ready';
       if (this.calibProgressBar) {
         this.calibProgressBar.style.width = '0%';
         this.calibProgressBar.className = 'modal-progress-fill';
@@ -3305,17 +3298,17 @@ class DubMateApp {
 
         if (phase === 'preroll') {
           if (this.calibTimerText) this.calibTimerText.innerText = `${remainingSec}s`;
-          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Phase 1: 1s Pre-Roll Delay (Mouse Release)';
+          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Get ready';
           if (this.calibProgressBar) this.calibProgressBar.style.width = `${percent}%`;
-          if (this.calibModalBadge) this.calibModalBadge.innerText = 'PRE-ROLL (1s)';
-          if (this.calibModalStatus) this.calibModalStatus.innerText = '🤫 Get ready: Releasing mouse click and quieting room...';
+          if (this.calibModalBadge) this.calibModalBadge.innerText = 'GET READY';
+          if (this.calibModalStatus) this.calibModalStatus.innerText = 'Stay quiet for a few seconds.';
           if (this.calibModalIcon) this.calibModalIcon.innerText = '🤫';
         } else if (phase === 'recording') {
           if (this.calibTimerText) this.calibTimerText.innerText = `${remainingSec}s`;
-          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Phase 2: Sampling Room Tone (Stay Quiet)';
+          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Listening to the room';
           if (this.calibProgressBar) this.calibProgressBar.style.width = `${percent}%`;
-          if (this.calibModalBadge) this.calibModalBadge.innerText = 'SAMPLING (3s)';
-          if (this.calibModalStatus) this.calibModalStatus.innerText = '🎙️ Listening to room tone (fan hum, AC, mic hiss)...';
+          if (this.calibModalBadge) this.calibModalBadge.innerText = 'LISTENING';
+          if (this.calibModalStatus) this.calibModalStatus.innerText = 'Listening to the room…';
           if (this.calibModalIcon) this.calibModalIcon.innerText = '🎙️';
           if (this.calibRadarRing) this.calibRadarRing.className = 'calib-radar-ring active-radar';
         }
@@ -3325,8 +3318,8 @@ class DubMateApp {
         throw new Error("No audio captured from microphone.");
       }
 
-      if (this.calibModalBadge) this.calibModalBadge.innerText = 'ANALYZING';
-      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Computing spectral noise fingerprint via FFT...';
+      if (this.calibModalBadge) this.calibModalBadge.innerText = 'SAVING';
+      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Saving…';
       if (this.calibTimerText) this.calibTimerText.innerText = '0.0s';
       if (this.calibProgressBar) this.calibProgressBar.style.width = '100%';
 
@@ -3347,21 +3340,21 @@ class DubMateApp {
       this.hasCustomNoiseProfile = true;
 
       if (this.calibModalBadge) this.calibModalBadge.innerText = 'CALIBRATED ✓';
-      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Microphone Calibrated!';
-      if (this.calibModalStatus) this.calibModalStatus.innerText = `✨ Custom noise fingerprint saved (${data.noise_floor_db || -30} dB floor).`;
+      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Mic calibrated';
+      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Noise reduction is now tuned to your room.';
       if (this.calibModalIcon) this.calibModalIcon.innerText = '✨';
 
       if (this.badgeNoiseStatus) {
-        this.badgeNoiseStatus.innerText = '✨ Calibrated ✓';
+        this.badgeNoiseStatus.innerText = 'Calibrated ✓';
         this.badgeNoiseStatus.className = 'badge-calibrated calibrated';
-        this.badgeNoiseStatus.title = `Calibrated custom noise profile (${data.noise_floor_db || -30} dB floor)`;
+        this.badgeNoiseStatus.dataset.tip = 'Noise reduction is tuned to your room';
       }
 
       if (this.btnResetNoiseProfile) {
         this.btnResetNoiseProfile.style.display = 'inline-flex';
       }
 
-      this.showToast("✨ Microphone noise profile calibrated (1s delay + 3s room sample)!");
+      this.showToast("Mic calibrated");
 
       // If active line has a take with noise reduction enabled, re-apply with new profile
       const take = this.roomState?.takes?.[this.currentLineIndex];
@@ -3379,10 +3372,10 @@ class DubMateApp {
         this.modalMicCalibration.style.display = 'none';
       }
       if (err.message && err.message.includes("cancelled")) {
-        this.showToast("Mic calibration cancelled.");
+        this.showToast("Calibration cancelled");
       } else {
         console.warn("[App] Calibration failed:", err);
-        this.showToast(`⚠️ ${this.friendlyError(err, "Mic calibration didn't finish. Please try again.")}`);
+        this.showToast(this.friendlyError(err, "Mic calibration didn't finish. Try again."));
       }
     } finally {
       this.isCalibratingMic = false;
@@ -3406,20 +3399,20 @@ class DubMateApp {
       this.btnCalibrateMic.classList.remove('calibrating-pulse');
     }
     if (this.calibrateIcon) this.calibrateIcon.innerText = '🎯';
-    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrate Mic (3s Quiet)';
+    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrate mic';
   }
 
   resetMicNoiseProfile() {
     this.hasCustomNoiseProfile = false;
     if (this.badgeNoiseStatus) {
-      this.badgeNoiseStatus.innerText = '● Auto-Tracking';
+      this.badgeNoiseStatus.innerText = '● Auto';
       this.badgeNoiseStatus.className = 'badge-calibrated uncalibrated';
-      this.badgeNoiseStatus.title = 'Using intelligent automatic FFT noise floor tracking';
+      this.badgeNoiseStatus.dataset.tip = 'Background noise is detected automatically';
     }
     if (this.btnResetNoiseProfile) {
       this.btnResetNoiseProfile.style.display = 'none';
     }
-    this.showToast("Microphone profile reset to automatic FFT tracking.");
+    this.showToast("Mic calibration reset");
 
     const take = this.roomState?.takes?.[this.currentLineIndex];
     if (take && this.applyNoiseReduction && !this.isProcessingTake) {
@@ -3478,10 +3471,10 @@ class DubMateApp {
         }
       }
 
-      this.showToast(enable ? "✨ Studio Noise Reduction applied to take!" : "Raw original take restored (Noise Reduction OFF)");
+      this.showToast(enable ? "Noise reduction on" : "Noise reduction off. Original take restored.");
     } catch (err) {
       console.warn("[App] Error toggling take noise reduction:", err);
-      this.showToast(`⚠️ ${this.friendlyError(err, "Couldn't change the noise reduction setting.")}`);
+      this.showToast(this.friendlyError(err, "Couldn't change the noise reduction setting."));
     }
   }
 
@@ -3490,7 +3483,7 @@ class DubMateApp {
     const line = this.roomState.pack.lines[this.currentLineIndex];
     const isMyLine = this.canRecordLine(line);
     if (!isMyLine) {
-      this.showToast(`🔒 Line ${this.currentLineIndex + 1} is assigned to ${line.character}. You cannot record over it.`);
+      this.showToast(`Line ${this.currentLineIndex + 1} belongs to ${line.character}. Only their actor can record it.`);
       return;
     }
 
@@ -3505,7 +3498,7 @@ class DubMateApp {
     }
 
     if (this.recordState === 'processing') {
-      this.showToast("Saving previous take... please wait.");
+      this.showToast("Still saving the last take");
       return;
     }
 
@@ -3533,7 +3526,7 @@ class DubMateApp {
     for (let count = 3; count > 0; count--) {
       if (this.countdownSessionId !== sessionId) return;
       this.overlayCountdown.innerText = count;
-      this.overlayStatusText.innerText = "GET READY...";
+      this.overlayStatusText.innerText = "GET READY";
 
       // Visual flash ring effect on each beat for headphone / silent cueing
       if (countdownCircle) {
@@ -3547,8 +3540,8 @@ class DubMateApp {
     }
 
     if (this.countdownSessionId !== sessionId) return;
-    this.overlayCountdown.innerText = "GO!";
-    this.overlayStatusText.innerText = "RECORDING...";
+    this.overlayCountdown.innerText = "GO";
+    this.overlayStatusText.innerText = "RECORDING";
 
     // Emerald / Cyan flash ring on GO!
     if (countdownCircle) {
@@ -3637,16 +3630,16 @@ class DubMateApp {
 
     if (this.boothProcessingTitle) {
       if (this.applyNoiseReduction) {
-        this.boothProcessingTitle.innerText = "✨ AI Voice Clean (DeepFilterNet 3)...";
+        this.boothProcessingTitle.innerText = "Saving take…";
       } else {
-        this.boothProcessingTitle.innerText = "🎙️ Processing Voice Take";
+        this.boothProcessingTitle.innerText = "Saving take…";
       }
     }
     if (this.boothProcessingSub) {
       if (this.applyNoiseReduction) {
-        this.boothProcessingSub.innerText = "Deep neural filtering isolating voice, removing room fans & AC...";
+        this.boothProcessingSub.innerText = "Removing background noise";
       } else {
-        this.boothProcessingSub.innerText = "Transcoding audio, computing waveform peaks & saving to session...";
+        this.boothProcessingSub.innerText = "";
       }
     }
 
@@ -3704,7 +3697,7 @@ class DubMateApp {
       this.recordState = 'idle';
       this.updateRecordButtonUI();
       this.setBoothProcessing(false);
-      this.showToast("No audio recorded.");
+      this.showToast("Nothing was recorded. Check your microphone.");
       return;
     }
 
@@ -3754,12 +3747,12 @@ class DubMateApp {
           this.screeningBuffers.set(data.take.url, recordedBuffer);
         }
       }
-      this.showToast("Take recorded & saved! 🎙️");
+      this.showToast("Take saved");
       await this.loadBoothLine(lineIndex);
     } catch (err) {
       this.recordState = 'idle';
       this.updateRecordButtonUI();
-      this.showToast(this.friendlyError(err, "That take didn't save. Please record it again."));
+      this.showToast(this.friendlyError(err, "That take didn't save. Record it again."));
     } finally {
       this.setBoothProcessing(false);
     }
@@ -3801,27 +3794,27 @@ class DubMateApp {
     if (!this.isReadyForScreening) {
       this.toggleMyReadiness();
     } else {
-      this.showToast("🎉 You're marked Ready for the Premiere! 🍿");
+      this.showToast("You're marked ready");
     }
 
     const isHost = this.isHost({ allowDummy: true });
     if (isHost) {
       const users = Object.values(this.roomState?.users || {}).filter(u => u.is_online);
       const readyCount = users.filter(u => u.is_ready).length;
-      if (confirm(`🎉 All your lines are complete! ${readyCount}/${users.length} cast members are marked Ready.\n\nProceed to the Premiere Screening Theater now?`)) {
+      if (confirm(`All your lines are done. ${readyCount} of ${users.length} actors are ready.\n\nGo to the premiere now?`)) {
         this.showView('screening');
         this.setupScreeningView();
         this.broadcastMyStatus('screening');
       }
     } else {
-      this.showToast("🎉 Great job! All your lines are finished. Waiting for Room Host to begin the Premiere!");
+      this.showToast("All your lines are done. The host will start the premiere.");
     }
   }
 
   clearCurrentTake() {
     if (this.isProcessingTake) return;
     this.cancelCurrentCountdown();
-    if (confirm("Are you sure you want to clear this take?")) {
+    if (confirm("Delete this take?")) {
       this.socket.clearTake(this.currentLineIndex);
       this.audio.evictTakeCache(this.currentLineIndex);
       delete this.roomState.takes[this.currentLineIndex];

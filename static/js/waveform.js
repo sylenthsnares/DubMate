@@ -352,7 +352,7 @@ export class WaveformRenderer {
       ctx.fillStyle = 'rgba(168, 159, 149, 0.4)';
       ctx.font = '500 10.5px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('Original reference audio loading...', 110, lane1MidY + 3);
+      ctx.fillText('Loading original…', 110, lane1MidY + 3);
     }
 
     // -------------------------------------------------------------
@@ -430,7 +430,7 @@ export class WaveformRenderer {
       ctx.fillStyle = 'rgba(168, 159, 149, 0.5)';
       ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('No take recorded yet — punch in above or press Space to record', 110, lane2MidY + 3);
+      ctx.fillText('No take yet. Press Space to record.', 110, lane2MidY + 3);
     }
 
     // -------------------------------------------------------------
@@ -453,7 +453,7 @@ export class WaveformRenderer {
     ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('ORIGINAL REF', 50, lane1Top + 13);
+    ctx.fillText('ORIGINAL', 50, lane1Top + 13);
 
     // Track 2 Badge: YOUR TAKE
     ctx.fillStyle = hasTake ? 'rgba(30, 20, 10, 0.92)' : 'rgba(20, 17, 14, 0.88)';
@@ -535,7 +535,7 @@ export class WaveformRenderer {
       ctx.font = '600 9.5px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      ctx.fillText('Drag waveform or use [ ] keys to sync', w - 10, lane2Top + 13);
+      ctx.fillText('Drag or press [ ] to adjust timing', w - 10, lane2Top + 13);
     }
 
     // -------------------------------------------------------------

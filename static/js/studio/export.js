@@ -70,10 +70,10 @@ export class ExportMethods {
     }
     if (this.exportModalBadge) {
       this.exportModalBadge.className = 'badge-render-live';
-      this.exportModalBadge.innerText = 'PROCESSING';
+      this.exportModalBadge.innerText = 'RENDERING';
     }
     if (this.exportModalTitle) {
-      this.exportModalTitle.innerText = 'Master Dub Rendering';
+      this.exportModalTitle.innerText = 'Rendering your dub';
     }
     if (this.exportModalReassurance) {
       this.exportModalReassurance.style.display = 'flex';
@@ -86,7 +86,7 @@ export class ExportMethods {
     if (this.exportSavedPath) {
       this.exportSavedPath.classList.remove('is-visible');
     }
-    this.updateExportModalStep(1, 25, "Applying vocal EQ, studio compression & acoustic room reverb...");
+    this.updateExportModalStep(1, 25, "Mixing your takes with the scene…");
     this.pauseScreeningPlayback();
     if (locked) this.lockScreeningUI(true);
   }
@@ -120,7 +120,7 @@ export class ExportMethods {
       this.roomState.download_url = data.download_url || data.download_url_16_9;
     }
 
-    this.updateExportModalStep(3, 100, "✅ Master Dubbed Video Rendered Successfully!");
+    this.updateExportModalStep(3, 100, "Your video is ready.");
 
     if (this.modalStepReady) {
       this.modalStepReady.className = 'modal-step-item completed';
@@ -133,7 +133,7 @@ export class ExportMethods {
       this.exportModalBadge.innerText = 'READY';
     }
     if (this.exportModalTitle) {
-      this.exportModalTitle.innerText = 'Master Dub Video Ready!';
+      this.exportModalTitle.innerText = 'Your dub is ready';
     }
     if (this.exportModalReassurance) {
       this.exportModalReassurance.style.display = 'none';
@@ -169,7 +169,7 @@ export class ExportMethods {
     if (this.stepMux) { this.stepMux.className = 'step-item completed'; }
     if (this.stepReady) { this.stepReady.className = 'step-item active'; }
     if (this.exportStatusText) {
-      this.exportStatusText.innerText = "✅ Master Dubbed Video Rendered Successfully!";
+      this.exportStatusText.innerText = "Your video is ready.";
     }
     if (this.btnDownloadLink) {
       this.btnDownloadLink.href = download169;
@@ -209,9 +209,9 @@ export class ExportMethods {
   }
 
   failExport(err) {
-    const message = this.friendlyError(err, "The export didn't finish. Please try again.");
+    const message = this.friendlyError(err, "The export didn't finish. Try again.");
     this.releaseExportModal();
-    this.updateExportModalStep(1, 0, `❌ ${message}`);
+    this.updateExportModalStep(1, 0, message);
     if (this.exportModalBadge) {
       this.exportModalBadge.innerText = 'FAILED';
     }
@@ -261,7 +261,7 @@ export class ExportMethods {
       }
 
       // If background rendering in progress, update step 2 and poll until ready
-      this.updateExportModalStep(2, 65, "Encoding multi-track audio & video stems in frame-accurate sync...");
+      this.updateExportModalStep(2, 65, "Making the video…");
 
       const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${aspectRatio}`;
       let attempts = 0;
@@ -305,8 +305,8 @@ export class ExportMethods {
           // which nothing in the app let them do.
           this.releaseExportModal();
           this.updateExportModalStep(2, 85,
-            "Still rendering — long scenes can take several minutes. " +
-            "You can close this and keep working; the video will appear here when it's done.");
+            "Still rendering. Long scenes can take a few minutes. " +
+            "You can close this and keep working. The video will show up here when it's done.");
           if (attempts >= maxAttempts * 4) {
             clearInterval(pollInterval);
             this.failExport("timed out");
@@ -336,8 +336,8 @@ export class ExportMethods {
       control = null,
       busyText = 'Preparing…',
       startMessage = '',
-      doneMessage = '✅ Download saved.',
-      errorText = "Couldn't download that file. Please try again.",
+      doneMessage = 'Download saved',
+      errorText = "Couldn't download that file. Try again.",
     } = options;
 
     if (!url) {
@@ -382,7 +382,7 @@ export class ExportMethods {
       this.showToast(doneMessage);
       return true;
     } catch (err) {
-      this.showToast(`❌ ${this.friendlyError(err, errorText)}`);
+      this.showToast(this.friendlyError(err, errorText));
       return false;
     } finally {
       if (objectUrl) {
@@ -429,8 +429,8 @@ export class ExportMethods {
       const dir = await this.fetchExportsDir();
       this.showExportSavedPath();
       this.showToast(dir
-        ? `✅ Already saved to ${dir}`
-        : '✅ Already saved in your Render & Export Folder.');
+        ? `Already saved to ${dir}`
+        : 'Already saved in your export folder.');
       return true;
     }
 
@@ -450,15 +450,15 @@ export class ExportMethods {
     return this.saveRemoteFile(url, `DubMate_${packName}_${suffix}.mp4`, {
       control,
       busyText: '⏳ Preparing…',
-      startMessage: '⏳ Preparing your download…',
-      doneMessage: '✅ Video downloaded.',
-      errorText: "Couldn't download that video. Please try again.",
+      startMessage: 'Preparing download…',
+      doneMessage: 'Video downloaded',
+      errorText: "Couldn't download that video. Try again.",
     });
   }
 
   async downloadFullProjectZip(control = null) {
     if (!this.roomState?.room_id) {
-      this.showToast("No active session to export.");
+      this.showToast("Join a room first.");
       return false;
     }
     const roomId = this.roomState.room_id;
@@ -471,10 +471,10 @@ export class ExportMethods {
     // their own session over a failed download.
     return this.saveRemoteFile(zipUrl, `DubMate_Project_${packName}_${roomId}.zip`, {
       control,
-      busyText: '⏳ Generating ZIP…',
-      startMessage: "📦 Packaging Full Project ZIP (MP3 Stems, Takes & Video)... Download starting!",
-      doneMessage: "📦 Project ZIP downloaded.",
-      errorText: "Couldn't build the project ZIP. Please try again.",
+      busyText: 'Preparing…',
+      startMessage: "Preparing project files…",
+      doneMessage: "Project files downloaded",
+      errorText: "Couldn't build the project files. Try again.",
     });
   }
 

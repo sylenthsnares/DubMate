@@ -41,7 +41,7 @@ export class ScreeningMethods {
         this.btnAspect916.classList.remove('active');
         this.btnAspect916.setAttribute('aria-checked', 'false');
         document.querySelector('.theater-player')?.classList.remove('shorts-mode');
-        this.showToast("Aspect ratio set to 🖥️ 16:9 Cinema");
+        this.showToast("Video shape: 16:9 landscape");
       });
 
       this.btnAspect916.addEventListener('click', () => {
@@ -51,7 +51,7 @@ export class ScreeningMethods {
         this.btnAspect169.classList.remove('active');
         this.btnAspect169.setAttribute('aria-checked', 'false');
         document.querySelector('.theater-player')?.classList.add('shorts-mode');
-        this.showToast("Aspect ratio set to 📱 9:16 Shorts (Vertical Letterboxed)");
+        this.showToast("Video shape: 9:16 vertical");
       });
     }
 
@@ -62,7 +62,7 @@ export class ScreeningMethods {
       });
       this.screeningVideo.addEventListener('pause', () => {
         if (this.screeningPlayIcon) {
-          this.screeningPlayIcon.innerText = '▶ Play Dub';
+          this.screeningPlayIcon.innerText = '▶ Play';
         }
         if (!this.isUsingExportedVideo) {
           this.audio.stopAllPlayback();
@@ -135,7 +135,7 @@ export class ScreeningMethods {
       this.screeningMasterBadge.style.display = muted ? 'none' : 'inline-flex';
     }
     if (this.screeningPlayIcon) {
-      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play Dub' : '⏸ Pause Dub';
+      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play' : '⏸ Pause';
     }
   }
 
@@ -214,13 +214,13 @@ export class ScreeningMethods {
     this.screeningBalance = Math.max(0, Math.min(100, val));
     if (this.valScreeningBalance) {
       if (this.screeningBalance === 50) {
-        this.valScreeningBalance.innerText = 'Balanced (50/50)';
+        this.valScreeningBalance.innerText = 'Even';
       } else if (this.screeningBalance < 50) {
         const musicBoost = (50 - this.screeningBalance) * 2;
-        this.valScreeningBalance.innerText = `Music Heavy (+${musicBoost}%)`;
+        this.valScreeningBalance.innerText = `More music (+${musicBoost}%)`;
       } else {
         const vocalBoost = (this.screeningBalance - 50) * 2;
-        this.valScreeningBalance.innerText = `Vocals Heavy (+${vocalBoost}%)`;
+        this.valScreeningBalance.innerText = `More voice (+${vocalBoost}%)`;
       }
     }
     if (this.sliderScreeningBalance) {
@@ -241,7 +241,7 @@ export class ScreeningMethods {
   renderPresenceUI(db, { syncSlider = true } = {}) {
     if (syncSlider && this.sliderDialoguePresence) this.sliderDialoguePresence.value = db;
     if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (db === 0) ? '0.0 dB (Scene Default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
+      this.valDialoguePresence.innerText = (db === 0) ? '0.0 dB (default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
     }
     document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
       const btnVal = parseFloat(btn.dataset.presence || '0');
@@ -300,8 +300,8 @@ export class ScreeningMethods {
     const isHost = this.isHost({ allowDummy: true });
     this.screeningHostBadge.style.display = isHost ? 'inline-block' : 'none';
     this.screeningStatusDesc.innerText = isHost
-      ? "You are the Host. Control playback to sync everyone in the room."
-      : "Watching Live. Host controls playback (or use Space/Replay for local preview).";
+      ? "You control playback for everyone."
+      : "The host controls playback. Space or Replay plays it just for you.";
   }
 
   async handleScreeningPlayPause() {
@@ -363,7 +363,7 @@ export class ScreeningMethods {
     this.stopScreeningSyncMonitor();
     this.audio.stopAllPlayback();
 
-    this.screeningPlayIcon.innerText = '⏸ Pause Dub';
+    this.screeningPlayIcon.innerText = '⏸ Pause';
 
     if (this.isUsingExportedVideo) {
       // Using Master Rendered MP4: native embedded audio is 100% in hardware sync
@@ -409,7 +409,7 @@ export class ScreeningMethods {
 
   pauseScreeningPlayback() {
     this.stopScreeningSyncMonitor();
-    this.screeningPlayIcon.innerText = '▶ Play Dub';
+    this.screeningPlayIcon.innerText = '▶ Play';
     this.screeningVideo.pause();
     if (!this.isUsingExportedVideo) {
       this.audio.stopAllPlayback();
