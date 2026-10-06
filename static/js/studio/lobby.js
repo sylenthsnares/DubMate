@@ -123,6 +123,9 @@ export class LobbyMethods {
             // The shell told the engine the tunnel failed, so say what went wrong
             // rather than implying it is still on its way.
             this.showToast(share.message || "Couldn't go online. Only people on your network can join.");
+          } else if (share.state === 'not_published' && share.message) {
+            // A continued session: its code was published by an earlier run.
+            this.showToast(share.message);
           } else {
             this.showToast(share.direct_url
               ? "Your room code isn't ready yet. Use Copy invite to share a direct link."
@@ -156,7 +159,9 @@ export class LobbyMethods {
     if (share && !share.code_is_live) {
       if (share.direct_url) {
         text = share.direct_url;
-        message = "Room code isn't ready yet, so the invite link was copied instead.";
+        message = share.state === 'not_published'
+          ? 'Invite link copied.'
+          : "Room code isn't ready yet, so the invite link was copied instead.";
       } else {
         message = `Room code ${code} copied. It only works on your network for now.`;
       }

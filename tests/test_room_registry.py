@@ -372,6 +372,39 @@ def test_share_endpoint_rejects_unknown_room():
     print("[PASS] /api/rooms/{code}/share 404s for a room we do not host")
 
 
+def test_restored_room_reports_not_published():
+    """A room restored from disk (startup or Continue) isn't queued and has no status:
+    its code was published by an earlier run, so the share payload says so and points
+    at the direct link. A code this run queued still reports waiting."""
+    try:
+        _reset_registry_state()
+        room_registry.TUNNEL_ERROR = None
+        room_registry.ACTIVE_TUNNEL_URL = "https://now.trycloudflare.com"
+        restored = room_registry.build_room_share_payload("old123")
+        assert restored["state"] == "not_published", restored
+        assert restored["message"] == (
+            "Room codes stop working when DubMate closes. Copy invite gives a link that works now.")
+        assert restored["code_is_live"] is False
+        assert restored["direct_url"] == "https://now.trycloudflare.com?room=OLD123"
+
+        # Without a tunnel there is no working link either, so the failure is reported.
+        room_registry.ACTIVE_TUNNEL_URL = None
+        room_registry.TUNNEL_ERROR = "The public tunnel did not come up."
+        assert room_registry.build_room_share_payload("OLD123")["state"] == "tunnel_unavailable"
+        room_registry.TUNNEL_ERROR = None
+
+        room_registry.WORKER_PENDING_ROOMS["NEW123"] = "1.0"
+        pending = room_registry.build_room_share_payload("NEW123")
+        assert pending["state"] == "waiting", pending
+        assert pending["message"] == "Getting your room code ready."
+        room_registry._set_room_status("NEW123", "publishing", "Getting your room code ready.")
+        assert room_registry.build_room_share_payload("NEW123")["state"] == "publishing"
+        print("[PASS] a restored room reports not_published; queued codes are unchanged")
+    finally:
+        room_registry.TUNNEL_ERROR = None
+        _reset_registry_state()
+
+
 if __name__ == "__main__":
     test_room_created_before_tunnel_is_published_when_tunnel_arrives()
     test_room_created_after_tunnel_publishes_immediately()
@@ -380,4 +413,5 @@ if __name__ == "__main__":
     test_rejected_key_is_not_retried_until_the_tunnel_changes()
     test_a_failed_tunnel_is_reported_instead_of_waiting_forever()
     test_share_endpoint_rejects_unknown_room()
+    test_restored_room_reports_not_published()
     print("\n[OK] Room registry suite passed")

@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import pack_loader
-from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api
+from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -305,6 +305,8 @@ app.include_router(room_registry.router)
 # Room REST routes and the room WebSocket live in dubmate/rooms_api.py and
 # dubmate/room_ws.py; registered here so they keep their original position.
 app.include_router(rooms_api.router)
+# Recent sessions (list, continue, remove) live in dubmate/sessions_api.py.
+app.include_router(sessions_api.router)
 app.include_router(room_ws.router)
 
 # Room check (noise profile) routes live in dubmate/noise_profiles_api.py.

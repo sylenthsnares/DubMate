@@ -24,11 +24,6 @@ from dubmate import common, packs_cache, rooms, room_registry
 
 router = APIRouter()
 
-# create_room prunes old sessions in a worker thread; serializing creation keeps a
-# concurrent create from inserting a room that an older prune then removes.
-_ROOM_CREATE_LOCK = asyncio.Lock()
-
-
 @router.post("/api/rooms")
 async def create_room(payload: Dict[str, Any], request: Request):
     pack_id = payload.get("pack_id")
@@ -38,7 +33,7 @@ async def create_room(payload: Dict[str, Any], request: Request):
 
     pack = packs_cache.pack_or_404(pack_id, "Selected pack not found")
 
-    async with _ROOM_CREATE_LOCK:
+    async with rooms.sessions_lock():
         room_id = rooms.new_room_code()
         # Delete old sessions beyond the recent ones the Continue card keeps
         await asyncio.to_thread(rooms.prune_sessions, keep_room_id=room_id)

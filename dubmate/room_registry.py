@@ -46,8 +46,10 @@ REGISTRY_REFRESH_SECONDS = 4 * 60 * 60
 WORKER_ROOM_TOKENS: Dict[str, str] = {}
 
 # Codes created by *this* process, mapped to the app version they were created with.
-# Rooms restored from disk on startup are deliberately excluded: those sessions are
-# over, and republishing them would only collide with whoever holds the code now.
+# Rooms restored from disk (at startup or by Continue) are deliberately excluded and
+# stay unpublished: their ownership token died with the earlier run, so republishing
+# would only collide with whoever holds the code now. Their share payload reports
+# "not_published" and invites use the direct link.
 WORKER_PENDING_ROOMS: Dict[str, str] = {}
 
 # Tunnel URL (and write time) each code is currently published under. Used to skip
@@ -131,6 +133,8 @@ def _set_room_status(room_id: str, state: str, message: str, tunnel_url: Optiona
       unauthorized - the registry rejected our key, so codes are unavailable
       conflict     - somebody else already holds this code
       error        - transient failure; the heartbeat will retry
+    A restored room has no status and isn't queued; build_room_share_payload reports it
+    as not_published (the code isn't published again, the direct link still works).
     """
     WORKER_ROOM_STATUS[room_id.upper()] = {
         "state": state,
@@ -289,6 +293,11 @@ def build_room_share_payload(room_id: str) -> Dict[str, Any]:
     code = room_id.upper()
     default_state = "waiting"
     default_message = "Getting your room code ready."
+    if code not in WORKER_ROOM_STATUS and code not in WORKER_PENDING_ROOMS:
+        # A room restored from disk: its code was published by an earlier run.
+        default_state = "not_published"
+        default_message = "Room codes stop working when DubMate closes. Copy invite gives a link that works now."
+    # A failed tunnel wins: without it there is no link that works now either.
     if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL:
         default_state = "tunnel_unavailable"
         default_message = TUNNEL_ERROR

@@ -103,6 +103,7 @@ DubMate
 │   │   ├── packs_api.py       # /api/packs routes
 │   │   ├── rooms.py           # Room model, room table & persistence
 │   │   ├── rooms_api.py       # Room REST routes: create, takes, export, downloads
+│   │   ├── sessions_api.py    # Recent sessions: list, continue, remove (own computer only)
 │   │   ├── room_ws.py         # Room WebSocket endpoint
 │   │   ├── room_registry.py   # Public room-code registry (worker) & /api/tunnel
 │   │   └── builder_api.py     # /api/builder Pack Builder routes

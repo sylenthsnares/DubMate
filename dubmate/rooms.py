@@ -331,6 +331,18 @@ def room_or_404(room_id: str) -> Room:
 
 RECENT_SESSIONS_KEEP = 5
 
+# Held by room creation (which prunes), Continue and Remove, so a concurrent create
+# can't insert a room that an older prune then removes, and Continue can't load a
+# session that Remove is deleting. Built lazily so it binds to the server's loop.
+SESSIONS_LOCK: Optional[asyncio.Lock] = None
+
+
+def sessions_lock() -> asyncio.Lock:
+    global SESSIONS_LOCK
+    if SESSIONS_LOCK is None:
+        SESSIONS_LOCK = asyncio.Lock()
+    return SESSIONS_LOCK
+
 
 def _rooms_dir() -> str:
     return os.path.join(audio_processor.CACHE_DIR, "rooms")
