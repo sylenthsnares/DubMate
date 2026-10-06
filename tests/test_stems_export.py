@@ -2,13 +2,16 @@
 """
 test_stems_export.py
 Stems export (documentation/design/stems-export.md): the scene mix split into buses
-(_mix_buses, _mix_scene on top of it) and the stems zip (build_stems_zip).
+(_mix_buses, _mix_scene on top of it), the stems zip (build_stems_zip) and its route
+(GET /api/rooms/{room}/export/stems), which holds export_status["stems"] until the file is sent.
 Renders are mocked as the take itself (the voice chain is covered by test_vocal_chain.py);
 the fitted take goes through the real take fitting.
 """
 
+import asyncio
 import contextlib
 import io
+import json
 import os
 import shutil
 import struct
@@ -23,9 +26,13 @@ import numpy as np
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
 import audio_processor
+import test_effects_rack
+from dubmate import common, rooms_api, vocal_chain
 from pack_loader import PackInfo
+from test_take_model import RoomCase
 
 SR = 44100
 
@@ -303,6 +310,166 @@ class TestStemsZip(StemsCase):
                 audio_processor.build_stems_zip(pack, takes, os.path.join(self.dir, "out", "s.zip"))
         self.assertEqual(len(made), 1)
         self.assertFalse(os.path.exists(made[0]))
+
+
+
+BUSY = "Someone is already getting the stems. Try again in a moment."
+REFRESHING = "Older takes are being refreshed. Try again in a moment."
+FAILED = "Couldn't get the stems. Try again."
+
+
+class StemsRouteCase(RoomCase):
+    """The export folder in a temp dir; TestStemsRoute mocks renders as the take itself,
+    TestOldRoomStems uses the real ones."""
+
+    @classmethod
+    def setUpClass(cls):
+        import app
+        from starlette.testclient import TestClient
+        cls.client = TestClient(app.app)
+
+    def setUp(self):
+        super().setUp()
+        self.exports = tempfile.mkdtemp(prefix="dm_stems_exports_")
+        self.addCleanup(shutil.rmtree, self.exports, True)
+        patcher = mock.patch.object(common, "_exports_dir", self.exports)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _identity(self):
+        return mock.patch.object(audio_processor, "render_take_cached", side_effect=_identity_render)
+
+    def _get(self, status=200):
+        res = self.client.get(f"/api/rooms/{self.ROOM}/export/stems")
+        self.assertEqual(res.status_code, status, res.text)
+        return res
+
+    def _stems(self, body):
+        """{name inside the zip's root folder: audio}."""
+        files = {}
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            for zi in zf.infolist():
+                root, _, rel = zi.filename.partition("/")
+                self.assertEqual(root, f"DubMate_Stems_Take_Model_Pack_{self.ROOM}")
+                path = os.path.join(self.cache, "read", rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as fh:
+                    fh.write(zf.read(zi))
+                files[rel] = audio_processor.read_wav_mono(path, SR)
+        return files
+
+
+class TestStemsRoute(StemsRouteCase):
+
+    def setUp(self):
+        super().setUp()
+        self.room = self._room()
+        self._add(self.room, "t1000", 300, offset_ms=40)
+        self._add(self.room, "t3000", 400, gain_db=-2.0)
+
+    def test_a_download_is_a_zip_and_the_claim_is_gone_after_it(self):
+        with self._identity():
+            res = self._get()
+        self.assertEqual(res.headers["content-type"], "application/zip")
+        self.assertIn(f'filename="DubMate_Stems_Take_Model_Pack_{self.ROOM}.zip"',
+                      res.headers["content-disposition"])
+        self.assertEqual(res.headers["cache-control"], "no-cache, must-revalidate")
+        files = self._stems(res.content)
+        self.assertIn("Dialogue.wav", files)
+        self.assertIn("Music_and_Effects.wav", files)
+        self.assertNotIn("stems", self.room.export_status)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.exports, f"DubMate_Stems_{self.PACK_ID}_{self.ROOM}.zip")))
+
+    def test_b_refused_while_someone_gets_them_or_takes_are_refreshed(self):
+        with mock.patch.object(audio_processor, "build_stems_zip") as built:
+            self.room.export_status["stems"] = "processing"
+            self.assertEqual(self._get(409).json()["detail"], BUSY)
+            self.assertEqual(self.room.export_status["stems"], "processing")
+            del self.room.export_status["stems"]
+            self.room.cleanup_refreshing["u1"] = 1
+            self.assertEqual(self._get(409).json()["detail"], REFRESHING)
+            self.assertNotIn("stems", self.room.export_status)
+        built.assert_not_called()
+
+    def test_c_failures_release_the_claim(self):
+        for error, status, detail in ((audio_processor.EffectsUnavailable("Voice effects are missing."), 503,
+                                       "Voice effects are missing."),
+                                      (RuntimeError("boom"), 500, FAILED)):
+            with self.subTest(status=status):
+                with mock.patch.object(audio_processor, "build_stems_zip", side_effect=error), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(self._get(status).json()["detail"], detail)
+                self.assertNotIn("stems", self.room.export_status)
+
+    def test_d_claim_is_held_through_the_send(self):
+        scope = {"type": "http", "method": "GET", "headers": []}
+
+        async def receive():
+            return {"type": "http.request"}
+
+        with self._identity():
+            response = asyncio.run(rooms_api.download_room_stems(self.ROOM))
+        self.assertEqual(self.room.export_status.get("stems"), "processing")
+        seen = []
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                seen.append(self.room.export_status.get("stems"))
+
+        asyncio.run(response(scope, receive, send))
+        self.assertGreater(len(seen), 1)
+        self.assertEqual(set(seen), {"processing"})
+        self.assertNotIn("stems", self.room.export_status)
+
+        with self._identity():
+            response = asyncio.run(rooms_api.download_room_stems(self.ROOM))
+        self.assertEqual(self.room.export_status.get("stems"), "processing")
+
+        async def broken_send(message):
+            if message["type"] == "http.response.body":
+                raise OSError("connection reset")
+
+        with self.assertRaises(OSError):
+            asyncio.run(response(scope, receive, broken_send))
+        self.assertNotIn("stems", self.room.export_status)
+
+    def test_e_room_dialogue_level_reaches_the_stems(self):
+        self.room.master_dialogue_presence_db = 4.5
+
+        def build(**kwargs):
+            with open(kwargs["output_zip_path"], "wb") as fh:
+                fh.write(b"PK")
+            return kwargs["output_zip_path"]
+
+        with mock.patch.object(audio_processor, "build_stems_zip", side_effect=build) as built:
+            self._get()
+        kwargs = built.call_args.kwargs
+        self.assertEqual(kwargs["presence_db"], 4.5)
+        self.assertEqual(kwargs["room_id"], self.ROOM)
+        self.assertIs(kwargs["pack"], self.room.pack)
+        self.assertEqual(sorted(kwargs["takes_dict"]), [0, 1])
+
+
+@unittest.skipUnless(vocal_chain.available(), "pedalboard is not installed")
+class TestOldRoomStems(StemsRouteCase):
+    """A room saved before the effects rack (PR #14 era) exports stems with its real renders."""
+
+    def setUp(self):
+        super().setUp()
+        with open(self._state_file(), "w", encoding="utf-8") as f:
+            json.dump(test_effects_rack.TestRoomLoads._v2_state(self), f)
+        self.room = self._reload()
+
+    def test_f_room_from_before_the_rack_gets_its_stems(self):
+        files = self._stems(self._get().content)
+        self.assertNotIn("stems", self.room.export_status)
+        mix = audio_processor._mix_scene(self.room.pack, self.room.mix_takes(),
+                                         presence_db=self.room.master_dialogue_presence_db)
+        summed = files["Dialogue.wav"] + files["Music_and_Effects.wav"]
+        self.assertEqual(len(summed), len(mix))
+        self.assertGreater(float(np.max(np.abs(mix))), 0.01)
+        np.testing.assert_allclose(summed, mix * _gain(mix), atol=1e-5)
 
 
 if __name__ == "__main__":
