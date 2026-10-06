@@ -60,7 +60,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
     def tearDownClass(cls):
         try:
             cls.client.__exit__(None, None, None)
-            rooms.prune_sessions(keep_room_id="NONE")
+            rooms.prune_sessions(keep_room_id="NONE", keep=0)
         finally:
             cls.cache_patch.stop()
             shutil.rmtree(cls.cache, ignore_errors=True)
@@ -274,7 +274,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
         finally:
             if profile_id:
                 audio_processor.delete_noise_profile(profile_id)
-            rooms.prune_sessions(keep_room_id="NONE")
+            rooms.prune_sessions(keep_room_id="NONE", keep=0)
 
 
 if __name__ == "__main__":

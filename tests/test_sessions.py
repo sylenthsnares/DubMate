@@ -193,6 +193,137 @@ class TestDeletedRoomSave(SessionCase):
         self.assertFalse(os.path.exists(self.room_dir))
 
 
+def _take_entry(take_id="aa11bb22"):
+    return {"picked": take_id, "next_number": 2, "takes": [{
+        "take_id": take_id, "user_name": "Host", "duration": 0.25, "audio_version": 1,
+        "noise_reduction": False, "has_raw": True, "number": 1}]}
+
+
+class TestRetention(SessionCase):
+    BASE = 1_790_000_000.0
+
+    def _folder(self, room_id, state=None, raw=None, mtime=None):
+        folder = audio_processor.get_room_cache_dir(room_id)
+        path = os.path.join(folder, "room_state.json")
+        if state is not None:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({**PR16_STATE, "room_id": room_id, **state}, f)
+        elif raw is not None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(raw)
+        if mtime is not None:
+            if os.path.exists(path):
+                os.utime(path, (mtime, mtime))
+            os.utime(folder, (mtime, mtime))
+        return folder
+
+    def _exists(self, room_id):
+        return os.path.isdir(os.path.join(self.cache, "rooms", room_id))
+
+    def _setup(self):
+        shutil.rmtree(self.room_dir)  # setUp's empty folder would be the newest
+        takes = {"t1000": _take_entry()}
+        for i in range(5):  # REC0 newest .. REC4 oldest of the five
+            self._folder(f"REC{i}", {"takes": takes, "last_active_at": self.BASE - i * 100, "created_here": True})
+        self._folder("OLDTK", {"takes": takes, "last_active_at": self.BASE - 10_000})
+        self._folder("EMPTY", {"takes": {}, "last_active_at": self.BASE + 50})
+        self._folder("BROKEN", raw="{not json", mtime=self.BASE + 500)
+        self._folder("GUEST", {"takes": takes, "last_active_at": self.BASE + 60, "created_here": False})
+        self._folder("LIVE", {"takes": takes, "last_active_at": self.BASE - 20_000, "created_here": False})
+        live = rooms.load_room_folder("LIVE")
+        live.sockets.add(object())
+
+    def test_summaries(self):
+        self._setup()
+        os.makedirs(os.path.join(self.cache, "rooms", "NOSTATE"))
+        by_id = {s["room_id"]: s for s in rooms.session_summaries()}
+        self.assertEqual(len(by_id), 11)
+        rec0 = by_id["REC0"]
+        self.assertEqual(rec0, {
+            "room_id": "REC0", "pack_id": self.PACK_ID, "pack_name": "Sessions Pack", "pack_found": True,
+            "recorded_lines": 1, "total_lines": 2, "last_active_at": self.BASE, "status": "recording",
+            "readable": True, "listed": True})
+        self.assertFalse(by_id["EMPTY"]["listed"])
+        self.assertFalse(by_id["GUEST"]["listed"])
+        self.assertFalse(by_id["LIVE"]["listed"])  # summarised from memory
+        self.assertEqual(by_id["LIVE"]["pack_name"], "Sessions Pack")
+        self.assertEqual(by_id["BROKEN"]["readable"], False)
+        self.assertEqual(by_id["BROKEN"]["listed"], True)
+        self.assertEqual(by_id["BROKEN"]["last_active_at"], self.BASE + 500)
+        self.assertFalse(by_id["NOSTATE"]["listed"])
+
+    def test_missing_pack_and_old_files(self):
+        self._folder("NOPACK", {"pack_id": "gone_pack", "takes": {"t1000": _take_entry()}})
+        os.utime(os.path.join(self.cache, "rooms", "NOPACK", "room_state.json"), (OLD_MTIME, OLD_MTIME))
+        v1 = {k: v for k, v in PR16_STATE.items() if k != "state_version"}
+        v1["takes"] = {"0": {"user_name": "Host", "duration": 0.25}, "7": {"user_name": "Host"}}
+        self._folder("VONE")
+        with open(os.path.join(self.cache, "rooms", "VONE", "room_state.json"), "w", encoding="utf-8") as f:
+            json.dump(v1, f)
+        by_id = {s["room_id"]: s for s in rooms.session_summaries()}
+        nopack = by_id["NOPACK"]
+        self.assertFalse(nopack["pack_found"])
+        self.assertEqual(nopack["pack_name"], "gone_pack")
+        self.assertEqual(nopack["last_active_at"], OLD_MTIME)
+        self.assertTrue(nopack["listed"])
+        self.assertEqual(by_id["VONE"]["recorded_lines"], 1)  # index 7 is not in the scene
+        self.assertTrue(by_id["VONE"]["listed"])
+
+    def test_prune_keeps_what_the_card_shows(self):
+        self._setup()
+        recent = [s["room_id"] for s in rooms.recent_sessions()]
+        self.assertEqual(recent, ["BROKEN", "REC0", "REC1", "REC2", "REC3"])
+        self._folder("NEWRM")
+        from dubmate import room_registry
+        for code in ("REC4", "GUEST"):
+            room_registry.WORKER_PENDING_ROOMS[code] = "1.0"
+            room_registry._set_room_status(code, "waiting", "x")
+        self.addCleanup(room_registry.WORKER_PENDING_ROOMS.clear)
+        self.addCleanup(room_registry.WORKER_ROOM_STATUS.clear)
+
+        rooms.prune_sessions(keep_room_id="NEWRM")
+
+        for kept in ("NEWRM", "LIVE", "BROKEN", "REC0", "REC1", "REC2", "REC3"):
+            self.assertTrue(self._exists(kept), kept)
+        for gone in ("REC4", "OLDTK", "EMPTY", "GUEST"):
+            self.assertFalse(self._exists(gone), gone)
+        for room_id in recent:
+            self.assertTrue(self._exists(room_id), room_id)
+        self.assertIn("LIVE", rooms.ROOMS)
+        for code in ("REC4", "GUEST"):
+            self.assertNotIn(code, room_registry.WORKER_PENDING_ROOMS)
+            self.assertNotIn(code, room_registry.WORKER_ROOM_STATUS)
+
+    def test_prune_without_keep_room_keeps_newest(self):
+        self._setup()
+        rooms.prune_sessions(keep=0)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.cache, "rooms"))), ["BROKEN", "LIVE"])
+
+    def test_prune_everything_but_live(self):
+        self._setup()
+        rooms.prune_sessions(keep_room_id="NONE", keep=0)
+        self.assertEqual(os.listdir(os.path.join(self.cache, "rooms")), ["LIVE"])
+        self.assertEqual(list(rooms.ROOMS), ["LIVE"])
+
+    def test_pruned_loaded_room_save_leaves_no_folder(self):
+        self._folder("DIRTY", {"takes": {"t1000": _take_entry()}, "created_here": False})
+        room = rooms.load_room_folder("DIRTY")
+        room._save_dirty = True
+        rooms.prune_sessions(keep_room_id="NONE", keep=0)
+        self.assertTrue(room.deleted)
+        self.assertNotIn("DIRTY", rooms.ROOMS)
+        room._sync_save_to_disk()
+        self.assertFalse(self._exists("DIRTY"))
+
+    def test_unsaved_loaded_room_is_forgotten(self):
+        room = rooms.Room("NOFOLD", packs_cache.PACKS_CACHE[self.PACK_ID], "hostS", "Host", "#7c5cff")
+        rooms.ROOMS["NOFOLD"] = room
+        rooms.prune_sessions(keep_room_id="NONE", keep=0)
+        self.assertNotIn("NOFOLD", rooms.ROOMS)
+        room._sync_save_to_disk()
+        self.assertFalse(self._exists("NOFOLD"))
+
+
 class TestNewRoomCode(SessionCase):
     def test_skips_codes_in_use(self):
         rooms.ROOMS["LOADED"] = object()

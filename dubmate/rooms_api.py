@@ -40,7 +40,7 @@ async def create_room(payload: Dict[str, Any], request: Request):
 
     async with _ROOM_CREATE_LOCK:
         room_id = rooms.new_room_code()
-        # Prune any previous session recordings from disk and RAM so only the new session is kept
+        # Delete old sessions beyond the recent ones the Continue card keeps
         await asyncio.to_thread(rooms.prune_sessions, keep_room_id=room_id)
 
         host_id = str(uuid.uuid4())[:8]
