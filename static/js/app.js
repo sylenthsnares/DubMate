@@ -28,6 +28,7 @@ class DubMateApp {
     this.currentLineIndex = 0;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
+    this.backingBufferUrl = null;
     this.origBuffer = null;
 
     // Countdown & Recording Mutex
@@ -66,7 +67,10 @@ class DubMateApp {
     this.currentLineIndex = 0;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
+    this.backingBufferUrl = null;
     this.origBuffer = null;
+    // Drop any line-audio load still in flight for the previous room.
+    this.loadLineSeq = (this.loadLineSeq || 0) + 1;
     if (this.screeningBuffers) {
       this.screeningBuffers.clear();
     }
@@ -2614,12 +2618,20 @@ class DubMateApp {
     this.updateRecordButtonUI();
   }
 
+  // The cache is keyed by the pack's backing_url so a buffer from a previous
+  // room's scene is never reused, and a load that finishes after the user has
+  // left (or switched scenes) is dropped instead of being cached.
   async ensureBackingBuffer() {
-    if (this.backingBuffer) return this.backingBuffer;
-    if (!this.roomState?.pack?.backing_url) return null;
+    const url = this.roomState?.pack?.backing_url;
+    if (!url) return null;
+    if (this.backingBuffer && this.backingBufferUrl === url) return this.backingBuffer;
+    let buf = null;
     try {
-      this.backingBuffer = await this.audio.loadAudioBuffer(this.roomState.pack.backing_url);
+      buf = await this.audio.loadAudioBuffer(url);
     } catch (e) { }
+    if (this.roomState?.pack?.backing_url !== url) return null;
+    this.backingBuffer = buf || null;
+    this.backingBufferUrl = buf ? url : null;
     return this.backingBuffer;
   }
 

@@ -182,6 +182,76 @@ try {
     app.leaveRoom();
     console.log("PASS: leaveRoom() executed cleanly without errors!");
 
+    // Test 3b (B1): the backing track must not carry over from one scene to the next.
+    // Recording in scene A cached A's backing; scene B then replayed it.
+    {
+      const realLoad = app.audio.loadAudioBuffer;
+      const deferred = {};
+      app.audio.loadAudioBuffer = (u) => {
+        if (deferred[u]) return deferred[u].promise;
+        return Promise.resolve({ url: u, duration: 10 });
+      };
+      const roomFor = (id) => ({
+        room_id: "B1" + id,
+        host_id: app.user.id,
+        pack: { ...mockPacks[0], id, backing_url: `/api/packs/${id}/backing` },
+        takes: {},
+        users: {}
+      });
+
+      app.roomState = roomFor("A");
+      const bufA = await app.ensureBackingBuffer();
+      if (bufA?.url !== "/api/packs/A/backing") {
+        console.error("FAIL: B1 scene A backing did not load:", bufA);
+        process.exit(1);
+      }
+      app.leaveRoom();
+      if (app.backingBuffer !== null) {
+        console.error("FAIL: B1 leaveRoom() kept the previous scene's backing buffer");
+        process.exit(1);
+      }
+      app.roomState = roomFor("B");
+      const bufB = await app.ensureBackingBuffer();
+      if (bufB?.url !== "/api/packs/B/backing") {
+        console.error("FAIL: B1 scene B played another scene's backing:", bufB?.url);
+        process.exit(1);
+      }
+      // Same room object swapped to another pack without a reset: the cache is keyed by URL.
+      app.roomState = roomFor("C");
+      const bufC = await app.ensureBackingBuffer();
+      if (bufC?.url !== "/api/packs/C/backing") {
+        console.error("FAIL: B1 cached backing reused for a different pack:", bufC?.url);
+        process.exit(1);
+      }
+
+      // Race: scene A's load (started during the countdown) finishes after leaving.
+      app.leaveRoom();
+      app.roomState = roomFor("A");
+      let resolveA;
+      deferred["/api/packs/A/backing"] = { promise: new Promise((r) => { resolveA = r; }) };
+      const pendingA = app.ensureBackingBuffer();
+      app.leaveRoom();
+      app.roomState = roomFor("B");
+      resolveA({ url: "/api/packs/A/backing", duration: 10 });
+      await pendingA;
+      if (app.backingBuffer && app.backingBuffer.url === "/api/packs/A/backing") {
+        console.error("FAIL: B1 a late scene A backing load overwrote scene B's state");
+        process.exit(1);
+      }
+      const bufB2 = await app.ensureBackingBuffer();
+      if (bufB2?.url !== "/api/packs/B/backing") {
+        console.error("FAIL: B1 scene B backing wrong after late load:", bufB2?.url);
+        process.exit(1);
+      }
+      app.leaveRoom();
+      if (app.origBuffer !== null) {
+        console.error("FAIL: B1 leaveRoom() kept the previous scene's line audio");
+        process.exit(1);
+      }
+      app.audio.loadAudioBuffer = realLoad;
+      console.log("PASS: B1 backing track is per scene and late loads are dropped!");
+    }
+
     // Test 4: Dialogue completion & "I'm Finished" button state
     app.roomState = {
       room_id: "TEST12",
