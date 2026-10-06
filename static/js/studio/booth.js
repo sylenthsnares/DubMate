@@ -717,7 +717,7 @@ export class BoothMethods {
     if (this.soundWait === wait) this.soundWait = null;
   }
 
-  // --- Studio Noise Reduction & Mic Profile Calibration ---
+  // --- Studio Noise Reduction ---
 
   setNoiseReduction(enabled) {
     this.applyNoiseReduction = !!enabled;
@@ -736,172 +736,6 @@ export class BoothMethods {
     const currentTake = this.takeForLine(this.currentLineIndex);
     if (currentTake && this.views.booth.classList.contains('active') && !this.isProcessingTake) {
       this.toggleTakeNoiseReduction(this.currentLineIndex, this.applyNoiseReduction);
-    }
-  }
-
-  async calibrateMicNoiseProfile() {
-    if (this.isCalibratingMic) return;
-    if (!this.roomState) {
-      this.showToast("Join or create a room first.");
-      return;
-    }
-    if (!(await this.ensureMicReady())) return;
-
-    this.isCalibratingMic = true;
-    const btn = this.btnCalibrateMic;
-    const origIcon = this.calibrateIcon ? this.calibrateIcon.innerText : '🎯';
-    const origLabel = this.calibrateLabel ? this.calibrateLabel.innerText : 'Calibrate mic';
-
-    if (btn) {
-      btn.disabled = true;
-      btn.classList.add('calibrating-pulse');
-    }
-    if (this.calibrateIcon) this.calibrateIcon.innerText = '🤫';
-    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrating…';
-
-    // 1. Open the Calibration Modal
-    if (this.modalMicCalibration) {
-      this.modalMicCalibration.style.display = 'flex';
-      if (this.calibModalBadge) this.calibModalBadge.innerText = 'GET READY';
-      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Mic calibration';
-      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Stay quiet for a few seconds.';
-      if (this.calibTimerText) this.calibTimerText.innerText = '1.0s';
-      if (this.calibPhaseText) this.calibPhaseText.innerText = 'Get ready';
-      if (this.calibProgressBar) {
-        this.calibProgressBar.style.width = '0%';
-        this.calibProgressBar.className = 'modal-progress-fill';
-      }
-      if (this.calibModalIcon) this.calibModalIcon.innerText = '🤫';
-      if (this.calibRadarRing) this.calibRadarRing.className = 'calib-radar-ring';
-    }
-
-    try {
-      // 1-second pre-roll delay followed by 3-second room tone recording
-      const blob = await this.audio.recordNoiseProfile(3000, 1000, (phase, elapsedMs, totalMs) => {
-        const remainingSec = Math.max(0, (totalMs - elapsedMs) / 1000.0).toFixed(1);
-        const percent = Math.min(100, Math.max(0, (elapsedMs / totalMs) * 100));
-
-        if (phase === 'preroll') {
-          if (this.calibTimerText) this.calibTimerText.innerText = `${remainingSec}s`;
-          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Get ready';
-          if (this.calibProgressBar) this.calibProgressBar.style.width = `${percent}%`;
-          if (this.calibModalBadge) this.calibModalBadge.innerText = 'GET READY';
-          if (this.calibModalStatus) this.calibModalStatus.innerText = 'Stay quiet for a few seconds.';
-          if (this.calibModalIcon) this.calibModalIcon.innerText = '🤫';
-        } else if (phase === 'recording') {
-          if (this.calibTimerText) this.calibTimerText.innerText = `${remainingSec}s`;
-          if (this.calibPhaseText) this.calibPhaseText.innerText = 'Listening to the room';
-          if (this.calibProgressBar) this.calibProgressBar.style.width = `${percent}%`;
-          if (this.calibModalBadge) this.calibModalBadge.innerText = 'LISTENING';
-          if (this.calibModalStatus) this.calibModalStatus.innerText = 'Listening to the room…';
-          if (this.calibModalIcon) this.calibModalIcon.innerText = '🎙️';
-          if (this.calibRadarRing) this.calibRadarRing.className = 'calib-radar-ring active-radar';
-        }
-      });
-
-      if (!blob || blob.size < 32) {
-        throw new Error("No audio captured from microphone.");
-      }
-
-      if (this.calibModalBadge) this.calibModalBadge.innerText = 'SAVING';
-      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Saving…';
-      if (this.calibTimerText) this.calibTimerText.innerText = '0.0s';
-      if (this.calibProgressBar) this.calibProgressBar.style.width = '100%';
-
-      const formData = new FormData();
-      formData.append('file', blob, 'profile.webm');
-      formData.append('user_id', this.user.id);
-
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/noise_profile`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        throw new Error(`Server returned HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-      this.hasCustomNoiseProfile = true;
-
-      if (this.calibModalBadge) this.calibModalBadge.innerText = 'CALIBRATED ✓';
-      if (this.calibModalTitle) this.calibModalTitle.innerText = 'Mic calibrated';
-      if (this.calibModalStatus) this.calibModalStatus.innerText = 'Noise reduction is now tuned to your room.';
-      if (this.calibModalIcon) this.calibModalIcon.innerText = '✨';
-
-      if (this.badgeNoiseStatus) {
-        this.badgeNoiseStatus.innerText = 'Calibrated ✓';
-        this.badgeNoiseStatus.className = 'badge-calibrated calibrated';
-        this.badgeNoiseStatus.dataset.tip = 'Noise reduction is tuned to your room';
-      }
-
-      if (this.btnResetNoiseProfile) {
-        this.btnResetNoiseProfile.style.display = 'inline-flex';
-      }
-
-      this.showToast("Mic calibrated");
-
-      // If active line has a take with noise reduction enabled, re-apply with new profile
-      const take = this.takeForLine(this.currentLineIndex);
-      if (take && this.applyNoiseReduction && !this.isProcessingTake) {
-        this.toggleTakeNoiseReduction(this.currentLineIndex, true);
-      }
-
-      // Automatically close modal smoothly after brief confirmation
-      await new Promise(r => setTimeout(r, 450));
-      if (this.modalMicCalibration) {
-        this.modalMicCalibration.style.display = 'none';
-      }
-    } catch (err) {
-      if (this.modalMicCalibration) {
-        this.modalMicCalibration.style.display = 'none';
-      }
-      if (err.message && err.message.includes("cancelled")) {
-        this.showToast("Calibration cancelled");
-      } else {
-        console.warn("[App] Calibration failed:", err);
-        this.showToast(this.friendlyError(err, "Mic calibration didn't finish. Try again."));
-      }
-    } finally {
-      this.isCalibratingMic = false;
-      if (btn) {
-        btn.disabled = false;
-        btn.classList.remove('calibrating-pulse');
-      }
-      if (this.calibrateIcon) this.calibrateIcon.innerText = origIcon;
-      if (this.calibrateLabel) this.calibrateLabel.innerText = origLabel;
-    }
-  }
-
-  cancelMicNoiseCalibration() {
-    this.audio.cancelNoiseProfileCalibration();
-    if (this.modalMicCalibration) {
-      this.modalMicCalibration.style.display = 'none';
-    }
-    this.isCalibratingMic = false;
-    if (this.btnCalibrateMic) {
-      this.btnCalibrateMic.disabled = false;
-      this.btnCalibrateMic.classList.remove('calibrating-pulse');
-    }
-    if (this.calibrateIcon) this.calibrateIcon.innerText = '🎯';
-    if (this.calibrateLabel) this.calibrateLabel.innerText = 'Calibrate mic';
-  }
-
-  resetMicNoiseProfile() {
-    this.hasCustomNoiseProfile = false;
-    if (this.badgeNoiseStatus) {
-      this.badgeNoiseStatus.innerText = '● Auto';
-      this.badgeNoiseStatus.className = 'badge-calibrated uncalibrated';
-      this.badgeNoiseStatus.dataset.tip = 'Background noise is detected automatically';
-    }
-    if (this.btnResetNoiseProfile) {
-      this.btnResetNoiseProfile.style.display = 'none';
-    }
-    this.showToast("Mic calibration reset");
-
-    const take = this.takeForLine(this.currentLineIndex);
-    if (take && this.applyNoiseReduction && !this.isProcessingTake) {
-      this.toggleTakeNoiseReduction(this.currentLineIndex, true);
     }
   }
 
@@ -1215,6 +1049,8 @@ export class BoothMethods {
     formData.append('offset_ms', offsetMs);
     formData.append('gain_db', gain);
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
+    // The room check for this microphone tunes the cleanup; '' means standard cleanup.
+    formData.append('noise_profile_id', this.currentRoomProfileId() || '');
     formData.append('auto_gain', autoGain ? 'true' : 'false');
     // The mic can pick up the guide voice, so the engine doesn't line those takes up.
     // `guideVoice` is the checkbox as it was when this take started recording.

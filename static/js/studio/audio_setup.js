@@ -33,7 +33,7 @@ export function safeStorageSet(store, key, value) {
   } catch (e) { }
 }
 
-function safeStorageRemove(store, key) {
+export function safeStorageRemove(store, key) {
   try {
     if (store) store.removeItem(key);
   } catch (e) { }
@@ -284,6 +284,7 @@ export class AudioSetupMethods {
     // Fire and forget: hidden entirely if the backend has no exports_dir yet.
     this.loadExportsDirSetting();
     this.loadPackBuilderRemoval();
+    this.verifyRoomCheck();
 
     if (state === 'granted') {
       this.showAudioSetupStep('devices');
@@ -308,6 +309,8 @@ export class AudioSetupMethods {
       this.modalAudioSettings.style.display = 'none';
     }
     this.cancelMicSync();
+    this.cancelRoomCheck();
+    this.showRoomCard(null);
     this.audioSetup.firstRunMode = false;
     this.setExportsFeedback('', null);
     this.showPackBuilderRemoveConfirm(false);
@@ -419,6 +422,7 @@ export class AudioSetupMethods {
       this.renderDeviceNote(this.audioOutputNote, outputResult, devices, 'output device');
     }
     this.renderMicSyncRow();
+    this.renderRoomCheckRow();
 
     return devices;
   }
@@ -503,6 +507,7 @@ export class AudioSetupMethods {
     }
     this.audio.setPreferredInputDevice(next || null);
     this.renderMicSyncRow();
+    this.renderRoomCheckRow();
 
     // Re-point the meter at the newly selected capture device.
     if (this.isAudioSettingsOpen()) {
@@ -851,7 +856,7 @@ export class AudioSetupMethods {
     this.navigateTo(`http://127.0.0.1:${port}/`);
   }
 
-  // Guard used by the record and calibration paths so the browser permission
+  // Guard used by the record path so the browser permission
   // prompt is never the first thing a user sees.
   async ensureMicReady() {
     if (this.audioSetup.permission === 'granted' || this.audioSetup.setupComplete) return true;

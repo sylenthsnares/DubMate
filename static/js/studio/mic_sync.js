@@ -42,10 +42,14 @@ function validEntry(entry) {
 }
 
 // The chosen device, else the system default entry, else the first one listed.
-function deviceLabel(list, selectedId) {
+export function chosenDevice(list, selectedId) {
   const devices = Array.isArray(list) ? list : [];
-  const device = (selectedId && devices.find((d) => d.deviceId === selectedId))
-    || devices.find((d) => d.deviceId === 'default') || devices[0];
+  return (selectedId && devices.find((d) => d.deviceId === selectedId))
+    || devices.find((d) => d.deviceId === 'default') || devices[0] || null;
+}
+
+export function deviceLabel(list, selectedId) {
+  const device = chosenDevice(list, selectedId);
   return device ? (device.label || device.deviceId) : '';
 }
 
@@ -163,7 +167,7 @@ export class MicSyncMethods {
     }
     if (this.btnMicSync) {
       this.btnMicSync.textContent = ms === null ? 'Sync your mic' : 'Sync again';
-      this.btnMicSync.disabled = !!this.micSyncBusy;
+      this.btnMicSync.disabled = !!(this.micSyncBusy || this.roomCheckBusy);
     }
   }
 
@@ -186,6 +190,7 @@ export class MicSyncMethods {
       this.btnStartClapping.textContent = step === 'clapping' ? 'Listening…' : 'Start clapping';
     }
     this.renderMicSyncRow();
+    this.renderRoomCheckRow();
   }
 
   openMicSyncPanel() {
@@ -194,7 +199,12 @@ export class MicSyncMethods {
     if (this.btnStartMicSync) this.btnStartMicSync.focus();
   }
 
+  // Both record from the same microphone stream, so one waits for the other.
   micSyncRefused() {
+    if (this.roomCheckBusy) {
+      this.showToast('Wait for the room check to finish, then sync your mic.');
+      return true;
+    }
     if (this.recordState !== 'countdown' && this.recordState !== 'recording') return false;
     this.showToast('Finish your take, then sync your mic.');
     return true;
@@ -213,6 +223,7 @@ export class MicSyncMethods {
     if (run !== this.micSyncRun) return;
     this.micSyncBusy = false;
     this.renderMicSyncRow();
+    this.renderRoomCheckRow();
     if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
   }
 

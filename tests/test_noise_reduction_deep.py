@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import zipfile
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 from typing import Tuple
 import numpy as np
@@ -88,9 +89,24 @@ class TestDeepNoiseReduction(unittest.TestCase):
         cls.client.__exit__(None, None, None)
         rooms.prune_sessions(keep_room_id="NONE")
 
+    def _profile_cache(self):
+        """Room checks go to a temp CACHE_DIR for this test."""
+        cache = tempfile.mkdtemp(prefix="dm_nr_profiles_")
+        self.addCleanup(shutil.rmtree, cache, True)
+        patcher = mock.patch.object(audio_processor, "CACHE_DIR", cache)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _stored_settings(self, noise, sr, **overrides):
+        """Stores a room check of `noise` and returns its cleanup settings."""
+        profile_id, _ = audio_processor.save_noise_profile(noise, sr)
+        self.assertIsNotNone(profile_id)
+        return dict(audio_processor.noise_cleanup_settings(profile_id), **overrides)
+
     def test_01_noise_attenuation_across_different_noise_types(self):
         """
-        Tests that spectral/neural noise reduction effectively attenuates:
+        Tests that spectral/neural noise reduction tuned by a room check (at the strongest
+        attenuation) effectively attenuates:
         - 60Hz Electrical AC Hum
         - Computer Fan Whine (1.2kHz + hiss)
         - Room AC Sub-bass Rumble (45Hz-85Hz)
@@ -98,17 +114,20 @@ class TestDeepNoiseReduction(unittest.TestCase):
         """
         sr = 44100
         noise_types = ["hum", "fan", "rumble", "white"]
+        self._profile_cache()
 
         for ntype in noise_types:
             with self.subTest(noise_type=ntype):
                 mixed, speech, noise = generate_audio_signal(2.0, sr=sr, noise_type=ntype, noise_level=0.035, speech_level=0.45)
-                
+                _, _, room_tone = generate_audio_signal(1.0, sr=sr, noise_type=ntype, noise_level=0.035, speech_level=0.0)
+                settings = self._stored_settings(room_tone, sr, attenuation_db=100)
+
                 tmp_in = tempfile.mktemp(suffix=".wav")
                 tmp_out = tempfile.mktemp(suffix=".wav")
                 try:
                     audio_processor.write_wav_mono(tmp_in, mixed, sr)
-                    audio_processor.apply_noise_reduction(tmp_in, tmp_out, reduction_db=100.0, sr=sr)
-                    
+                    self.assertEqual(audio_processor.apply_noise_reduction(tmp_in, tmp_out, sr=sr, settings=settings), tmp_out)
+
                     self.assertTrue(os.path.isfile(tmp_out))
                     processed = audio_processor.read_wav_mono(tmp_out, sr)
                     
@@ -129,39 +148,51 @@ class TestDeepNoiseReduction(unittest.TestCase):
                         if os.path.exists(p):
                             os.remove(p)
 
+    def test_01b_strongest_attenuation_is_passed_to_deep_filter(self):
+        """With DeepFilterNet, a room check asking for 100 dB runs `-a 100`; more is clamped to 100."""
+        tmp_dir = tempfile.mkdtemp(prefix="dm_df_clamp_")
+        self.addCleanup(shutil.rmtree, tmp_dir, True)
+        fake_bin = os.path.join(tmp_dir, "deep-filter")
+        open(fake_bin, "wb").close()
+        tmp_in = os.path.join(tmp_dir, "take.wav")
+        audio_processor.write_wav_mono(tmp_in, generate_audio_signal(0.5)[0], 44100)
+        df_cmds = []
+
+        def fake_run(cmd, **kwargs):
+            df_cmds.append(list(cmd))
+            shutil.copyfile(cmd[-1], os.path.join(cmd[cmd.index("-o") + 1], os.path.basename(cmd[-1])))
+
+        with mock.patch.object(audio_processor, "get_deep_filter_path", return_value=fake_bin), \
+                mock.patch.object(audio_processor, "_ffmpeg_to_mono_wav",
+                                  side_effect=lambda src, dst, *a, **k: shutil.copyfile(src, dst)), \
+                mock.patch.object(audio_processor, "_run_subprocess", side_effect=fake_run):
+            for attenuation in (100, 150):
+                settings = {"profile_id": "0123456789ab", "attenuation_db": attenuation, "notches_hz": []}
+                audio_processor.apply_noise_reduction(tmp_in, os.path.join(tmp_dir, "out.wav"), settings=settings)
+        self.assertEqual([cmd[cmd.index("-a") + 1] for cmd in df_cmds], ["100", "100"])
+
     def test_02_custom_profile_vs_uncalibrated_spectral_subtraction(self):
         """
-        Compares denoising with a calibrated 1-second noise profile vs auto-tracking.
+        Compares denoising tuned by a stored 1-second room check vs standard cleanup.
         Verifies both produce clean output without distortion.
         """
         sr = 44100
-        test_room = "TEST_DEEP_ROOM_1"
-        user_id = "actor_deep_profile"
-        room_dir = audio_processor.get_room_cache_dir(test_room)
+        self._profile_cache()
 
+        tmp_in = tempfile.mktemp(suffix=".wav")
+        tmp_out_profiled = tempfile.mktemp(suffix=".wav")
+        tmp_out_auto = tempfile.mktemp(suffix=".wav")
         try:
-            # 1. Create 1s fan noise sample for profile
+            # 1. Store a 1s fan noise room check
             _, _, fan_noise = generate_audio_signal(1.0, sr=sr, noise_type="fan", noise_level=0.08, speech_level=0.0)
-            tmp_prof = tempfile.mktemp(suffix=".wav")
-            audio_processor.write_wav_mono(tmp_prof, fan_noise, sr)
-            with open(tmp_prof, "rb") as f:
-                prof_bytes = f.read()
-            os.remove(tmp_prof)
+            settings = self._stored_settings(fan_noise, sr)
+            self.assertTrue(audio_processor.noise_profile_wav_path(settings["profile_id"]))
 
-            prof_res = audio_processor.save_user_noise_profile(test_room, user_id, prof_bytes)
-            self.assertEqual(prof_res["status"], "ok")
-            profile_path = prof_res["profile_path"]
-            self.assertTrue(os.path.isfile(profile_path))
-
-            # 2. Process noisy speech with calibrated profile
+            # 2. Process noisy speech with the tuned settings and with standard cleanup
             mixed, _, _ = generate_audio_signal(2.0, sr=sr, noise_type="fan", noise_level=0.08, speech_level=0.4)
-            tmp_in = tempfile.mktemp(suffix=".wav")
-            tmp_out_profiled = tempfile.mktemp(suffix=".wav")
-            tmp_out_auto = tempfile.mktemp(suffix=".wav")
-
             audio_processor.write_wav_mono(tmp_in, mixed, sr)
-            audio_processor.apply_noise_reduction(tmp_in, tmp_out_profiled, noise_profile_wav=profile_path, sr=sr)
-            audio_processor.apply_noise_reduction(tmp_in, tmp_out_auto, noise_profile_wav=None, sr=sr)
+            audio_processor.apply_noise_reduction(tmp_in, tmp_out_profiled, sr=sr, settings=settings)
+            audio_processor.apply_noise_reduction(tmp_in, tmp_out_auto, sr=sr, settings=None)
 
             self.assertTrue(os.path.isfile(tmp_out_profiled))
             self.assertTrue(os.path.isfile(tmp_out_auto))
@@ -175,7 +206,9 @@ class TestDeepNoiseReduction(unittest.TestCase):
             self.assertLessEqual(np.max(np.abs(data_auto)), 1.0)
 
         finally:
-            shutil.rmtree(room_dir, ignore_errors=True)
+            for p in (tmp_in, tmp_out_profiled, tmp_out_auto):
+                if os.path.exists(p):
+                    os.remove(p)
 
     def test_03_edge_cases_and_boundaries(self):
         """
@@ -183,16 +216,22 @@ class TestDeepNoiseReduction(unittest.TestCase):
         - Pure digital silence (all zeros)
         - Very short audio (0.15s)
         - Peak audio at 1.0 (maximum headroom before clipping)
-        - Non-existent noise profile fallback
+        - Non-existent room check: without DeepFilterNet tuned cleanup returns None and
+          writes nothing, and the caller's standard cleanup still works
         """
         sr = 44100
+        self._profile_cache()
         # Case A: Digital silence
         silence = np.zeros(sr, dtype=np.float32)
         tmp_in = tempfile.mktemp(suffix=".wav")
         tmp_out = tempfile.mktemp(suffix=".wav")
         try:
             audio_processor.write_wav_mono(tmp_in, silence, sr)
-            audio_processor.apply_noise_reduction(tmp_in, tmp_out, noise_profile_wav="non_existent.wav", sr=sr)
+            unknown = {"profile_id": "0123456789ab", "attenuation_db": 30, "notches_hz": []}
+            with mock.patch.object(audio_processor, "get_deep_filter_path", return_value=None):
+                self.assertIsNone(audio_processor.apply_noise_reduction(tmp_in, tmp_out, sr=sr, settings=unknown))
+            self.assertFalse(os.path.exists(tmp_out))
+            audio_processor.apply_noise_reduction(tmp_in, tmp_out, sr=sr)
             out_data = audio_processor.read_wav_mono(tmp_out, sr)
             self.assertEqual(len(out_data), len(silence))
             self.assertLess(np.max(np.abs(out_data)), 1e-4)
@@ -231,35 +270,26 @@ class TestDeepNoiseReduction(unittest.TestCase):
 
     def test_04_multi_user_concurrent_profiles(self):
         """
-        Tests two distinct actors in the same room with distinct noise profiles.
+        Tests two distinct actors in the same room with distinct room checks.
         Actor A has electrical hum noise profile.
         Actor B has fan noise profile.
-        Verifies both takes are saved and denoised without cross-contamination.
+        Verifies both takes are saved and denoised with their own settings, under
+        different cleaned-file keys.
         """
+        self._profile_cache()
         test_room = "TEST_MULTI_ACTOR_ROOM"
-        user_a = "actor_alice"
-        user_b = "actor_bob"
         room_dir = audio_processor.get_room_cache_dir(test_room)
         sr = 44100
 
         try:
-            # Calibrate Profile A (Hum)
+            # Room check A (Hum)
             _, _, hum_noise = generate_audio_signal(1.0, sr=sr, noise_type="hum", noise_level=0.08, speech_level=0.0)
-            tmp_a = tempfile.mktemp(suffix=".wav")
-            audio_processor.write_wav_mono(tmp_a, hum_noise, sr)
-            with open(tmp_a, "rb") as f:
-                prof_bytes_a = f.read()
-            os.remove(tmp_a)
-            audio_processor.save_user_noise_profile(test_room, user_a, prof_bytes_a)
+            settings_a = self._stored_settings(hum_noise, sr)
 
-            # Calibrate Profile B (Fan)
+            # Room check B (Fan)
             _, _, fan_noise = generate_audio_signal(1.0, sr=sr, noise_type="fan", noise_level=0.08, speech_level=0.0)
-            tmp_b = tempfile.mktemp(suffix=".wav")
-            audio_processor.write_wav_mono(tmp_b, fan_noise, sr)
-            with open(tmp_b, "rb") as f:
-                prof_bytes_b = f.read()
-            os.remove(tmp_b)
-            audio_processor.save_user_noise_profile(test_room, user_b, prof_bytes_b)
+            settings_b = self._stored_settings(fan_noise, sr)
+            self.assertNotEqual(settings_a["profile_id"], settings_b["profile_id"])
 
             # Actor A records Line 0 (with hum noise)
             mixed_a, _, _ = generate_audio_signal(1.5, sr=sr, noise_type="hum", noise_level=0.08, speech_level=0.4)
@@ -270,7 +300,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             os.remove(tmp_take_a)
 
             saved_a = audio_processor.save_uploaded_take(
-                test_room, room_dir, "take_line_0", audio_bytes=take_bytes_a, enable_noise_reduction=True, user_id=user_a
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes_a, enable_noise_reduction=True, nr_settings=settings_a
             )
 
             # Actor B records Line 1 (with fan noise)
@@ -282,19 +312,27 @@ class TestDeepNoiseReduction(unittest.TestCase):
             os.remove(tmp_take_b)
 
             saved_b = audio_processor.save_uploaded_take(
-                test_room, room_dir, "take_line_1", audio_bytes=take_bytes_b, enable_noise_reduction=True, user_id=user_b
+                test_room, room_dir, "take_line_1", audio_bytes=take_bytes_b, enable_noise_reduction=True, nr_settings=settings_b
             )
 
             self.assertTrue(saved_a["noise_reduction"])
             self.assertTrue(saved_b["noise_reduction"])
+            self.assertEqual(saved_a["nr_settings"], settings_a)
+            self.assertEqual(saved_b["nr_settings"], settings_b)
             self.assertTrue(os.path.isfile(saved_a["wav_path"]))
             self.assertTrue(os.path.isfile(saved_b["wav_path"]))
 
-            # Both raw takes and denoised takes exist independently
+            # Both raw takes and denoised takes exist independently, keyed by their own check
             self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_0_raw.wav")))
-            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, "take_line_0")))
+            self.assertEqual(saved_a["denoised_path"], audio_processor.denoised_take_path(room_dir, "take_line_0", settings_a))
+            self.assertTrue(os.path.exists(saved_a["denoised_path"]))
             self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_1_raw.wav")))
-            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, "take_line_1")))
+            self.assertEqual(saved_b["denoised_path"], audio_processor.denoised_take_path(room_dir, "take_line_1", settings_b))
+            self.assertTrue(os.path.exists(saved_b["denoised_path"]))
+            key_a = os.path.basename(saved_a["denoised_path"])[len("take_line_0"):]
+            key_b = os.path.basename(saved_b["denoised_path"])[len("take_line_1"):]
+            self.assertNotEqual(key_a, key_b)
+            self.assertNotEqual(saved_a["denoised_path"], audio_processor.denoised_take_path(room_dir, "take_line_0"))
 
         finally:
             shutil.rmtree(room_dir, ignore_errors=True)
@@ -305,7 +343,6 @@ class TestDeepNoiseReduction(unittest.TestCase):
         Verifies filesystem and state consistency throughout the stress loop.
         """
         test_room = "TEST_STRESS_TOGGLE_ROOM"
-        user_id = "actor_stress"
         room_dir = audio_processor.get_room_cache_dir(test_room)
         sr = 44100
 
@@ -319,7 +356,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
 
             # Initially saved as RAW (noise reduction OFF)
             saved = audio_processor.save_uploaded_take(
-                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=False, user_id=user_id
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=False
             )
             self.assertFalse(saved["noise_reduction"])
 
@@ -331,7 +368,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             for i in range(12):
                 should_enable = (i % 2 == 0) # True on even, False on odd
                 toggled = audio_processor.toggle_take_noise_reduction(
-                    test_room, room_dir, "take_line_0", enable_noise_reduction=should_enable, user_id=user_id
+                    test_room, room_dir, "take_line_0", enable_noise_reduction=should_enable
                 )
                 self.assertEqual(toggled["noise_reduction"], should_enable)
                 expected_size = os.path.getsize(denoised_wav if should_enable else raw_wav)
@@ -363,7 +400,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             os.remove(tmp_take)
 
             saved = audio_processor.save_uploaded_take(
-                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=True, user_id="host"
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=True
             )
 
             takes_dict = {

@@ -251,7 +251,13 @@ export class ExportMethods {
       });
 
       if (!res.ok) {
-        throw new Error(`Server returned HTTP ${res.status}`);
+        // Say why when the engine does (e.g. older takes are being refreshed).
+        let detail = `Server returned HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          if (typeof body?.detail === 'string') detail = body.detail;
+        } catch { /* not JSON; the status is all we have */ }
+        throw new Error(detail);
       }
       const data = await res.json();
 

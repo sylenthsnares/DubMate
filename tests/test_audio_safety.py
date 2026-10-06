@@ -15,6 +15,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 import numpy as np
 
 # Ensure the project root is importable when this suite is run from tests/
@@ -55,23 +56,6 @@ class TestPathTraversalSanitization(unittest.TestCase):
         with self.assertRaises(ValueError):
             audio_processor._sanitize_id_token(None)
 
-    def test_get_user_noise_profile_path_rejects_traversal(self):
-        room_id = "TESTSAFE1"
-        room_dir = audio_processor.get_room_cache_dir(room_id)
-        try:
-            malicious_user_id = "../../../../evil_outside_room"
-            profile_path = audio_processor.get_user_noise_profile_path(room_id, malicious_user_id)
-            real_profile = os.path.realpath(profile_path)
-            real_room = os.path.realpath(room_dir)
-            self.assertTrue(
-                real_profile == real_room or real_profile.startswith(real_room + os.sep),
-                f"Profile path {real_profile!r} escaped room dir {real_room!r}",
-            )
-            # The dangerous ".." sequence must never survive into the actual filename.
-            self.assertNotIn("..", os.path.basename(real_profile))
-        finally:
-            shutil.rmtree(room_dir, ignore_errors=True)
-
     def test_get_room_cache_dir_rejects_traversal(self):
         malicious_room_id = "../../../outside_cache"
         room_dir = audio_processor.get_room_cache_dir(malicious_room_id)
@@ -90,11 +74,53 @@ class TestPathTraversalSanitization(unittest.TestCase):
         user_id = "user_abc-123"
         room_dir = audio_processor.get_room_cache_dir(room_id)
         try:
-            profile_path = audio_processor.get_user_noise_profile_path(room_id, user_id)
-            self.assertIn(room_dir, profile_path)
-            self.assertIn(user_id, os.path.basename(profile_path))
+            self.assertEqual(os.path.basename(room_dir), room_id)
+            self.assertEqual(audio_processor._sanitize_id_token(user_id), user_id)
         finally:
             shutil.rmtree(room_dir, ignore_errors=True)
+
+
+class TestNoiseProfileIdSafety(unittest.TestCase):
+    """Room check ids can never reach a file outside the noise profile folder."""
+
+    BAD_IDS = ["../../evil", "ABCDEF123456", "g" * 12, ""]
+
+    def setUp(self):
+        self.cache = tempfile.mkdtemp(prefix="dm_profile_ids_")
+        self.addCleanup(shutil.rmtree, self.cache, True)
+        patcher = mock.patch.object(audio_processor, "CACHE_DIR", os.path.join(self.cache, "cache"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.makedirs(audio_processor.noise_profiles_dir())
+        # Files a traversal id could reach if it were joined into a path.
+        for path in (os.path.join(self.cache, "evil.wav"), os.path.join(self.cache, "evil.json")):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"cleanup": {"attenuation_db": 20, "notches_hz": []}}')
+
+    def test_store_functions_reject_bad_ids(self):
+        for bad in self.BAD_IDS:
+            self.assertIsNone(audio_processor.noise_profile_wav_path(bad), bad)
+            self.assertIsNone(audio_processor.load_noise_profile_stats(bad), bad)
+            self.assertFalse(audio_processor.delete_noise_profile(bad), bad)
+            self.assertIsNone(audio_processor.noise_cleanup_settings(bad), bad)
+            self.assertIsNone(audio_processor._noise_profile_file(bad, ".wav"), bad)
+        self.assertTrue(os.path.isfile(os.path.join(self.cache, "evil.wav")))
+        self.assertTrue(os.path.isfile(os.path.join(self.cache, "evil.json")))
+
+    def test_valid_id_stays_in_profile_folder(self):
+        folder = os.path.realpath(audio_processor.noise_profiles_dir())
+        for ext in (".wav", ".json"):
+            path = os.path.realpath(audio_processor._noise_profile_file("0123456789ab", ext))
+            self.assertEqual(os.path.dirname(path), folder)
+
+    def test_routes_reject_malformed_ids(self):
+        from starlette.testclient import TestClient
+        import app
+        client = TestClient(app.app)
+        for bad in ("ABCDEF123456", "g" * 12, "abc", "..evil"):
+            self.assertEqual(client.get(f"/api/noise_profiles/{bad}").status_code, 400, bad)
+            self.assertEqual(client.delete(f"/api/noise_profiles/{bad}").status_code, 400, bad)
+        self.assertTrue(os.path.isfile(os.path.join(self.cache, "evil.json")))
 
 
 class TestNonFiniteAudioGuard(unittest.TestCase):

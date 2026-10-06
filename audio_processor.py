@@ -182,11 +182,16 @@ def _noise_reduction_engine() -> str:
     return "dfn" if df_bin and os.path.isfile(df_bin) else "fallback"
 
 
-def denoised_take_path(take_dir: str, stem: str) -> str:
-    """Path of a take's cleaned audio for the current noise-reduction settings.
-    The name carries a short hash of (NR_VERSION, attenuation, engine), so changed settings
-    point at a file that does not exist yet and the take is cleaned again."""
+def denoised_take_path(take_dir: str, stem: str, settings: Optional[Dict[str, Any]] = None) -> str:
+    """Path of a take's cleaned audio for the current engine and the take's cleanup settings.
+    The name carries a short hash of (NR_VERSION, attenuation, engine) plus, for tuned cleanup,
+    the profile id, attenuation and notches, so changed settings point at a file that does not
+    exist yet and the take is cleaned again. The key depends only on `settings`, never on
+    whether the profile's files still exist."""
     key_src = f"{NR_VERSION}:{NR_ATTENUATION_DB}:{_noise_reduction_engine()}"
+    if settings is not None:
+        notches = ",".join(f"{float(n):.1f}" for n in (settings.get("notches_hz") or []))
+        key_src += f":{settings.get('profile_id')}:{settings.get('attenuation_db')}:{notches}"
     key = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:8]
     return os.path.join(take_dir, f"{stem}_denoised_{key}.wav")
 
@@ -411,45 +416,228 @@ def write_wav_float(path: str, data: np.ndarray, sr: int = SR) -> str:
     return path
 
 
-def get_user_noise_profile_path(room_id: str, user_id: str) -> str:
-    """Returns the persistent noise profile path for an actor in a room (path-traversal safe)."""
-    room_dir = get_room_cache_dir(room_id)
-    safe_user_id = _sanitize_id_token(user_id)
-    target = os.path.join(room_dir, "noise_profile_" + safe_user_id + ".wav")
-    _ensure_within_directory(target, room_dir)
-    return target
+# ---------------------------------------------------------------------------
+# Room check: room tone analysis and the engine-wide noise profile store
+# ---------------------------------------------------------------------------
+
+NOISE_PROFILE_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+NOISE_PROFILE_KEEP = 50
+_LEVEL_FLOOR_DB = -120.0
+_TONE_NFFT = 32768
+_TONE_EXCESS_DB = 10.0
 
 
-def save_user_noise_profile(
-    room_id: str,
-    user_id: str,
-    audio_bytes: bytes,
-    filename_hint: str = "profile.webm"
-) -> Dict[str, Any]:
-    """
-    Saves a 1-second sample of idle room background noise to calibrate the actor's noise profile.
-    Returns path, duration, and estimated noise floor in dB.
-    """
-    if not audio_bytes or len(audio_bytes) < 32:
-        raise ValueError("Uploaded noise profile audio stream is empty.")
+def _level_db(power: float) -> float:
+    """dBFS of a mean power (RMS re 1.0), floored so stats stay JSON-safe."""
+    if not power > 0:
+        return _LEVEL_FLOOR_DB
+    return max(_LEVEL_FLOOR_DB, 10.0 * math.log10(power))
 
-    target_profile = get_user_noise_profile_path(room_id, user_id)
-    try:
-        _transcode_upload(audio_bytes, filename_hint, target_profile, SUBPROCESS_TIMEOUT_PROBE, "noise profile transcoding")
-    except subprocess.CalledProcessError as err:
-        print(f"[AudioProcessor] Noise profile calibration conversion failed: {err}")
-        raise RuntimeError(f"Noise profile calibration failed: {err}")
 
-    profile_data = read_wav_mono(target_profile)
-    rms = np.sqrt(np.mean(profile_data ** 2)) if len(profile_data) > 0 else 1e-6
-    noise_floor_db = round(float(20.0 * np.log10(max(rms, 1e-6))), 1)
+def _welch_psd(audio: np.ndarray, sr: int, nfft: int = _TONE_NFFT) -> Tuple[np.ndarray, np.ndarray]:
+    """Welch power spectrum (Hann, 50 % overlap); zero-pads clips shorter than nfft."""
+    if len(audio) < nfft:
+        audio = np.pad(audio, (0, nfft - len(audio)))
+    win = np.hanning(nfft)
+    hop = nfft // 2
+    starts = range(0, len(audio) - nfft + 1, hop)
+    psd = np.mean([np.abs(np.fft.rfft(audio[s:s + nfft] * win)) ** 2 for s in starts], axis=0)
+    return np.fft.rfftfreq(nfft, 1.0 / sr), psd
 
+
+def _peak_excess_db(freqs: np.ndarray, psd_db: np.ndarray, k: int, half_width_hz: float) -> float:
+    """dB of bin k above the median of the bins within +/-half_width_hz, excluding +/-3 Hz."""
+    dist = np.abs(freqs - freqs[k])
+    ring = psd_db[(dist <= half_width_hz) & (dist > 3.0)]
+    if ring.size == 0:
+        return 0.0
+    return float(psd_db[k] - np.median(ring))
+
+
+def analyse_room_tone(audio: np.ndarray, sr: int) -> Dict[str, Any]:
+    """Measures a room tone clip for the room check (numpy only); see documentation/design/calibrate-mic.md."""
+    x = np.asarray(_sanitize_finite_audio(audio, context="analyse_room_tone"), dtype=np.float64)
+    n = len(x)
+    nyquist = sr / 2.0
+
+    spec = np.fft.rfft(x) if n else np.zeros(1, dtype=complex)
+    freqs = np.fft.rfftfreq(max(n, 1), 1.0 / sr)
+    power = np.abs(spec) ** 2
+    total_power = float(np.sum(power))
+    band = (freqs >= 100.0) & (freqs <= 8000.0)
+    # Parseval: band bins are interior (not DC or Nyquist), so each counts twice.
+    band_power = 2.0 * float(np.sum(power[band])) / (n * n) if n else 0.0
+    speech_floor_db = _level_db(band_power)
+    full_band_db = _level_db(float(np.mean(x * x)) if n else 0.0)
+    rumble_share = float(np.sum(power[freqs < 80.0]) / total_power) if total_power > 0 else 0.0
+    if speech_floor_db < -60.0:
+        verdict = "good"
+    elif speech_floor_db <= -45.0:
+        verdict = "ok"
+    else:
+        verdict = "noisy"
+
+    # Tones: mains hum harmonics first, then other narrow peaks in the speech band.
+    tfreqs, psd = _welch_psd(x, sr)
+    psd_db = 10.0 * np.log10(psd + 1e-20)
+    hum: Dict[int, List[Tuple[float, float]]] = {}
+    for base in (50, 60):
+        found = []
+        for h in range(1, 9):
+            f = float(base * h)
+            near = np.where(np.abs(tfreqs - f) <= 2.0)[0]
+            if near.size == 0:
+                continue
+            k = int(near[np.argmax(psd_db[near])])
+            excess = _peak_excess_db(tfreqs, psd_db, k, 25.0)
+            if excess > _TONE_EXCESS_DB:
+                found.append((f, excess))
+        hum[base] = found
+    hum_hz = None
+    if hum[50] or hum[60]:
+        hum_hz = max((50, 60), key=lambda b: (len(hum[b]), sum(e for _, e in hum[b])))
+    tones = list(hum[hum_hz]) if hum_hz else []
+    hum_freqs = [f for f, _ in tones]
+    lo = max(1, int(np.searchsorted(tfreqs, 100.0)))
+    hi = min(len(psd_db) - 1, int(np.searchsorted(tfreqs, min(8000.0, nyquist), side="right")))
+    for k in range(lo, hi):
+        if not (psd_db[k] > psd_db[k - 1] and psd_db[k] >= psd_db[k + 1]):
+            continue
+        f = float(tfreqs[k])
+        if any(abs(f - h) <= 3.0 for h in hum_freqs):
+            continue
+        excess = _peak_excess_db(tfreqs, psd_db, k, 50.0)
+        if excess > _TONE_EXCESS_DB:
+            tones.append((round(f, 1), excess))
+    tones.sort(key=lambda t: -t[1])
+    tones_hz = [float(f) for f, _ in tones]
+
+    # Hiss: mean power per bin in 4-16 kHz over 300 Hz-2 kHz.
+    highs = (tfreqs >= 4000.0) & (tfreqs <= min(16000.0, nyquist))
+    mids = (tfreqs >= 300.0) & (tfreqs <= 2000.0)
+    high_mean = float(np.mean(psd[highs])) if np.any(highs) else 0.0
+    mid_mean = float(np.mean(psd[mids])) if np.any(mids) else 0.0
+    hiss_db = 10.0 * math.log10((high_mean + 1e-20) / (mid_mean + 1e-20))
+    hiss = hiss_db >= -3.0 and verdict != "good"
+
+    # Stability: spread of the 100 ms frame levels of the band-limited signal.
+    banded = np.fft.irfft(np.where(band, spec, 0), n=n) if n else x
+    frame = max(1, int(sr * 0.1))
+    count = n // frame
+    if count >= 2:
+        frames = banded[:count * frame].reshape(count, frame)
+        levels = [_level_db(float(p)) for p in np.mean(frames * frames, axis=1)]
+        stability_db = float(np.percentile(levels, 90) - np.percentile(levels, 10))
+    else:
+        stability_db = 0.0
+
+    suppressed = bool(n == 0 or np.count_nonzero(x == 0.0) * 2 >= n or full_band_db < -90.0)
+    clipped = bool(np.count_nonzero(np.abs(x) >= 0.999) >= 3)
+    speech_floor_db = round(speech_floor_db, 1)
+    attenuation_db = int(min(40, max(12, round(speech_floor_db + 80.0))))
     return {
-        "status": "ok",
-        "user_id": user_id,
-        "profile_path": target_profile,
-        "duration": round(len(profile_data) / float(SR), 2),
-        "noise_floor_db": noise_floor_db,
+        "duration_sec": round(n / float(sr), 3),
+        "verdict": verdict,
+        "speech_floor_db": round(speech_floor_db, 1),
+        "full_band_db": round(full_band_db, 1),
+        "rumble_share": round(rumble_share, 3),
+        "hum_hz": hum_hz,
+        "tones_hz": tones_hz,
+        "hiss_db": round(hiss_db, 1),
+        "hiss": bool(hiss),
+        "stability_db": round(stability_db, 1),
+        "unstable": stability_db > 6.0,
+        "suppressed": suppressed,
+        "clipped": clipped,
+        "dc_offset": round(float(np.mean(x)) if n else 0.0, 5),
+        "cleanup": {"attenuation_db": attenuation_db, "notches_hz": tones_hz[:4]},
+    }
+
+
+def noise_profiles_dir() -> str:
+    return os.path.join(CACHE_DIR, "noise_profiles")
+
+
+def _noise_profile_file(profile_id, ext: str) -> Optional[str]:
+    """Path of a profile's file, or None for a malformed id (never touches the filesystem)."""
+    if not isinstance(profile_id, str) or not NOISE_PROFILE_ID_RE.match(profile_id):
+        return None
+    return os.path.join(noise_profiles_dir(), profile_id + ext)
+
+
+def save_noise_profile(
+    audio: np.ndarray, sr: int, device_id: str = "", device_label: str = ""
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Analyses a room tone and stores <id>.wav + <id>.json; a suppressed or clipped check saves nothing."""
+    stats = analyse_room_tone(audio, sr)
+    if stats["suppressed"] or stats["clipped"]:
+        return None, stats
+    data = np.asarray(_sanitize_finite_audio(audio, context="save_noise_profile"), dtype=np.float32)
+    if sr != SR:
+        positions = np.arange(int(len(data) * SR / sr)) * (sr / SR)
+        data = np.interp(positions, np.arange(len(data)), data).astype(np.float32)
+    pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+    profile_id = hashlib.sha1(pcm + (device_label or "").encode("utf-8")).hexdigest()[:12]
+    stats = dict(stats, profile_id=profile_id, version=1, created_at=time.time(),
+                 device_id=device_id or "", device_label=device_label or "")
+    write_wav_mono(_noise_profile_file(profile_id, ".wav"), data, SR)
+    json_path = _noise_profile_file(profile_id, ".json")
+    with open(json_path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(stats, f)
+    os.replace(json_path + ".tmp", json_path)
+    _prune_noise_profiles()
+    return profile_id, stats
+
+
+def _prune_noise_profiles(keep: int = NOISE_PROFILE_KEEP) -> None:
+    """Keeps the newest `keep` profiles by created_at."""
+    entries = []
+    for name in os.listdir(noise_profiles_dir()):
+        pid, ext = os.path.splitext(name)
+        if ext == ".json" and NOISE_PROFILE_ID_RE.match(pid):
+            entries.append(((load_noise_profile_stats(pid) or {}).get("created_at") or 0.0, pid))
+    entries.sort(reverse=True)
+    for _, pid in entries[keep:]:
+        delete_noise_profile(pid)
+
+
+def load_noise_profile_stats(profile_id) -> Optional[Dict[str, Any]]:
+    path = _noise_profile_file(profile_id, ".json")
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            stats = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return stats if isinstance(stats, dict) else None
+
+
+def noise_profile_wav_path(profile_id) -> Optional[str]:
+    path = _noise_profile_file(profile_id, ".wav")
+    return path if path and os.path.isfile(path) else None
+
+
+def delete_noise_profile(profile_id) -> bool:
+    """Removes a profile's WAV and JSON; False when the id is malformed or nothing was there."""
+    deleted = False
+    for ext in (".wav", ".json"):
+        path = _noise_profile_file(profile_id, ext)
+        if path and os.path.isfile(path):
+            os.remove(path)
+            deleted = True
+    return deleted
+
+
+def noise_cleanup_settings(profile_id) -> Optional[Dict[str, Any]]:
+    """The cleanup a profile asks for, or None (standard cleanup) when the id is None, malformed or gone."""
+    cleanup = (load_noise_profile_stats(profile_id) or {}).get("cleanup")
+    if not isinstance(cleanup, dict):
+        return None
+    return {
+        "profile_id": profile_id,
+        "attenuation_db": cleanup.get("attenuation_db", NR_ATTENUATION_DB),
+        "notches_hz": [float(f) for f in (cleanup.get("notches_hz") or [])][:4],
     }
 
 
@@ -940,18 +1128,95 @@ def align_take_timing(take: np.ndarray, reference: np.ndarray, start_offset_ms: 
             "stretch": stretch, "aligned": True}
 
 
+_GATE_NFFT = 2048
+_GATE_HOP = 512  # _GATE_NFFT / 4: the overlap-add below relies on exactly four frames per sample
+
+
+def _gate_stft(x: np.ndarray, win: np.ndarray) -> np.ndarray:
+    """Centred STFT (half a window of zeros on each side), one row per frame."""
+    n_frames = 1 + -(-len(x) // _GATE_HOP)
+    padded = np.zeros(_GATE_NFFT + _GATE_HOP * (n_frames - 1), dtype=np.float32)
+    padded[_GATE_NFFT // 2:_GATE_NFFT // 2 + len(x)] = x
+    frames = np.lib.stride_tricks.sliding_window_view(padded, _GATE_NFFT)[::_GATE_HOP]
+    return np.fft.rfft(frames * win, axis=1)
+
+
+def _triangular_smooth(a: np.ndarray, half: int, axis: int) -> np.ndarray:
+    """Weighted moving average along `axis` with triangular weights over +/-half cells;
+    the edges are renormalised so a constant stays constant."""
+    moved = np.moveaxis(a, axis, -1)
+    n = moved.shape[-1]
+    padded = np.pad(moved, [(0, 0)] * (moved.ndim - 1) + [(half, half)])
+    ones = np.pad(np.ones(n, dtype=np.float32), half)
+    out = np.zeros_like(moved)
+    norm = np.zeros(n, dtype=np.float32)
+    for i in range(2 * half + 1):
+        w = half + 1 - abs(i - half)
+        out += w * padded[..., i:i + n]
+        norm += w * ones[i:i + n]
+    return np.moveaxis(out / norm, -1, axis)
+
+
+def spectral_gate(audio: np.ndarray, profile_audio: np.ndarray, sr: int, reduction: float = 0.75) -> np.ndarray:
+    """Stationary spectral gate (numpy only): reduces every time-frequency cell that is not
+    clearly louder than the room tone in `profile_audio`. A cell passes when its level is above
+    the profile's mean + 1.5 std for that frequency; the pass mask is smoothed over +/-50 ms and
+    +/-500 Hz with triangular weights, and gain = mask * reduction + (1 - reduction), so cells of
+    pure room tone drop by about 12 dB. The frequency smoothing never lowers a cell below its
+    time-smoothed mask, so a steady tone keeps its level instead of being averaged away by the
+    quiet bins around it. Returns float32 of the input length."""
+    x = np.asarray(audio, dtype=np.float32)
+    n = len(x)
+    win = np.hanning(_GATE_NFFT + 1)[:-1].astype(np.float32)
+    prof_db = 20.0 * np.log10(np.abs(_gate_stft(np.asarray(profile_audio, dtype=np.float32), win)) + 1e-10)
+    threshold = prof_db.mean(axis=0) + 1.5 * prof_db.std(axis=0)
+    spec = _gate_stft(x, win)
+    mask = (20.0 * np.log10(np.abs(spec) + 1e-10) > threshold).astype(np.float32)
+    mask = _triangular_smooth(mask, max(1, round(0.05 * sr / _GATE_HOP)), axis=0)
+    mask = np.maximum(mask, _triangular_smooth(mask, max(1, round(500.0 * _GATE_NFFT / sr)), axis=1))
+    gain = mask * reduction + (1.0 - reduction)
+    frames = np.fft.irfft(spec * gain, n=_GATE_NFFT, axis=1).astype(np.float32) * win
+    # Windowed overlap-add: frame f covers hops f..f+3, so add each quarter of every frame
+    # into its hop, then divide by the summed squared window.
+    n_frames = frames.shape[0]
+    quarters = frames.reshape(n_frames, 4, _GATE_HOP)
+    win_sq = (win * win).reshape(4, _GATE_HOP)
+    out = np.zeros(_GATE_HOP * (n_frames + 3), dtype=np.float32)
+    win_sum = np.zeros_like(out)
+    for j in range(4):
+        out[j * _GATE_HOP:(j + n_frames) * _GATE_HOP] += quarters[:, j, :].reshape(-1)
+        win_sum[j * _GATE_HOP:(j + n_frames) * _GATE_HOP] += np.tile(win_sq[j], n_frames)
+    out /= np.maximum(win_sum, 1e-8)
+    start = _GATE_NFFT // 2
+    return out[start:start + n].astype(np.float32)
+
+
+def _cleanup_prefilter(settings: Dict[str, Any]) -> str:
+    """ffmpeg -af chain run before tuned cleanup: a 60 Hz high-pass plus a narrow notch per
+    hum or whine frequency the room check found (at most 4)."""
+    filters = ["highpass=f=60"]
+    filters += [f"bandreject=f={float(hz):g}:width_type=q:width=30" for hz in (settings.get("notches_hz") or [])[:4]]
+    return ",".join(filters)
+
+
 def apply_noise_reduction(
     input_wav: str,
     output_wav: str,
-    noise_profile_wav: Optional[str] = None,
-    reduction_db: float = NR_ATTENUATION_DB,
-    sr: int = SR
-) -> str:
+    sr: int = SR,
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """
-    Applies state-of-the-art DeepFilterNet 3 neural speech enhancement & vocal de-noising.
-    Preserves 100% of quiet dialogue, subtle mouth grit, breath, and natural dynamics
-    while removing heavy fan noise, AC hum, and preamp hiss with zero phase warble.
-    Falls back gracefully to highpass + adaptive spectral denoising if deep-filter binary is absent.
+    Cleans a take with DeepFilterNet 3 (deep-filter binary), else with an ffmpeg/numpy fallback.
+
+    settings None (standard cleanup): DeepFilterNet at NR_ATTENUATION_DB, else
+    highpass + afftdn. settings = noise_cleanup_settings(...) (tuned cleanup): the take first
+    goes through _cleanup_prefilter(settings); DeepFilterNet then runs at
+    settings["attenuation_db"], else spectral_gate() is driven by the stored profile WAV of
+    settings["profile_id"] (put through the same pre-filter).
+
+    Returns output_wav. Returns None WITHOUT writing output_wav when tuned cleanup needs the
+    fallback and the profile WAV is gone; the caller then cleans with standard settings.
+    If every denoiser fails, output_wav is an unprocessed copy of the input.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_wav)), exist_ok=True)
     df_bin = get_deep_filter_path()
@@ -969,10 +1234,13 @@ def apply_noise_reduction(
             os.makedirs(df_out_dir, exist_ok=True)
 
             # Resample cleanly to 48kHz for DeepFilterNet native processing
-            _ffmpeg_to_mono_wav(input_wav, tmp_48k_in, 48000, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample to 48k")
+            _ffmpeg_to_mono_wav(input_wav, tmp_48k_in, 48000, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample to 48k",
+                                af=_cleanup_prefilter(settings) if settings is not None else None)
 
             # Run DeepFilterNet with delay compensation (-D)
-            atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else NR_ATTENUATION_DB
+            atten_lim = NR_ATTENUATION_DB
+            if settings is not None:
+                atten_lim = max(12.0, min(100.0, float(settings["attenuation_db"])))
             cmd_df = [
                 df_bin, "-D",
                 "-a", str(int(atten_lim)),
@@ -1005,12 +1273,37 @@ def apply_noise_reduction(
             if os.path.exists(tmp_dir):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # 2. Fallback Path: High-pass + Adaptive Spectral Denoising
+    # 2. Fallback Path, tuned: pre-filter + spectral gate driven by the stored room tone
+    if settings is not None:
+        profile_wav = noise_profile_wav_path(settings.get("profile_id"))
+        if not profile_wav:
+            print(f"[AudioProcessor] Room check {settings.get('profile_id')!r} is gone; {input_wav!r} not cleaned with it.")
+            return None
+        tmp_dir = tempfile.mkdtemp(prefix="dubmate_gate_")
+        try:
+            af = _cleanup_prefilter(settings)
+            take_tmp = os.path.join(tmp_dir, "take.wav")
+            profile_tmp = os.path.join(tmp_dir, "profile.wav")
+            _ffmpeg_to_mono_wav(input_wav, take_tmp, sr, SUBPROCESS_TIMEOUT_PROCESS, "tuned cleanup pre-filter", af=af)
+            _ffmpeg_to_mono_wav(profile_wav, profile_tmp, sr, SUBPROCESS_TIMEOUT_PROCESS, "room tone pre-filter", af=af)
+            cleaned = spectral_gate(read_wav_mono(take_tmp, sr), read_wav_mono(profile_tmp, sr), sr)
+            out_tmp = os.path.join(tmp_dir, "cleaned.wav")
+            write_wav_mono(out_tmp, cleaned, sr)
+            shutil.move(out_tmp, output_wav)
+            return output_wav
+        except Exception as ex:
+            print(f"[AudioProcessor] WARNING: noise reduction NOT applied for {input_wav!r} (tuned cleanup failed); returning unprocessed copy. Reason: {ex}")
+            shutil.copy2(input_wav, output_wav)
+            return output_wav
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 3. Fallback Path: High-pass + Adaptive Spectral Denoising
     tmp_out = None
     try:
         af_filters = [
             "highpass=f=80",
-            f"afftdn=nr={min(18.0, reduction_db):.1f}:nf=-35:tn=1",
+            "afftdn=nr=18.0:nf=-35:tn=1",
         ]
         fd, tmp_out = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
@@ -1038,6 +1331,25 @@ def match_take_timing(audio: np.ndarray, reference_wav: str, start_offset_ms: in
     return align_take_timing(audio, reference, start_offset_ms, sr=SR, allow_stretch=allow_stretch)
 
 
+def _clean_take(take_dir: str, stem: str, raw_wav: str,
+                nr_settings: Optional[Dict[str, Any]]) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Makes sure the take's cleaned file for nr_settings exists; returns (path, settings used).
+    An existing file (>= 100 bytes) is reused. When tuned cleanup can't run (it needs the gate
+    and the profile WAV is gone) the take gets standard cleanup and the settings are None."""
+    denoised_wav = denoised_take_path(take_dir, stem, nr_settings)
+    if os.path.exists(denoised_wav) and os.path.getsize(denoised_wav) >= 100:
+        return denoised_wav, nr_settings
+    if nr_settings is not None:
+        if apply_noise_reduction(raw_wav, denoised_wav, settings=nr_settings) is not None:
+            return denoised_wav, nr_settings
+        nr_settings = None
+        denoised_wav = denoised_take_path(take_dir, stem)
+        if os.path.exists(denoised_wav) and os.path.getsize(denoised_wav) >= 100:
+            return denoised_wav, None
+    apply_noise_reduction(raw_wav, denoised_wav)
+    return denoised_wav, None
+
+
 def save_uploaded_take(
     room_id: str,
     take_dir: str,
@@ -1045,7 +1357,7 @@ def save_uploaded_take(
     audio_bytes: bytes,
     filename_hint: str = "take.webm",
     enable_noise_reduction: bool = False,
-    user_id: Optional[str] = None,
+    nr_settings: Optional[Dict[str, Any]] = None,
     target_lufs: Optional[float] = None,
     reference_wav: Optional[str] = None,
     start_offset_ms: int = 0,
@@ -1054,21 +1366,23 @@ def save_uploaded_take(
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
     Writes <take_dir>/<stem>.wav (active), preserves pristine raw audio (<stem>_raw.wav) and
-    generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested.
+    generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested,
+    tuned by nr_settings (noise_cleanup_settings(...)) or standard when None (see _clean_take).
     Measures the take's integrated loudness and the auto gain that matches it to target_lufs.
     When align and reference_wav (the original line's audio) are given, matches the take's
     timing to it from start_offset_ms (match_take_timing); a clearly faster or slower take is
     also fitted, so the active file is the raw or cleaned audio at that stretch. Otherwise the
     timing is "not measured" and the active file is a plain copy.
     Returns active path, duration, waveform peaks, auto_gain_db, noise reduction status,
-    start_offset_ms (snapped to 5 ms) and the align_take_timing keys.
+    nr_settings (the settings actually used), start_offset_ms (snapped to 5 ms) and the
+    align_take_timing keys.
     """
     if not audio_bytes or len(audio_bytes) < 32:
         raise ValueError("Uploaded audio stream is empty or incomplete.")
 
     target_wav = os.path.join(take_dir, f"{stem}.wav")
     raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
-    denoised_wav = denoised_take_path(take_dir, stem)
+    denoised_wav = None
 
     try:
         _transcode_upload(audio_bytes, filename_hint, raw_wav, SUBPROCESS_TIMEOUT_PROCESS, "take upload transcoding")
@@ -1076,19 +1390,9 @@ def save_uploaded_take(
         print(f"[AudioProcessor] ffmpeg conversion failed on upload {filename_hint!r} ({len(audio_bytes)} bytes): {err}")
         raise RuntimeError(f"Audio transcoding failed: {err}")
 
-    profile_path = None
-    if user_id:
-        try:
-            profile_path = get_user_noise_profile_path(room_id, user_id)
-        except ValueError as ex:
-            print(f"[AudioProcessor] WARNING: could not resolve noise profile path for user_id={user_id!r}: {ex}")
-            profile_path = None
-    if not os.path.isfile(profile_path or ""):
-        profile_path = None
-
     # A new raw take makes every earlier cleaned version of this line stale.
     if enable_noise_reduction:
-        apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+        denoised_wav, nr_settings = _clean_take(take_dir, stem, raw_wav, nr_settings)
         _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
         source_wav = denoised_wav
     else:
@@ -1123,10 +1427,11 @@ def save_uploaded_take(
     return {
         "wav_path": target_wav,
         "raw_path": raw_wav,
-        "denoised_path": denoised_wav if enable_noise_reduction else None,
+        "denoised_path": denoised_wav,
         "duration": round(duration, 3),
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
+        "nr_settings": nr_settings,
         "has_raw": True,
         "loudness_lufs": gain_match["loudness_lufs"],
         "target_lufs": gain_match["target_lufs"],
@@ -1141,19 +1446,19 @@ def toggle_take_noise_reduction(
     take_dir: str,
     stem: str,
     enable_noise_reduction: bool,
-    user_id: Optional[str] = None,
+    nr_settings: Optional[Dict[str, Any]] = None,
     target_lufs: Optional[float] = None,
     stretch: float = 1.0,
 ) -> Dict[str, Any]:
     """
     Instantly toggles a take between pristine raw and denoised audio.
-    Generates denoised audio on-demand if missing, writes the active file at the take's
-    stretch (so a fitted take stays fitted), and re-measures the swapped audio's loudness
-    and auto gain against target_lufs.
+    Generates denoised audio on-demand if missing (with the take's nr_settings, see
+    _clean_take), writes the active file at the take's stretch (so a fitted take stays
+    fitted), and re-measures the swapped audio's loudness and auto gain against
+    target_lufs. Returns nr_settings: the settings the take uses from now on.
     """
     target_wav = os.path.join(take_dir, f"{stem}.wav")
     raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
-    denoised_wav = denoised_take_path(take_dir, stem)
 
     if not os.path.exists(raw_wav):
         if os.path.exists(target_wav):
@@ -1161,19 +1466,10 @@ def toggle_take_noise_reduction(
         else:
             raise FileNotFoundError(f"No take audio found for {stem}")
 
-    profile_path = None
-    if user_id:
-        try:
-            profile_path = get_user_noise_profile_path(room_id, user_id)
-        except ValueError as ex:
-            print(f"[AudioProcessor] WARNING: could not resolve noise profile path for user_id={user_id!r}: {ex}")
-            profile_path = None
-    if not os.path.isfile(profile_path or ""):
-        profile_path = None
-
     if enable_noise_reduction:
+        denoised_wav = denoised_take_path(take_dir, stem, nr_settings)
         if not os.path.exists(denoised_wav) or os.path.getsize(denoised_wav) < 100:
-            apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+            denoised_wav, nr_settings = _clean_take(take_dir, stem, raw_wav, nr_settings)
             _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
         _write_active_take(denoised_wav, target_wav, stretch)
     else:
@@ -1190,6 +1486,7 @@ def toggle_take_noise_reduction(
         "duration": round(duration, 3),
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
+        "nr_settings": nr_settings,
         "has_raw": True,
         "loudness_lufs": gain_match["loudness_lufs"],
         "target_lufs": gain_match["target_lufs"],

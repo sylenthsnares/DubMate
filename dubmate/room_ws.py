@@ -19,6 +19,19 @@ from dubmate import common, rooms, rooms_api
 router = APIRouter()
 
 
+async def _wait_for_cleanup_refresh(room) -> None:
+    """Returns once no Refresh older takes is running or about to start its task (a request
+    still planning holds its claim in room.cleanup_refreshing before the task exists)."""
+    while True:
+        task = room.cleanup_refresh_task
+        if task is not None and not task.done():
+            await asyncio.wait({task})
+        elif room.cleanup_refreshing:
+            await asyncio.sleep(0.05)
+        else:
+            return
+
+
 @router.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     await websocket.accept()
@@ -117,8 +130,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     for u in room.users.values():
                         u["location"] = "screening"
 
-                    # Auto-master the scene into MP4 for the cast
+                    # Auto-master the scene into MP4 for the cast. Marked as rendering
+                    # first, as the export route does, so no Refresh older takes starts
+                    # now; then it waits for any refresh already running, so the render
+                    # doesn't mix old and new audio.
+                    room.export_status["16:9"] = "processing"
                     try:
+                        await _wait_for_cleanup_refresh(room)
                         out_path = room.export_out_path("16:9")
                         takes = await rooms_api.mix_for_export(room)
                         await asyncio.to_thread(
@@ -126,9 +144,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                             room.pack, takes, out_path,
                         )
                         room.exported_video_path = out_path
+                        room.export_status["16:9"] = "ready"
                         await room.broadcast("export_ready", room.export_ready_payload("16:9"))
                     except Exception as ex:
+                        room.export_status["16:9"] = f"failed: {ex}"
                         print(f"[PremiereRenderError] {ex}")
+                    finally:
+                        # Cancelled (the host's socket closed) before it finished.
+                        if room.export_status.get("16:9") == "processing":
+                            room.export_status.pop("16:9", None)
 
                     await room.broadcast("warp_to_screening", {"triggered_by": user_id})
 

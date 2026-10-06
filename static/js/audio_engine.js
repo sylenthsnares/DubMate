@@ -506,104 +506,73 @@ export class AudioEngine {
     });
   }
 
-  // --- 4c. Calibrate Idle Room Noise Profile (1s Pre-Roll + 3s Sampling) ---
-  async recordNoiseProfile(durationMs = 3000, delayMs = 1000, onProgress = null) {
+  // --- 4c. A short clip from the microphone (the room check) ---
+  // Resolves with the recorded Blob after `durationMs`; onProgress(elapsedMs, durationMs)
+  // ticks while it records. cancelClip() rejects it. The microphone is released after unless something else is recording.
+  async recordClip(durationMs, onProgress = null) {
     this.initContext();
     await this.requestMicrophone();
 
     return new Promise((resolve, reject) => {
       const mimeType = this._pickRecorderMimeType();
-      const options = mimeType ? { mimeType } : {};
-      const recorder = new MediaRecorder(this.stream, options);
+      const recorder = new MediaRecorder(this.stream, mimeType ? { mimeType } : {});
       const chunks = [];
-      let isCancelled = false;
+      let timer = null;
+      let settled = false;
+      const settle = (fn) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(timer);
+        this.currentClip = null;
+        // A take or mic sync may still be recording from the same stream.
+        if (!this.isRecording) this.releaseMicrophone();
+        fn();
+      };
 
-      this.currentNoiseRecorder = {
+      this.currentClip = {
         cancel: () => {
-          isCancelled = true;
           try {
             if (recorder.state === 'recording') recorder.stop();
           } catch (e) {}
-          reject(new Error("Calibration cancelled by user"));
-        }
+          settle(() => reject(new Error('Recording cancelled')));
+        },
       };
-
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
+      recorder.onstop = () => settle(() => resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })));
+      recorder.onerror = (e) => settle(() => reject((e && e.error) || new Error('Recording failed')));
 
-      recorder.onstop = () => {
-        this.currentNoiseRecorder = null;
-        if (isCancelled) return;
-        const mime = recorder.mimeType || 'audio/webm';
-        const blob = new Blob(chunks, { type: mime });
-        resolve(blob);
-      };
-
-      recorder.onerror = (err) => {
-        this.currentNoiseRecorder = null;
-        reject(err);
-      };
-
-      // Phase 1: Pre-Roll Delay (Mouse click acoustic release)
-      const preRollInterval = 40;
-      let preRollElapsed = 0;
-      if (onProgress) onProgress('preroll', 0, delayMs);
-
-      const preRollTimer = setInterval(() => {
-        if (isCancelled) {
-          clearInterval(preRollTimer);
-          return;
+      try {
+        recorder.start(50);
+      } catch (err) {
+        settle(() => reject(err));
+        return;
+      }
+      const startedAt = performance.now();
+      if (onProgress) onProgress(0, durationMs);
+      timer = setInterval(() => {
+        const elapsed = Math.min(durationMs, performance.now() - startedAt);
+        if (onProgress) onProgress(elapsed, durationMs);
+        if (elapsed < durationMs) return;
+        clearInterval(timer);
+        try {
+          recorder.stop();
+        } catch (e) {
+          settle(() => resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })));
         }
-        preRollElapsed += preRollInterval;
-        if (onProgress) {
-          onProgress('preroll', Math.min(delayMs, preRollElapsed), delayMs);
-        }
-        if (preRollElapsed >= delayMs) {
-          clearInterval(preRollTimer);
-          if (isCancelled) return;
-
-          // Phase 2: 3-Second Room Tone Sampling
-          try {
-            recorder.start(50);
-            let sampleElapsed = 0;
-            const sampleInterval = 40;
-            if (onProgress) onProgress('recording', 0, durationMs);
-
-            const sampleTimer = setInterval(() => {
-              if (isCancelled) {
-                clearInterval(sampleTimer);
-                return;
-              }
-              sampleElapsed += sampleInterval;
-              if (onProgress) {
-                onProgress('recording', Math.min(durationMs, sampleElapsed), durationMs);
-              }
-              if (sampleElapsed >= durationMs) {
-                clearInterval(sampleTimer);
-                try {
-                  if (recorder.state === 'recording') {
-                    recorder.stop();
-                  }
-                } catch (e) {
-                  const mime = recorder.mimeType || 'audio/webm';
-                  resolve(new Blob(chunks, { type: mime }));
-                }
-              }
-            }, sampleInterval);
-          } catch (err) {
-            reject(err);
-          }
-        }
-      }, preRollInterval);
+      }, 40);
     });
   }
 
-  cancelNoiseProfileCalibration() {
-    if (this.currentNoiseRecorder && typeof this.currentNoiseRecorder.cancel === 'function') {
-      this.currentNoiseRecorder.cancel();
-      this.currentNoiseRecorder = null;
-    }
+  cancelClip() {
+    if (this.currentClip) this.currentClip.cancel();
+  }
+
+  /** Decodes a recordClip() blob into an AudioBuffer. */
+  async decodeClip(blob) {
+    this.initContext();
+    return this.ctx.decodeAudioData(await blob.arrayBuffer());
   }
 
   /** Drops every cached version of this take's audio (any ?v=). */
