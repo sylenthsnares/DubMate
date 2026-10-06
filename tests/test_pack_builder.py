@@ -1140,13 +1140,16 @@ NOTE This is a test subtitle file
         os.makedirs(os.path.join(self.tmp_dir, "not-it", "ai-packages"))  # no marker: ignored
 
         runs = []
-        patches, fake, script = self._speaker_env(addon=addon)
+        patches, _fake, _script = self._speaker_env(addon=addon)
         try:
             patches.append(mock.patch.object(pack_builder.subprocess, "run", lambda *a, **k: runs.append(a)))
-            patches[-1].start()
+            patches.append(mock.patch.object(pack_builder.subprocess, "Popen", lambda *a, **k: runs.append(a)))
+            for p in patches[-2:]:
+                p.start()
             sys.path.insert(1, os.path.join(self.tmp_dir, "not-it", "ai-packages"))
             self.assertEqual(pack_builder._addon_dir(), addon)
             self.assertFalse(hasattr(pack_builder, "_install_speaker_package"))
+            self.assertEqual(pack_builder._speaker_models_dir(), os.path.join(addon, "dubmate-models", "speakers"))
 
             sys.modules["sherpa_onnx"] = None  # import fails; restored by the slot patch
             turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
@@ -1155,20 +1158,27 @@ NOTE This is a test subtitle file
                                      "To add it, remove Pack Builder in Audio settings, then run the DubMate "
                                      "installer again and tick Pack Builder.")
             self.assertEqual(runs, [])
+        finally:
+            for p in reversed(patches):
+                p.stop()
 
-            sys.modules["sherpa_onnx"] = fake
+    def test_23_speaker_child_entry_point(self):
+        """The child builds the pinned config, prints progress and then the turns as JSON on stdout."""
+        import contextlib
+        import json
+        import sys
+        patches, fake, script = self._speaker_env()
+        try:
             folder = self._touch_speaker_models()
-            self.assertEqual(folder, os.path.join(addon, "dubmate-models", "speakers"))
             script["segments"] = [(3.0, 4.0, 1), (0.5, 2.0, 0)]
-            progress, messages = [], []
-
-            def on_progress(fraction, message):
-                progress.append(fraction)
-                messages.append(message)
-            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"), on_progress)
-            self.assertEqual(notice, "")
-            self.assertEqual(turns, [(0.5, 2.0, 0), (3.0, 4.0, 1)])
-            self.assertEqual(runs, [])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = pack_builder._speaker_turns_child(os.path.join(self.tmp_dir, "vocals.wav"), folder)
+            self.assertEqual(code, 0)
+            lines = out.getvalue().splitlines()
+            self.assertEqual(lines[:2], ["DUBMATE_SPEAKER_PROGRESS 0.5000", "DUBMATE_SPEAKER_PROGRESS 1.0000"])
+            self.assertTrue(lines[-1].startswith("DUBMATE_SPEAKER_TURNS "))
+            self.assertEqual(json.loads(lines[-1][len("DUBMATE_SPEAKER_TURNS "):]), [[0.5, 2.0, 0], [3.0, 4.0, 1]])
 
             config = script["config"]
             self.assertEqual(config.segmentation.pyannote.window_shift_ratio, 0.1)
@@ -1179,37 +1189,190 @@ NOTE This is a test subtitle file
             self.assertEqual((config.min_duration_on, config.min_duration_off), (0.3, 0.5))
             self.assertEqual(str(script["samples"].dtype), "float32")
             self.assertEqual(script["callbacks"], [0, 0])
-            self.assertTrue(progress and all(0.90 <= f <= 0.98 for f in progress))
-            self.assertAlmostEqual(progress[-1], 0.98)
-            self.assertEqual(set(messages), {""})  # models already there: no download message
-        finally:
-            for p in reversed(patches):
-                p.stop()
 
-    def test_23_speaker_detection_empty_and_failure(self):
-        """No voices found and any error both fall back with their own notice."""
-        patches, _fake, script = self._speaker_env()
-        try:
-            self._touch_speaker_models()
-            wav = os.path.join(self.tmp_dir, "vocals.wav")
-            turns, notice = pack_builder.detect_speaker_turns(wav)
-            self.assertIsNone(turns)
-            self.assertEqual(notice, "Speaker detection couldn't tell the voices apart, so speakers were guessed "
-                                     "from pauses. Check who says each line.")
+            # No package in the child: its own exit code, so the parent can say how to add it.
+            sys.modules["sherpa_onnx"] = None
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(pack_builder._speaker_turns_child("x.wav", folder), 3)
+            sys.modules["sherpa_onnx"] = fake
 
+            # Any other failure raises, so the child process exits non-zero.
             script["raise"] = RuntimeError("boom")
-            script["segments"] = [(0.0, 1.0, 0)]
-            turns, notice = pack_builder.detect_speaker_turns(wav)
-            self.assertIsNone(turns)
-            self.assertEqual(notice, "Speaker detection couldn't run, so speakers were guessed from pauses. "
-                                     "Check who says each line.")
-
-            script["raise"] = None
-            turns, notice = pack_builder.detect_speaker_turns(wav)
-            self.assertEqual((turns, notice), ([(0.0, 1.0, 0)], ""))
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+                pack_builder._speaker_turns_child("x.wav", folder)
         finally:
             for p in reversed(patches):
                 p.stop()
+
+    def test_23b_speaker_child_process_outcomes(self):
+        """Success, crash, timeout, bad JSON, no voices and a missing package, with Popen stubbed."""
+        import json
+        import sys
+        import threading
+        from unittest import mock
+
+        class _Out:
+            def __init__(self, lines, hang):
+                self.lines, self.hang, self.closed = lines, hang, False
+
+            def __iter__(self):
+                for line in self.lines:
+                    yield line + "\n"
+                if self.hang:
+                    self.hang.wait(5)  # until killed
+
+            def close(self):
+                self.closed = True
+
+        class _Proc:
+            def __init__(self, lines, code, hang=False):
+                self.killed = threading.Event()
+                self.stdout = _Out(lines, self.killed if hang else None)
+                self.code, self.returncode = code, None
+
+            def wait(self):
+                self.returncode = -9 if self.killed.is_set() else self.code
+                return self.returncode
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                self.killed.set()
+
+        patches, _fake, _script = self._speaker_env()
+        calls = []
+        plan = {}
+
+        def fake_popen(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            if plan.get("raise"):
+                raise OSError("no python")
+            plan["proc"] = _Proc(plan["lines"], plan["code"], plan.get("hang", False))
+            return plan["proc"]
+
+        def run(lines, code, **extra):
+            plan.clear()
+            plan.update(lines=lines, code=code, **extra)
+            progress = []
+            result = pack_builder.detect_speaker_turns(wav, lambda f, m: progress.append((round(f, 4), m)))
+            return result, progress
+
+        try:
+            patches.append(mock.patch.object(pack_builder.subprocess, "Popen", fake_popen))
+            patches[-1].start()
+            folder = self._touch_speaker_models()
+            wav = os.path.join(self.tmp_dir, "vocals.wav")
+            turns_line = "DUBMATE_SPEAKER_TURNS " + json.dumps([[3.0, 4.0, 1], [0.5, 2.0, 0]])
+
+            # Success: progress maps to 0.90-0.98, other lines are ignored, turns come back sorted.
+            (turns, notice), progress = run(["onnxruntime log line", "DUBMATE_SPEAKER_PROGRESS 0.5",
+                                             "DUBMATE_SPEAKER_PROGRESS 1.0", turns_line], 0)
+            self.assertEqual((turns, notice), ([(0.5, 2.0, 0), (3.0, 4.0, 1)], ""))
+            self.assertEqual(progress, [(0.9, ""), (0.94, ""), (0.98, "")])
+            self.assertTrue(plan["proc"].stdout.closed)
+            cmd, kwargs = calls[-1]
+            self.assertEqual(cmd[:2], [sys.executable, "-c"])
+            self.assertIn("import pack_builder", cmd[2])
+            self.assertEqual(cmd[4:], [wav, folder])
+            child_path = json.loads(cmd[3])
+            self.assertEqual(child_path[0], pack_builder.BASE_DIR)
+            for p in sys.path:  # the engine's own path, add-on folder included, in order
+                self.assertIn(os.path.abspath(p) if p else os.getcwd(), child_path)
+            self.assertEqual(kwargs["stderr"], pack_builder.subprocess.STDOUT)
+            self.assertEqual(kwargs["stdin"], pack_builder.subprocess.DEVNULL)
+            self.assertNotIn("env", kwargs)  # PYTHONPATH and the rest are inherited
+
+            # A crash (an OpenMP abort is SIGABRT) falls back, even after a partial turns line.
+            (turns, notice), _ = run(["OMP: Error #15", turns_line], -6)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+            (turns, notice), _ = run([], 1)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+
+            # Exit 0 without a turns line, or with bad JSON, falls back.
+            (turns, notice), _ = run(["DUBMATE_SPEAKER_PROGRESS 1.0"], 0)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+            (turns, notice), _ = run(["DUBMATE_SPEAKER_TURNS [[0.5, 2.0"], 0)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+            (turns, notice), _ = run(['DUBMATE_SPEAKER_TURNS {"a": 1}'], 0)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+            (turns, notice), _ = run(["DUBMATE_SPEAKER_PROGRESS nan-ish", turns_line], 0)
+            self.assertEqual(notice, "")  # a garbled progress line is skipped
+
+            # No voices found.
+            (turns, notice), _ = run(["DUBMATE_SPEAKER_TURNS []"], 0)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_NO_VOICES))
+
+            # The child couldn't import the package (exit 3): the install notice.
+            (turns, notice), _ = run(["DLL load failed"], 3)
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_NOT_INSTALLED_SOURCE))
+
+            # A child that never finishes is killed at the timeout.
+            with mock.patch.object(pack_builder, "SPEAKER_TIMEOUT_S", 0.2):
+                (turns, notice), _ = run(["DUBMATE_SPEAKER_PROGRESS 0.1"], 0, hang=True)
+            self.assertTrue(plan["proc"].killed.is_set())
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+
+            # The child can't even start.
+            (turns, notice), _ = run([], 0, **{"raise": True})
+            self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    def test_23c_speaker_child_real_process(self):
+        """A real child process finds a package that only the engine's sys.path knows about."""
+        import sys
+        import textwrap
+        from unittest import mock
+        fake_dir = os.path.join(self.tmp_dir, "only-on-engine-path")
+        os.makedirs(fake_dir)
+        with open(os.path.join(fake_dir, "sherpa_onnx.py"), "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent("""
+                import types
+
+                class _Config:
+                    def __init__(self, **kwargs):
+                        self.__dict__.update(kwargs)
+
+                    def validate(self):
+                        return True
+
+                OfflineSpeakerDiarizationConfig = OfflineSpeakerSegmentationModelConfig = _Config
+                OfflineSpeakerSegmentationPyannoteModelConfig = SpeakerEmbeddingExtractorConfig = _Config
+                FastClusteringConfig = _Config
+
+                class _Result:
+                    def __init__(self, n):
+                        self.n = n
+
+                    def sort_by_start_time(self):
+                        half = self.n / 16000 / 2
+                        return [types.SimpleNamespace(start=0.0, end=half, speaker=4),
+                                types.SimpleNamespace(start=half, end=2 * half, speaker=9)]
+
+                class OfflineSpeakerDiarization:
+                    sample_rate = 16000
+
+                    def __init__(self, config):
+                        pass
+
+                    def process(self, samples, callback=None):
+                        callback(1, 1)
+                        return _Result(len(samples))
+            """))
+        wav = os.path.join(self.tmp_dir, "vocals.wav")
+        pack_builder.audio_processor.write_wav_mono(wav, __import__("numpy").zeros(32000, dtype="float32"), sr=16000)
+        folder = os.path.join(self.tmp_dir, "models")
+        os.makedirs(folder)
+        progress = []
+        with mock.patch.object(sys, "path", [fake_dir] + sys.path), \
+                mock.patch.object(pack_builder, "_speaker_package_present", lambda: True):
+            turns, notice = pack_builder._run_speaker_child(wav, folder, lambda f, m: progress.append(f))
+        self.assertEqual((turns, notice), ([(0.0, 1.0, 4), (1.0, 2.0, 9)], ""))
+        self.assertAlmostEqual(progress[-1], 0.98)
+        # Only the child loaded it; this process never did.
+        self.assertFalse(any((getattr(m, "__file__", None) or "").startswith(fake_dir) for m in list(sys.modules.values())))
 
     def test_24_assign_speakers_from_turns(self):
         """Lines take the voice they overlap most, then a near turn, then the previous line; names follow first appearance."""

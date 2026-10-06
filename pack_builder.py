@@ -16,6 +16,7 @@ import datetime
 import shutil
 import hashlib
 import threading
+import importlib.util
 import subprocess
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -1130,56 +1131,166 @@ def _ensure_speaker_models(on_progress=None) -> bool:
                 _remove_quietly(archive)
 
 
+# Speaker detection runs in a child Python process. Demucs (torch) and onnxruntime each ship
+# their own OpenMP runtime, and loading both into one process can abort it on macOS, which no
+# try/except can catch. A crashed, stuck or garbled child only costs the speaker guess.
+SPEAKER_TIMEOUT_S = 1800          # scenes are at most 30 minutes; detection takes a few on CPU
+_SPEAKER_EXIT_NOT_INSTALLED = 3
+_SPEAKER_PROGRESS_PREFIX = "DUBMATE_SPEAKER_PROGRESS "
+_SPEAKER_TURNS_PREFIX = "DUBMATE_SPEAKER_TURNS "
+# The embedded Windows runtime ignores PYTHONPATH (it has a ._pth file) and puts neither the
+# script folder nor the working folder on sys.path, so the child is handed the engine's own
+# sys.path, in the engine's order, before it imports anything.
+_SPEAKER_CHILD_BOOT = (
+    "import json, sys; "
+    "paths = json.loads(sys.argv[1]); "
+    "sys.path[:] = paths + [p for p in sys.path if p not in paths]; "
+    "import pack_builder; "
+    "sys.exit(pack_builder._speaker_turns_child(sys.argv[2], sys.argv[3]))"
+)
+
+
+def _speaker_package_present() -> bool:
+    """Whether sherpa_onnx can be found, without loading it (and its OpenMP) into the engine."""
+    try:
+        return importlib.util.find_spec("sherpa_onnx") is not None
+    except ValueError:
+        return True  # already loaded without a spec
+    except ImportError:
+        return False
+
+
+def _speaker_turns_child(vocals_wav: str, folder: str) -> int:
+    """
+    Entry point of the speaker detection child process. Prints progress lines, then one line
+    of JSON turns [[start, end, speaker_id], ...], each with its own prefix, to stdout.
+    Returns the exit code: 0 on success, _SPEAKER_EXIT_NOT_INSTALLED without the package.
+    Any other error raises, so the process exits non-zero.
+    """
+    try:
+        import sherpa_onnx
+    except ImportError as ex:
+        print(f"[PackBuilder] Speaker detection isn't installed: {ex}", flush=True)
+        return _SPEAKER_EXIT_NOT_INSTALLED
+
+    config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                model=os.path.join(folder, SPEAKER_MODELS[0][0]),
+                window_shift_ratio=0.1,
+            ),
+        ),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=os.path.join(folder, SPEAKER_MODELS[2][0])),
+        clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SPEAKER_CLUSTER_THRESHOLD),
+        min_duration_on=0.3,
+        min_duration_off=0.5,
+    )
+    if not config.validate():
+        raise RuntimeError("speaker detection config is not valid")
+    sd = sherpa_onnx.OfflineSpeakerDiarization(config)
+    if sd.sample_rate != 16000:
+        raise RuntimeError(f"unexpected sample rate {sd.sample_rate}")
+    samples = np.ascontiguousarray(audio_processor.read_wav_mono(vocals_wav, sr=16000), dtype=np.float32)
+
+    def _callback(done: int, total: int) -> int:
+        print(f"{_SPEAKER_PROGRESS_PREFIX}{min(1.0, done / max(1, total)):.4f}", flush=True)
+        return 0
+
+    result = sd.process(samples, callback=_callback)
+    turns = [[float(seg.start), float(seg.end), int(seg.speaker)] for seg in result.sort_by_start_time()]
+    print(_SPEAKER_TURNS_PREFIX + json.dumps(turns), flush=True)
+    return 0
+
+
+def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+    """
+    Runs _speaker_turns_child in the same interpreter and returns (turns, notice) like
+    detect_speaker_turns. A non-zero exit (a native abort included), a timeout, or output
+    that isn't a list of turns all return (None, SPEAKER_NOTICE_FAILED).
+    """
+    paths = [BASE_DIR] + [os.path.abspath(p) if p else os.getcwd() for p in sys.path]
+    paths = list(dict.fromkeys(paths))
+    cmd = [sys.executable, "-c", _SPEAKER_CHILD_BOOT, json.dumps(paths), vocals_wav, folder]
+    try:
+        # stderr joins stdout, so native log lines can never fill a pipe nobody reads.
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as ex:
+        print(f"[PackBuilder] Speaker detection couldn't start: {ex}")
+        return None, SPEAKER_NOTICE_FAILED
+
+    timed_out = threading.Event()
+
+    def _stop() -> None:
+        timed_out.set()
+        proc.kill()
+
+    timer = threading.Timer(SPEAKER_TIMEOUT_S, _stop)
+    timer.daemon = True
+    timer.start()
+    turns_json, tail = None, []
+    try:
+        for line in proc.stdout:
+            line = line.rstrip("\r\n")
+            if line.startswith(_SPEAKER_PROGRESS_PREFIX):
+                try:
+                    done = float(line[len(_SPEAKER_PROGRESS_PREFIX):])
+                except ValueError:
+                    continue
+                if on_progress:
+                    on_progress(0.90 + 0.08 * max(0.0, min(1.0, done)), "")
+            elif line.startswith(_SPEAKER_TURNS_PREFIX):
+                turns_json = line[len(_SPEAKER_TURNS_PREFIX):]
+            elif line.strip():
+                tail = (tail + [line])[-8:]
+        code = proc.wait()
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+
+    if timed_out.is_set():
+        print(f"[PackBuilder] Speaker detection took longer than {SPEAKER_TIMEOUT_S} s, guessing from pauses.")
+        return None, SPEAKER_NOTICE_FAILED
+    if code == _SPEAKER_EXIT_NOT_INSTALLED:
+        return None, _speaker_not_installed_notice()
+    if code != 0 or turns_json is None:
+        detail = "\n".join(tail)
+        print(f"[PackBuilder] Speaker detection failed (exit {code}), guessing from pauses.\n{detail}")
+        return None, SPEAKER_NOTICE_FAILED
+    try:
+        turns = sorted((float(a), float(b), int(c)) for a, b, c in json.loads(turns_json))
+    except (ValueError, TypeError) as ex:
+        print(f"[PackBuilder] Speaker detection returned unreadable turns, guessing from pauses: {ex}")
+        return None, SPEAKER_NOTICE_FAILED
+    if not turns:
+        return None, SPEAKER_NOTICE_NO_VOICES
+    print(f"[PackBuilder] Found {len({t[2] for t in turns})} voices in {len(turns)} turns.")
+    return turns, ""
+
+
 def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
     """
     Finds who speaks when on the voice stem: ([(start, end, speaker_id), ...] by start, "").
     On any failure the turns are None and the notice says speakers were guessed from pauses.
     on_progress(fraction, message) runs 0.88-0.90 while downloading (first time only, with
     the download message) and 0.90-0.98 while detecting (message "").
+    The models download here; detection itself runs in a child process (_run_speaker_child).
     """
     try:
-        try:
-            import sherpa_onnx
-        except ImportError as ex:
-            print(f"[PackBuilder] Speaker detection isn't installed: {ex}")
+        if not _speaker_package_present():
+            print("[PackBuilder] Speaker detection isn't installed.")
             return None, _speaker_not_installed_notice()
 
         if not _ensure_speaker_models((lambda f: on_progress(0.88 + 0.02 * f, SPEAKER_DOWNLOAD_MESSAGE)) if on_progress else None):
             return None, SPEAKER_NOTICE_NO_DOWNLOAD
 
-        folder = _speaker_models_dir()
-        config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-            segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-                pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-                    model=os.path.join(folder, SPEAKER_MODELS[0][0]),
-                    window_shift_ratio=0.1,
-                ),
-            ),
-            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=os.path.join(folder, SPEAKER_MODELS[2][0])),
-            clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=SPEAKER_CLUSTER_THRESHOLD),
-            min_duration_on=0.3,
-            min_duration_off=0.5,
-        )
-        if not config.validate():
-            raise RuntimeError("speaker detection config is not valid")
-        sd = sherpa_onnx.OfflineSpeakerDiarization(config)
-        if sd.sample_rate != 16000:
-            raise RuntimeError(f"unexpected sample rate {sd.sample_rate}")
-        samples = np.ascontiguousarray(audio_processor.read_wav_mono(vocals_wav, sr=16000), dtype=np.float32)
-
         if on_progress:
-            def _callback(done: int, total: int) -> int:
-                on_progress(0.90 + 0.08 * min(1.0, done / max(1, total)), "")
-                return 0
             on_progress(0.90, "")
-            result = sd.process(samples, callback=_callback)
-        else:
-            result = sd.process(samples)
-        turns = [(float(seg.start), float(seg.end), int(seg.speaker)) for seg in result.sort_by_start_time()]
-        if not turns:
-            return None, SPEAKER_NOTICE_NO_VOICES
-        print(f"[PackBuilder] Found {len({t[2] for t in turns})} voices in {len(turns)} turns.")
-        return turns, ""
+        return _run_speaker_child(vocals_wav, _speaker_models_dir(), on_progress)
     except Exception as ex:
         print(f"[PackBuilder] Speaker detection failed, guessing from pauses: {ex}")
         return None, SPEAKER_NOTICE_FAILED

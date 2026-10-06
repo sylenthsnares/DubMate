@@ -129,10 +129,11 @@ Any exception inside it is logged and the lines are kept as they were.
 
 **Speaker detection** (`pack_builder.detect_speaker_turns(vocals_wav, on_progress=None) -> (turns | None, notice)`):
 
-1. `import sherpa_onnx`. The running engine never installs packages. The package comes
+1. Check that `sherpa_onnx` can be found (`importlib.util.find_spec`, which does not load
+   it into the engine). The running engine never installs packages. The package comes
    with the Pack Builder (`requirements_builder.txt`), so fresh add-on installs and
-   `update.bat`/`update.sh` get it. On ImportError the turns are None and the notice says
-   how to add it:
+   `update.bat`/`update.sh` get it. When it is missing (or the child below can't import
+   it, exit code 3) the turns are None and the notice says how to add it:
    - Desktop (`_addon_dir()` is not None): "Speaker detection isn't installed, so speakers
      were guessed from pauses. To add it, remove Pack Builder in Audio settings, then run the
      DubMate installer again and tick Pack Builder." That is the existing flow: Audio settings
@@ -145,16 +146,33 @@ Any exception inside it is logged and the lines are kept as they were.
 2. `_ensure_speaker_models()` downloads any missing files under a module lock. It uses
    `urllib.request.urlopen` with a 60 s timeout. On failure it returns
    `(None, "Couldn't download speaker detection, ...")`, and the next build tries again.
-3. Build `sherpa_onnx.OfflineSpeakerDiarization` with:
-   - pyannote segmentation, `window_shift_ratio=0.1`;
-   - `SpeakerEmbeddingExtractorConfig(model=...)`;
-   - `FastClusteringConfig(num_clusters=-1, threshold=SPEAKER_CLUSTER_THRESHOLD=0.5)`;
-   - `min_duration_on=0.3`, `min_duration_off=0.5`.
-4. Feed it 16 kHz mono float32 from the voice stem. Its progress callback maps to 0.90–0.98.
-5. Return the result as `[(start, end, speaker_id), ...]`.
+3. Run detection in a **child process** (`_run_speaker_child`). Demucs (torch) and
+   onnxruntime each ship their own OpenMP runtime; loading both into one process can abort it
+   on macOS, and no `except` catches that. The engine starts the same interpreter,
+   `sys.executable -c <boot> <engine sys.path as JSON> <vocals.wav> <model folder>`, with
+   `cwd=BASE_DIR`, stdin closed, stderr merged into stdout, a hidden console on Windows and
+   the engine's environment (so Tauri's PYTHONPATH carries over). The boot line sets the
+   child's `sys.path` to the engine's own, in the same order (BASE_DIR first, the add-on
+   folder included), because the embedded Windows runtime ignores PYTHONPATH and adds no
+   script or working folder. It then imports `pack_builder` and runs
+   `_speaker_turns_child(vocals_wav, folder)`, which:
+   - builds `sherpa_onnx.OfflineSpeakerDiarization` with pyannote segmentation
+     (`window_shift_ratio=0.1`), `SpeakerEmbeddingExtractorConfig(model=...)`,
+     `FastClusteringConfig(num_clusters=-1, threshold=SPEAKER_CLUSTER_THRESHOLD=0.5)`,
+     `min_duration_on=0.3` and `min_duration_off=0.5`;
+   - feeds it 16 kHz mono float32 from the voice stem;
+   - prints `DUBMATE_SPEAKER_PROGRESS <0..1>` lines, then one line
+     `DUBMATE_SPEAKER_TURNS [[start, end, speaker_id], ...]`;
+   - exits 3 when `sherpa_onnx` can't be imported, non-zero on any other error.
+   The engine maps progress lines to 0.90–0.98, ignores other output (keeping the last few
+   lines for the log), and kills the child after `SPEAKER_TIMEOUT_S` (1800 s; scenes are at
+   most 30 minutes). No new process framework: one `subprocess.Popen` and a timer.
+4. Return the result as `[(start, end, speaker_id), ...]`, sorted by start.
    - **Zero turns** (sherpa-onnx logs "No speakers found" and returns an empty result rather
      than raising): return `(None, "Speaker detection couldn't tell the voices apart, so speakers were guessed from pauses. Check who says each line.")`.
-   - Any exception: `(None, "Speaker detection couldn't run, so speakers were guessed from pauses. ...")`.
+   - A non-zero exit (a native abort is a signal exit), a timeout, a child that can't start,
+     no turns line or turns that aren't valid JSON, and any other exception:
+     `(None, "Speaker detection couldn't run, so speakers were guessed from pauses. ...")`.
 
 `assign_speakers_to_segments(segments, turns=None)` behaves as follows:
 
@@ -168,8 +186,8 @@ Any exception inside it is logged and the lines are kept as they were.
 - With `turns` None or empty: today's gap heuristic, unchanged.
 
 The pipeline only calls `detect_speaker_turns` when no names were given, so subtitles with
-names never trigger a download. `sherpa_onnx` is imported inside the function only, never at
-module scope (guarded by `HEAVY_MODULES`).
+names never trigger a download. `sherpa_onnx` is imported only in the child process, never
+in the engine and never at module scope (guarded by `HEAVY_MODULES`).
 
 **Stem preview** (`pack_builder.js`):
 
@@ -242,9 +260,13 @@ Tests guarding this:
     `add_nonverbal_segments` and `detect_speaker_turns` monkeypatched. Asserts order,
     `voices_separated`, warnings and the final segments.
   - Speaker detection with a fake `sherpa_onnx` module injected into `sys.modules`, and
-    `urllib.request.urlopen` and `subprocess.run` stubbed. Covers: model download with a good
-    and a bad checksum, ImportError on source and desktop, `[]` turns, exceptions, overlap
-    mapping and the first-line case.
+    `urllib.request.urlopen`, `subprocess.run` and `subprocess.Popen` stubbed. Covers: model
+    download with a good and a bad checksum, a missing package on source and desktop, the
+    child entry point (config, progress and turns lines, exit 3), and the child process
+    outcomes: success, crash (signal exit), timeout, bad JSON, no turns line, `[]` turns,
+    exit 3 and a failed start. Overlap mapping and the first-line case.
+  - One real child process (`sys.executable`) that finds a fake `sherpa_onnx.py` only through
+    the engine's `sys.path`, proving the path hand-over.
 - `tests/test_performance_guards.py`: `"sherpa_onnx"` added to `HEAVY_MODULES`.
 - JavaScript: a new jsdom suite `tests/test_builder_editor.js` loads `static/builder.html` and
   `pack_builder.js` through `tests/helpers/studio_dom.js` (given an optional entry file). It
@@ -264,13 +286,15 @@ Tests guarding this:
 - Transcoding the stem to a smaller format for preview.
 - A general "update Pack Builder's packages" mechanism in the launcher. Desktop installs from
   before this release get speaker detection by reinstalling Pack Builder.
-- Running speaker detection in a separate process (only if the macOS check below fails).
 
 ## Risks
 
-- **Torch and onnxruntime in one process.** On macOS a duplicate OpenMP runtime can abort the
-  engine, and a fallback can't catch that. Hands-on check 1. If it aborts, the follow-up is to
-  run `detect_speaker_turns` in a child Python process; that is not in this PR.
+- **Torch and onnxruntime in one process.** On macOS a duplicate OpenMP runtime can abort a
+  process. Speaker detection runs in a child process, so an abort there only costs the
+  speaker guess. Hands-on check 1.
+- **Child start-up.** The child re-imports `pack_builder` (numpy and the engine helpers, not
+  torch), about a second. The embedded Windows runtime gets the engine's `sys.path` from the
+  boot line; only a regular Python was tested. Hands-on checks 1 and 4.
 - **Older desktop installs** have no speaker detection until Pack Builder is reinstalled
   (about 2 GB again). The notice says how.
 - **Embedded Windows Python** (`._pth`) must load the sherpa-onnx-core DLLs from the add-on
@@ -287,8 +311,9 @@ Tests guarding this:
 
 ## Hands-on checks (before release)
 
-1. macOS desktop build: build a pack from a 2-minute clip with real separation, so Demucs and
-   then speaker detection run in one engine process. The engine must not abort.
+1. macOS desktop build: build a pack from a 2-minute clip with real separation, so Demucs runs
+   in the engine and speaker detection in its child. The engine must not abort, and speakers
+   are detected (no "couldn't run" notice).
 2. macOS desktop app: open the editor with "Voices only" and press play. You hear the voices,
    or you get the fallback toast and the full audio. Never silence.
 3. Windows, CPU only: time speaker detection on a real 30-minute voice stem.
@@ -329,6 +354,10 @@ Tests guarding this:
 14. There is a maximum non-verbal region length of 8 s, against song leaks and long walla.
 15. Pointer: non-primary pointers are ignored, there is no pinch-zoom, and mouse buttons are not filtered.
 16. Diarization is skipped when subtitles name the characters.
+17. Speaker detection always runs in a child process (same interpreter, the engine's
+    `sys.path`, 1800 s timeout), not only after the macOS check failed: an OpenMP abort
+    can't be caught in-process, and the child costs about a second. A crash, timeout or
+    unreadable output falls back to the pause guess with the "couldn't run" notice.
 
 ## Implementation steps
 
@@ -346,3 +375,9 @@ Each step is one commit and keeps `python tests/run_all_tests.py` green.
    model download, `detect_speaker_turns`, overlap mapping, README licences, `HEAVY_MODULES`.
 6. **Speaker detection (pipeline and editor).** New stage, notices, progress, pipeline test.
 7. **Changelog and roadmap.**
+
+Follow-up fixes, one commit each (`fix(pack-builder): ...`):
+
+1. **No engine-side installs.** The pip top-up is gone; a missing package gives the pause
+   guess and a notice that says how to add it (Decided overnight 6).
+2. **Speaker detection in a child process** (How it works, step 3; Decided overnight 17).
