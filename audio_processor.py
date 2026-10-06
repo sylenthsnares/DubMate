@@ -1723,28 +1723,38 @@ def _mix_into(buffers: List[np.ndarray], audio: np.ndarray, pos_sec: float, sr: 
             buf[start_sample:end_sample] += audio[:end_sample - start_sample]
 
 
-def _mix_scene(
+def _mix_buses(
     pack: PackInfo,
     takes_dict: Dict[int, Dict[str, Any]],
     sr: int = SR,
     presence_db: float = 0.0,
-) -> np.ndarray:
+    by_character: bool = False,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
-    The scene's unmastered mono mix: backing x BACKING_TRACK_LEVEL, each take at its
-    offset with its effects, gain and presence_db, and the original voice
-    (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take.
-    takes_dict format (Room.mix_takes): {line_index: {"wav_path": str, "render_dir": str,
-    "offset_ms": int, "gain_db": float, "chain": dict}}
+    The scene's unmastered mono mix, split into buses: (backing, voices). backing is the
+    backing track x BACKING_TRACK_LEVEL; voices holds each take at its offset with its
+    effects, gain and presence_db, and the original voice (x ORIGINAL_LINE_LEVEL, plus
+    presence_db) for lines without a take. Voices go into voices["dialogue"], or with
+    by_character into voices[<character>]. Every buffer is _timeline_samples long; a voice
+    bus exists only once a line lands in it. takes_dict format (Room.mix_takes):
+    {line_index: {"wav_path": str, "render_dir": str, "offset_ms": int, "gain_db": float, "chain": dict}}
     """
     total_samples = _timeline_samples(pack, sr)
-    mix_buffer = np.zeros(total_samples, dtype=np.float32)
+    backing = np.zeros(total_samples, dtype=np.float32)
+    voices: Dict[str, np.ndarray] = {}
+
+    def voice_bus(line: Dict[str, Any]) -> np.ndarray:
+        name = (line.get("character") or "Actor") if by_character else "dialogue"
+        if name not in voices:
+            voices[name] = np.zeros(total_samples, dtype=np.float32)
+        return voices[name]
 
     # 1. Backing track (music & sound effects at the calibrated backing level)
     if pack.backing_track_path and os.path.isfile(pack.backing_track_path):
         try:
             backing_data = read_wav_mono(pack.backing_track_path, sr) * BACKING_TRACK_LEVEL
             n_copy = min(len(backing_data), total_samples)
-            mix_buffer[:n_copy] = backing_data[:n_copy]
+            backing[:n_copy] = backing_data[:n_copy]
         except Exception as ex:
             print(f"Error loading backing track: {ex}")
 
@@ -1763,7 +1773,7 @@ def _mix_scene(
                 # Failure policy: an unreadable take is skipped so the render can continue.
                 print(f"[render_dub_mix] Skipping line {idx}: take audio could not be read.")
                 continue
-            _mix_into([mix_buffer], processed_audio, start_sec + offset_sec, sr)
+            _mix_into([voice_bus(line)], processed_audio, start_sec + offset_sec, sr)
 
         else:
             orig_path = os.path.join(pack.folder, line["filename"])
@@ -1771,10 +1781,29 @@ def _mix_scene(
                 try:
                     orig_audio = read_wav_mono(orig_path, sr)
                     orig_mult = ORIGINAL_LINE_LEVEL * (10.0 ** (float(presence_db) / 20.0))
-                    _mix_into([mix_buffer], orig_audio * np.float32(orig_mult), start_sec, sr)
+                    _mix_into([voice_bus(line)], orig_audio * np.float32(orig_mult), start_sec, sr)
                 except Exception as ex:
                     print(f"Error loading original audio for line {idx}: {ex}")
 
+    return backing, voices
+
+
+def _mix_scene(
+    pack: PackInfo,
+    takes_dict: Dict[int, Dict[str, Any]],
+    sr: int = SR,
+    presence_db: float = 0.0,
+) -> np.ndarray:
+    """
+    The scene's unmastered mono mix: backing x BACKING_TRACK_LEVEL, each take at its
+    offset with its effects, gain and presence_db, and the original voice
+    (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take (_mix_buses, summed).
+    takes_dict format (Room.mix_takes): {line_index: {"wav_path": str, "render_dir": str,
+    "offset_ms": int, "gain_db": float, "chain": dict}}
+    """
+    mix_buffer, voices = _mix_buses(pack, takes_dict, sr, presence_db)
+    for buf in voices.values():
+        mix_buffer += buf
     return mix_buffer
 
 
@@ -2226,3 +2255,61 @@ def build_project_zip(
                 shutil.rmtree(temp_stage_dir, ignore_errors=True)
             except Exception:
                 pass
+
+
+def build_stems_zip(
+    pack: PackInfo,
+    takes_dict: Dict[int, Dict[str, Any]],
+    output_zip_path: str,
+    presence_db: float = 0.0,
+    room_id: str = "",
+    sr: int = SR,
+) -> str:
+    """
+    Writes the scene's stems to output_zip_path, under DubMate_Stems_<Pack>_<ROOM>/:
+    Dialogue.wav (every voice), Music_and_Effects.wav (the backing at its mix level) and
+    Characters/<Character>.wav (one per character with a line; they add up to Dialogue).
+    Mono 32-bit float WAVs, all _timeline_samples long and starting with the scene.
+    Every file gets the master stage's start gain (toward -16 LUFS, measured on the
+    unlimited mix), nothing after it: Dialogue + Music_and_Effects is the video's mix
+    before its limiter, at -16 LUFS, with its peaks kept. EffectsUnavailable is raised.
+    """
+    backing, voices = _mix_buses(pack, takes_dict, sr, presence_db, by_character=True)
+    dialogue = np.zeros(len(backing), dtype=np.float32)
+    for buf in voices.values():
+        dialogue += buf
+    lufs_in = integrated_lufs(backing + dialogue, sr)
+    gain_db = _master_gain_db(lufs_in)
+    g = np.float32(10.0 ** (gain_db / 20.0))
+    print(f"[build_stems_zip] Master: {round(lufs_in, 2)} LUFS in, {round(gain_db, 2):+} dB, no limiter.")
+
+    try:
+        room_id_safe = _sanitize_id_token(room_id)
+    except ValueError:
+        room_id_safe = "SESSION"
+    root_folder_name = f"DubMate_Stems_{sanitize_filename(pack.name)}_{room_id_safe}"
+
+    temp_stage_dir = tempfile.mkdtemp(prefix=f"dubmate_stems_{room_id_safe}_")
+    try:
+        root = os.path.join(temp_stage_dir, root_folder_name)
+        write_wav_float(os.path.join(root, "Dialogue.wav"), dialogue * g, sr)
+        write_wav_float(os.path.join(root, "Music_and_Effects.wav"), backing * g, sr)
+        used = set()
+        for char, buf in voices.items():
+            base = sanitize_filename(char)
+            name, n = base, 1
+            while name.lower() in used:
+                n += 1
+                name = f"{base}_{n}"
+            used.add(name.lower())
+            write_wav_float(os.path.join(root, "Characters", f"{name}.wav"), buf * g, sr)
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_zip_path)), exist_ok=True)
+        with zipfile.ZipFile(output_zip_path, "w", zipfile.ZIP_STORED) as zf:
+            for dirpath, _dirs, files in os.walk(root):
+                for f in sorted(files):
+                    file_path = os.path.join(dirpath, f)
+                    zf.write(file_path, os.path.relpath(file_path, temp_stage_dir))
+        return output_zip_path
+    finally:
+        shutil.rmtree(temp_stage_dir, ignore_errors=True)
