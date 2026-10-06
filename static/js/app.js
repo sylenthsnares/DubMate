@@ -2108,6 +2108,8 @@ class DubMateApp {
             startMessage: `Preparing "${rawTitle}"…`,
             doneMessage: `Downloaded "${rawTitle}"`,
             errorText: "Couldn't download that pack. Try again.",
+            // packs_api writes the ZIP into the export folder's packs/ subfolder.
+            exportSubfolder: 'packs',
           });
         });
       }
