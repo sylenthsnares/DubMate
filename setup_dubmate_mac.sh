@@ -25,8 +25,8 @@ fi
 
 PYTHON_VERSION=$(python3 -c 'import sys; print(sys.version_info.major, sys.version_info.minor)')
 read -r PY_MAJ PY_MIN <<< "$PYTHON_VERSION"
-if [ "$PY_MAJ" -lt 3 ] || ([ "$PY_MAJ" -eq 3 ] && [ "$PY_MIN" -lt 9 ]); then
-    echo "[ERROR] Python 3.9 or higher is required. Found Python $PY_MAJ.$PY_MIN"
+if [ "$PY_MAJ" -lt 3 ] || ([ "$PY_MAJ" -eq 3 ] && [ "$PY_MIN" -lt 10 ]); then
+    echo "[ERROR] Python 3.10 or higher is required. Found Python $PY_MAJ.$PY_MIN"
     exit 1
 fi
 echo "      Python $PY_MAJ.$PY_MIN detected."

@@ -3,6 +3,7 @@
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { WaveformRenderer } from '../waveform.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
+import { resolveChain } from './voice.js';
 
 export class BoothMethods {
   toggleFilterLines() {
@@ -104,6 +105,7 @@ export class BoothMethods {
   async loadBoothLine(index) {
     if (!this.roomState || !this.roomState.pack.lines[index]) return;
     this.cancelCurrentCountdown();
+    this.flushVoiceSave();
     this.currentLineIndex = index;
     const line = this.roomState.pack.lines[index];
     this.loadLineSeq = (this.loadLineSeq || 0) + 1;
@@ -147,10 +149,6 @@ export class BoothMethods {
     if (take) {
       this.sliderNudge.value = take.offset_ms || 0;
       this.nudgeDisplay.innerText = (take.offset_ms || 0) + ' ms';
-      this.sliderPitch.value = take.pitch_semitones || 0;
-      this.valPitch.innerText = (take.pitch_semitones > 0 ? '+' : '') + (take.pitch_semitones || 0) + ' st';
-      this.sliderReverb.value = (take.reverb_wet || 0) * 100;
-      this.valReverb.innerText = Math.round((take.reverb_wet || 0) * 100) + '%';
       this.sliderGain.value = take.gain_db || 0;
       this.valGain.innerText = (take.gain_db > 0 ? '+' : '') + (take.gain_db || 0) + ' dB';
 
@@ -167,10 +165,6 @@ export class BoothMethods {
     } else {
       this.sliderNudge.value = 0;
       this.nudgeDisplay.innerText = '0 ms';
-      this.sliderPitch.value = 0;
-      this.valPitch.innerText = '0 st';
-      this.sliderReverb.value = 0;
-      this.valReverb.innerText = '0%';
       this.sliderGain.value = 0;
       this.valGain.innerText = '0 dB';
       if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'none';
@@ -182,6 +176,7 @@ export class BoothMethods {
     if (this.checkRackNoiseReduction) this.checkRackNoiseReduction.checked = activeNoiseRed;
     if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
 
+    this.startTakeVoice(line, take);
     this.updateKnobsVisuals();
 
     this.recordState = 'idle';
@@ -425,6 +420,8 @@ export class BoothMethods {
     this.isPlayingReference = false;
     this.isPlayingTake = false;
     this.playingHistoryTakeId = null;
+    if (this.soundWait) this.endSoundWait(this.soundWait);
+    this.releaseVoiceWaiters();
     this.audio.stopAllPlayback();
     if (this.stageVideo) {
       this.stageVideo.pause();
@@ -484,9 +481,11 @@ export class BoothMethods {
   }
 
   // Preview Take (Bi-directional Sync & Live Waveform Animation)
+  // Preview plays the take as the engine rendered it, waiting (button pulsing) while the
+  // render is on its way. Without voice effects installed, it plays the take as recorded.
   async previewCurrentTake() {
     this.cancelCurrentCountdown();
-    if (this.isPlayingTake) {
+    if (this.isPlayingTake || (this.soundWait && !this.playingHistoryTakeId)) {
       this.stopBoothPlayback();
       return;
     }
@@ -500,7 +499,35 @@ export class BoothMethods {
       return;
     }
 
-    // Ensure take audio buffer is ready
+    const token = this.activePlaybackToken;
+    const scheduler = this.voiceScheduler;
+    if (scheduler && scheduler.state !== 'current' && scheduler.state !== 'unavailable') {
+      const wait = this.beginSoundWait(this.btnPreviewTake);
+      await this.waitForTakeVoice();
+      this.endSoundWait(wait);
+      if (token !== this.activePlaybackToken) return;
+    }
+
+    let buffer = null;
+    if (this.voiceUnavailable) {
+      buffer = await this.rawTakeBuffer(take);
+    } else if (this.voiceRender) {
+      buffer = this.voiceRender.buffer;
+    } else {
+      this.showToast("Your take's sound isn't ready yet. Try again in a moment.");
+      if (this.voiceScheduler) this.voiceScheduler.want(this.voiceChain, this.voicePlayState());
+      return;
+    }
+    if (!buffer || token !== this.activePlaybackToken) return;
+
+    await this.playTakeOverScene(line, buffer, {
+      offsetMs: parseInt(this.sliderNudge.value, 10),
+      gain: parseFloat(this.sliderGain.value),
+    });
+  }
+
+  /** The current take as recorded (played only while voice effects aren't installed). */
+  async rawTakeBuffer(take) {
     if (!this.currentTakeBuffer) {
       try {
         this.currentTakeBuffer = await this.audio.loadAudioBuffer(take.url, true);
@@ -508,22 +535,14 @@ export class BoothMethods {
         console.warn("[App] Error loading take audio:", e);
       }
     }
-
     if (!this.currentTakeBuffer) {
       this.showToast("The take is still loading. Try again in a moment.");
-      return;
     }
-
-    await this.playTakeOverScene(line, this.currentTakeBuffer, {
-      offsetMs: parseInt(this.sliderNudge.value, 10),
-      pitch: parseFloat(this.sliderPitch.value),
-      reverb: parseFloat(this.sliderReverb.value) / 100.0,
-      gain: parseFloat(this.sliderGain.value),
-    });
+    return this.currentTakeBuffer;
   }
 
-  /** Plays a take buffer over the scene from the line's start with the given settings. */
-  async playTakeOverScene(line, takeBuffer, { offsetMs, pitch, reverb, gain }) {
+  /** Plays a take's sound over the scene from the line's start, at its timing and level. */
+  async playTakeOverScene(line, takeBuffer, { offsetMs, gain }) {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     const token = this.activePlaybackToken;
     this.isPlayingTake = true;
@@ -537,8 +556,6 @@ export class BoothMethods {
     try {
       await this.stageVideo.play();
     } catch (e) { }
-
-    const lowcut = this.checkLowcut.checked;
 
     const startAudioTime = performance.now();
     const previewDurationSec = Math.max(line.duration || 3.0, (takeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
@@ -562,10 +579,7 @@ export class BoothMethods {
       takeBuffer,
       origBuffer: this.origBuffer,
       offsetMs,
-      pitchSemitones: pitch,
-      reverbWet: reverb,
       gainDb: gain,
-      enableLowCut: lowcut,
       onEnded: () => {
         if (token === this.activePlaybackToken) {
           this.isPlayingTake = false;
@@ -574,6 +588,7 @@ export class BoothMethods {
         }
       },
     });
+    this.startVoiceMeter();
   }
 
   toggleABState() {
@@ -658,26 +673,48 @@ export class BoothMethods {
     }
   }
 
+  /** Sends the take's timing and level. Its sound (voice chain) is saved by flushVoiceSave. */
   syncTakeParams() {
     const lineIdx = this.currentLineIndex;
     const offsetMs = parseInt(this.sliderNudge.value, 10);
-    const pitch = parseFloat(this.sliderPitch.value);
-    const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
 
     const take = this.roomState && this.takeForLine(lineIdx);
     if (!take) return;
     take.offset_ms = offsetMs;
-    take.pitch_semitones = pitch;
-    take.reverb_wet = reverb;
     take.gain_db = gain;
 
     this.socket.updateTakeParams(this.roomState.pack.lines[lineIdx].line_id, take.take_id, {
       offset_ms: offsetMs,
-      pitch_semitones: pitch,
-      reverb_wet: reverb,
       gain_db: gain,
     });
+  }
+
+  /** The Level dial, its readout and match badge, and the playing take's gain, from the take. */
+  showTakeLevel(take) {
+    const gainDb = parseFloat(take.gain_db) || 0;
+    this.sliderGain.value = gainDb;
+    this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
+    this.audio.setGain(gainDb);
+    this.updateKnobsVisuals();
+    if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
+  }
+
+  isPlayingCurrentTake() {
+    return !!this.isPlayingTake && !this.playingHistoryTakeId;
+  }
+
+  /** A play button pulses while its sound is on the way. */
+  beginSoundWait(button) {
+    const wait = { button };
+    this.soundWait = wait;
+    if (button) button.classList.add('is-waiting-sound');
+    return wait;
+  }
+
+  endSoundWait(wait) {
+    if (wait.button) wait.button.classList.remove('is-waiting-sound');
+    if (this.soundWait === wait) this.soundWait = null;
   }
 
   // --- Studio Noise Reduction ---
@@ -730,6 +767,10 @@ export class BoothMethods {
       this.audio.evictTakeCache(this.takeForLine(lineIndex));
 
       if (lineIndex === this.currentLineIndex) {
+        // The take's audio changed, so its render is of the old audio: ask for a new one.
+        this.voiceRender = null;
+        if (this.voiceScheduler) this.voiceScheduler.want(this.voiceChain, this.voicePlayState());
+
         const line = this.roomState.pack.lines[lineIndex];
         const take = this.takeForLine(lineIndex);
         let origPeaks = line.peaks || [];
@@ -738,14 +779,7 @@ export class BoothMethods {
         this.setWaveformForLine(line, take, origPeaks, takePeaks);
 
         // The server re-matches gain for the swapped audio; show the take's new level.
-        if (take) {
-          const gainDb = parseFloat(take.gain_db) || 0;
-          this.sliderGain.value = gainDb;
-          this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
-          this.audio.setGain(gainDb);
-          this.updateKnobsVisuals();
-          if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
-        }
+        if (take) this.showTakeLevel(take);
 
         if (take && take.url) {
           const newBuf = await this.audio.loadAudioBuffer(take.url, true);
@@ -948,8 +982,6 @@ export class BoothMethods {
       this.sliderBackingVol,
       this.checkMetronome,
       this.checkGuideVoice,
-      this.sliderPitch,
-      this.sliderReverb,
       this.sliderGain,
       this.btnLeaveRoom,
       this.navStepLobby,
@@ -967,6 +999,7 @@ export class BoothMethods {
     if (this.timelineChips) {
       this.timelineChips.classList.toggle('ui-interaction-locked', isProcessing);
     }
+    this.refreshVoiceControls();
   }
 
   async finishRecording() {
@@ -1001,8 +1034,6 @@ export class BoothMethods {
     await this.updateAudioDeviceList();
     const latencyMs = this.currentLatencyMs();
     const offsetMs = latencyMs !== null ? -latencyMs : parseInt(this.sliderNudge.value, 10);
-    const pitch = parseFloat(this.sliderPitch.value);
-    const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
     // Ask the server to apply this take's scene-matched gain unless the slider was moved
     // off 0 / off the previous take's auto gain (the slider still shows that take's level).
@@ -1014,9 +1045,8 @@ export class BoothMethods {
     formData.append('file', blob, `take_${lineIndex}.webm`);
     formData.append('user_id', this.user.id);
     formData.append('user_name', this.user.name);
+    // No sound settings: the engine gives the new take the sound of the take it replaces.
     formData.append('offset_ms', offsetMs);
-    formData.append('pitch_semitones', pitch);
-    formData.append('reverb_wet', reverb);
     formData.append('gain_db', gain);
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
     // The room check for this microphone tunes the cleanup; '' means standard cleanup.
@@ -1210,7 +1240,7 @@ export class BoothMethods {
         row.appendChild(btn);
         return btn;
       };
-      addButton('Play', 'btn-secondary take-history-play', () => this.playHistoryTake(take));
+      addButton('Play', 'btn-secondary take-history-play', (e) => this.playHistoryTake(take, e.currentTarget));
       if (take === picked) {
         const badge = document.createElement('span');
         badge.className = 'take-history-picked';
@@ -1225,30 +1255,56 @@ export class BoothMethods {
     }
   }
 
-  /** Plays a take from the history over the scene with its own settings; sliders stay put. */
-  async playHistoryTake(take) {
+  /** Plays a take from the history over the scene with its own sound, timing and level,
+   *  once the engine has rendered it (the button pulses meanwhile); the controls stay put. */
+  async playHistoryTake(take, button = null) {
     this.cancelCurrentCountdown();
-    const wasThisTake = this.isPlayingTake && this.playingHistoryTakeId === take.take_id;
+    const wasThisTake = (this.isPlayingTake || this.soundWait) && this.playingHistoryTakeId === take.take_id;
     this.stopBoothPlayback();
     if (wasThisTake || !take.url) return;
 
     const line = this.roomState.pack.lines[this.currentLineIndex];
+    const token = this.activePlaybackToken;
+    this.playingHistoryTakeId = take.take_id;
     let buffer = null;
-    try {
-      buffer = await this.audio.loadAudioBuffer(take.url);
-    } catch (e) {
-      console.warn("[App] Error loading take audio:", e);
+    if (!this.voiceUnavailable) {
+      const wait = this.beginSoundWait(button);
+      try {
+        const chain = resolveChain(this.roomState.voice, line.character, take);
+        // Its own client id, so it never replaces the edited take's queued render.
+        const render = await this.requestTakeRender(this.roomState.room_id, line.line_id, take.take_id, chain,
+          { clientId: `${this.renderClientId()}-play` });
+        if (render.status === 200) buffer = render.buffer;
+        else if (render.status === 503) this.voiceUnavailable = true;
+      } catch (e) {
+        console.warn("[App] Error rendering take audio:", e);
+      }
+      this.endSoundWait(wait);
+      if (token !== this.activePlaybackToken) return;
+      this.refreshVoiceControls();
+      if (!buffer && !this.voiceUnavailable) {
+        this.playingHistoryTakeId = null;
+        this.showToast("That take's sound didn't load. Try again.");
+        return;
+      }
     }
     if (!buffer) {
+      // Voice effects aren't installed: the take as recorded.
+      try {
+        buffer = await this.audio.loadAudioBuffer(take.url);
+      } catch (e) {
+        console.warn("[App] Error loading take audio:", e);
+      }
+    }
+    if (!buffer) {
+      this.playingHistoryTakeId = null;
       this.showToast("The take is still loading. Try again in a moment.");
       return;
     }
-    if (line !== this.roomState?.pack?.lines?.[this.currentLineIndex]) return;
+    if (token !== this.activePlaybackToken || line !== this.roomState?.pack?.lines?.[this.currentLineIndex]) return;
     this.playingHistoryTakeId = take.take_id;
     await this.playTakeOverScene(line, buffer, {
       offsetMs: take.offset_ms || 0,
-      pitch: take.pitch_semitones || 0,
-      reverb: take.reverb_wet || 0,
       gain: take.gain_db || 0,
     });
   }

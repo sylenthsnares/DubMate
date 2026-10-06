@@ -103,7 +103,47 @@ async fn apply_update(download_url: String, app: tauri::AppHandle) -> Result<(),
     // bundle is worse than refusing, and the caller surfaces this message to the user.
     updater::ensure_writable(&app_dir)?;
 
-    updater::download_and_extract_bundle(&download_url, &app_dir, app.clone()).await?;
+    let bundle = updater::download_bundle(&download_url, app.clone()).await?;
+
+    // The bundle carries only Python and static files, so packages the new version needs
+    // go into the bundled runtime here, before its files are written: if that fails the
+    // old version stays whole and the engine is started on it again.
+    let mut engine_stopped = false;
+    if let Some(requirements) = updater::requirements_to_install(&bundle, &app_dir)? {
+        match updater::bundled_python(&app) {
+            Some(python) => {
+                engine_stopped = true;
+                let _ = app.emit(
+                    "update-stage",
+                    updater::UpdateStagePayload {
+                        headline: "Installing the update".to_string(),
+                        detail: "Downloading the parts it needs".to_string(),
+                    },
+                );
+                // Windows won't replace a library the running engine has loaded.
+                kill_sidecars(&app);
+                let installed = tauri::async_runtime::spawn_blocking(move || {
+                    updater::install_bundle_requirements(&python, &requirements)
+                })
+                .await
+                .map_err(|e| format!("{}\n\nDetails: {}", updater::DEPENDENCY_INSTALL_FAILED, e))
+                .and_then(|result| result);
+                if let Err(message) = installed {
+                    eprintln!("[Updater] Installing the update's requirements failed: {}", message);
+                    start_sidecars(app.clone()).await;
+                    return Err(message);
+                }
+            }
+            None => println!("[Updater] No bundled Python runtime; requirements are left to the developer."),
+        }
+    }
+
+    if let Err(message) = updater::extract_bundle(&bundle, &app_dir) {
+        if engine_stopped {
+            start_sidecars(app.clone()).await;
+        }
+        return Err(message);
+    }
 
     // The running engine still holds the previous Python modules in memory. Without this
     // restart the freshly downloaded fixes stay inert until the next cold launch.
