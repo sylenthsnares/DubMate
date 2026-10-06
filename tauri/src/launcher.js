@@ -1,4 +1,4 @@
-// launcher.js - Bridges the Tauri desktop window into DubMate Studio Pro.
+// launcher.js - Bridges the Tauri desktop window into DubMate.
 // The engine port is chosen at runtime (8000 unless taken), so never hardcode it.
 
 const splash = document.getElementById("splash");
@@ -17,6 +17,8 @@ const statusText = document.getElementById("status-text");
 const detailText = document.getElementById("detail-text");
 const errorMsg = document.getElementById("error-msg");
 const errorTitle = document.getElementById("error-title");
+const errorDetails = document.getElementById("error-details");
+const errorRaw = document.getElementById("error-raw");
 const updaterTitle = document.getElementById("updater-title");
 const btnRetry = document.getElementById("btn-retry");
 const btnOpenBrowser = document.getElementById("btn-open-browser");
@@ -56,13 +58,21 @@ function showUpdater() {
   if (errorBox) errorBox.style.display = "none";
 }
 
-function showError(msg, title) {
+// `detail` is the raw error text. It sits behind "Show details" so the message
+// stays plain, and stays selectable for bug reports.
+function showError(msg, title, detail) {
   if (isEntering || isUpdating || isInstallingBuilder) return;
   if (splash) splash.style.display = "none";
   if (updaterBox) updaterBox.style.display = "none";
   if (errorBox) errorBox.style.display = "block";
   if (errorTitle && title) errorTitle.innerText = title;
   if (errorMsg) errorMsg.innerText = msg || "DubMate is taking longer than usual to start. Click Try again.";
+  if (errorDetails && errorRaw) {
+    const raw = detail ? String(detail) : "";
+    errorRaw.innerText = raw;
+    errorDetails.open = false;
+    errorDetails.style.display = raw ? "block" : "none";
+  }
 }
 
 function updateStatus(mainMsg, subMsg) {
@@ -133,10 +143,9 @@ async function init() {
             showError(
               `The update to version ${payload.data.latest_version} didn't install. ` +
               `DubMate is still on version ${payload.data.current_version}. ` +
-              `Click Try again to open it.
-
-Details: ${e}`,
-              "Update failed"
+              `Click Try again to open it.`,
+              "Update failed",
+              e
             );
           }
         } else {
@@ -163,10 +172,18 @@ Details: ${e}`,
           if (techDetails) techDetails.style.display = "none";
           if (progressBar) progressBar.classList.remove("is-idle");
           if (progressHeadline) progressHeadline.innerText = "Downloading the update";
-          if (progressFill) progressFill.style.width = `${p.percentage}%`;
-          if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
-          if (progressText) {
-            progressText.innerText = `${(p.received / (1024 * 1024)).toFixed(1)} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
+          const receivedMb = (p.received / (1024 * 1024)).toFixed(1);
+          if (p.total > 0) {
+            if (progressFill) progressFill.style.width = `${p.percentage}%`;
+            if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
+            if (progressText) {
+              progressText.innerText = `${receivedMb} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
+            }
+          } else {
+            // Size unknown: a full bar with the moving sheen, and just the amount so far.
+            if (progressFill) progressFill.style.width = "100%";
+            if (progressPercent) progressPercent.innerText = "";
+            if (progressText) progressText.innerText = `${receivedMb} MB`;
           }
         }
       });
@@ -189,7 +206,15 @@ Details: ${e}`,
       // Listen for server error events from Rust
       listen("server-error", (event) => {
         if (!isUpdating && !isEntering) {
-          showError(event.payload || "DubMate couldn't start. Click Try again.", "DubMate didn't start");
+          // Rust appends the raw error as "\n\nDetails: ..."; keep it behind Show details.
+          const text = String(event.payload || "DubMate couldn't start. Click Try again.");
+          const marker = "\n\nDetails: ";
+          const cut = text.indexOf(marker);
+          if (cut >= 0) {
+            showError(text.slice(0, cut), "DubMate didn't start", text.slice(cut + marker.length));
+          } else {
+            showError(text, "DubMate didn't start");
+          }
         }
       });
 
@@ -296,10 +321,9 @@ async function maybeInstallPackBuilder(invoke) {
     isInstallingBuilder = false;
     showError(
       `Pack Builder didn't install. Everything else works. ` +
-      `Click Try again to open DubMate. Pack Builder will install the next time you start it.
-
-Details: ${e}`,
-      "Pack Builder didn't install"
+      `Click Try again to open DubMate. Pack Builder will install the next time you start it.`,
+      "Pack Builder didn't install",
+      e
     );
     return false;
   }
@@ -348,7 +372,11 @@ async function pollAndEnterStudio() {
 
   pollingActive = false;
   if (!isUpdating && !isEntering) {
-    showError(`DubMate didn't start within a minute. Click Try again to restart it.\n\nAddress: ${engineUrl()}`, "DubMate didn't start");
+    showError(
+      "DubMate didn't start within a minute. Click Try again to restart it.",
+      "DubMate didn't start",
+      `Address: ${engineUrl()}`
+    );
   }
 }
 
@@ -356,7 +384,7 @@ function enterStudio() {
   if (isUpdating || isEntering || isInstallingBuilder || builderCheckPending) return;
   isEntering = true;
   updateStatus("Opening DubMate", "");
-  // Seamlessly load the full DubMate Studio Pro interface into the native window
+  // Seamlessly load the full DubMate interface into the native window
   window.location.replace(engineUrl());
 }
 

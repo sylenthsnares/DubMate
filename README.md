@@ -200,7 +200,7 @@ Works on Apple Silicon and Intel Macs. Open Terminal in the DubMate project root
 
 ```bash
 # 1. 1-Click Setup
-chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
+chmod +x setup_dubmate_mac.sh run_mac.sh run_cloudflare.sh update.sh
 ./setup_dubmate_mac.sh
 
 # 2. Launch
@@ -209,13 +209,7 @@ chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
 
 Then open **`http://localhost:8000`** and allow **Microphone Access** when the browser asks.
 
-**Internet multiplayer (Cloudflare Tunnel)**: keep `./run_mac.sh` running, and in a second Terminal tab start the tunnel:
-
-```bash
-python3 scripts/run_tunnel.py --cloudflared tools/cloudflared --port 8000
-```
-
-Copy the generated `https://xxxx.trycloudflare.com` link and send it to your cast.
+**Internet multiplayer (Cloudflare Tunnel)**: run `./run_cloudflare.sh` instead of `./run_mac.sh`. It starts DubMate and opens a public tunnel. Copy the generated `https://xxxx.trycloudflare.com` link and send it to your cast.
 
 **Microphone permissions**: if the browser does not capture microphone audio:
 1. Open **System Settings** on macOS.

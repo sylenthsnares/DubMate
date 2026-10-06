@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::Emitter;
@@ -201,11 +202,39 @@ pub async fn download_and_extract_bundle(
         .await
         .map_err(|e| format!("Failed to download update: {}", e))?;
 
+    // Zero means the server sent no content-length; the launcher then shows an
+    // indeterminate bar with just the downloaded size.
     let total_size = response.content_length().unwrap_or(0);
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Error reading update stream: {}", e))?;
+    // Cap the up-front reservation so a bogus header cannot force a huge allocation.
+    let mut bytes: Vec<u8> = Vec::with_capacity(total_size.min(256 * 1024 * 1024) as usize);
+    let mut stream = response.bytes_stream();
+    let mut last_percent: u8 = 0;
+    let mut last_emit = std::time::Instant::now();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Error reading update stream: {}", e))?;
+        bytes.extend_from_slice(&chunk);
+
+        let received = bytes.len() as u64;
+        let percent = if total_size > 0 {
+            ((received.min(total_size) * 100) / total_size) as u8
+        } else {
+            0
+        };
+        // Throttle: at most one event per whole percent, or every 250 ms.
+        if percent > last_percent || last_emit.elapsed() >= std::time::Duration::from_millis(250) {
+            last_percent = percent;
+            last_emit = std::time::Instant::now();
+            let _ = app_handle.emit(
+                "update-progress",
+                UpdateProgressPayload {
+                    received,
+                    total: total_size,
+                    percentage: percent,
+                },
+            );
+        }
+    }
 
     let _ = app_handle.emit(
         "update-progress",

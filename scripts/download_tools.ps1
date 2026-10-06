@@ -17,47 +17,61 @@ $ProgressPreference = 'SilentlyContinue'
 $ffmpegPath = Join-Path $TargetDir "ffmpeg.exe"
 $ffprobePath = Join-Path $TargetDir "ffprobe.exe"
 
+# Pinned to one BtbN month-end build (those are kept for about two years) and
+# checked against a hardcoded SHA-256 before anything is extracted. The same pin
+# lives in tauri/scripts/stage-sidecars.ps1; move both together, and never relax
+# the hash to make a download pass.
+$FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip"
+$FfmpegSha256 = "cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835"
+$ffmpegHashMismatch = $false
+
 if ((-not (Test-Path $ffmpegPath)) -or (-not (Test-Path $ffprobePath))) {
     Write-Host "   -> Setting up portable FFmpeg & FFprobe in tools\..." -ForegroundColor Cyan
-    
-    $downloaded = $false
 
-    if (-not $downloaded) {
-        $urls = @(
-            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-        )
-        
-        foreach ($url in $urls) {
-            try {
-                Write-Host "      Downloading from: $url"
-                $tempZip = Join-Path $env:TEMP "dubmate_ffmpeg_$([Guid]::NewGuid().ToString('N')).zip"
-                $tempExtract = Join-Path $env:TEMP "dubmate_ffmpeg_x_$([Guid]::NewGuid().ToString('N'))"
-                
-                Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing
-                
-                Write-Host "      Extracting FFmpeg binaries..."
-                Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
-                
-                $foundFfmpeg = Get-ChildItem -Path $tempExtract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-                if ($foundFfmpeg) {
-                    $binDir = $foundFfmpeg.DirectoryName
-                    Get-ChildItem -Path $binDir -Filter "*.exe" | ForEach-Object {
-                        Copy-Item -Path $_.FullName -Destination $TargetDir -Force
-                    }
-                    $downloaded = $true
-                    Write-Host "      FFmpeg and FFprobe successfully installed in tools\" -ForegroundColor Green
+    $downloaded = $false
+    $tempZip = Join-Path $env:TEMP "dubmate_ffmpeg_$([Guid]::NewGuid().ToString('N')).zip"
+    $tempExtract = Join-Path $env:TEMP "dubmate_ffmpeg_x_$([Guid]::NewGuid().ToString('N'))"
+
+    try {
+        Write-Host "      Downloading from: $FfmpegUrl"
+        Invoke-WebRequest -Uri $FfmpegUrl -OutFile $tempZip -UseBasicParsing
+
+        # Hashed through .NET rather than Get-FileHash: Windows PowerShell started
+        # from a PowerShell 7 terminal inherits a module path where Get-FileHash
+        # fails to load.
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $stream = [System.IO.File]::OpenRead($tempZip)
+        try {
+            $actualSha256 = ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant()
+        } finally {
+            $stream.Dispose()
+            $sha.Dispose()
+        }
+        if ($actualSha256 -ne $FfmpegSha256) {
+            $ffmpegHashMismatch = $true
+            Write-Host "      FFmpeg download failed its SHA-256 check and was NOT installed." -ForegroundColor Red
+            Write-Host "        expected: $FfmpegSha256" -ForegroundColor Red
+            Write-Host "        actual  : $actualSha256" -ForegroundColor Red
+        } else {
+            Write-Host "      SHA-256 verified. Extracting FFmpeg binaries..."
+            Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+
+            $foundFfmpeg = Get-ChildItem -Path $tempExtract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+            if ($foundFfmpeg) {
+                $binDir = $foundFfmpeg.DirectoryName
+                Get-ChildItem -Path $binDir -Filter "*.exe" | ForEach-Object {
+                    Copy-Item -Path $_.FullName -Destination $TargetDir -Force
                 }
-                
-                Remove-Item $tempZip, $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
-                if ($downloaded) { break }
-            } catch {
-                Write-Host "      Download attempt failed: $($_.Exception.Message)" -ForegroundColor Yellow
-                Remove-Item $tempZip, $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+                $downloaded = $true
+                Write-Host "      FFmpeg and FFprobe successfully installed in tools\" -ForegroundColor Green
             }
         }
+    } catch {
+        Write-Host "      Download attempt failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    } finally {
+        Remove-Item $tempZip, $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
     }
-    
+
     if (-not $downloaded) {
         Write-Warning "Could not automatically download FFmpeg. You can place ffmpeg.exe into $TargetDir manually."
     }
@@ -91,4 +105,9 @@ if (-not (Test-Path $deepFilterPath)) {
     }
 } else {
     Write-Host "   -> deep-filter.exe already present in tools\" -ForegroundColor Green
+}
+
+if ($ffmpegHashMismatch) {
+    Write-Error "FFmpeg was not installed: the download did not match its pinned SHA-256. Try again; if it keeps failing, the published file has changed."
+    exit 1
 }

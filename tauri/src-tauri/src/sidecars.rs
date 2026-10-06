@@ -115,7 +115,7 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
         Some(p) => p,
         None => {
             eprintln!("[Sidecar Error] app.py not found in working directory or resources!");
-            let _ = app.emit("server-error", "Some of DubMate's files are missing. Restart DubMate to download them, or reinstall it.");
+            let _ = app.emit("server-error", "Some of DubMate's files are missing. Connect to the internet and restart DubMate to download them, or reinstall it.");
             let _ = app.emit("startup-progress", "Files missing");
             return;
         }
