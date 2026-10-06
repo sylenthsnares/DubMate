@@ -1,6 +1,14 @@
 // pack_builder.js - High-Performance Pack Authoring Studio Controller
 // Handles Video Ingestion, Demucs/Whisper Progress SSE, Interactive Timeline & Cue Editor, and Pack Assembly
-import { escapeHtml, showToast, initModeDropdown } from './ui_common.js';
+import { escapeHtml, showToast, initModeDropdown, initTooltips } from './ui_common.js';
+
+// The engine's error body is {detail: "..."} or {detail: {code, message}}.
+function detailText(body, fallback) {
+  const d = body && body.detail;
+  if (typeof d === 'string' && d.trim()) return d;
+  if (d && typeof d.message === 'string' && d.message.trim()) return d.message;
+  return fallback;
+}
 
 const PALETTE = [
   '#d97706', // Vintage Amber
@@ -69,12 +77,12 @@ export class PackBuilderApp {
         const data = await res.json();
         if (this.deviceLabel) {
           const isHw = data.is_hardware;
-          const vendor = data.vendor || 'GPU';
-          const enc = (data.encoder || '').replace('h264_', '').toUpperCase();
-          this.deviceLabel.innerText = isHw ? `⚡ ${vendor} ${enc}` : `💻 ${data.encoder}`;
+          this.deviceLabel.innerText = isHw ? 'Fast processing' : 'Standard processing';
         }
         if (this.devicePill) {
-          this.devicePill.title = `Encoding Engine: ${data.description}`;
+          this.devicePill.dataset.tip = data.is_hardware
+            ? 'Your graphics card speeds up processing.'
+            : 'No supported graphics card found, so processing uses the processor and takes longer.';
           if (data.is_hardware) {
             this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
           }
@@ -199,6 +207,7 @@ export class PackBuilderApp {
 
   initEvents() {
     this.initModeDropdown();
+    initTooltips();
 
     // 0. Mode Tabs (File vs YouTube URL)
     if (this.tabBtnFile && this.tabBtnUrl) {
@@ -285,10 +294,10 @@ export class PackBuilderApp {
     // 6. Audio track switch (vocals only vs full audio)
     this.btnToggleAudioTrack.addEventListener('click', async () => {
       this.activeAudioTrack = this.activeAudioTrack === 'vocals' ? 'full' : 'vocals';
-      this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Vocals Only' : 'Full Audio';
+      this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Voices only' : 'Full audio';
       await this.fetchWaveformPeaks(this.activeAudioTrack);
       this.renderWaveformCanvas();
-      this.showToast(`Waveform: ${this.labelActiveTrack.innerText}`);
+      this.showToast(`Showing ${this.labelActiveTrack.innerText.toLowerCase()}`);
     });
 
     // 7. Timeline In / Out / Add Cue Markers / Whisper Transcribe
@@ -389,7 +398,7 @@ export class PackBuilderApp {
       localStorage.removeItem('dubmate_pack_builder_timeline_h');
       this.renderWaveformCanvas();
       this.renderTimelineSegments();
-      this.showToast('Reset timeline height to default (240px)');
+      this.showToast('Timeline height reset');
     });
   }
 
@@ -470,7 +479,7 @@ export class PackBuilderApp {
     this.sessionId = null;
     this.selectedVideoName.innerText = file.name;
     const mbSize = (file.size / (1024 * 1024)).toFixed(1);
-    this.selectedVideoStats.innerText = `${mbSize} MB • Processing source ready`;
+    this.selectedVideoStats.innerText = `${mbSize} MB`;
 
     if (!this.inputPackTitle.value) {
       const base = file.name.replace(/\.[^/.]+$/, '').replace(/[_\-]+/g, ' ');
@@ -490,7 +499,7 @@ export class PackBuilderApp {
   async handleUrlImport() {
     const url = (this.inputYoutubeUrl.value || '').trim();
     if (!url) {
-      this.showToast('Please paste a YouTube or web video URL.');
+      this.showToast('Paste a video link first.');
       if (this.inputYoutubeUrl) this.inputYoutubeUrl.focus();
       return;
     }
@@ -512,7 +521,7 @@ export class PackBuilderApp {
     const timerInterval = setInterval(() => {
       elapsed++;
       if (timeDesc) {
-        timeDesc.innerText = `Downloading video, up to 1080p... (${elapsed}s)`;
+        timeDesc.innerText = `${elapsed}s`;
       }
       if (elapsed > 4 && stage1 && stage2 && stage1.classList.contains('active')) {
         stage1.className = 'fetch-step-row completed';
@@ -532,8 +541,8 @@ export class PackBuilderApp {
       clearInterval(timerInterval);
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Failed to import video from URL.');
+        const err = await res.json().catch(() => ({}));
+        throw new Error(detailText(err, "Couldn't import that video. Check the link and try again."));
       }
 
       // Mark stage 2 & 3 as completed
@@ -564,10 +573,12 @@ export class PackBuilderApp {
       if (data.device_info) {
         const dev = data.device_info;
         if (dev.cuda_available) {
-          this.deviceLabel.innerText = `CUDA GPU: ${dev.device.toUpperCase()}`;
+          this.deviceLabel.innerText = 'Fast processing';
+          this.devicePill.dataset.tip = 'Your graphics card speeds up processing.';
           this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
         } else {
-          this.deviceLabel.innerText = 'Multi-Core CPU Pipeline';
+          this.deviceLabel.innerText = 'Standard processing';
+          this.devicePill.dataset.tip = 'No supported graphics card found, so processing uses the processor and takes longer.';
         }
       }
 
@@ -576,7 +587,7 @@ export class PackBuilderApp {
 
       // Update selected card
       this.selectedVideoName.innerText = data.title || data.filename;
-      this.selectedVideoStats.innerText = `${this.formatTime(data.duration)} • YouTube Source Ready`;
+      this.selectedVideoStats.innerText = this.formatTime(data.duration);
 
       if (this.ingestPanelFile) this.ingestPanelFile.style.display = 'none';
       if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
@@ -584,13 +595,13 @@ export class PackBuilderApp {
       this.btnStartProcess.disabled = false;
 
       if (data.has_subtitles) {
-        this.showToast(`Imported video + ${data.subtitles_count} subtitles from YouTube!`);
+        this.showToast(`Video imported with ${data.subtitles_count} subtitle lines`);
       } else {
-        this.showToast(`YouTube video downloaded & ready!`);
+        this.showToast('Video imported');
       }
     } catch (e) {
       clearInterval(timerInterval);
-      this.showToast(`Import Error: ${e.message}`);
+      this.showToast(e.message);
     } finally {
       this.btnFetchUrl.disabled = false;
       this.urlFetchLoading.style.display = 'none';
@@ -603,16 +614,16 @@ export class PackBuilderApp {
     if (!this.videoFile && !this.sessionId) return;
 
     this.setStep('process');
-    this.processHeadline.innerText = 'Preparing Video & Audio...';
-    this.processSubtext.innerText = 'Initializing stems separation pipeline...';
+    this.processHeadline.innerText = 'Preparing your video';
+    this.processSubtext.innerText = '';
     this.builderProgressFill.style.width = '10%';
     this.processPercentText.innerText = '10%';
 
     try {
       // If local file was selected and session hasn't been created yet
       if (this.videoFile && !this.sessionId) {
-        this.processHeadline.innerText = 'Uploading Scene Video...';
-        this.processSubtext.innerText = 'Uploading video file to studio processing engine...';
+        this.processHeadline.innerText = 'Uploading';
+        this.processSubtext.innerText = '';
 
         const formData = new FormData();
         formData.append('file', this.videoFile);
@@ -623,8 +634,8 @@ export class PackBuilderApp {
         });
 
         if (!uploadRes.ok) {
-          const err = await uploadRes.json();
-          throw new Error(err.detail || 'Upload failed');
+          const err = await uploadRes.json().catch(() => ({}));
+          throw new Error(detailText(err, "The upload didn't finish. Try again."));
         }
 
         const uploadData = await uploadRes.json();
@@ -634,10 +645,12 @@ export class PackBuilderApp {
         if (uploadData.device_info) {
           const dev = uploadData.device_info;
           if (dev.cuda_available) {
-            this.deviceLabel.innerText = `CUDA GPU: ${dev.device.toUpperCase()}`;
+            this.deviceLabel.innerText = 'Fast processing';
+            this.devicePill.dataset.tip = 'Your graphics card speeds up processing.';
             this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
           } else {
-            this.deviceLabel.innerText = 'Multi-Core CPU Pipeline';
+            this.deviceLabel.innerText = 'Standard processing';
+            this.devicePill.dataset.tip = 'No supported graphics card found, so processing uses the processor and takes longer.';
           }
         }
       }
@@ -650,7 +663,7 @@ export class PackBuilderApp {
           body: coverData,
         });
         if (!coverRes.ok) {
-          this.showToast(`Cover image upload failed (HTTP ${coverRes.status}).`);
+          this.showToast("The cover image didn't upload. You can build the pack without it.");
         }
       }
 
@@ -677,15 +690,15 @@ export class PackBuilderApp {
       });
       if (!processRes.ok) {
         const err = await processRes.json().catch(() => ({}));
-        throw new Error(err.detail || `Processing failed to start (HTTP ${processRes.status})`);
+        throw new Error(detailText(err, "Processing didn't start. Try again."));
       }
 
       this.listenToProgressSSE();
 
     } catch (ex) {
-      this.processHeadline.innerText = 'Processing Error';
+      this.processHeadline.innerText = 'Processing stopped';
       this.processSubtext.innerText = ex.message;
-      this.showToast(`Error: ${ex.message}`);
+      this.showToast(ex.message);
     }
   }
 
@@ -698,7 +711,7 @@ export class PackBuilderApp {
         const pct = Math.round((data.progress || 0.0) * 100);
         this.builderProgressFill.style.width = `${pct}%`;
         this.processPercentText.innerText = `${pct}%`;
-        this.processStageText.innerText = data.message || 'Processing...';
+        this.processStageText.innerText = data.message || 'Processing';
 
         const status = data.status;
         this.stageExtract.classList.toggle('active', status === 'extracting_audio');
@@ -713,9 +726,9 @@ export class PackBuilderApp {
           }, 600);
         } else if (status === 'error') {
           sse.close();
-          this.processHeadline.innerText = 'Processing Failed';
-          this.processSubtext.innerText = data.error || 'Unknown error occurred.';
-          this.showToast(`Pipeline Error: ${data.error}`);
+          this.processHeadline.innerText = 'Processing stopped';
+          this.processSubtext.innerText = data.error || "Processing didn't finish. Try again.";
+          this.showToast(data.error || "Processing didn't finish. Try again.");
         }
       } catch (e) {
         console.error('Error parsing SSE event:', e);
@@ -732,12 +745,12 @@ export class PackBuilderApp {
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/builder/${this.sessionId}/status`);
-        if (!res.ok) throw new Error(`Status check failed (HTTP ${res.status})`);
+        if (!res.ok) throw new Error("Lost track of processing. Reload the page and try again.");
         const data = await res.json();
         const pct = Math.round((data.progress || 0.0) * 100);
         this.builderProgressFill.style.width = `${pct}%`;
         this.processPercentText.innerText = `${pct}%`;
-        this.processStageText.innerText = data.message || 'Processing...';
+        this.processStageText.innerText = data.message || 'Processing';
 
         if (data.status === 'transcribed') {
           clearInterval(interval);
@@ -745,14 +758,14 @@ export class PackBuilderApp {
           this.setStep('editor');
         } else if (data.status === 'error') {
           clearInterval(interval);
-          this.processHeadline.innerText = 'Processing Failed';
-          this.processSubtext.innerText = data.error || 'Error during processing.';
+          this.processHeadline.innerText = 'Processing stopped';
+          this.processSubtext.innerText = data.error || "Processing didn't finish. Try again.";
         }
       } catch (e) {
         clearInterval(interval);
-        this.processHeadline.innerText = 'Processing Failed';
+        this.processHeadline.innerText = 'Processing stopped';
         this.processSubtext.innerText = e.message;
-        this.showToast(`Error: ${e.message}`);
+        this.showToast(e.message);
       }
     }, 1000);
   }
@@ -846,7 +859,7 @@ export class PackBuilderApp {
     if (this.btnAddAudioTrack) {
       const isMax = this.tracks.length >= 5;
       this.btnAddAudioTrack.disabled = isMax;
-      this.btnAddAudioTrack.title = isMax ? 'Maximum 5 audio tracks reached' : 'Add another audio track lane (up to 5)';
+      this.btnAddAudioTrack.dataset.tip = isMax ? 'You can have up to 5 tracks' : 'Add a track (up to 5)';
     }
   }
 
@@ -873,7 +886,7 @@ export class PackBuilderApp {
     this.dawChannelStrips.innerHTML = '';
     if (this.timelineChannelGuides) this.timelineChannelGuides.innerHTML = '';
     if (this.labelDawChannelCount) {
-      this.labelDawChannelCount.innerText = `${this.tracks.length} Audio Track${this.tracks.length === 1 ? '' : 's'}`;
+      this.labelDawChannelCount.innerText = `${this.tracks.length} track${this.tracks.length === 1 ? '' : 's'}`;
     }
     this.updateTrackButtonsState();
 
@@ -891,12 +904,12 @@ export class PackBuilderApp {
       header.innerHTML = `
         <div class="channel-id-badge">A${idx + 1}</div>
         <div class="channel-info">
-          <input type="text" class="channel-title-input" value="${escapeHtml(trackName)}" data-channel="${idx}" title="Click to rename Track ${idx + 1}" aria-label="Track ${idx + 1} Name" maxlength="24">
+          <input type="text" class="channel-title-input" value="${escapeHtml(trackName)}" data-channel="${idx}" aria-label="Track ${idx + 1} name" maxlength="24">
         </div>
         <div class="channel-header-actions">
-          <div class="channel-indicator ${isActive ? 'active' : ''}" title="${isActive ? 'Active dialogue take' : 'Idle'}"></div>
+          <div class="channel-indicator ${isActive ? 'active' : ''}" aria-hidden="true"></div>
           ${canDelete ? `
-            <button type="button" class="btn-del-track" data-channel="${idx}" title="Delete Track A${idx + 1}">
+            <button type="button" class="btn-del-track" data-channel="${idx}" aria-label="Delete track A${idx + 1}" data-tip="Delete track">
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" style="pointer-events: none;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           ` : ''}
@@ -908,7 +921,7 @@ export class PackBuilderApp {
         const val = e.target.value.trim();
         this.tracks[idx] = val || `Audio Track ${idx + 1}`;
         e.target.value = this.tracks[idx];
-        this.showToast(`Renamed Track ${idx + 1} to "${this.tracks[idx]}"`);
+        this.showToast(`Track renamed to "${this.tracks[idx]}"`);
       });
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') input.blur();
@@ -935,7 +948,7 @@ export class PackBuilderApp {
 
   addAudioTrack() {
     if (this.tracks.length >= 5) {
-      this.showToast('Maximum 5 audio tracks reached.');
+      this.showToast('You can have up to 5 tracks.');
       return;
     }
     const nextNum = this.tracks.length + 1;
@@ -943,12 +956,12 @@ export class PackBuilderApp {
     this.renderWaveformCanvas();
     this.renderTimelineSegments();
     this.updateTrackButtonsState();
-    this.showToast(`Added Audio Track ${nextNum}`);
+    this.showToast(`Track ${nextNum} added`);
   }
 
   deleteAudioTrack(idx) {
     if (this.tracks.length <= 1) {
-      this.showToast('At least 1 audio track is required.');
+      this.showToast('A pack needs at least one track.');
       return;
     }
     const removedName = this.tracks[idx];
@@ -956,7 +969,7 @@ export class PackBuilderApp {
     this.renderWaveformCanvas();
     this.renderTimelineSegments();
     this.updateTrackButtonsState();
-    this.showToast(`Deleted ${removedName}. Remaining tracks expanded to fit.`);
+    this.showToast(`${removedName} deleted`);
   }
 
   renderWaveformCanvas() {
@@ -1112,7 +1125,7 @@ export class PackBuilderApp {
       handleL.style.background = color;
       handleL.dataset.idx = idx;
       handleL.dataset.type = 'start';
-      handleL.title = 'Drag to trim start';
+      handleL.dataset.tip = 'Drag to change the start';
 
       // Right resize handle
       const handleR = document.createElement('div');
@@ -1120,7 +1133,7 @@ export class PackBuilderApp {
       handleR.style.background = color;
       handleR.dataset.idx = idx;
       handleR.dataset.type = 'end';
-      handleR.title = 'Drag to trim end';
+      handleR.dataset.tip = 'Drag to change the end';
 
       // Inner content wrap
       const contentWrap = document.createElement('div');
@@ -1135,7 +1148,8 @@ export class PackBuilderApp {
       deleteBtn.className = 'segment-inline-delete-btn';
       deleteBtn.type = 'button';
       deleteBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" style="pointer-events: none;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-      deleteBtn.title = 'Delete this dialogue line';
+      deleteBtn.setAttribute('aria-label', 'Delete line');
+      deleteBtn.dataset.tip = 'Delete line';
 
       // Prevent mousedown / mouseup from triggering segment block drag or deselect
       deleteBtn.addEventListener('mousedown', (e) => {
@@ -1179,7 +1193,7 @@ export class PackBuilderApp {
   renderSegmentsList() {
     const container = this.segmentsListContainer;
     container.innerHTML = '';
-    this.labelCueCount.innerText = `${this.segments.length} Lines`;
+    this.labelCueCount.innerText = `${this.segments.length} line${this.segments.length === 1 ? '' : 's'}`;
 
     const allCast = Array.from(new Set([
       ...this.characterColors.keys(),
@@ -1198,7 +1212,7 @@ export class PackBuilderApp {
       // Build options for character dropdown
       const charOptionsHtml = allCast.map(c =>
         `<option value="${escapeHtml(c)}" ${c === seg.character ? 'selected' : ''}>${escapeHtml(c)}</option>`
-      ).join('') + '<option value="__ADD_NEW__">+ New Character...</option>';
+      ).join('') + '<option value="__ADD_NEW__">+ New character</option>';
 
       card.innerHTML = `
         <div class="cue-card-header">
@@ -1208,15 +1222,15 @@ export class PackBuilderApp {
           </div>
           <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
           <div style="display: flex; gap: 4px; align-items: center;">
-            <button class="btn btn-secondary btn-xs btn-whisper-cue" data-idx="${idx}" title="Transcribe this line with Whisper AI">
+            <button class="btn btn-secondary btn-xs btn-whisper-cue" data-idx="${idx}" data-tip="Fill in this line's text from the audio">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-              <span>Whisper</span>
+              <span>Transcribe</span>
             </button>
-            <button class="btn btn-secondary btn-xs btn-romaji-cue" data-idx="${idx}" title="Convert Japanese Kanji/Kana to Romaji">
+            <button class="btn btn-secondary btn-xs btn-romaji-cue" data-idx="${idx}" data-tip="Convert Japanese text to romaji">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
               <span>Romaji</span>
             </button>
-            <button class="btn-delete-cue" title="Delete Cue" data-idx="${idx}">
+            <button class="btn-delete-cue" data-idx="${idx}">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               <span>Delete</span>
             </button>
@@ -1225,16 +1239,16 @@ export class PackBuilderApp {
         <div class="cue-card-body">
           <div class="cue-field-row">
             <div class="cue-char-select-wrap">
-              <select class="form-input cue-char-select" data-idx="${idx}" title="Change character role">
+              <select class="form-input cue-char-select" data-idx="${idx}" aria-label="Character">
                 ${charOptionsHtml}
               </select>
             </div>
-            <button class="btn btn-secondary btn-xs btn-preview-cue" data-idx="${idx}" title="Preview audio for this line">
+            <button class="btn btn-secondary btn-xs btn-preview-cue" data-idx="${idx}">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              <span>Play Take</span>
+              <span>Play</span>
             </button>
           </div>
-          <textarea class="form-input cue-text-input" rows="2" placeholder="Dialogue subtitle text..." data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
+          <textarea class="form-input cue-text-input" rows="2" placeholder="Line text" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
         </div>
       `;
 
@@ -1250,7 +1264,7 @@ export class PackBuilderApp {
       charSelect.addEventListener('change', (e) => {
         const val = e.target.value;
         if (val === '__ADD_NEW__') {
-          const newName = prompt('Enter new character name:');
+          const newName = prompt('Character name');
           if (newName && newName.trim()) {
             const clean = newName.trim();
             this.getCharacterColor(clean);
@@ -1324,9 +1338,9 @@ export class PackBuilderApp {
       chip.className = 'char-color-chip';
       chip.innerHTML = `
         <span class="chip-color-dot" style="background: ${color};"></span>
-        <span class="chip-name" title="Click to rename role">${escapeHtml(char)}</span>
-        <span class="chip-count-badge" title="${count} line(s) assigned">(${count})</span>
-        <button class="chip-del-btn" title="Delete character role" data-char="${escapeHtml(char)}">
+        <span class="chip-name" data-tip="Click to rename">${escapeHtml(char)}</span>
+        <span class="chip-count-badge" aria-label="${count} line${count === 1 ? '' : 's'}">(${count})</span>
+        <button class="chip-del-btn" aria-label="Delete ${escapeHtml(char)}" data-tip="Delete character" data-char="${escapeHtml(char)}">
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       `;
@@ -1346,7 +1360,7 @@ export class PackBuilderApp {
     const fallbackChar = remainingChars.length > 0 ? remainingChars[0] : 'Lead';
 
     if (segmentsWithChar.length > 0) {
-      if (!confirm(`Delete character "${charName}"? Its ${segmentsWithChar.length} line(s) will be reassigned to "${fallbackChar}".`)) {
+      if (!confirm(`Delete "${charName}"? Their ${segmentsWithChar.length} line${segmentsWithChar.length === 1 ? '' : 's'} will move to "${fallbackChar}".`)) {
         return;
       }
       this.segments.forEach(s => {
@@ -1365,11 +1379,11 @@ export class PackBuilderApp {
     this.renderCharacterChips();
     this.renderSegmentsList();
     this.syncSegmentsToServer();
-    this.showToast(`Deleted character role "${charName}"`);
+    this.showToast(`"${charName}" deleted`);
   }
 
   promptRenameCharacter(oldName) {
-    const newName = prompt(`Rename character role "${oldName}" across all lines to:`, oldName);
+    const newName = prompt(`Rename "${oldName}" to`, oldName);
     if (newName && newName.trim() && newName.trim() !== oldName) {
       const cleanNew = newName.trim();
       const existingColor = this.characterColors.get(oldName) || PALETTE[0];
@@ -1387,7 +1401,7 @@ export class PackBuilderApp {
       this.renderCharacterChips();
       this.renderSegmentsList();
       this.syncSegmentsToServer();
-      this.showToast(`Renamed role "${oldName}" to "${cleanNew}"`);
+      this.showToast(`"${oldName}" renamed to "${cleanNew}"`);
     }
   }
 
@@ -1633,7 +1647,7 @@ export class PackBuilderApp {
     this.renderCharacterChips();
     this.selectSegment(newIdx);
     this.syncSegmentsToServer();
-    this.showToast('Added dialogue line at playhead');
+    this.showToast('Line added');
   }
 
   deleteSegment(idx) {
@@ -1647,17 +1661,17 @@ export class PackBuilderApp {
     this.renderSegmentsList();
     this.renderCharacterChips();
     this.syncSegmentsToServer();
-    this.showToast('Deleted dialogue line');
+    this.showToast('Line deleted');
   }
 
   promptAddCharacter() {
-    const name = prompt('Enter new character name:');
+    const name = prompt('Character name');
     if (name && name.trim()) {
       const clean = name.trim();
       this.getCharacterColor(clean);
       this.renderCharacterChips();
       this.renderSegmentsList();
-      this.showToast(`Added character role "${clean}"`);
+      this.showToast(`"${clean}" added`);
     }
   }
 
@@ -1671,7 +1685,7 @@ export class PackBuilderApp {
       this.renderTimelineSegments();
       this.renderSegmentsList();
       this.syncSegmentsToServer();
-      this.showToast(`Marked In [ at ${this.formatTime(t)}`);
+      this.showToast(`Start set to ${this.formatTime(t)}`);
     } else {
       this.addNewSegmentAtPlayhead();
     }
@@ -1686,7 +1700,7 @@ export class PackBuilderApp {
         this.renderTimelineSegments();
         this.renderSegmentsList();
         this.syncSegmentsToServer();
-        this.showToast(`Marked Out ] at ${this.formatTime(t)}`);
+        this.showToast(`End set to ${this.formatTime(t)}`);
       }
     }
   }
@@ -1722,10 +1736,9 @@ export class PackBuilderApp {
     const seg = this.segments[idx];
     const origText = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
-      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Transcribing...</span>';
+      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Transcribing</span>';
       btnEl.disabled = true;
     }
-    this.showToast(`Transcribing cue #${idx + 1} with Whisper AI...`);
 
     const lang = this.selectTranscribeLang ? this.selectTranscribeLang.value : 'auto';
     const isRomaji = lang === 'ja_romaji';
@@ -1749,16 +1762,16 @@ export class PackBuilderApp {
           if (textInputEl) textInputEl.value = seg.text;
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
-          this.showToast(`Whisper recognized: "${seg.text}"`);
+          this.showToast(`Line ${idx + 1}: "${seg.text}"`);
         } else {
-          this.showToast(`Whisper did not detect clear dialogue in this section.`);
+          this.showToast('No clear speech in this line. Type the text instead.');
         }
       } else {
-        this.showToast(`Whisper transcription failed.`);
+        this.showToast("Couldn't transcribe this line. Type the text instead.");
       }
     } catch (e) {
       console.warn('Transcription error:', e);
-      this.showToast(`Error: ${e.message}`);
+      this.showToast("Couldn't transcribe this line. Type the text instead.");
     } finally {
       if (btnEl) {
         btnEl.innerHTML = origText;
@@ -1771,13 +1784,13 @@ export class PackBuilderApp {
     if (!this.sessionId || idx < 0 || idx >= this.segments.length) return;
     const seg = this.segments[idx];
     if (!seg.text || !seg.text.trim()) {
-      this.showToast('Dialogue text is empty.');
+      this.showToast('This line has no text yet.');
       return;
     }
 
     const origText = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
-      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Converting...</span>';
+      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Converting</span>';
       btnEl.disabled = true;
     }
 
@@ -1795,10 +1808,10 @@ export class PackBuilderApp {
           if (textInputEl) textInputEl.value = seg.text;
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
-          this.showToast(`Romanized: "${seg.text}"`);
+          this.showToast(`Line ${idx + 1}: "${seg.text}"`);
         }
       } else {
-        this.showToast('Romanization failed.');
+        this.showToast("Couldn't convert this line to romaji.");
       }
     } catch (e) {
       console.warn('Romanization error:', e);
@@ -1812,7 +1825,7 @@ export class PackBuilderApp {
 
   transcribeSelectedSegment() {
     if (this.selectedSegmentIndex === null) {
-      this.showToast('Please select a dialogue line on the timeline first.');
+      this.showToast('Select a line first.');
       return;
     }
     const idx = this.selectedSegmentIndex;
@@ -1826,7 +1839,7 @@ export class PackBuilderApp {
 
   goToCompileStep() {
     if (this.segments.length === 0) {
-      this.showToast('Please add at least 1 dialogue line before building.');
+      this.showToast('Add at least one line before building.');
       return;
     }
 
@@ -1836,7 +1849,7 @@ export class PackBuilderApp {
     const savedUser = localStorage.getItem('dubmate_user_name') || '';
     this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.innerText.replace(/\.[^/.]+$/, '');
     this.compileAuthor.value = savedUser || 'Creator';
-    this.compileSubtitle.value = `${this.segments.length} dialogue lines • ${this.characterColors.size} characters`;
+    this.compileSubtitle.value = `${this.segments.length} lines, ${this.characterColors.size} characters`;
 
     this.statValDuration.innerText = this.formatTime(this.duration);
     this.statValLines.innerText = this.segments.length;
@@ -1850,7 +1863,7 @@ export class PackBuilderApp {
 
     this.btnExecuteCompile.style.display = 'none';
     this.compileProgressBox.style.display = 'flex';
-    this.compileStatusMsg.innerText = 'Slicing audio lines with micro-fades and compiling pack...';
+    this.compileStatusMsg.innerText = 'Building the pack';
 
     try {
       const res = await fetch(`/api/builder/${this.sessionId}/compile`, {
@@ -1865,8 +1878,8 @@ export class PackBuilderApp {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Pack compilation failed.');
+        const err = await res.json().catch(() => ({}));
+        throw new Error(detailText(err, "The pack didn't build. Try again."));
       }
 
       const data = await res.json();
@@ -1879,12 +1892,12 @@ export class PackBuilderApp {
 
       this.compileProgressBox.style.display = 'none';
       this.compileSuccessBox.style.display = 'block';
-      this.showToast(`🎉 Pack '${packName}' successfully compiled!`);
+      this.showToast(`'${packName}' is ready`);
 
     } catch (ex) {
       this.compileProgressBox.style.display = 'none';
       this.btnExecuteCompile.style.display = 'block';
-      this.showToast(`Compilation Error: ${ex.message}`);
+      this.showToast(ex.message);
     }
   }
 

@@ -211,7 +211,8 @@ def extract_audio_from_video(video_path: str, output_wav: str) -> str:
     except (subprocess.CalledProcessError, RuntimeError):
         pass
 
-    raise RuntimeError(f"FFmpeg audio extraction failed: {extract_error or 'Unknown error'}")
+    print(f"[PackBuilder] Audio extraction failed: {extract_error or 'unknown error'}")
+    raise RuntimeError("Couldn't read the audio in this video. Try a different file.")
 
 
 # Captions are written under their own prefix so the scan below cannot confuse them
@@ -310,7 +311,7 @@ def download_video_from_url(
     Merges high-res video and audio tracks via project FFmpeg binary.
     """
     if not url or not url.strip():
-        raise ValueError("No video URL provided.")
+        raise ValueError("Paste a video link first.")
 
     clean_url = url.strip()
 
@@ -363,18 +364,18 @@ def download_video_from_url(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(clean_url, download=True)
             if not info:
-                raise ValueError("Could not extract video metadata from the provided URL.")
+                raise ValueError("Couldn't read that link. Check it and try again.")
 
             title = info.get("title") or "Imported YouTube Scene"
             duration = float(info.get("duration") or 0.0)
             if duration > max_duration_seconds:
                 raise ValueError(
-                    f"Video duration ({duration:.1f}s) exceeds the maximum allowed scene length ({max_duration_seconds/60:.0f} minutes)."
+                    f"This video is {duration/60:.1f} minutes long. Scenes can be up to {max_duration_seconds/60:.0f} minutes."
                 )
     except Exception as ex:
         err_msg = str(ex)
         if "Unsupported URL" in err_msg or "is not a valid URL" in err_msg:
-            raise ValueError(f"Invalid or unsupported video URL: {clean_url}")
+            raise ValueError("That link isn't supported. Use a YouTube link or a direct video link.")
         raise RuntimeError(f"Failed to download video with yt-dlp: {err_msg}")
 
     # Best-effort captions, after the video is safely on disk.
@@ -544,11 +545,11 @@ def separate_audio_stems(audio_wav: str, output_dir: str, model_name: str = "htd
         "used_fallback": True,
         "fallback_reason": fallback_reason,
         "fallback_notice": (
-            "AI vocal separation isn't installed, so a basic filter was used. "
-            "Background audio may bleed into the dialogue track."
+            "Voice separation isn't installed, so a basic filter was used. "
+            "Some background sound may stay in the dialogue."
             if fallback_reason == "not_installed" else
-            "AI vocal separation couldn't run, so a basic filter was used. "
-            "Background audio may bleed into the dialogue track."
+            "Voice separation couldn't run, so a basic filter was used. "
+            "Some background sound may stay in the dialogue."
         ),
     }
 
@@ -910,9 +911,10 @@ def slice_audio_lines(
             # Both attempts failed: stop the build with a clear message instead of
             # installing a pack that is silently missing this line's audio.
             if fallback_error is not None or not os.path.isfile(out_wav):
+                print(f"[PackBuilder] Slice {i + 1} failed: {fallback_error or 'no audio file was written'}")
                 raise RuntimeError(
-                    f"Could not cut dialogue line {i + 1} ({start:.3f}s-{end:.3f}s) from the vocals track: "
-                    f"{fallback_error or 'no audio file was written'}"
+                    f"Could not cut dialogue line {i + 1} ({start:.2f}s to {end:.2f}s). "
+                    "Adjust its start or end and build again."
                 )
 
         enriched_segments.append({

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DubMate Pack Builder — Scene Dub Authoring Studio</title>
-  <meta name="description" content="Create custom scene dub packs from any video with AI vocal isolation, automatic subtitle transcription, interactive waveform timeline slicing, and one-click studio compilation.">
+  <title>Pack Builder · DubMate</title>
+  <meta name="description" content="Turn a video into a DubMate scene pack.">
   
   <!-- Preconnected Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,8 +21,8 @@
   <header class="app-header">
     <div class="header-left">
       <div class="logo-dropdown-container" id="logo-dropdown-container">
-        <div class="logo logo-with-dropdown" id="btn-mode-dropdown" title="Switch Studio Mode" role="button" tabindex="0"
-          aria-haspopup="true" aria-expanded="false" aria-label="Switch DubMate Studio Mode">
+        <div class="logo logo-with-dropdown" id="btn-mode-dropdown" role="button" tabindex="0"
+          aria-haspopup="true" aria-expanded="false" aria-label="Switch between Studio and Pack Builder">
           <div class="logo-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
           </div>
@@ -39,62 +39,62 @@
             <div class="mode-item-icon">🎙️</div>
             <div class="mode-item-content">
               <div class="mode-item-title-row">
-                <span class="mode-item-title">DubMate Studio Pro</span>
+                <span class="mode-item-title">DubMate Studio</span>
               </div>
-              <span class="mode-item-desc">Multiplayer Scene Dubbing DAW & Screening</span>
+              <span class="mode-item-desc">Record and watch dubs</span>
             </div>
           </a>
           <a href="/builder.html" class="mode-dropdown-item active" id="mode-opt-builder">
             <div class="mode-item-icon">🎬</div>
             <div class="mode-item-content">
               <div class="mode-item-title-row">
-                <span class="mode-item-title">DubMate Pack Builder</span>
+                <span class="mode-item-title">Pack Builder</span>
                 <span class="mode-active-pill">Active</span>
               </div>
-              <span class="mode-item-desc">AI Vocal Isolation & Scene Pack Authoring</span>
+              <span class="mode-item-desc">Turn a video into a scene pack</span>
             </div>
           </a>
         </div>
       </div>
 
       <!-- Step Wizard Indicator -->
-      <nav class="builder-stepper" aria-label="Pack Builder Progress">
+      <nav class="builder-stepper" aria-label="Pack Builder steps">
         <div class="builder-step active" id="step-nav-upload" data-step="upload">
           <span class="step-num">1</span>
-          <span class="step-label">Upload Video</span>
+          <span class="step-label">Video</span>
         </div>
         <span class="step-arrow">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
         <div class="builder-step" id="step-nav-process" data-step="process">
           <span class="step-num">2</span>
-          <span class="step-label">AI Processing</span>
+          <span class="step-label">Process</span>
         </div>
         <span class="step-arrow">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
         <div class="builder-step" id="step-nav-editor" data-step="editor">
           <span class="step-num">3</span>
-          <span class="step-label">Timeline & Cues</span>
+          <span class="step-label">Edit lines</span>
         </div>
         <span class="step-arrow">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
         <div class="builder-step" id="step-nav-compile" data-step="compile">
           <span class="step-num">4</span>
-          <span class="step-label">Build Pack</span>
+          <span class="step-label">Build</span>
         </div>
       </nav>
     </div>
 
     <div class="header-status">
-      <div id="device-pill" class="builder-device-pill" title="Hardware Processing Engine">
+      <div id="device-pill" class="builder-device-pill" tabindex="0" data-tip="Shows whether a graphics card can speed up processing.">
         <span class="device-dot"></span>
-        <span id="device-label" class="device-text">Pro Audio Engine</span>
+        <span id="device-label" class="device-text">Processing speed</span>
       </div>
-      <a href="/" class="btn btn-ghost btn-sm" title="Exit to Studio Home" aria-label="Exit Pack Builder">
+      <a href="/" class="btn btn-ghost btn-sm" aria-label="Exit Pack Builder">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-        <span>Exit Studio</span>
+        <span>Exit</span>
       </a>
     </div>
   </header>
@@ -103,38 +103,38 @@
   <main class="builder-main-container">
 
     <!-- STEP 1: UPLOAD -->
-    <section id="view-step-upload" class="builder-view active" aria-label="Video Upload Step">
+    <section id="view-step-upload" class="builder-view active" aria-label="Add a video">
       <div class="builder-hero">
-        <h1 class="hero-title">Create a Scene Dub Pack <span class="hero-title-accent">from Any Video</span></h1>
-        <p class="hero-subtitle">Drop a scene clip. DubMate's AI pipeline separates background music from dialogues, transcribes speech timestamps, and creates a pro dubbing scene.</p>
+        <h1 class="hero-title">Make a scene pack <span class="hero-title-accent">from a video</span></h1>
+        <p class="hero-subtitle">Add a clip. DubMate separates the voices from the background and writes out each line for you to check.</p>
       </div>
 
       <div class="builder-upload-grid">
         <!-- Main Video Dropzone Card with Dual Ingest Modes -->
         <div class="glass-card builder-dropzone-card">
           <!-- Ingest Mode Selector Tabs -->
-          <div class="ingest-tabs-bar" role="tablist" aria-label="Video Ingestion Mode">
+          <div class="ingest-tabs-bar" role="tablist" aria-label="Video source">
             <button type="button" class="ingest-tab-btn active" id="tab-btn-file" data-tab="file" role="tab" aria-selected="true">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><polyline points="12 8 12 12 14 14"/><path d="m9 16 3-3 3 3"/><path d="M12 13v8"/></svg>
-              <span>Upload Video File</span>
+              <span>Upload file</span>
             </button>
             <button type="button" class="ingest-tab-btn" id="tab-btn-url" data-tab="url" role="tab" aria-selected="false">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-              <span>Import from YouTube / URL</span>
+              <span>Paste link</span>
             </button>
           </div>
 
           <!-- Ingest Mode 1: File Dropzone -->
           <div id="ingest-panel-file" class="ingest-panel active">
-            <div class="builder-dropzone" id="video-dropzone" role="button" tabindex="0" aria-label="Drop video file or click to select">
+            <div class="builder-dropzone" id="video-dropzone" role="button" tabindex="0" aria-label="Drop a video file or click to choose one">
               <div class="dropzone-icon">
                 <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><polyline points="12 8 12 12 14 14"/><path d="m9 16 3-3 3 3"/><path d="M12 13v8"/></svg>
               </div>
-              <h3 class="dropzone-title">Drop your scene video here</h3>
-              <p class="dropzone-subtitle">Supports MP4, MKV, WebM, MOV, or AVI up to 500 MB</p>
+              <h3 class="dropzone-title">Drop a video here</h3>
+              <p class="dropzone-subtitle">MP4, MKV, WebM, MOV or AVI, up to 500 MB</p>
               <div class="dropzone-btn-wrap">
                 <button type="button" class="btn btn-primary btn-md" id="btn-browse-video" style="pointer-events: none;">
-                  <span>Browse Video File</span>
+                  <span>Browse</span>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
               </div>
@@ -148,14 +148,14 @@
               <div class="url-importer-icon">
                 <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/></svg>
               </div>
-              <h3 class="dropzone-title">Direct YouTube Import</h3>
-              <p class="dropzone-subtitle">Paste any YouTube video or Shorts link to fetch and import directly</p>
+              <h3 class="dropzone-title">Import from a link</h3>
+              <p class="dropzone-subtitle">Paste a YouTube video or Shorts link.</p>
               
               <div class="url-input-group">
-                <input type="url" id="input-youtube-url" class="form-input url-text-input" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
-                <button type="button" id="btn-fetch-url" class="btn btn-primary btn-md btn-fetch-url">
+                <input type="url" id="input-youtube-url" class="form-input url-text-input" placeholder="https://www.youtube.com/watch?v=" aria-label="Video link" autocomplete="off">
+                <button type="button" id="btn-fetch-url" class="btn btn-primary btn-md btn-fetch-url" data-tip="Downloads at up to 1080p.">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
-                  <span>Fetch Video</span>
+                  <span>Import</span>
                 </button>
               </div>
 
@@ -165,22 +165,22 @@
                   <div class="fetch-step-row active" id="fetch-stage-1">
                     <div class="fetch-stage-indicator"><div class="mini-spinner"></div></div>
                     <div class="fetch-stage-details">
-                      <span class="stage-name">Stage 1: Downloading Streams (yt-dlp)</span>
-                      <span class="stage-desc" id="fetch-status-time">Fetching the video, up to 1080p...</span>
+                      <span class="stage-name">Downloading</span>
+                      <span class="stage-desc" id="fetch-status-time"></span>
                     </div>
                   </div>
                   <div class="fetch-step-row" id="fetch-stage-2">
                     <div class="fetch-stage-indicator"><span>2</span></div>
                     <div class="fetch-stage-details">
-                      <span class="stage-name">Stage 2: Browser Media Standardization</span>
-                      <span class="stage-desc">Transcoding to faststart H.264 MP4 & 44.1kHz stereo audio...</span>
+                      <span class="stage-name">Converting</span>
+                      <span class="stage-desc"></span>
                     </div>
                   </div>
                   <div class="fetch-step-row" id="fetch-stage-3">
                     <div class="fetch-stage-indicator"><span>3</span></div>
                     <div class="fetch-stage-details">
-                      <span class="stage-name">Stage 3: Loading into Pack Builder</span>
-                      <span class="stage-desc">Extracting audio waveforms & scene subtitles...</span>
+                      <span class="stage-name">Opening</span>
+                      <span class="stage-desc"></span>
                     </div>
                   </div>
                 </div>
@@ -199,7 +199,7 @@
                 <span id="selected-video-stats" class="video-stats">0:00 • 0 MB</span>
               </div>
             </div>
-            <button id="btn-change-video" class="btn btn-ghost btn-sm" title="Change video">Change</button>
+            <button id="btn-change-video" class="btn btn-ghost btn-sm" aria-label="Change video">Change</button>
           </div>
         </div>
 
@@ -209,20 +209,20 @@
             <span class="panel-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
             </span>
-            <h3 class="panel-title">Authoring Options</h3>
+            <h3 class="panel-title">Options</h3>
           </div>
 
           <div class="form-group" style="margin-top: 14px;">
-            <label class="form-label" for="input-pack-title">Pack Name / Scene Title</label>
+            <label class="form-label" for="input-pack-title">Pack name</label>
             <input type="text" id="input-pack-title" class="form-input" placeholder="e.g. Levi vs Beast Titan" maxlength="60">
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="select-transcribe-lang">Audio Language (Whisper)</label>
-            <select id="select-transcribe-lang" class="form-input form-select">
-              <option value="auto">Auto-Detect Language</option>
-              <option value="ja_romaji">Japanese (Romaji Subtitles)</option>
-              <option value="ja">Japanese (Kanji / Kana)</option>
+            <label class="form-label" for="select-transcribe-lang">Spoken language</label>
+            <select id="select-transcribe-lang" class="form-input form-select" data-tip="Romaji writes Japanese lines in Latin letters.">
+              <option value="auto">Detect automatically</option>
+              <option value="ja_romaji">Japanese (romaji)</option>
+              <option value="ja">Japanese (kanji and kana)</option>
               <option value="en">English</option>
               <option value="de">German</option>
               <option value="es">Spanish</option>
@@ -234,20 +234,20 @@
 
           <!-- Optional SRT/VTT Subtitle Import -->
           <div class="form-group">
-            <label class="form-label">Optional Subtitle Track (.SRT / .VTT)</label>
-            <div class="sub-dropzone" id="sub-dropzone" role="button" tabindex="0">
+            <label class="form-label">Subtitles (optional)</label>
+            <div class="sub-dropzone" id="sub-dropzone" role="button" tabindex="0" data-tip="Lines and timings come from the file instead of being detected.">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-              <span id="sub-filename-label">Drop .SRT/.VTT for instant timestamps</span>
+              <span id="sub-filename-label">Drop an SRT or VTT file</span>
             </div>
             <input type="file" id="input-sub-file" accept=".srt,.vtt,.txt" style="display: none;">
           </div>
 
           <!-- Optional Cover Art -->
           <div class="form-group">
-            <label class="form-label">Optional Cover Thumbnail (PNG / JPG)</label>
+            <label class="form-label">Cover image (optional)</label>
             <div class="cover-dropzone" id="cover-dropzone" role="button" tabindex="0">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-              <span id="cover-filename-label">Select Cover Image</span>
+              <span id="cover-filename-label">Choose a PNG, JPG or WebP</span>
             </div>
             <input type="file" id="input-cover-file" accept=".png,.jpg,.jpeg,.webp" style="display: none;">
           </div>
@@ -255,7 +255,7 @@
           <div style="margin-top: 20px;">
             <button id="btn-start-process" class="btn btn-primary btn-lg" style="width: 100%;" disabled>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-              <span>Process Scene with AI</span>
+              <span>Process video</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
@@ -264,7 +264,7 @@
     </section>
 
     <!-- STEP 2: PROCESSING (Demucs + Whisper Progress Screen) -->
-    <section id="view-step-process" class="builder-view" aria-label="AI Processing Progress">
+    <section id="view-step-process" class="builder-view" aria-label="Processing">
       <div class="builder-process-card glass-card">
         <div class="process-radar">
           <div class="radar-pulse"></div>
@@ -273,8 +273,8 @@
           </div>
         </div>
 
-        <h2 id="process-headline" class="process-title">Isolating Audio & Transcribing Dialogue...</h2>
-        <p id="process-subtext" class="process-subtitle">Running GPU-accelerated Demucs vocal separation and Whisper timestamp extraction.</p>
+        <h2 id="process-headline" class="process-title">Processing your video</h2>
+        <p id="process-subtext" class="process-subtitle">Keep this page open until it finishes.</p>
 
         <!-- Progress Bar -->
         <div class="builder-progress-container">
@@ -282,7 +282,7 @@
             <div id="builder-progress-fill" class="builder-progress-fill" style="width: 15%;"></div>
           </div>
           <div class="builder-progress-meta">
-            <span id="process-stage-text">Stage 1/3: Extracting high-res audio track</span>
+            <span id="process-stage-text">Starting</span>
             <span id="process-percent-text">15%</span>
           </div>
         </div>
@@ -294,8 +294,8 @@
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
             <div class="stage-info">
-              <span class="stage-title">Audio Extraction</span>
-              <span class="stage-desc">Extracting 44.1kHz uncompressed master audio from video</span>
+              <span class="stage-title">Read the audio</span>
+              <span class="stage-desc"></span>
             </div>
           </div>
           <div id="stage-stems" class="pipeline-item">
@@ -303,8 +303,8 @@
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             </div>
             <div class="stage-info">
-              <span class="stage-title">Demucs Vocal & Backing Isolation</span>
-              <span class="stage-desc">Separating music/SFX backing track from character dialogue</span>
+              <span class="stage-title">Separate the voices</span>
+              <span class="stage-desc">Splits dialogue from music and effects</span>
             </div>
           </div>
           <div id="stage-whisper" class="pipeline-item">
@@ -312,8 +312,8 @@
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             </div>
             <div class="stage-info">
-              <span class="stage-title">Whisper Speech-to-Text</span>
-              <span class="stage-desc">Transcribing spoken lines, millisecond timestamps, and speaker turns</span>
+              <span class="stage-title">Write out the lines</span>
+              <span class="stage-desc">Finds each line and when it is spoken</span>
             </div>
           </div>
         </div>
@@ -321,7 +321,7 @@
     </section>
 
     <!-- STEP 3: TIMELINE & CUE EDITOR (Visual Workspace) -->
-    <section id="view-step-editor" class="builder-view" aria-label="Interactive Cue Timeline Editor">
+    <section id="view-step-editor" class="builder-view" aria-label="Edit lines">
       <div class="editor-workspace-layout">
         
         <!-- Top Row: Video Player (Left) + Dialogue Cues & Cast Sidebar (Right) -->
@@ -338,16 +338,16 @@
               <!-- Tier 1: Tape Transport & Master Playback Bar -->
               <div class="deck-tier-top">
                 <div class="deck-playback-group">
-                  <button id="btn-step-backward" class="btn btn-secondary btn-sm btn-transport-unit" title="Step -1s (←)">
+                  <button id="btn-step-backward" class="btn btn-secondary btn-sm btn-transport-unit" aria-label="Back 1 second" data-tip="Back 1 second (←)">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/></svg>
                     <span>-1s</span>
                   </button>
-                  <button id="btn-play-pause" class="btn btn-primary btn-sm btn-builder-play" title="Play / Pause (Space)">
+                  <button id="btn-play-pause" class="btn btn-primary btn-sm btn-builder-play" data-tip="Play or pause (Space)">
                     <svg id="icon-play" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     <svg id="icon-pause" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/></svg>
                     <span id="label-play-btn">Play</span>
                   </button>
-                  <button id="btn-step-forward" class="btn btn-secondary btn-sm btn-transport-unit" title="Step +1s (→)">
+                  <button id="btn-step-forward" class="btn btn-secondary btn-sm btn-transport-unit" aria-label="Forward 1 second" data-tip="Forward 1 second (→)">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></svg>
                     <span>+1s</span>
                   </button>
@@ -361,9 +361,9 @@
 
                 <!-- Track Audio Source Switch on Right -->
                 <div class="deck-audio-toggle">
-                  <button id="btn-toggle-audio-track" class="btn btn-secondary btn-xs btn-audio-source-toggle" title="Waveform: Vocals Only / Full Audio">
+                  <button id="btn-toggle-audio-track" class="btn btn-secondary btn-xs btn-audio-source-toggle" data-tip="Switch the waveform between voices only and the full audio">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                    <span id="label-active-track">Vocals Only</span>
+                    <span id="label-active-track">Voices only</span>
                   </button>
                 </div>
               </div>
@@ -371,32 +371,32 @@
               <!-- Tier 2: ADR Cue Points & AI Actions (Spacious, Uncrowded Bar) -->
               <div class="deck-tier-bottom">
                 <div class="cue-inout-group">
-                  <button id="btn-mark-in" class="btn btn-secondary btn-sm btn-mark-pill" title="Set Segment Start at playhead (I or [)">
+                  <button id="btn-mark-in" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Start the selected line at the playhead (I or [)">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16"/><path d="M4 4h10l4 6-4 6H4"/></svg>
-                    <span>Mark IN [</span>
+                    <span>Start</span>
                   </button>
-                  <button id="btn-mark-out" class="btn btn-secondary btn-sm btn-mark-pill" title="Set Segment End at playhead (O or ])">
+                  <button id="btn-mark-out" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="End the selected line at the playhead (O or ])">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v16"/><path d="M20 4H10L6 10l4 6h10"/></svg>
-                    <span>Mark OUT ]</span>
+                    <span>End</span>
                   </button>
                 </div>
 
                 <div class="cue-add-ai-group">
-                  <button id="btn-add-line-at-playhead" class="btn btn-primary btn-sm btn-cue-add-highlight" title="Add Line at Playhead (N)">
+                  <button id="btn-add-line-at-playhead" class="btn btn-primary btn-sm btn-cue-add-highlight" data-tip="Add a line at the playhead (N)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-                    <span>+ Add Cue</span>
+                    <span>Add line</span>
                   </button>
-                  <button id="btn-transcribe-line" class="btn btn-secondary btn-sm btn-whisper-ai-deck" title="Interpret selected dialogue with Whisper AI">
+                  <button id="btn-transcribe-line" class="btn btn-secondary btn-sm btn-whisper-ai-deck" data-tip="Fill in the selected line's text from the audio">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                    <span>Whisper AI</span>
+                    <span>Transcribe</span>
                   </button>
                 </div>
 
                 <div class="deck-zoom-group">
-                  <span class="zoom-title">ZOOM:</span>
-                  <button id="btn-zoom-out" class="btn btn-ghost btn-xs" title="Zoom Out">−</button>
+                  <span class="zoom-title">ZOOM</span>
+                  <button id="btn-zoom-out" class="btn btn-ghost btn-xs" aria-label="Zoom out">−</button>
                   <span id="label-zoom" class="zoom-label">100%</span>
-                  <button id="btn-zoom-in" class="btn btn-ghost btn-xs" title="Zoom In">+</button>
+                  <button id="btn-zoom-in" class="btn btn-ghost btn-xs" aria-label="Zoom in">+</button>
                 </div>
               </div>
             </div>
@@ -406,22 +406,22 @@
           <div class="editor-right-sidebar glass-card">
             <div class="sidebar-header">
               <div>
-                <h3 class="panel-title">Dialogue Cues</h3>
-                <span id="label-cue-count" class="badge-accent" style="margin-top: 4px; display: inline-block;">0 Lines</span>
+                <h3 class="panel-title">Lines</h3>
+                <span id="label-cue-count" class="badge-accent" style="margin-top: 4px; display: inline-block;">0 lines</span>
               </div>
               <button id="btn-proceed-to-compile" class="btn btn-primary btn-sm">
-                <span>Ready to Build</span>
+                <span>Continue</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
               </button>
             </div>
 
             <!-- Character Legend & Manager -->
             <div class="character-manager-strip" id="character-manager-strip">
-              <span class="char-strip-title">Cast:</span>
+              <span class="char-strip-title">Cast</span>
               <div id="character-chips-list" class="character-chips-list">
                 <!-- Dynamically populated character color chips -->
               </div>
-              <button id="btn-add-character" class="btn-add-char" title="Add Character Tag">
+              <button id="btn-add-character" class="btn-add-char" aria-label="Add character" data-tip="Add character">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               </button>
             </div>
@@ -434,7 +434,7 @@
         </div>
 
         <!-- Vertical Resizable Splitter Handle Bar -->
-        <div class="timeline-splitter-handle" id="timeline-splitter-handle" role="separator" aria-orientation="horizontal" title="Drag vertically to resize audio timeline (Double-click to reset)" tabindex="0">
+        <div class="timeline-splitter-handle" id="timeline-splitter-handle" role="separator" aria-orientation="horizontal" aria-label="Resize timeline" data-tip="Drag to resize. Double-click to reset." tabindex="0">
           <div class="splitter-grip-line">
             <span class="splitter-dot"></span>
             <span class="splitter-dot"></span>
@@ -448,15 +448,15 @@
             <div class="timeline-header-left">
               <span class="timeline-title">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
-                MULTI-CHANNEL DAW TIMELINE &amp; CUES
+                TIMELINE
               </span>
-              <span id="label-daw-channel-count" class="daw-channel-badge">1 Audio Track</span>
-              <button id="btn-add-audio-track" class="btn btn-secondary btn-xs" title="Add another audio track lane (up to 5)">
+              <span id="label-daw-channel-count" class="daw-channel-badge">1 track</span>
+              <button id="btn-add-audio-track" class="btn btn-secondary btn-xs" data-tip="Add a track (up to 5)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span>Add Track</span>
+                <span>Add track</span>
               </button>
             </div>
-            <span class="timeline-hint">Drag timeline to pan • Drag handles to trim • Click delete icon • Click block to seek</span>
+            <span class="timeline-hint">Drag to pan · drag a line's edges to trim · click a line to jump to it</span>
           </div>
 
           <div class="daw-timeline-container" id="daw-timeline-container">
@@ -488,29 +488,29 @@
     </section>
 
     <!-- STEP 4: COMPILE & LAUNCH -->
-    <section id="view-step-compile" class="builder-view" aria-label="Pack Compilation & Playtest">
+    <section id="view-step-compile" class="builder-view" aria-label="Build the pack">
       <div class="builder-compile-grid">
         <div class="glass-card compile-summary-card">
           <div class="panel-header">
             <span class="panel-icon">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" x2="12" y1="22.08" y2="12"/></svg>
             </span>
-            <h3 class="panel-title">Pack Details & Metadata</h3>
+            <h3 class="panel-title">Pack details</h3>
           </div>
 
           <div class="form-group" style="margin-top: 16px;">
-            <label class="form-label" for="compile-pack-name">Pack Title</label>
+            <label class="form-label" for="compile-pack-name">Title</label>
             <input type="text" id="compile-pack-name" class="form-input" placeholder="e.g. My Anime Scene Dub">
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="compile-author">Author / Dub Group</label>
-            <input type="text" id="compile-author" class="form-input" placeholder="e.g. DubMate Studio Pro">
+            <label class="form-label" for="compile-author">Author</label>
+            <input type="text" id="compile-author" class="form-input" placeholder="e.g. your name">
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="compile-subtitle">Description / Subtitle</label>
-            <input type="text" id="compile-subtitle" class="form-input" placeholder="e.g. 12 dialogue lines • Japanese original">
+            <label class="form-label" for="compile-subtitle">Description</label>
+            <input type="text" id="compile-subtitle" class="form-input" placeholder="e.g. 12 lines, Japanese audio">
           </div>
 
           <div class="compile-stats-box">
@@ -519,11 +519,11 @@
               <span id="stat-val-duration" class="stat-num">0:00</span>
             </div>
             <div class="stat-pill">
-              <span class="stat-lbl">Dialogue Lines</span>
+              <span class="stat-lbl">Lines</span>
               <span id="stat-val-lines" class="stat-num">0</span>
             </div>
             <div class="stat-pill">
-              <span class="stat-lbl">Cast Size</span>
+              <span class="stat-lbl">Characters</span>
               <span id="stat-val-cast" class="stat-num">0</span>
             </div>
           </div>
@@ -531,14 +531,14 @@
           <div style="margin-top: 24px;">
             <button id="btn-execute-compile" class="btn btn-primary btn-lg" style="width: 100%;">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              <span>Slice Cues & Compile Pack</span>
+              <span>Build pack</span>
             </button>
           </div>
 
           <!-- Compilation In-Progress Modal / Banner -->
           <div id="compile-progress-box" class="compile-progress-box" style="display: none;">
             <div class="compile-spinner"></div>
-            <span id="compile-status-msg">Slicing audio lines with micro-fades...</span>
+            <span id="compile-status-msg">Building the pack</span>
           </div>
 
           <!-- Success Box -->
@@ -546,20 +546,20 @@
             <div class="success-icon">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polyline points="16 9 10 15 7 12"/></svg>
             </div>
-            <h3 class="success-title">Pack Created Successfully!</h3>
-            <p class="success-desc">The pack has been compiled and installed into your DubMate scenes registry.</p>
+            <h3 class="success-title">Pack ready</h3>
+            <p class="success-desc">It is now in your scene list.</p>
             <div class="success-actions">
               <a id="btn-download-pack-zip" class="btn btn-primary btn-md" download href="#">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span>Download Pack (.zip)</span>
+                <span>Download .zip</span>
               </a>
-              <button id="btn-playtest-now" class="btn btn-secondary btn-md">
+              <button id="btn-playtest-now" class="btn btn-secondary btn-md" data-tip="Open a room with this pack">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                <span>Launch Room &amp; Playtest</span>
+                <span>Try it</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
               </button>
               <a href="/" class="btn btn-secondary btn-md">
-                <span>View in Studio Lobby</span>
+                <span>Go to Studio</span>
               </a>
             </div>
           </div>

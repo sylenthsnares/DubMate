@@ -32,7 +32,7 @@ BUILDER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 def _builder_session_or_404(session_id: str) -> Dict[str, Any]:
     session = BUILDER_SESSIONS.get(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+        raise HTTPException(status_code=404, detail="This session is no longer available. Add the video again.")
     return session
 
 
@@ -60,13 +60,13 @@ async def builder_upload_video(file: UploadFile = File(...)):
     prune_old_builder_sessions()
     
     if not file.filename:
-        raise HTTPException(status_code=400, detail="No video file provided.")
+        raise HTTPException(status_code=400, detail="Choose a video file first.")
     
     _, ext = os.path.splitext(file.filename.lower())
     if ext not in pack_loader.VIDEO_EXTS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported video format '{ext}'. Accepted formats: {', '.join(pack_loader.VIDEO_EXTS)}"
+            detail=f"That video type isn't supported. Use {', '.join(pack_loader.VIDEO_EXTS)}."
         )
 
     session_id = str(uuid.uuid4())[:12]
@@ -79,7 +79,7 @@ async def builder_upload_video(file: UploadFile = File(...)):
         content = await file.read()
         if len(content) > pack_loader.MAX_ARCHIVE_SIZE_BYTES:
             shutil.rmtree(session_dir, ignore_errors=True)
-            raise HTTPException(status_code=413, detail="Video exceeds maximum allowed upload size (500 MB).")
+            raise HTTPException(status_code=413, detail="This video is over 500 MB. Use a shorter clip.")
 
         def _save_and_probe() -> float:
             with open(video_path, "wb") as f:
@@ -125,7 +125,8 @@ async def builder_upload_video(file: UploadFile = File(...)):
         raise
     except Exception as ex:
         shutil.rmtree(session_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(ex)}")
+        print(f"[Builder] Upload failed: {ex}")
+        raise HTTPException(status_code=500, detail="The upload didn't finish. Try again.")
 
 
 @router.post("/api/builder/import_url")
@@ -138,7 +139,7 @@ async def builder_import_url(payload: Dict[str, Any]):
 
     raw_url = str(payload.get("url") or "").strip()
     if not raw_url:
-        raise HTTPException(status_code=400, detail="Please provide a valid YouTube / web video URL.")
+        raise HTTPException(status_code=400, detail="Paste a video link first.")
 
     session_id = str(uuid.uuid4())[:12]
     session_dir = os.path.join(pack_builder.BUILDER_CACHE_DIR, session_id)
@@ -241,14 +242,14 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
 
     try:
         # Step 1: Extract Audio (0% -> 20%)
-        progress.update("extracting_audio", 0.10, "Extracting audio track from video with FFmpeg...", stage="audio_extraction")
+        progress.update("extracting_audio", 0.10, "Reading the audio", stage="audio_extraction")
         full_wav = os.path.join(session_dir, "full_audio.wav")
         pack_builder.extract_audio_from_video(video_path, full_wav)
         session["full_audio_path"] = full_wav
-        progress.update("extracting_audio", 0.20, "Audio track extracted.", stage="audio_extraction")
+        progress.update("extracting_audio", 0.20, "Audio ready", stage="audio_extraction")
 
         # Step 2: Stem Separation via Demucs (20% -> 60%)
-        progress.update("separating_stems", 0.30, "Isolating dialogue and backing audio (Demucs AI)...", stage="stem_separation")
+        progress.update("separating_stems", 0.30, "Separating voices from the background", stage="stem_separation")
         stems_dir = os.path.join(session_dir, "stems")
         stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
         session["vocals_path"] = stem_results["vocals"]
@@ -258,17 +259,17 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         # did not get it.
         if stem_results.get("used_fallback"):
             progress.warning = stem_results.get("fallback_notice") or ""
-            progress.update("separating_stems", 0.60, stem_results.get("fallback_notice") or "Stems ready.", stage="stem_separation")
+            progress.update("separating_stems", 0.60, stem_results.get("fallback_notice") or "Voices separated", stage="stem_separation")
         else:
-            progress.update("separating_stems", 0.60, "Audio stem separation complete.", stage="stem_separation")
+            progress.update("separating_stems", 0.60, "Voices separated", stage="stem_separation")
 
         # Step 3: Speech-to-Text Transcription via Whisper (60% -> 90%)
         existing_subtitles = session.get("subtitle_segments") or progress.segments
         if existing_subtitles and len(existing_subtitles) > 0:
-            progress.update("transcribing", 0.85, f"Loaded {len(existing_subtitles)} timestamped subtitle cues...", stage="transcription")
+            progress.update("transcribing", 0.85, f"Using {len(existing_subtitles)} lines from your subtitles", stage="transcription")
             segments = existing_subtitles
         else:
-            progress.update("transcribing", 0.70, "Transcribing dialogue lines & timestamps (Whisper AI)...", stage="transcription")
+            progress.update("transcribing", 0.70, "Writing out the dialogue", stage="transcription")
             is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
             segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
         
@@ -286,7 +287,7 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             }]
 
         progress.characters = sorted(list({s["character"] for s in segments}))
-        progress.update("transcribed", 1.0, f"Detected {len(segments)} dialogue cues.", stage="complete", segments=segments)
+        progress.update("transcribed", 1.0, f"Found {len(segments)} lines", stage="complete", segments=segments)
 
     except pack_builder.MissingPipelineError as missing:
         print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {missing}")
@@ -497,7 +498,7 @@ async def builder_delete_segment(session_id: str, index: int):
             progress.characters = sorted(list({s["character"] for s in progress.segments}))
             return {"status": "ok", "deleted": deleted, "segments": progress.segments}
         else:
-            raise HTTPException(status_code=404, detail="Segment index out of range.")
+            raise HTTPException(status_code=404, detail="That line no longer exists.")
 
 
 @router.post("/api/builder/{session_id}/transcribe_segment")
@@ -507,7 +508,7 @@ async def builder_transcribe_segment(session_id: str, payload: Dict[str, Any]):
 
     vocals_path = session.get("vocals_path") or session.get("full_audio_path")
     if not vocals_path or not os.path.isfile(vocals_path):
-        raise HTTPException(status_code=400, detail="Audio track not ready for transcription.")
+        raise HTTPException(status_code=400, detail="The audio isn't ready yet. Wait for processing to finish.")
 
     start = float(payload.get("start", 0.0))
     end = float(payload.get("end", start + 2.0))
@@ -553,7 +554,7 @@ async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)
         parsed = pack_builder.parse_srt(text)
 
     if not parsed:
-        raise HTTPException(status_code=400, detail="Could not parse any timestamped subtitle lines from file.")
+        raise HTTPException(status_code=400, detail="No timed lines found in that subtitle file. Use an SRT or VTT file.")
 
     # Clamp to video duration
     max_dur = session.get("duration", 99999.0)
@@ -631,11 +632,11 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     progress: pack_builder.BuildProgress = session["progress"]
     segments = payload.get("segments") or progress.segments
     if not segments:
-        raise HTTPException(status_code=400, detail="Cannot compile pack with 0 dialogue lines.")
+        raise HTTPException(status_code=400, detail="Add at least one line before building.")
 
     pack_name = (payload.get("pack_name") or session.get("filename") or "Custom Scene").strip()
     authors = payload.get("authors") or ["DubMate Creator"]
-    subtitle = payload.get("subtitle") or f"Authored with DubMate Pack Builder ({len(segments)} lines)"
+    subtitle = payload.get("subtitle") or f"{len(segments)} lines"
 
     session_dir = session["folder"]
     video_path = session["video_path"]
@@ -644,7 +645,7 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     cover_path = session.get("cover_path")
 
     # Step 1: Slice individual audio takes
-    progress.update("slicing", 0.80, "Slicing audio dialogue lines with micro-fades...", stage="slicing")
+    progress.update("slicing", 0.80, "Cutting the lines", stage="slicing")
     slices_dir = os.path.join(session_dir, "slices")
     try:
         sliced_lines = await asyncio.to_thread(pack_builder.slice_audio_lines, vocals_path, segments, slices_dir, pack_name)
@@ -653,7 +654,7 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(slice_err))
 
     # Step 2: Assemble complete pack folder
-    progress.update("assembling", 0.90, "Compiling metadata and installing pack into Packs/...", stage="assembling")
+    progress.update("assembling", 0.90, "Adding the pack to your library", stage="assembling")
     pack_folder = await asyncio.to_thread(
         pack_builder.assemble_pack,
         pack_name=pack_name,
@@ -678,12 +679,12 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
             packs_cache.PACKS_CACHE = {**packs_cache.PACKS_CACHE, loaded_pack.pack_id: loaded_pack}
 
     progress.pack_info = loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name}
-    progress.update("done", 1.0, f"Successfully created and installed pack '{pack_name}'!", stage="done")
+    progress.update("done", 1.0, f"'{pack_name}' is ready", stage="done")
 
     quoted_pack_id = urllib.parse.quote(pack_id)
     return {
         "status": "ok",
-        "message": f"Successfully created and installed pack '{pack_name}'!",
+        "message": f"'{pack_name}' is ready",
         "pack_id": pack_id,
         "download_url": f"/api/packs/{quoted_pack_id}/export",
         "pack": loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name, "export_url": f"/api/packs/{quoted_pack_id}/export"},
