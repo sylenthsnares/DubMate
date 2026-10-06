@@ -635,7 +635,7 @@ export class AudioEngine {
 
   // --- 4c. A short clip from the microphone (the room check) ---
   // Resolves with the recorded Blob after `durationMs`; onProgress(elapsedMs, durationMs)
-  // ticks while it records. cancelClip() rejects it. The microphone is released after.
+  // ticks while it records. cancelClip() rejects it. The microphone is released after unless something else is recording.
   async recordClip(durationMs, onProgress = null) {
     this.initContext();
     await this.requestMicrophone();
@@ -651,7 +651,8 @@ export class AudioEngine {
         settled = true;
         clearInterval(timer);
         this.currentClip = null;
-        this.releaseMicrophone();
+        // A take or mic sync may still be recording from the same stream.
+        if (!this.isRecording) this.releaseMicrophone();
         fn();
       };
 

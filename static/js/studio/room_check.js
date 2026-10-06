@@ -161,7 +161,7 @@ export class RoomCheckMethods {
     }
     if (this.btnRoomCheck) {
       this.btnRoomCheck.textContent = check && matches ? 'Check again' : 'Check your room';
-      this.btnRoomCheck.disabled = !!this.roomCheckBusy;
+      this.btnRoomCheck.disabled = !!(this.roomCheckBusy || this.micSyncBusy);
     }
   }
 
@@ -196,6 +196,7 @@ export class RoomCheckMethods {
       this.btnStartRoomCheck.textContent = step === 'listening' ? 'Listening…' : 'Start';
     }
     this.renderRoomCheckRow();
+    this.renderMicSyncRow();
   }
 
   setRoomCheckProgress(fraction) {
@@ -237,7 +238,12 @@ export class RoomCheckMethods {
     if (this.btnStartRoomCheck) this.btnStartRoomCheck.focus();
   }
 
+  // Both record from the same microphone stream, so one waits for the other.
   roomCheckRefused() {
+    if (this.micSyncBusy) {
+      this.showToast('Wait for mic sync to finish, then check your room.');
+      return true;
+    }
     if (this.recordState !== 'countdown' && this.recordState !== 'recording') return false;
     this.showToast('Finish your take, then check your room.');
     return true;
@@ -259,7 +265,7 @@ export class RoomCheckMethods {
   // Records the room, has the engine measure it, keeps the check when it can be used and
   // shows the card. The previous check is removed from the engine once a new one is kept.
   async runRoomCheck() {
-    if (this.roomCheckBusy || this.micSyncBusy || this.roomCheckRefused()) return;
+    if (this.roomCheckBusy || this.roomCheckRefused()) return;
     const run = ++this.roomCheckRun;
     this.roomCheckBusy = true;
     this.stopInputMeter();
@@ -323,6 +329,7 @@ export class RoomCheckMethods {
       if (run === this.roomCheckRun) {
         this.roomCheckBusy = false;
         this.renderRoomCheckRow();
+        this.renderMicSyncRow();
         if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
       }
     }

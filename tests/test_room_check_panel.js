@@ -5,12 +5,14 @@
  * opens the panel, Start records 3.3 s of room tone and the engine's report becomes the
  * card (light, word, sentence, advice) and the row's text. A silent check stores nothing;
  * a different microphone asks for a new check and its takes are sent with no check id; a
- * stored check the engine no longer has is dropped when Audio settings opens. The audio
- * engine's recordClip and the engine routes are stubbed.
+ * stored check the engine no longer has is dropped when Audio settings opens; mic sync
+ * and the check wait for each other. The audio engine's recordClip and the engine routes
+ * are stubbed; recordClip itself is checked against a stub MediaRecorder.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const { buildStudioBundle } = require("./helpers/studio_dom");
 
@@ -361,7 +363,76 @@ async function upload(env) {
     console.log("PASS: Cancel stops the check, engine errors show in the panel, and a take in progress refuses it");
   }
 
-  // 7. Guests see the row with the tooltip; every button is a named, focusable button.
+  // 7. Mic sync and the room check share the microphone: each waits for the other.
+  {
+    const env = await boot(HOST);
+    let syncRecordings = 0;
+    env.app.audio.startRecording = async () => { syncRecordings++; };
+    $(env, "btn-room-check").click();
+    $(env, "btn-start-room-check").click();
+    await until(() => env.clip, "the recording");
+    if (!$(env, "btn-mic-sync").disabled) fail("Sync your mic enabled during the room check");
+    env.toasts.length = 0;
+    env.app.openMicSyncPanel();
+    if (shown($(env, "mic-sync-panel"))) fail("mic sync panel opened during the room check");
+    await env.app.runMicSync();
+    await env.app.runClapSync();
+    if (syncRecordings || env.app.micSyncBusy) fail("mic sync recorded during the room check");
+    if (env.toasts.length !== 3 || !/room check/.test(env.toasts[0])) fail(`toasts: ${JSON.stringify(env.toasts)}`);
+    env.clip.finish();
+    await until(() => !env.app.roomCheckBusy, "the check");
+    if ($(env, "btn-mic-sync").disabled) fail("Sync your mic still disabled after the room check");
+
+    // The other way round: the room check waits while mic sync listens.
+    $(env, "btn-room-check").click();
+    env.app.micSyncBusy = true;
+    env.app.renderRoomCheckRow();
+    if (!$(env, "btn-room-check").disabled) fail("Check your room enabled during mic sync");
+    const clips = env.log.clips.length;
+    env.toasts.length = 0;
+    $(env, "btn-start-room-check").click();
+    await tick(20);
+    if (env.log.clips.length !== clips || env.app.roomCheckBusy) fail("room check recorded during mic sync");
+    if (env.toasts.length !== 1 || !/mic sync/.test(env.toasts[0])) fail(`toasts: ${JSON.stringify(env.toasts)}`);
+    env.app.cancelRoomCheck();
+    env.app.openRoomCheckPanel();
+    if (shown($(env, "room-check-panel"))) fail("room check panel opened during mic sync");
+    env.app.micSyncBusy = false;
+    if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
+    console.log("PASS: mic sync and the room check refuse to start while the other is listening");
+  }
+
+  // 8. recordClip keeps the microphone open when a take or mic sync is still recording.
+  {
+    const { AudioEngine } = await import(pathToFileURL(path.join(PROJECT_ROOT, "static", "js", "audio_engine.js")).href);
+    globalThis.MediaRecorder = class {
+      static isTypeSupported() { return true; }
+      constructor() { this.state = "inactive"; this.mimeType = "audio/webm"; }
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        setTimeout(() => { this.ondataavailable({ data: { size: 1 } }); this.onstop(); }, 0);
+      }
+    };
+    globalThis.Blob = globalThis.Blob || require("buffer").Blob;
+    const clipWith = async (isRecording) => {
+      const engine = new AudioEngine();
+      let stopped = 0;
+      const stream = { getTracks: () => [{ stop: () => { stopped++; } }] };
+      engine.initContext = () => {};
+      engine.requestMicrophone = async () => { engine.stream = stream; return stream; };
+      engine.isRecording = isRecording;
+      await engine.recordClip(60);
+      return { stopped, kept: engine.stream === stream };
+    };
+    const busy = await clipWith(true);
+    if (busy.stopped || !busy.kept) fail("recordClip released the mic another recording uses");
+    const idle = await clipWith(false);
+    if (idle.stopped !== 1 || idle.kept) fail("recordClip kept the mic when nothing else records");
+    console.log("PASS: recordClip releases the microphone only when nothing else is recording from it");
+  }
+
+  // 9. Guests see the row with the tooltip; every button is a named, focusable button.
   {
     const env = await boot(GUEST);
     const status = $(env, "room-check-status");
