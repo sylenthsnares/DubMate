@@ -71,6 +71,10 @@ class Room:
         # Take processing runs in a worker thread; this keeps one room's uploads and
         # noise-reduction toggles serialized without blocking other rooms.
         self.processing_lock = asyncio.Lock()
+        # Refresh older takes (not saved): user id -> takes still to re-clean, and the
+        # running background task. Renders are refused while anyone's refresh runs.
+        self.cleanup_refreshing: Dict[str, int] = {}
+        self.cleanup_refresh_task: Optional[asyncio.Task] = None
 
     def line_entry(self, line_id: str) -> Optional[Dict[str, Any]]:
         """The line's take history, or None if it has no takes."""
@@ -268,6 +272,9 @@ class Room:
                 if line["line_id"] in self.takes
             },
             "status": self.status,
+            # Whose older takes are being refreshed, so a tab that missed cleanup_refreshed
+            # (a dropped socket) still learns the refresh ended.
+            "cleanup_refreshing": sorted(self.cleanup_refreshing),
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
             "has_export": has_export,
             "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,

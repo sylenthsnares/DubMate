@@ -3929,110 +3929,6 @@ svg {
 }
 
 /* ------------------------------------------------------------- */
-/* 9. MICROPHONE NOISE CALIBRATION MODAL                         */
-/* ------------------------------------------------------------- */
-
-.calib-modal-card {
-  max-width: 440px;
-  padding: 28px 24px 22px;
-  text-align: center;
-}
-
-.calib-animation-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 80px;
-  margin-bottom: 6px;
-}
-
-.calib-mic-visual {
-  position: relative;
-  width: 72px;
-  height: 72px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.calib-mic-icon-circle {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #2d241c 0%, var(--panel-core) 100%);
-  border: 1.5px solid var(--border-wood);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 16px rgba(217, 119, 6, 0.25);
-  z-index: 2;
-}
-
-.calib-pulse-icon {
-  font-size: 26px;
-  line-height: 1;
-}
-
-.calib-radar-ring {
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(217, 119, 6, 0.2);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.calib-radar-ring.active-radar {
-  animation: calibRadarPulse 1.4s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
-}
-
-@keyframes calibRadarPulse {
-  0% {
-    transform: scale(0.85);
-    opacity: 0.9;
-    border-color: var(--primary);
-    box-shadow: 0 0 10px var(--accent-amber-glow);
-  }
-  70% {
-    transform: scale(1.45);
-    opacity: 0.15;
-    border-color: var(--accent-teal);
-    box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
-  }
-  100% {
-    transform: scale(1.6);
-    opacity: 0;
-  }
-}
-
-.calib-meter-box {
-  background: rgba(18, 15, 12, 0.7);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-md);
-  padding: 14px 16px;
-  margin-top: 14px;
-  text-align: center;
-}
-
-.calib-timer-readout {
-  font-family: var(--font-mono);
-  font-size: 32px;
-  font-weight: 800;
-  color: var(--accent-brass);
-  letter-spacing: 1px;
-  line-height: 1.1;
-  text-shadow: 0 0 12px var(--accent-amber-glow);
-}
-
-.calib-phase-indicator {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--foreground-muted);
-  margin-top: 4px;
-}
-
-/* ------------------------------------------------------------- */
 /* 10. SMART DIALOGUE LOUDNESS & PROMINENCE STYLES              */
 /* ------------------------------------------------------------- */
 
@@ -4566,6 +4462,66 @@ svg {
 .mic-sync-panel {
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border);
+}
+
+/* Room check report card: a light, one word, a sentence and advice lines. */
+.room-check-card.is-error {
+  border-color: rgba(239, 68, 68, 0.34);
+  color: var(--accent-red-soft);
+}
+
+.room-check-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.room-check-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--foreground-muted);
+}
+
+.room-check-light.is-good { background: var(--accent-green-bright); box-shadow: 0 0 8px var(--accent-green-bright); }
+.room-check-light.is-ok { background: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber-glow); }
+.room-check-light.is-noisy { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+
+.room-check-light:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+.room-check-advice {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.room-check-advice li + li {
+  margin-top: 4px;
+}
+
+.room-check-standard {
+  margin-top: 4px;
+  padding-left: 0;
+}
+
+.room-check-loud {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.room-check-loud p {
+  align-self: stretch;
+}
+
+.room-check-refresh {
+  margin-top: 9px;
 }
 
 @media (max-width: 640px) {

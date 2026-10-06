@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 dubmate/rooms_api.py
-Room REST routes (/api/rooms/*): create, share, state, noise profile, takes,
+Room REST routes (/api/rooms/*): create, share, state, takes,
 export render, video streaming and downloads.
 
 Works on the room model in dubmate.rooms and never imports app.
@@ -82,29 +82,6 @@ async def get_room(room_id: str):
     return room.to_state_dict()
 
 
-@router.post("/api/rooms/{room_id}/noise_profile")
-async def upload_noise_profile(
-    room_id: str,
-    file: UploadFile = File(...),
-    user_id: str = Form(...),
-):
-    """Calibrates and saves a 1-second room background noise profile for an actor."""
-    common.require_safe_identifier(user_id, "user_id")
-    room = rooms.room_or_404(room_id)
-    try:
-        content = await file.read()
-        res = audio_processor.save_user_noise_profile(
-            room.room_id,
-            user_id,
-            content,
-            filename_hint=file.filename or "profile.webm"
-        )
-        return res
-    except Exception as ex:
-        print(f"[NoiseProfileError] Failed calibrating noise profile for {user_id} in {room_id}: {ex}")
-        raise HTTPException(status_code=400, detail=str(ex))
-
-
 def _line_target_loudness(pack, line) -> float:
     """Measured loudness of the original line, the target for a take's auto gain.
 
@@ -143,6 +120,38 @@ def _take_or_404(room, line_id: str, take_id: str):
     return line, take
 
 
+def _store_nr_settings(take: Dict[str, Any], result: Dict[str, Any]) -> None:
+    """Keeps the cleanup settings a take was (re)cleaned with; standard cleanup stores no field."""
+    if result.get("nr_settings") is not None:
+        take["nr_settings"] = result["nr_settings"]
+    else:
+        take.pop("nr_settings", None)
+
+
+def _apply_toggled_take(take: Dict[str, Any], toggled: Dict[str, Any], enable: bool) -> None:
+    """Stores what toggle_take_noise_reduction wrote: noise reduction on or off, the cleanup
+    settings used, the new audio's version, peaks, duration and loudness."""
+    take["noise_reduction"] = enable
+    _store_nr_settings(take, toggled)
+    take["audio_version"] = int(time.time() * 1000)
+    take["peaks"] = toggled["peaks"]
+    take["duration"] = toggled["duration"]
+    # The swapped audio has a different level: re-match, and keep a take that was
+    # sitting at its auto gain on the new auto gain.
+    old_auto = take.get("auto_gain_db")
+    if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
+        take["gain_db"] = toggled["auto_gain_db"]
+    take["speech_loudness_db"] = toggled["speech_loudness_db"]
+    take["target_loudness_db"] = toggled["target_loudness_db"]
+    take["auto_gain_db"] = toggled["auto_gain_db"]
+
+
+def _refuse_during_cleanup_refresh(room) -> None:
+    """409 while older takes are re-cleaned: a render then would mix old and new audio."""
+    if room.cleanup_refreshing:
+        raise HTTPException(status_code=409, detail="Older takes are being refreshed. Try again in a moment.")
+
+
 @router.post("/api/rooms/{room_id}/lines/{line_id}/takes")
 async def upload_take(
     room_id: str,
@@ -157,6 +166,7 @@ async def upload_take(
     noise_reduction: bool = Form(False),
     auto_gain: bool = Form(False),
     guide_voice: bool = Form(False),
+    noise_profile_id: str = Form(""),
 ):
     common.require_safe_identifier(user_id, "user_id")
     room = rooms.room_or_404(room_id)
@@ -174,6 +184,8 @@ async def upload_take(
     start_offset_ms = int(5 * round(offset_ms / 5.0))
     try:
         target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
+        # The actor's room check tunes the cleanup; an unknown or malformed id means standard cleanup.
+        nr_settings = audio_processor.noise_cleanup_settings(noise_profile_id) if noise_profile_id else None
 
         content = await file.read()
         async with room.processing_lock:
@@ -185,7 +197,7 @@ async def upload_take(
                 content,
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
-                user_id=user_id,
+                nr_settings=nr_settings,
                 target_loudness_db=target_loudness,
                 # The original line's voice; a take recorded with the guide voice on can
                 # hear the guide itself, so it isn't lined up.
@@ -223,6 +235,7 @@ async def upload_take(
         "auto_gain_db": saved.get("auto_gain_db", 0.0),
         "recorded_at": time.time(),
     })
+    _store_nr_settings(take, saved)
     wire = room.wire_take(line_id, take)
 
     room.invalidate_exports()
@@ -291,7 +304,6 @@ async def toggle_take_noise_reduction_endpoint(
     line, take = _take_or_404(room, line_id, take_id)
 
     enable = bool(payload.get("noise_reduction", False))
-    user_id = take.get("user_id", "host")
     target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
 
     try:
@@ -302,23 +314,12 @@ async def toggle_take_noise_reduction_endpoint(
                 audio_processor.take_dir(room.room_id, line_id),
                 take_id,
                 enable_noise_reduction=enable,
-                user_id=user_id,
+                nr_settings=take.get("nr_settings"),
                 target_loudness_db=target_loudness,
                 # A fitted take stays fitted; its timing fields don't change.
                 stretch=float(take.get("stretch", 1.0)),
             )
-        take["noise_reduction"] = enable
-        take["audio_version"] = int(time.time() * 1000)
-        take["peaks"] = toggled["peaks"]
-        take["duration"] = toggled["duration"]
-        # The swapped audio has a different level: re-match, and keep a take that was
-        # sitting at its auto gain on the new auto gain.
-        old_auto = take.get("auto_gain_db")
-        if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
-            take["gain_db"] = toggled["auto_gain_db"]
-        take["speech_loudness_db"] = toggled["speech_loudness_db"]
-        take["target_loudness_db"] = toggled["target_loudness_db"]
-        take["auto_gain_db"] = toggled["auto_gain_db"]
+        _apply_toggled_take(take, toggled, enable)
         wire = room.wire_take(line_id, take)
         room.invalidate_exports()
         await room.broadcast("take_params_updated", {
@@ -355,7 +356,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             audio_processor.take_dir(room.room_id, line_id),
             take_id,
             enable_noise_reduction=bool(take.get("noise_reduction", False)),
-            user_id=take.get("user_id", "host"),
+            nr_settings=take.get("nr_settings"),
             target_loudness_db=target_loudness,
             stretch=1.0,
         )
@@ -374,6 +375,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             if abs(int(take.get("offset_ms", 0)) - int(old_auto_offset)) < 5:
                 take["offset_ms"] = timing["auto_offset_ms"]
             take["stretch"] = 1.0
+            _store_nr_settings(take, written)
             take["auto_offset_ms"] = timing["auto_offset_ms"]
             take["timing_score"] = timing["timing_score"]
             take["aligned"] = timing["aligned"]
@@ -398,6 +400,130 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
         "url": wire["url"],
     })
     return {"status": "ok", "line_id": line_id, "take": wire}
+
+
+@router.post("/api/rooms/{room_id}/cleanup/refresh")
+async def refresh_cleanup(room_id: str, payload: Dict[str, Any]):
+    """Refresh older takes: moves one person's takes to their latest room check (an unknown
+    or missing id means standard cleanup). A take with noise reduction off just gets the new
+    settings. One with it on whose active audio isn't the new cleaning is re-cleaned in the
+    background and gets the new settings only once that worked; the rest already sound
+    right. Returns how many will be re-cleaned. Raw takes are never touched."""
+    room = rooms.room_or_404(room_id)
+    user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
+    if any(status == "processing" for status in room.export_status.values()):
+        raise HTTPException(status_code=409, detail="A video is rendering. Refresh older takes when it's done.")
+    if user_id in room.cleanup_refreshing:
+        return {"status": "ok", "refreshing": room.cleanup_refreshing[user_id]}
+
+    settings = audio_processor.noise_cleanup_settings(payload.get("noise_profile_id"))
+    # Claimed before the first await, so a second request or a render can't slip in.
+    room.cleanup_refreshing[user_id] = 0
+    try:
+        # Under the lock, so a toggle or Original speed in flight can't write its old
+        # settings back over the new ones.
+        async with room.processing_lock:
+            mine = [
+                (line_id, take)
+                for line_id, entry in room.takes.items()
+                for take in entry["takes"]
+                if take.get("user_id") == user_id
+            ]
+            # Lines outside the current pack have no original to match loudness to: a take
+            # there with noise reduction on keeps its cleanup until it's re-cleaned.
+            cleaned = [(line_id, take) for line_id, take in mine
+                       if take.get("noise_reduction") and room.find_line(line_id)]
+
+            def stale_takes():
+                return [(line_id, take["take_id"]) for line_id, take in cleaned
+                        if _needs_reclean(room.room_id, line_id, take, settings)]
+
+            queued = await asyncio.to_thread(stale_takes)
+            stale = set(queued)
+            in_pack = {id(take) for _, take in cleaned}
+            for line_id, take in mine:
+                if (line_id, take["take_id"]) in stale:
+                    continue
+                if not take.get("noise_reduction") or id(take) in in_pack:
+                    _store_nr_settings(take, {"nr_settings": settings})
+    except Exception:
+        room.cleanup_refreshing.pop(user_id, None)
+        raise
+
+    if not queued:
+        room.cleanup_refreshing.pop(user_id, None)
+        await room.broadcast("cleanup_refreshed", {"user_id": user_id, "count": 0, "failed": 0})
+        return {"status": "ok", "refreshing": 0}
+
+    room.cleanup_refreshing[user_id] = len(queued)
+    room.cleanup_refresh_task = asyncio.create_task(
+        _refresh_takes(room, user_id, queued, settings, room.cleanup_refresh_task)
+    )
+    return {"status": "ok", "refreshing": len(queued)}
+
+
+def _needs_reclean(room_id: str, line_id: str, take: Dict[str, Any], settings) -> bool:
+    """True when the take's active audio isn't the cleaning `settings` give: the take is
+    on other settings, or the cleaned file for these is missing."""
+    take_dir = audio_processor.take_dir(room_id, line_id, create=False)
+    wanted = audio_processor.denoised_take_path(take_dir, take["take_id"], settings)
+    current = audio_processor.denoised_take_path(take_dir, take["take_id"], take.get("nr_settings"))
+    return wanted != current or not os.path.exists(wanted)
+
+
+async def _refresh_takes(room, user_id: str, queued, settings, previous) -> None:
+    """Re-cleans the queued takes one at a time with `settings`, each under the room's
+    processing lock, at the take's stretch. A take gets the new settings only once its new
+    audio is written; one that fails keeps its settings and sound and is counted in
+    `failed`. Timing fields stay, as with the toggle. A take deleted meanwhile is skipped;
+    one switched to raw meanwhile just gets the new settings."""
+    count = 0
+    failed = 0
+    try:
+        # One refresh at a time, so the latest task finishes last and launch_premiere can wait on it.
+        if previous is not None and not previous.done():
+            await asyncio.wait({previous})
+        for line_id, take_id in queued:
+            line = room.find_line(line_id)
+            try:
+                if line and room.find_take(line_id, take_id):
+                    target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
+                    async with room.processing_lock:
+                        take = room.find_take(line_id, take_id)
+                        if take and take.get("noise_reduction"):
+                            toggled = await asyncio.to_thread(
+                                audio_processor.toggle_take_noise_reduction,
+                                room.room_id,
+                                audio_processor.take_dir(room.room_id, line_id),
+                                take_id,
+                                enable_noise_reduction=True,
+                                nr_settings=settings,
+                                target_loudness_db=target_loudness,
+                                stretch=float(take.get("stretch", 1.0)),
+                            )
+                            _apply_toggled_take(take, toggled, True)
+                        else:
+                            if take:
+                                _store_nr_settings(take, {"nr_settings": settings})
+                            take = None
+                    if take:
+                        count += 1
+                        await room.broadcast("take_params_updated", {
+                            "line_id": line_id,
+                            "take_id": take_id,
+                            "url": room.wire_take(line_id, take)["url"],
+                            "noise_reduction": True,
+                        })
+            except Exception as ex:
+                failed += 1
+                print(f"[CleanupRefreshError] {room.room_id} {line_id}/{take_id}: {ex}")
+            room.cleanup_refreshing[user_id] = max(0, room.cleanup_refreshing.get(user_id, 1) - 1)
+        room.invalidate_exports()
+        # Renders are allowed again before clients hear that the refresh is done.
+        room.cleanup_refreshing.pop(user_id, None)
+        await room.broadcast("cleanup_refreshed", {"user_id": user_id, "count": count, "failed": failed})
+    finally:
+        room.cleanup_refreshing.pop(user_id, None)
 
 
 @router.get("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/peaks")
@@ -438,6 +564,7 @@ async def get_take_audio(room_id: str, line_id: str, take_id: str, request: Requ
 async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0):
     """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously."""
     room = rooms.room_or_404(room_id)
+    _refuse_during_cleanup_refresh(room)
 
     presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
     room.master_dialogue_presence_db = presence_val
@@ -539,6 +666,7 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
 @router.get("/api/rooms/{room_id}/export/download")
 async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     room = rooms.room_or_404(room_id)
+    _refuse_during_cleanup_refresh(room)
 
     # A render for this aspect is already writing the file; rendering it again here
     # would put a second ffmpeg on the same output path.
@@ -582,6 +710,7 @@ async def download_room_project_zip(room_id: str):
     Assembles and streams a complete multi-track NLE project ZIP containing stems, video, markers.
     """
     room = rooms.room_or_404(room_id)
+    _refuse_during_cleanup_refresh(room)
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
     zip_path = os.path.join(common.exports_dir(), zip_filename)

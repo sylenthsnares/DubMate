@@ -47,14 +47,23 @@ class TestStudioNoiseReduction(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Rooms and room checks go to a temp cache, never the user's profile store
+        # (saving a check prunes old ones) or their rooms (prune_sessions below).
+        cls.cache = tempfile.mkdtemp(prefix="dm_nr_cache_")
+        cls.cache_patch = mock.patch.object(audio_processor, "CACHE_DIR", cls.cache)
+        cls.cache_patch.start()
         cls.client = TestClient(app.app)
         cls.client.__enter__()
         cls.client.get("/api/packs")
 
     @classmethod
     def tearDownClass(cls):
-        cls.client.__exit__(None, None, None)
-        rooms.prune_sessions(keep_room_id="NONE")
+        try:
+            cls.client.__exit__(None, None, None)
+            rooms.prune_sessions(keep_room_id="NONE")
+        finally:
+            cls.cache_patch.stop()
+            shutil.rmtree(cls.cache, ignore_errors=True)
 
     def test_01_apply_noise_reduction_filters(self):
         """Verifies that apply_noise_reduction processes audio and preserves signal without clipping."""
@@ -67,7 +76,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             with open(tmp_in, "wb") as f:
                 f.write(noisy_bytes)
 
-            out_path = audio_processor.apply_noise_reduction(tmp_in, tmp_out, reduction_db=14.0, sr=sr)
+            out_path = audio_processor.apply_noise_reduction(tmp_in, tmp_out, sr=sr)
             self.assertTrue(os.path.isfile(out_path))
             self.assertGreater(os.path.getsize(out_path), 1000)
 
@@ -79,26 +88,28 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 if os.path.exists(p):
                     os.remove(p)
 
-    def test_02_save_user_noise_profile(self):
-        """Tests 1-second room noise profile calibration."""
-        test_room = "TEST_NR_ROOM_1"
-        test_user = "user_calib_test"
-        room_dir = audio_processor.get_room_cache_dir(test_room)
-        
-        noise_bytes = generate_synthetic_wav_bytes(1.0, add_noise=True)
+    def test_02_save_noise_profile_round_trip(self):
+        """A stored room check reads back with its report, file and cleanup settings."""
+        cache = tempfile.mkdtemp(prefix="dm_nr_profile_")
         try:
-            result = audio_processor.save_user_noise_profile(test_room, test_user, noise_bytes)
-            self.assertEqual(result["status"], "ok")
-            self.assertEqual(result["user_id"], test_user)
-            self.assertTrue(os.path.isfile(result["profile_path"]))
-            self.assertIn("noise_floor_db", result)
+            with mock.patch.object(audio_processor, "CACHE_DIR", cache):
+                noise = (0.003 * np.random.default_rng(3).standard_normal(44100 * 3)).astype(np.float32)
+                profile_id, stats = audio_processor.save_noise_profile(noise, 44100, device_id="d1")
+                self.assertRegex(profile_id, r"^[0-9a-f]{12}$")
+                loaded = audio_processor.load_noise_profile_stats(profile_id)
+                self.assertEqual(loaded["profile_id"], profile_id)
+                self.assertEqual(loaded["device_id"], "d1")
+                self.assertEqual(loaded["verdict"], stats["verdict"])
+                self.assertTrue(os.path.isfile(audio_processor.noise_profile_wav_path(profile_id)))
+                self.assertEqual(audio_processor.noise_cleanup_settings(profile_id)["profile_id"], profile_id)
+                self.assertTrue(audio_processor.delete_noise_profile(profile_id))
+                self.assertIsNone(audio_processor.load_noise_profile_stats(profile_id))
         finally:
-            shutil.rmtree(room_dir, ignore_errors=True)
+            shutil.rmtree(cache, ignore_errors=True)
 
     def test_03_save_uploaded_take_dual_preservation(self):
         """Tests that save_uploaded_take preserves raw take while generating denoised take."""
         test_room = "TEST_NR_ROOM_2"
-        test_user = "user_dual_test"
         room_dir = audio_processor.get_room_cache_dir(test_room)
         
         take_bytes = generate_synthetic_wav_bytes(1.5, add_noise=True)
@@ -108,10 +119,10 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 room_dir, "take_line_0",
                 audio_bytes=take_bytes,
                 enable_noise_reduction=True,
-                user_id=test_user
             )
 
             self.assertTrue(saved["noise_reduction"])
+            self.assertIsNone(saved["nr_settings"])
             self.assertTrue(saved["has_raw"])
             self.assertTrue(os.path.isfile(saved["wav_path"]))
             self.assertTrue(os.path.isfile(saved["raw_path"]))
@@ -134,7 +145,6 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 test_room,
                 room_dir, "take_line_0",
                 enable_noise_reduction=False,
-                user_id=test_user
             )
             self.assertFalse(toggled_off["noise_reduction"])
             self.assertEqual(os.path.getsize(active_wav), os.path.getsize(raw_wav))
@@ -144,9 +154,9 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 test_room,
                 room_dir, "take_line_0",
                 enable_noise_reduction=True,
-                user_id=test_user
             )
             self.assertTrue(toggled_on["noise_reduction"])
+            self.assertIsNone(toggled_on["nr_settings"])
             self.assertEqual(os.path.getsize(active_wav), os.path.getsize(denoised_wav))
 
         finally:
@@ -206,16 +216,23 @@ class TestStudioNoiseReduction(unittest.TestCase):
         room_data = res.json()
         room_id = room_data["room_id"]
         user_id = room_data["user_id"]
+        profile_id = None
 
         try:
-            # 2. Upload Noise Profile
-            noise_bytes = generate_synthetic_wav_bytes(1.0, add_noise=True)
-            files = {"file": ("noise.wav", noise_bytes, "audio/wav")}
-            data = {"user_id": user_id}
-            res_prof = self.client.post(f"/api/rooms/{room_id}/noise_profile", files=files, data=data)
-            self.assertEqual(res_prof.status_code, 200)
-            prof_json = res_prof.json()
-            self.assertEqual(prof_json["status"], "ok")
+            # 2. Room check: 3.3 s of quiet room tone
+            noise = (0.003 * np.random.default_rng(4).standard_normal(int(44100 * 3.3))).astype(np.float32)
+            noise_wav = tempfile.mktemp(suffix=".wav")
+            audio_processor.write_wav_mono(noise_wav, noise, 44100)
+            with open(noise_wav, "rb") as f:
+                noise_bytes = f.read()
+            os.remove(noise_wav)
+            res_prof = self.client.post("/api/noise_profiles",
+                                        files={"file": ("check.wav", noise_bytes, "audio/wav")})
+            self.assertEqual(res_prof.status_code, 200, res_prof.text)
+            profile_id = res_prof.json()["profile_id"]
+            self.assertRegex(profile_id, r"^[0-9a-f]{12}$")
+            stored_at = os.path.abspath(audio_processor.noise_profile_wav_path(profile_id))
+            self.assertTrue(stored_at.startswith(os.path.abspath(self.cache) + os.sep), stored_at)
 
             # 3. Upload Take with Noise Reduction ON
             take_bytes = generate_synthetic_wav_bytes(1.2, add_noise=True)
@@ -228,6 +245,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 "reverb_wet": "0.0",
                 "gain_db": "0.0",
                 "noise_reduction": "true",
+                "noise_profile_id": profile_id,
             }
             line_id = room_data["state"]["pack"]["lines"][0]["line_id"]
             res_take = self.client.post(f"/api/rooms/{room_id}/lines/{line_id}/takes", files=take_files, data=take_data)
@@ -235,6 +253,9 @@ class TestStudioNoiseReduction(unittest.TestCase):
             take_resp = res_take.json()["take"]
             self.assertTrue(take_resp["noise_reduction"])
             self.assertTrue(take_resp["has_raw"])
+            self.assertEqual(take_resp["nr_settings"]["profile_id"], profile_id)
+            stored = rooms.ROOMS[room_id].find_take(line_id, take_resp["take_id"])
+            self.assertEqual(stored["nr_settings"], audio_processor.noise_cleanup_settings(profile_id))
 
             # 4. Toggle Take Noise Reduction to OFF via API
             res_toggle = self.client.post(
@@ -251,6 +272,8 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertGreater(len(res_audio.content), 1000)
 
         finally:
+            if profile_id:
+                audio_processor.delete_noise_profile(profile_id)
             rooms.prune_sessions(keep_room_id="NONE")
 
 

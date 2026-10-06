@@ -40,7 +40,8 @@
     ],
     "externalBin": [
       "sidecar/cloudflared",
-      "sidecar/ffmpeg"
+      "sidecar/ffmpeg",
+      "sidecar/deep-filter"
     ],
     "icon": [
       "icons/32x32.png",

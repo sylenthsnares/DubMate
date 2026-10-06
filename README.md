@@ -361,6 +361,10 @@ Speaker detection models (downloaded on first use, not bundled):
 - 3D-Speaker CAM++ speaker embedding (`campplus_sv_zh_en_16k-common_advanced`): Apache-2.0.
 - sherpa-onnx (the runtime that uses them, installed with the Pack Builder): Apache-2.0.
 
+Bundled with the desktop app:
+
+- DeepFilterNet 0.5.6 (`deep-filter`, the official standalone binary, pinned by SHA-256): MIT OR Apache-2.0. It cleans background noise from takes. Its speech model is built into the binary, so this one model ships with the app instead of downloading on first use.
+
 ---
 
 ## ⚖️ Fair Use & Media Disclaimer

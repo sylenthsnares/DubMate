@@ -94,14 +94,34 @@ if (-not (Test-Path $cloudflaredPath)) {
 }
 
 # 3. DeepFilterNet 3 (AI Vocal De-Noising & Speech Enhancer)
+# Pinned like FFmpeg: the same URL and SHA-256 live in tauri/scripts/stage-sidecars.ps1.
+# The file is downloaded to %TEMP% and only kept if its hash matches.
+$DeepFilterUrl = "https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-pc-windows-msvc.exe"
+$DeepFilterSha256 = "75e11fa16445f560cb6b021521ddb89e89270d13b83089705d98776f58fd7915"
 $deepFilterPath = Join-Path $TargetDir "deep-filter.exe"
 if (-not (Test-Path $deepFilterPath)) {
     Write-Host "   -> Downloading DeepFilterNet 3 for AI vocal de-noising..." -ForegroundColor Cyan
+    $tempDeepFilter = Join-Path $env:TEMP "dubmate_deep_filter_$([Guid]::NewGuid().ToString('N')).exe"
     try {
-        Invoke-WebRequest -Uri "https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-pc-windows-msvc.exe" -OutFile $deepFilterPath -UseBasicParsing
-        Write-Host "      DeepFilterNet 3 installed in tools\" -ForegroundColor Green
+        Invoke-WebRequest -Uri $DeepFilterUrl -OutFile $tempDeepFilter -UseBasicParsing
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $stream = [System.IO.File]::OpenRead($tempDeepFilter)
+        try {
+            $actualSha256 = ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant()
+        } finally {
+            $stream.Dispose()
+            $sha.Dispose()
+        }
+        if ($actualSha256 -ne $DeepFilterSha256) {
+            Write-Warning "DeepFilterNet download failed its SHA-256 check and was NOT installed (expected $DeepFilterSha256, got $actualSha256). Noise cleanup uses the built-in fallback."
+        } else {
+            Move-Item -Path $tempDeepFilter -Destination $deepFilterPath -Force
+            Write-Host "      SHA-256 verified. DeepFilterNet 3 installed in tools\" -ForegroundColor Green
+        }
     } catch {
         Write-Warning "DeepFilterNet download failed: $($_.Exception.Message)"
+    } finally {
+        Remove-Item $tempDeepFilter -Force -ErrorAction SilentlyContinue
     }
 } else {
     Write-Host "   -> deep-filter.exe already present in tools\" -ForegroundColor Green
