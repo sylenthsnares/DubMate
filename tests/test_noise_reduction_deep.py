@@ -292,9 +292,9 @@ class TestDeepNoiseReduction(unittest.TestCase):
 
             # Both raw takes and denoised takes exist independently
             self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_0_raw.wav")))
-            self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_0_denoised.wav")))
+            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, 0)))
             self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_1_raw.wav")))
-            self.assertTrue(os.path.exists(os.path.join(room_dir, "take_line_1_denoised.wav")))
+            self.assertTrue(os.path.exists(audio_processor.denoised_take_path(room_dir, 1)))
 
         finally:
             shutil.rmtree(room_dir, ignore_errors=True)
@@ -324,7 +324,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             self.assertFalse(saved["noise_reduction"])
 
             raw_wav = os.path.join(room_dir, "take_line_0_raw.wav")
-            denoised_wav = os.path.join(room_dir, "take_line_0_denoised.wav")
+            denoised_wav = audio_processor.denoised_take_path(room_dir, 0)
             active_wav = os.path.join(room_dir, "take_line_0.wav")
 
             # Toggle 12 times alternating ON and OFF
