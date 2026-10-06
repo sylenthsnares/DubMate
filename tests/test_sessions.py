@@ -56,6 +56,8 @@ class SessionCase(unittest.TestCase):
             self.addCleanup(patcher.stop)
         rooms.ROOMS.clear()
         self.addCleanup(rooms.ROOMS.clear)
+        rooms.UNLOADABLE_ROOMS.clear()
+        self.addCleanup(rooms.UNLOADABLE_ROOMS.clear)
         packs_cache.PACKS_CACHE[self.PACK_ID] = self._make_pack()
         self.room_dir = audio_processor.get_room_cache_dir(self.ROOM)
         self.state_file = os.path.join(self.room_dir, "room_state.json")
@@ -252,6 +254,18 @@ class TestRetention(SessionCase):
         self.assertEqual(by_id["BROKEN"]["last_active_at"], self.BASE + 500)
         self.assertFalse(by_id["NOSTATE"]["listed"])
 
+    def test_summary_of_a_room_that_does_not_load(self):
+        shutil.rmtree(self.room_dir)
+        self._folder("BADUSR", {"takes": {"t1000": _take_entry()}, "users": "nobody"})
+        self._folder("NEWER", {"takes": {"t1000": _take_entry()}, "state_version": 99})
+        rooms.load_persisted_rooms()
+        by_id = {s["room_id"]: s for s in rooms.session_summaries()}
+        for code in ("BADUSR", "NEWER"):
+            self.assertNotIn(code, rooms.ROOMS)
+            self.assertFalse(by_id[code]["readable"], code)
+            self.assertTrue(by_id[code]["listed"], code)
+        self.assertEqual(rooms.UNLOADABLE_ROOMS, {"BADUSR", "NEWER"})
+
     def test_missing_pack_and_old_files(self):
         self._folder("NOPACK", {"pack_id": "gone_pack", "takes": {"t1000": _take_entry()}})
         os.utime(os.path.join(self.cache, "rooms", "NOPACK", "room_state.json"), (OLD_MTIME, OLD_MTIME))
@@ -412,6 +426,20 @@ class TestSessionRoutes(RouteCase):
             self.assertEqual(res.status_code, 404, code)
             self.assertEqual(res.json()["detail"], "That session is gone.")
         self.assertNotIn("EMPTY", rooms.ROOMS)
+
+    def test_open_room_that_does_not_load_is_unreadable(self):
+        # room_state.json parses and its scene is in the library, but "users" is not an
+        # object, so load_room_folder fails: the session is unreadable, not a missing scene.
+        self._folder("BADUSR", {"takes": self.takes, "users": ["hostS"]})
+        res = self.client.post("/api/sessions/BADUSR/open")
+        self.assertEqual(res.status_code, 409)
+        self.assertEqual(res.json()["detail"], "That session couldn't be opened.")
+        self.assertNotIn("BADUSR", rooms.ROOMS)
+        row = next(s for s in self.client.get("/api/sessions").json()["sessions"] if s["room_id"] == "BADUSR")
+        self.assertFalse(row["readable"])
+        res = self.client.delete("/api/sessions/BADUSR")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertNotIn("BADUSR", rooms.UNLOADABLE_ROOMS)
 
     def test_open_bad_id_is_400(self):
         self.assertEqual(self.client.post("/api/sessions/..%5Cx/open").status_code, 400)

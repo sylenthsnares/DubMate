@@ -47,9 +47,11 @@ async def open_session(room_id: str, request: Request):
             # have brought it back.
             room = await asyncio.to_thread(rooms.load_room_folder, code)
         if room is None:
-            if summary["readable"]:
+            # The load failure is recorded in UNLOADABLE_ROOMS, so readable is checked
+            # afresh: a room that can't load is not a missing scene.
+            if summary["readable"] and code not in rooms.UNLOADABLE_ROOMS:
                 raise HTTPException(status_code=409, detail="This scene isn't in your library anymore.")
-            raise HTTPException(status_code=404, detail="That session is gone.")
+            raise HTTPException(status_code=409, detail="That session couldn't be opened.")
         room.last_active_at = time.time()
         room.mark_dirty()
         # The code is deliberately not queued for the room-code registry: its ownership
@@ -79,6 +81,7 @@ async def delete_session(room_id: str, request: Request):
             raise HTTPException(status_code=409, detail="Someone is still in this session.")
 
         rooms.ROOMS.pop(code, None)
+        rooms.UNLOADABLE_ROOMS.discard(code)
         for table in (room_registry.WORKER_PENDING_ROOMS, room_registry.WORKER_ROOM_STATUS,
                       room_registry.WORKER_PUBLISHED_TUNNEL, room_registry.WORKER_PUBLISHED_AT):
             table.pop(code, None)

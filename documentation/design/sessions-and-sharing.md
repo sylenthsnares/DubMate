@@ -109,6 +109,7 @@ New routes live in `dubmate/sessions_api.py`, registered in `app.py` next to `ro
   - 400 for an id failing `common.require_safe_identifier`;
   - 404 "That session is gone." when there is no folder or it isn't listed;
   - 409 "This scene isn't in your library anymore." when the pack is missing, after trying `load_room_folder` again in case a rescan brought it back.
+  - 409 "That session couldn't be opened." when the session is unreadable: its `room_state.json` isn't a JSON object, or `load_room_folder` failed on it for another reason (recorded in `rooms.UNLOADABLE_ROOMS`, so its summary turns unreadable and the card offers only Remove).
   - Otherwise it sets `last_active_at`, marks the room dirty and returns `{room_id, user_id: creator_id, state}`.
   - It does not republish the code. When the code isn't in `WORKER_PENDING_ROOMS`, `build_room_share_payload` reports a new state `not_published` with the message above.
   - `lobby.js` shows that message in the badge and toasts "Invite link copied." for it. The registry docstring is updated: restored rooms stay unpublished.

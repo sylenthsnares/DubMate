@@ -346,6 +346,11 @@ class Room:
 
 ROOMS: Dict[str, Room] = {}
 
+# Codes of room folders whose room_state.json load_room_folder could not load for a
+# reason other than a missing pack (bad contents, a newer layout). Their summaries are
+# unreadable, so the Continue card offers only Remove.
+UNLOADABLE_ROOMS: Set[str] = set()
+
 
 def room_or_404(room_id: str) -> Room:
     room = ROOMS.get(room_id.upper())
@@ -421,6 +426,8 @@ def _summary_from_folder(room_id: str, folder: str) -> Dict[str, Any]:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("room_state.json is not an object")
+        if room_id.upper() in UNLOADABLE_ROOMS:
+            raise ValueError("room_state.json could not be loaded")
     except Exception:
         try:
             summary["last_active_at"] = os.path.getmtime(folder)
@@ -455,6 +462,7 @@ def session_summaries() -> List[Dict[str, Any]]:
     """One summary per folder under <CACHE_DIR>/rooms: {room_id, pack_id, pack_name,
     pack_found, recorded_lines, total_lines, last_active_at, status, readable, listed}.
     Loaded rooms are summarised from memory, other folders from their room_state.json.
+    readable is False when the file isn't a JSON object or load_room_folder failed on it.
     listed is True for an unreadable folder (so the user can see and remove it), and
     otherwise for a room made on this computer that has takes."""
     rooms_dir = _rooms_dir()
@@ -482,6 +490,7 @@ def _forget_room(room_id: str) -> None:
     """Marks a loaded room deleted (so no save can bring its folder back) and drops it
     from ROOMS."""
     room = ROOMS.pop(room_id, None)
+    UNLOADABLE_ROOMS.discard(room_id.upper())
     if room is not None and isinstance(room, Room):
         with room._save_lock:
             room.deleted = True
@@ -571,6 +580,7 @@ def load_room_folder(room_id: str) -> Optional[Room]:
             # drop its takes on the next save, so it is left exactly as it is.
             print(f"[DubMate] Room {room_id} was saved by a newer DubMate (layout {version!r}); "
                   f"it is left untouched and not loaded.")
+            UNLOADABLE_ROOMS.add(room_id.upper())
             return None
         pack = packs_cache.PACKS_CACHE.get(data.get("pack_id"))
         if not pack:
@@ -616,9 +626,11 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         if changed:
             room._sync_save_to_disk()
         ROOMS[room_id.upper()] = room
+        UNLOADABLE_ROOMS.discard(room_id.upper())
         return room
     except Exception as ex:
         print(f"[DubMate] Error restoring room {room_id}: {ex}")
+        UNLOADABLE_ROOMS.add(room_id.upper())
         return None
 
 
