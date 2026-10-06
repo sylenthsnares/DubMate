@@ -36,7 +36,13 @@ function strip(src) {
   return out;
 }
 
-const files = fs.readdirSync(JS_DIR).filter(f => f.endsWith(".js")).sort();
+// Includes subdirectories (static/js/studio/), reported as "studio/x.js".
+function listJs(dir, prefix = "") {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? listJs(path.join(dir, e.name), prefix + e.name + "/")
+      : e.name.endsWith(".js") ? [prefix + e.name] : []);
+}
+const files = listJs(JS_DIR).sort();
 const info = files.map(f => {
   const code = strip(fs.readFileSync(path.join(JS_DIR, f), "utf8"));
   const declared = new Set([...code.matchAll(DECL_RE)].map(m => m[1]));

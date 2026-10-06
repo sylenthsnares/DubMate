@@ -11,7 +11,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="/css/style.css?v=3.6">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/builder.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
 </head>
 <body class="builder-body">
@@ -360,7 +361,7 @@
 
                 <!-- Track Audio Source Switch on Right -->
                 <div class="deck-audio-toggle">
-                  <button id="btn-toggle-audio-track" class="btn btn-secondary btn-xs btn-audio-source-toggle" title="Toggle audio source between Isolated Vocals and Full Mix">
+                  <button id="btn-toggle-audio-track" class="btn btn-secondary btn-xs btn-audio-source-toggle" title="Waveform: Vocals Only / Full Audio">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                     <span id="label-active-track">Vocals Only</span>
                   </button>
@@ -572,6 +573,6 @@
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- Builder Module Scripts -->
-  <script type="module" src="/js/pack_builder.js?v=1.0"></script>
+  <script type="module" src="/js/pack_builder.js"></script>
 </body>
 </html>

@@ -10,7 +10,9 @@ export class AudioEngine {
 
     // Buffer Caches & In-Flight Request Deduplication
     this.bufferCache = new Map();
-    this.pitchShiftCache = new Map();
+    // Source AudioBuffer -> Map<semitones.toFixed(2), shifted AudioBuffer>. Keyed by
+    // buffer identity, so shifted copies die with their source buffer.
+    this.pitchShiftCache = new WeakMap();
     this.inFlightRequests = new Map();
 
     // Active Audio Nodes
@@ -27,7 +29,6 @@ export class AudioEngine {
 
     // Shared Reverb Impulse Buffer
     this.reverbBuffer = null;
-    this.masterConvolver = null;
 
     // --- Device Routing (see setPreferredInputDevice / setPreferredOutputDevice) ---
     // preferredInputId is fed into the getUserMedia deviceId constraint.
@@ -37,7 +38,6 @@ export class AudioEngine {
     this.preferredInputId = null;
     this.preferredOutputId = null;
     this.activeInputDeviceId = null;
-    this.lastInputFallbackReason = null;
 
     // Live Input Level Monitor (settings meter only, never routed to speakers)
     this.monitorStream = null;
@@ -45,8 +45,6 @@ export class AudioEngine {
     this.monitorAnalyser = null;
     this.monitorFloatData = null;
     this.monitorByteData = null;
-    this.monitorDeviceId = null;
-    this.monitorDidFallBack = false;
   }
 
   // --- dBFS helpers (shared with the settings level meter UI) ---
@@ -151,9 +149,14 @@ export class AudioEngine {
       return inputBuffer;
     }
 
-    const cacheKey = `${inputBuffer.duration}_${inputBuffer.length}_${pitchSemitones.toFixed(2)}`;
-    if (this.pitchShiftCache.has(cacheKey)) {
-      return this.pitchShiftCache.get(cacheKey);
+    let shiftedBySemitones = this.pitchShiftCache.get(inputBuffer);
+    if (!shiftedBySemitones) {
+      shiftedBySemitones = new Map();
+      this.pitchShiftCache.set(inputBuffer, shiftedBySemitones);
+    }
+    const semitonesKey = pitchSemitones.toFixed(2);
+    if (shiftedBySemitones.has(semitonesKey)) {
+      return shiftedBySemitones.get(semitonesKey);
     }
 
     this.initContext();
@@ -202,7 +205,7 @@ export class AudioEngine {
       }
     }
 
-    this.pitchShiftCache.set(cacheKey, outBuffer);
+    shiftedBySemitones.set(semitonesKey, outBuffer);
     return outBuffer;
   }
 
@@ -393,9 +396,6 @@ export class AudioEngine {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: attempt.audio });
         this.stream = stream;
         this.activeInputDeviceId = attempt.id;
-        this.lastInputFallbackReason = (wanted && attempt.id === null)
-          ? ((lastErr && lastErr.name) || 'unavailable')
-          : null;
         return this.stream;
       } catch (err) {
         lastErr = err;
@@ -456,7 +456,6 @@ export class AudioEngine {
     this.monitorAnalyser = analyser;
     this.monitorFloatData = new Float32Array(size);
     this.monitorByteData = new Uint8Array(size);
-    this.monitorDidFallBack = didFallBack;
 
     let actualId = didFallBack ? null : wanted;
     let actualLabel = '';
@@ -468,13 +467,8 @@ export class AudioEngine {
         if (settings && settings.deviceId) actualId = settings.deviceId;
       }
     } catch (e) {}
-    this.monitorDeviceId = actualId;
 
     return { deviceId: actualId, label: actualLabel, didFallBack };
-  }
-
-  isMonitoringInput() {
-    return !!this.monitorAnalyser;
   }
 
   // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame,
@@ -541,8 +535,14 @@ export class AudioEngine {
     this.monitorAnalyser = null;
     this.monitorFloatData = null;
     this.monitorByteData = null;
-    this.monitorDeviceId = null;
-    this.monitorDidFallBack = false;
+  }
+
+  /** First MediaRecorder type the webview supports; '' lets the browser choose. */
+  _pickRecorderMimeType() {
+    for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
   }
 
   async startRecording() {
@@ -550,17 +550,7 @@ export class AudioEngine {
     await this.requestMicrophone();
     this.audioChunks = [];
 
-    let mimeType = 'audio/webm;codecs=opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'audio/webm';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/mp4';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = '';
-        }
-      }
-    }
-
+    const mimeType = this._pickRecorderMimeType();
     const options = mimeType ? { mimeType } : {};
     this.mediaRecorder = new MediaRecorder(this.stream, options);
 
@@ -627,10 +617,7 @@ export class AudioEngine {
     await this.requestMicrophone();
 
     return new Promise((resolve, reject) => {
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-      }
+      const mimeType = this._pickRecorderMimeType();
       const options = mimeType ? { mimeType } : {};
       const recorder = new MediaRecorder(this.stream, options);
       const chunks = [];
@@ -732,7 +719,8 @@ export class AudioEngine {
         }
       }
     }
-    this.pitchShiftCache.clear();
+    // pitchShiftCache needs no clearing: it is keyed by buffer identity, so
+    // shifted copies go when the evicted source buffer does.
   }
 
   async loadAudioBuffer(url, bypassCache = false) {
@@ -761,21 +749,7 @@ export class AudioEngine {
         const copy = arrayBuffer.slice(0);
         let audioBuffer = null;
         try {
-          audioBuffer = await new Promise((resolve, reject) => {
-            let handled = false;
-            try {
-              const res = this.ctx.decodeAudioData(
-                copy,
-                (buf) => { if (!handled) { handled = true; resolve(buf); } },
-                (err) => { if (!handled) { handled = true; reject(err); } }
-              );
-              if (res && typeof res.then === 'function') {
-                res.then((buf) => { if (!handled) { handled = true; resolve(buf); } }).catch((err) => { if (!handled) { handled = true; reject(err); } });
-              }
-            } catch (e) {
-              if (!handled) { handled = true; reject(e); }
-            }
-          });
+          audioBuffer = await this.ctx.decodeAudioData(copy);
         } catch (decodeErr) {
           console.warn(`[AudioEngine] decodeAudioData failed (${url}):`, decodeErr);
           return null;
@@ -800,7 +774,9 @@ export class AudioEngine {
   }
 
   stopAllPlayback() {
-    this.releaseMicrophone();
+    // Never cut the mic out from under a take in progress (e.g. an export_ready
+    // arriving mid-take); abandoned takes are stopped via stopRecording().
+    if (!this.isRecording) this.releaseMicrophone();
     for (const node of this.currentPlayingNodes) {
       try {
         node.stop();
@@ -839,7 +815,6 @@ export class AudioEngine {
   // --- 5. Studio Vocal DSP Chain ---
   buildVocalDSPChain(options = {}) {
     const {
-      pitchSemitones = 0,
       reverbWet = 0,
       gainDb = 0,
       enableLowCut = true,
@@ -964,7 +939,6 @@ export class AudioEngine {
       takeSource.buffer = processedTake;
 
       const dsp = this.buildVocalDSPChain({
-        pitchSemitones,
         reverbWet,
         gainDb,
         enableLowCut,

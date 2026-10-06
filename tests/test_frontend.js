@@ -128,7 +128,7 @@ try {
   dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
   
   setTimeout(async () => {
-    const app = dom.window.dubMateApp || dom.window.app;
+    const app = dom.window.dubMateApp;
     if (!app) {
       console.error("FAIL: DubMateApp was not instantiated!");
       process.exit(1);
