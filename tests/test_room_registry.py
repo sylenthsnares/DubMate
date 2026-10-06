@@ -387,8 +387,16 @@ def test_restored_room_reports_not_published():
         assert restored["code_is_live"] is False
         assert restored["direct_url"] == "https://now.trycloudflare.com?room=OLD123"
 
-        # Without a tunnel there is no working link either, so the failure is reported.
+        # With no tunnel set up there is no link to copy, so the message doesn't offer one.
         room_registry.ACTIVE_TUNNEL_URL = None
+        offline = room_registry.build_room_share_payload("OLD123")
+        assert offline["state"] == "not_published", offline
+        assert offline["direct_url"] == ""
+        assert offline["message"] == (
+            "Room codes stop working when DubMate closes. Only people on your network can join for now.")
+        assert "Copy invite" not in offline["message"]
+
+        # Without a tunnel there is no working link either, so the failure is reported.
         room_registry.TUNNEL_ERROR = "The public tunnel did not come up."
         assert room_registry.build_room_share_payload("OLD123")["state"] == "tunnel_unavailable"
         room_registry.TUNNEL_ERROR = None

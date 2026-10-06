@@ -294,9 +294,14 @@ def build_room_share_payload(room_id: str) -> Dict[str, Any]:
     default_state = "waiting"
     default_message = "Getting your room code ready."
     if code not in WORKER_ROOM_STATUS and code not in WORKER_PENDING_ROOMS:
-        # A room restored from disk: its code was published by an earlier run.
+        # A room restored from disk: its code was published by an earlier run. Copy
+        # invite only has a working link to offer once a tunnel is up.
         default_state = "not_published"
-        default_message = "Room codes stop working when DubMate closes. Copy invite gives a link that works now."
+        default_message = (
+            "Room codes stop working when DubMate closes. Copy invite gives a link that works now."
+            if ACTIVE_TUNNEL_URL else
+            "Room codes stop working when DubMate closes. Only people on your network can join for now."
+        )
     # A failed tunnel wins: without it there is no link that works now either.
     if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL:
         default_state = "tunnel_unavailable"
