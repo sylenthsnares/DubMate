@@ -81,10 +81,10 @@ All of this goes into one PR.
    - **L**
 4. **Calibrate Mic, diagnose + tune**, plus bundling DeepFilterNet. Write the fallback as a small numpy-only stationary gate (the approach noisereduce uses), so scipy stays out after PR 2 drops it. **M**
 5. **Pack Builder.**
-   - Stem preview **S/M**.
-   - Pointer Events for touch and pen **M**.
-   - Speaker detection **M**.
-   - Non-verbal lines **M**.
+   - Stem preview **S/M** (done).
+   - Pointer Events for touch and pen **M** (done).
+   - Speaker detection **M** (done).
+   - Non-verbal lines **M** (done). For now they are only found on transcribed clips, not on subtitle imports, pending owner confirmation (see `documentation/design/pack-builder-upgrades.md`, "Decided overnight").
 6. **Export and sessions.**
    - Stems export **S**.
    - Keyboard shortcut sheet **S**.

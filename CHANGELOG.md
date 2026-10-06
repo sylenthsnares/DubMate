@@ -9,6 +9,9 @@
 - **Update Progress**: desktop updates show real download progress instead of jumping to 100%.
 - **macOS Room Codes Launcher**: `run_cloudflare.sh` starts DubMate with a public room code on macOS source installs.
 - **Tooltips**: secondary explanations moved into tooltips that also open on keyboard focus.
+- **Pack Builder Touch and Pen**: the timeline works with touch and pen.
+- **Pack Builder Lines Without Words**: grunts, efforts, screams and laughs the transcript skipped become lines to record, marked "No words".
+- **Pack Builder Notices**: the editor now shows processing notices, such as when voices couldn't be fully separated.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -18,6 +21,8 @@
 - **Smaller Install**: scipy is no longer needed.
 - **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
+- **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
+- **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB (desktop installs from before this release: about 55 MB). If that isn't possible, speakers are guessed from pauses as before and the editor says so.
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
