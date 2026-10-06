@@ -159,6 +159,16 @@
                 </button>
               </div>
 
+              <!-- Import failures stay here until the next attempt. A toast is gone before
+                   anyone can read update steps or copy a folder path out of it. -->
+              <div id="url-import-error" class="audio-inline-feedback is-error" role="alert" style="display: none; text-align: left;">
+                <p id="url-import-error-text" style="margin: 0;"></p>
+                <details id="url-import-error-details" style="display: none; margin-top: 6px;">
+                  <summary style="cursor: pointer;">Show details</summary>
+                  <p id="url-import-error-steps" style="margin: 6px 0 0; white-space: pre-line; overflow-wrap: anywhere; user-select: text;"></p>
+                </details>
+              </div>
+
               <!-- URL Fetch In-Progress Multi-Stage Status -->
               <div id="url-fetch-loading" class="url-fetch-loading" style="display: none;">
                 <div class="fetch-steps-container">

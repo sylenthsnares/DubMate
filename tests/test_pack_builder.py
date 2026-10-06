@@ -418,7 +418,7 @@ NOTE This is a test subtitle file
         return mod
 
     def test_08c_stale_ytdlp_message_on_failed_import(self):
-        """A failed link import names an outdated yt-dlp and how to update it."""
+        """A failed link import says Pack Builder needs an update, with the steps kept apart."""
         import datetime
         import sys
         from unittest.mock import patch
@@ -434,10 +434,15 @@ NOTE This is a test subtitle file
             with self.assertRaises(pack_builder.StaleYtDlpError) as ctx:
                 pack_builder.download_video_from_url(url, out_dir)
         msg = str(ctx.exception)
-        self.assertIn("90 days old", msg)
-        self.assertIn("update.bat", msg)
-        self.assertIn("update.sh", msg)
+        steps = ctx.exception.details
+        # The headline is short and outcome-first: no tool name, no steps, no raw error.
+        self.assertTrue(msg.startswith("Couldn't import that video."), msg)
+        self.assertNotIn("yt-dlp", msg)
+        self.assertNotIn("update.bat", msg)
         self.assertNotIn("Unable to extract", msg)  # raw error stays in the log
+        self.assertLess(len(msg), 80)
+        self.assertIn("update.bat", steps)
+        self.assertIn("update.sh", steps)
 
         # Desktop app: points at re-downloading Pack Builder from its ai-packages folder.
         ai_dir = os.path.join(self.tmp_dir, "ai-packages")
@@ -446,9 +451,11 @@ NOTE This is a test subtitle file
             with self.assertRaises(pack_builder.StaleYtDlpError) as ctx:
                 pack_builder.download_video_from_url(url, out_dir)
         msg = str(ctx.exception)
-        self.assertIn(ai_dir, msg)
-        self.assertIn("open DubMate again", msg)
-        self.assertNotIn("update.bat", msg)
+        steps = ctx.exception.details
+        self.assertNotIn(ai_dir, msg)
+        self.assertIn(ai_dir, steps)
+        self.assertIn("open DubMate again", steps)
+        self.assertNotIn("update.bat", steps)
 
         # A recent yt-dlp keeps the plain failure; so do our own link errors.
         fresh_mod = self._fake_ytdlp(fresh, os.path.join(self.tmp_dir, "site-packages"))
@@ -462,12 +469,15 @@ NOTE This is a test subtitle file
             with self.assertRaises(ValueError):
                 pack_builder.download_video_from_url(url, out_dir)
 
-        # The API passes the update steps through instead of the generic text.
+        # The API passes the message and update steps through instead of the generic text.
         with patch("pack_builder.download_video_from_url",
-                   side_effect=pack_builder.StaleYtDlpError("STALE-MESSAGE")):
+                   side_effect=pack_builder.StaleYtDlpError("STALE-MESSAGE", "STALE-STEPS")):
             res = self.client.post("/api/builder/import_url", json={"url": url})
         self.assertEqual(res.status_code, 500)
-        self.assertEqual(res.json()["detail"], "STALE-MESSAGE")
+        detail = res.json()["detail"]
+        self.assertEqual(detail["code"], "ytdlp_stale")
+        self.assertEqual(detail["message"], "STALE-MESSAGE")
+        self.assertEqual(detail["details"], "STALE-STEPS")
 
     def test_09_extract_audio_silent_video(self):
         """Tests that extract_audio_from_video handles silent video files without crashing."""

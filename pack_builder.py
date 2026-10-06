@@ -41,7 +41,14 @@ class StaleYtDlpError(RuntimeError):
     Kept apart from a generic RuntimeError so the API passes this message through
     instead of the catch-all "check the link" text, which sends the user hunting for
     a problem with their link.
+
+    str(error) is the short, outcome-first line. `details` holds the steps to update,
+    which can include a full folder path, so the UI keeps them out of the headline.
     """
+
+    def __init__(self, message: str, details: str = ""):
+        super().__init__(message)
+        self.details = details
 
 
 def ensure_ai_packages_on_path():
@@ -328,10 +335,10 @@ def ytdlp_age_days(version: str, today: Optional[datetime.date] = None) -> Optio
     return max(0, ((today or datetime.date.today()) - released).days)
 
 
-def stale_ytdlp_message(yt_dlp_module, today: Optional[datetime.date] = None) -> Optional[str]:
+def stale_ytdlp_error(yt_dlp_module, today: Optional[datetime.date] = None) -> Optional[StaleYtDlpError]:
     """
-    The user-facing explanation for a failed import when yt-dlp is out of date, or
-    None when it is recent enough (or its age can't be told) to not be the suspect.
+    The user-facing error for a failed import when yt-dlp is out of date, or None
+    when it is recent enough (or its age can't be told) to not be the suspect.
 
     The update steps depend on where yt-dlp lives. The desktop app installs it once
     into 'ai-packages' and never upgrades it in place, so the only way to a newer
@@ -346,22 +353,21 @@ def stale_ytdlp_message(yt_dlp_module, today: Optional[datetime.date] = None) ->
     if age is None or age <= YTDLP_STALE_AFTER_DAYS:
         return None
 
-    lead = (
-        f"Couldn't import that video. The link importer (yt-dlp) is {age} days old, "
-        "and video sites often change in ways that break older versions."
-    )
+    print(f"[PackBuilder] yt-dlp {version} is {age} days old; suggesting an update.")
+    message = "Couldn't import that video. Pack Builder needs an update."
     package_dir = os.path.dirname(os.path.abspath(getattr(yt_dlp_module, "__file__", "") or ""))
     install_dir = os.path.dirname(package_dir)
     if os.path.basename(install_dir).lower() == "ai-packages":
-        return (
-            f"{lead} To update it, close DubMate, delete the folder {install_dir}, "
-            "then open DubMate again. Pack Builder downloads again (about 2 GB) "
-            "with the latest version."
+        details = (
+            "Close DubMate, delete this folder, then open DubMate again. "
+            f"Pack Builder downloads again (about 2 GB).\n{install_dir}"
         )
-    return (
-        f"{lead} To update it, run update.bat (Windows) or update.sh (macOS and Linux) "
-        "in your DubMate folder, then restart DubMate."
-    )
+    else:
+        details = (
+            "Run update.bat (Windows) or update.sh (macOS and Linux) in your DubMate folder, "
+            "then restart DubMate."
+        )
+    return StaleYtDlpError(message, details)
 
 
 def download_video_from_url(
@@ -441,10 +447,10 @@ def download_video_from_url(
         if "Unsupported URL" in err_msg or "is not a valid URL" in err_msg:
             raise ValueError("That link isn't supported. Use a YouTube link or a direct video link.")
         # Our own messages above (too long, unreadable link) are not yt-dlp's fault.
-        stale = None if isinstance(ex, ValueError) else stale_ytdlp_message(yt_dlp)
+        stale = None if isinstance(ex, ValueError) else stale_ytdlp_error(yt_dlp)
         if stale:
             print(f"[PackBuilder] URL import failed on an outdated yt-dlp: {err_msg}")
-            raise StaleYtDlpError(stale)
+            raise stale
         raise RuntimeError(f"Failed to download video with yt-dlp: {err_msg}")
 
     # Best-effort captions, after the video is safely on disk.

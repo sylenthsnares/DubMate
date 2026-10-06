@@ -212,7 +212,11 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     """
     Strict Single-Session Retention Policy:
     Ensures only the latest / active session is kept on disk and in memory.
-    Purges all older room folders, old takes, and outdated export videos to keep the server ultra-light.
+    Purges all older room folders and their takes to keep the server ultra-light.
+
+    The exports folder is never touched. It is the user's folder (often one they
+    chose), the host is told a render or project ZIP is "saved" there, and it can
+    hold files DubMate didn't write. Pruning it deleted those on the next new room.
     """
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
@@ -262,20 +266,6 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     ]
     for r in to_delete:
         ROOMS.pop(r, None)
-
-    # Prune old exports in the exports folder
-    if os.path.isdir(common.exports_dir()):
-        for fname in os.listdir(common.exports_dir()):
-            if fname.endswith((".mp4", ".zip")):
-                if retained_id and retained_id in fname.upper():
-                    continue
-                if any(a in fname.upper() for a in active_ids):
-                    continue
-                try:
-                    os.remove(os.path.join(common.exports_dir(), fname))
-                    print(f"[DubMate Cache Pruner] Removed old export/zip: {fname}")
-                except Exception:
-                    pass
 
 
 def load_persisted_rooms():

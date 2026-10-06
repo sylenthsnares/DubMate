@@ -216,7 +216,11 @@ async def builder_import_url(payload: Dict[str, Any]):
     except pack_builder.StaleYtDlpError as stale:
         shutil.rmtree(session_dir, ignore_errors=True)
         # The message says how to update; the generic "check the link" would mislead.
-        raise HTTPException(status_code=500, detail=str(stale))
+        # The steps go in `details` so the wizard can keep them on screen.
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "ytdlp_stale", "message": str(stale), "details": stale.details},
+        )
     except RuntimeError as run_err:
         shutil.rmtree(session_dir, ignore_errors=True)
         print(f"[Builder] URL import failed: {run_err}")

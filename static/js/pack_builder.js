@@ -121,6 +121,10 @@ export class PackBuilderApp {
     this.btnFetchUrl = document.getElementById('btn-fetch-url');
     this.urlFetchLoading = document.getElementById('url-fetch-loading');
     this.urlFetchStatusText = document.getElementById('url-fetch-status-text');
+    this.urlImportError = document.getElementById('url-import-error');
+    this.urlImportErrorText = document.getElementById('url-import-error-text');
+    this.urlImportErrorDetails = document.getElementById('url-import-error-details');
+    this.urlImportErrorSteps = document.getElementById('url-import-error-steps');
 
     this.videoDropzone = document.getElementById('video-dropzone');
     this.inputVideoFile = document.getElementById('input-video-file');
@@ -504,6 +508,8 @@ export class PackBuilderApp {
       return;
     }
 
+    this.showUrlImportError('');
+
     const stage1 = document.getElementById('fetch-stage-1');
     const stage2 = document.getElementById('fetch-stage-2');
     const stage3 = document.getElementById('fetch-stage-3');
@@ -542,7 +548,10 @@ export class PackBuilderApp {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(detailText(err, "Couldn't import that video. Check the link and try again."));
+        const failure = new Error(detailText(err, "Couldn't import that video. Check the link and try again."));
+        const d = err && err.detail;
+        failure.details = d && typeof d.details === 'string' ? d.details : '';
+        throw failure;
       }
 
       // Mark stage 2 & 3 as completed
@@ -601,11 +610,29 @@ export class PackBuilderApp {
       }
     } catch (e) {
       clearInterval(timerInterval);
-      this.showToast(e.message);
+      this.showUrlImportError(e.message, e.details);
     } finally {
       this.btnFetchUrl.disabled = false;
       this.urlFetchLoading.style.display = 'none';
     }
+  }
+
+  /**
+   * Shows why a link import failed in the import panel, where it stays until the
+   * next attempt. Steps to fix it (which can include a folder path) sit behind
+   * "Show details". An empty message hides the box.
+   */
+  showUrlImportError(message, details = '') {
+    if (!this.urlImportError) {
+      if (message) this.showToast(message);
+      return;
+    }
+    this.urlImportErrorText.innerText = message || '';
+    const steps = typeof details === 'string' ? details.trim() : '';
+    this.urlImportErrorSteps.innerText = steps;
+    this.urlImportErrorDetails.style.display = steps ? 'block' : 'none';
+    this.urlImportErrorDetails.open = false;
+    this.urlImportError.style.display = message ? 'block' : 'none';
   }
 
   // --- STEP 2: Upload & AI Pipeline ---
