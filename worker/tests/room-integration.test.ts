@@ -1,12 +1,5 @@
-﻿/**
- * room-integration.test.ts
- * Integration tests for DubMate room creation/joining workflow.
- * Run with: npx vitest run --config vitest.config.ts
- *
- * These tests run inside the actual Cloudflare Workers runtime via
- * @cloudflare/vitest-pool-workers, bound to the ROOMS preview KV namespace
- * defined in wrangler.toml. Rooms are real KV entries pushed to Cloudflare.
- */
+﻿// Integration tests for the DubMate room registry, run in workerd via vitest.config.ts.
+// KV is a local Miniflare namespace with isolated per-test storage; nothing leaves the machine.
 
 import { env, SELF } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
@@ -53,7 +46,7 @@ async function resolveRoom(code: string): Promise<{
 
 // ---- Tests ---------------------------------------------------------------
 
-describe("Room creation and KV persistence (preview KV)", () => {
+describe("Room creation and KV persistence", () => {
   it("POST /rooms/create returns 201 and a DUB-XXXX room code", async () => {
     const { status, code, room_token } = await createRoom({
       tunnel_url: "https://integration.trycloudflare.com",
@@ -65,7 +58,7 @@ describe("Room creation and KV persistence (preview KV)", () => {
     expect(room_token).toMatch(/^[0-9a-f]{32}$/);
   });
 
-  it("Created room is actually stored in the preview KV namespace", async () => {
+  it("Created room is actually stored in the KV namespace", async () => {
     const { code, room_token } = await createRoom({
       tunnel_url: "https://kv-verify.trycloudflare.com",
       app_version: "1.0.6",
@@ -154,41 +147,6 @@ describe("Room joining workflow", () => {
     expect(res.status).toBe(404);
     const data = await res.json() as { error: string };
     expect(data.error).toContain("not found");
-  });
-});
-
-describe("Room update workflow", () => {
-  it("POST /rooms/:code/update replaces tunnel_url and is reflected in KV", async () => {
-    const { code, room_token } = await createRoom({
-      tunnel_url: "https://old-tunnel.trycloudflare.com",
-      app_version: "1.0.5",
-    });
-
-    // Update the tunnel URL
-    const updateRes = await SELF.fetch(`https://dubmate.test/rooms/${code}/update`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${room_token}`,
-      },
-      body: JSON.stringify({
-        tunnel_url: "https://new-tunnel.trycloudflare.com",
-        app_version: "1.0.6",
-      }),
-    });
-    expect(updateRes.status).toBe(200);
-    const updateData = await updateRes.json() as { ok: boolean };
-    expect(updateData.ok).toBe(true);
-
-    // Verify the update is reflected in the KV namespace
-    const raw = await env.ROOMS.get(code);
-    const stored = JSON.parse(raw!) as { tunnel_url: string; app_version: string };
-    expect(stored.tunnel_url).toBe("https://new-tunnel.trycloudflare.com");
-    expect(stored.app_version).toBe("1.0.6");
-
-    // And the resolve endpoint returns the new URL
-    const resolved = await resolveRoom(code);
-    expect(resolved.tunnel_url).toBe("https://new-tunnel.trycloudflare.com");
   });
 });
 
@@ -357,6 +315,18 @@ describe("Type confusion and oversized input validation", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it("Returns 400 (not a crash) when the JSON body is null", async () => {
+    const res = await SELF.fetch("https://dubmate.test/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "null",
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toBe("Invalid JSON payload");
   });
 
   it("Rejects an oversized code (> 64 chars)", async () => {

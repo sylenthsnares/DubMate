@@ -11,17 +11,7 @@ export interface CreateRoomRequest {
   app_version?: string;
 }
 
-export interface UpdateRoomRequest {
-  tunnel_url: string;
-  app_version?: string;
-}
-
 export interface CreateRoomResponse {
   code: string;
   room_token: string;
-}
-
-export interface UpdateRoomResponse {
-  ok: boolean;
-  message?: string;
 }
