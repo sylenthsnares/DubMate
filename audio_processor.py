@@ -150,11 +150,16 @@ def _noise_reduction_engine() -> str:
     return "dfn" if df_bin and os.path.isfile(df_bin) else "fallback"
 
 
-def denoised_take_path(take_dir: str, stem: str) -> str:
-    """Path of a take's cleaned audio for the current noise-reduction settings.
-    The name carries a short hash of (NR_VERSION, attenuation, engine), so changed settings
-    point at a file that does not exist yet and the take is cleaned again."""
+def denoised_take_path(take_dir: str, stem: str, settings: Optional[Dict[str, Any]] = None) -> str:
+    """Path of a take's cleaned audio for the current engine and the take's cleanup settings.
+    The name carries a short hash of (NR_VERSION, attenuation, engine) plus, for tuned cleanup,
+    the profile id, attenuation and notches, so changed settings point at a file that does not
+    exist yet and the take is cleaned again. The key depends only on `settings`, never on
+    whether the profile's files still exist."""
     key_src = f"{NR_VERSION}:{NR_ATTENUATION_DB}:{_noise_reduction_engine()}"
+    if settings is not None:
+        notches = ",".join(f"{float(n):.1f}" for n in (settings.get("notches_hz") or []))
+        key_src += f":{settings.get('profile_id')}:{settings.get('attenuation_db')}:{notches}"
     key = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:8]
     return os.path.join(take_dir, f"{stem}_denoised_{key}.wav")
 
@@ -879,15 +884,13 @@ def _cleanup_prefilter(settings: Dict[str, Any]) -> str:
 def apply_noise_reduction(
     input_wav: str,
     output_wav: str,
-    noise_profile_wav: Optional[str] = None,
-    reduction_db: float = NR_ATTENUATION_DB,
     sr: int = SR,
     settings: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """
     Cleans a take with DeepFilterNet 3 (deep-filter binary), else with an ffmpeg/numpy fallback.
 
-    settings None (standard cleanup): DeepFilterNet at `reduction_db`, else
+    settings None (standard cleanup): DeepFilterNet at NR_ATTENUATION_DB, else
     highpass + afftdn. settings = noise_cleanup_settings(...) (tuned cleanup): the take first
     goes through _cleanup_prefilter(settings); DeepFilterNet then runs at
     settings["attenuation_db"], else spectral_gate() is driven by the stored profile WAV of
@@ -917,10 +920,9 @@ def apply_noise_reduction(
                                 af=_cleanup_prefilter(settings) if settings is not None else None)
 
             # Run DeepFilterNet with delay compensation (-D)
+            atten_lim = NR_ATTENUATION_DB
             if settings is not None:
                 atten_lim = max(12.0, min(100.0, float(settings["attenuation_db"])))
-            else:
-                atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else NR_ATTENUATION_DB
             cmd_df = [
                 df_bin, "-D",
                 "-a", str(int(atten_lim)),
@@ -983,7 +985,7 @@ def apply_noise_reduction(
     try:
         af_filters = [
             "highpass=f=80",
-            f"afftdn=nr={min(18.0, reduction_db):.1f}:nf=-35:tn=1",
+            "afftdn=nr=18.0:nf=-35:tn=1",
         ]
         fd, tmp_out = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
@@ -1011,6 +1013,25 @@ def match_take_timing(audio: np.ndarray, reference_wav: str, start_offset_ms: in
     return align_take_timing(audio, reference, start_offset_ms, sr=SR, allow_stretch=allow_stretch)
 
 
+def _clean_take(take_dir: str, stem: str, raw_wav: str,
+                nr_settings: Optional[Dict[str, Any]]) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Makes sure the take's cleaned file for nr_settings exists; returns (path, settings used).
+    An existing file (>= 100 bytes) is reused. When tuned cleanup can't run (it needs the gate
+    and the profile WAV is gone) the take gets standard cleanup and the settings are None."""
+    denoised_wav = denoised_take_path(take_dir, stem, nr_settings)
+    if os.path.exists(denoised_wav) and os.path.getsize(denoised_wav) >= 100:
+        return denoised_wav, nr_settings
+    if nr_settings is not None:
+        if apply_noise_reduction(raw_wav, denoised_wav, settings=nr_settings) is not None:
+            return denoised_wav, nr_settings
+        nr_settings = None
+        denoised_wav = denoised_take_path(take_dir, stem)
+        if os.path.exists(denoised_wav) and os.path.getsize(denoised_wav) >= 100:
+            return denoised_wav, None
+    apply_noise_reduction(raw_wav, denoised_wav)
+    return denoised_wav, None
+
+
 def save_uploaded_take(
     room_id: str,
     take_dir: str,
@@ -1018,7 +1039,7 @@ def save_uploaded_take(
     audio_bytes: bytes,
     filename_hint: str = "take.webm",
     enable_noise_reduction: bool = False,
-    user_id: Optional[str] = None,
+    nr_settings: Optional[Dict[str, Any]] = None,
     target_loudness_db: Optional[float] = None,
     reference_wav: Optional[str] = None,
     start_offset_ms: int = 0,
@@ -1027,21 +1048,23 @@ def save_uploaded_take(
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
     Writes <take_dir>/<stem>.wav (active), preserves pristine raw audio (<stem>_raw.wav) and
-    generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested.
+    generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested,
+    tuned by nr_settings (noise_cleanup_settings(...)) or standard when None (see _clean_take).
     Calculates speech-gated loudness and smart auto-gain calibration against scene target.
     When align and reference_wav (the original line's audio) are given, matches the take's
     timing to it from start_offset_ms (match_take_timing); a clearly faster or slower take is
     also fitted, so the active file is the raw or cleaned audio at that stretch. Otherwise the
     timing is "not measured" and the active file is a plain copy.
     Returns active path, duration, waveform peaks, auto_gain_db, noise reduction status,
-    start_offset_ms (snapped to 5 ms) and the align_take_timing keys.
+    nr_settings (the settings actually used), start_offset_ms (snapped to 5 ms) and the
+    align_take_timing keys.
     """
     if not audio_bytes or len(audio_bytes) < 32:
         raise ValueError("Uploaded audio stream is empty or incomplete.")
 
     target_wav = os.path.join(take_dir, f"{stem}.wav")
     raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
-    denoised_wav = denoised_take_path(take_dir, stem)
+    denoised_wav = None
 
     try:
         _transcode_upload(audio_bytes, filename_hint, raw_wav, SUBPROCESS_TIMEOUT_PROCESS, "take upload transcoding")
@@ -1049,19 +1072,9 @@ def save_uploaded_take(
         print(f"[AudioProcessor] ffmpeg conversion failed on upload {filename_hint!r} ({len(audio_bytes)} bytes): {err}")
         raise RuntimeError(f"Audio transcoding failed: {err}")
 
-    profile_path = None
-    if user_id:
-        try:
-            profile_path = get_user_noise_profile_path(room_id, user_id)
-        except ValueError as ex:
-            print(f"[AudioProcessor] WARNING: could not resolve noise profile path for user_id={user_id!r}: {ex}")
-            profile_path = None
-    if not os.path.isfile(profile_path or ""):
-        profile_path = None
-
     # A new raw take makes every earlier cleaned version of this line stale.
     if enable_noise_reduction:
-        apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+        denoised_wav, nr_settings = _clean_take(take_dir, stem, raw_wav, nr_settings)
         _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
         source_wav = denoised_wav
     else:
@@ -1096,10 +1109,11 @@ def save_uploaded_take(
     return {
         "wav_path": target_wav,
         "raw_path": raw_wav,
-        "denoised_path": denoised_wav if enable_noise_reduction else None,
+        "denoised_path": denoised_wav,
         "duration": round(duration, 3),
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
+        "nr_settings": nr_settings,
         "has_raw": True,
         "speech_loudness_db": gain_match["take_loudness_db"],
         "target_loudness_db": gain_match["target_loudness_db"],
@@ -1114,19 +1128,19 @@ def toggle_take_noise_reduction(
     take_dir: str,
     stem: str,
     enable_noise_reduction: bool,
-    user_id: Optional[str] = None,
+    nr_settings: Optional[Dict[str, Any]] = None,
     target_loudness_db: Optional[float] = None,
     stretch: float = 1.0,
 ) -> Dict[str, Any]:
     """
     Instantly toggles a take between pristine raw and denoised audio.
-    Generates denoised audio on-demand if missing, writes the active file at the take's
-    stretch (so a fitted take stays fitted), and re-measures the swapped audio's loudness
-    and auto gain against target_loudness_db.
+    Generates denoised audio on-demand if missing (with the take's nr_settings, see
+    _clean_take), writes the active file at the take's stretch (so a fitted take stays
+    fitted), and re-measures the swapped audio's loudness and auto gain against
+    target_loudness_db. Returns nr_settings: the settings the take uses from now on.
     """
     target_wav = os.path.join(take_dir, f"{stem}.wav")
     raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
-    denoised_wav = denoised_take_path(take_dir, stem)
 
     if not os.path.exists(raw_wav):
         if os.path.exists(target_wav):
@@ -1134,19 +1148,10 @@ def toggle_take_noise_reduction(
         else:
             raise FileNotFoundError(f"No take audio found for {stem}")
 
-    profile_path = None
-    if user_id:
-        try:
-            profile_path = get_user_noise_profile_path(room_id, user_id)
-        except ValueError as ex:
-            print(f"[AudioProcessor] WARNING: could not resolve noise profile path for user_id={user_id!r}: {ex}")
-            profile_path = None
-    if not os.path.isfile(profile_path or ""):
-        profile_path = None
-
     if enable_noise_reduction:
+        denoised_wav = denoised_take_path(take_dir, stem, nr_settings)
         if not os.path.exists(denoised_wav) or os.path.getsize(denoised_wav) < 100:
-            apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+            denoised_wav, nr_settings = _clean_take(take_dir, stem, raw_wav, nr_settings)
             _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
         _write_active_take(denoised_wav, target_wav, stretch)
     else:
@@ -1163,6 +1168,7 @@ def toggle_take_noise_reduction(
         "duration": round(duration, 3),
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
+        "nr_settings": nr_settings,
         "has_raw": True,
         "speech_loudness_db": gain_match["take_loudness_db"],
         "target_loudness_db": gain_match["target_loudness_db"],

@@ -67,7 +67,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             with open(tmp_in, "wb") as f:
                 f.write(noisy_bytes)
 
-            out_path = audio_processor.apply_noise_reduction(tmp_in, tmp_out, reduction_db=14.0, sr=sr)
+            out_path = audio_processor.apply_noise_reduction(tmp_in, tmp_out, sr=sr)
             self.assertTrue(os.path.isfile(out_path))
             self.assertGreater(os.path.getsize(out_path), 1000)
 
@@ -98,7 +98,6 @@ class TestStudioNoiseReduction(unittest.TestCase):
     def test_03_save_uploaded_take_dual_preservation(self):
         """Tests that save_uploaded_take preserves raw take while generating denoised take."""
         test_room = "TEST_NR_ROOM_2"
-        test_user = "user_dual_test"
         room_dir = audio_processor.get_room_cache_dir(test_room)
         
         take_bytes = generate_synthetic_wav_bytes(1.5, add_noise=True)
@@ -108,10 +107,10 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 room_dir, "take_line_0",
                 audio_bytes=take_bytes,
                 enable_noise_reduction=True,
-                user_id=test_user
             )
 
             self.assertTrue(saved["noise_reduction"])
+            self.assertIsNone(saved["nr_settings"])
             self.assertTrue(saved["has_raw"])
             self.assertTrue(os.path.isfile(saved["wav_path"]))
             self.assertTrue(os.path.isfile(saved["raw_path"]))
@@ -134,7 +133,6 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 test_room,
                 room_dir, "take_line_0",
                 enable_noise_reduction=False,
-                user_id=test_user
             )
             self.assertFalse(toggled_off["noise_reduction"])
             self.assertEqual(os.path.getsize(active_wav), os.path.getsize(raw_wav))
@@ -144,9 +142,9 @@ class TestStudioNoiseReduction(unittest.TestCase):
                 test_room,
                 room_dir, "take_line_0",
                 enable_noise_reduction=True,
-                user_id=test_user
             )
             self.assertTrue(toggled_on["noise_reduction"])
+            self.assertIsNone(toggled_on["nr_settings"])
             self.assertEqual(os.path.getsize(active_wav), os.path.getsize(denoised_wav))
 
         finally:

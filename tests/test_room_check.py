@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 test_room_check.py
-Room tone analysis (audio_processor.analyse_room_tone) and the engine-wide noise profile store.
+Room tone analysis (audio_processor.analyse_room_tone), the engine-wide noise profile store,
+and takes' cleanup settings (nr_settings) with the cleaned-file key.
 """
 
 import os
 import json
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -13,9 +15,13 @@ from unittest import mock
 import numpy as np
 
 import sys as _sys
-_sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_sys.path.insert(0, os.path.dirname(_TESTS_DIR))
+_sys.path.insert(0, _TESTS_DIR)
 
 import audio_processor as ap
+from dubmate import rooms
+from test_recording_timing import UploadCase, delayed, time_stretched, _fake_denoise
 
 SR = 44100
 SECONDS = 2.7
@@ -228,6 +234,180 @@ class TestNoiseProfileStore(unittest.TestCase):
     def test_missing_profile_gives_standard_cleanup(self):
         self.assertIsNone(ap.noise_cleanup_settings("0123456789ab"))
         self.assertIsNone(ap.noise_cleanup_settings(None))
+
+
+class TestCleanedFileKey(unittest.TestCase):
+    SETTINGS = {"profile_id": "3fa9c01b7d2e", "attenuation_db": 28, "notches_hz": [50.0, 150.0]}
+
+    def _key(self, settings=None, engine="fallback"):
+        with mock.patch.object(ap, "_noise_reduction_engine", return_value=engine):
+            name = os.path.basename(ap.denoised_take_path("takes", "k1", settings))
+        self.assertTrue(name.startswith("k1_denoised_") and name.endswith(".wav"), name)
+        return name[len("k1_denoised_"):-4]
+
+    def test_default_key_is_the_pr10_key(self):
+        """Takes cleaned before room checks keep their file: the key string is unchanged."""
+        for engine in ("dfn", "fallback"):
+            with self.subTest(engine=engine):
+                pr10 = hashlib.sha1(f"2:30.0:{engine}".encode("utf-8")).hexdigest()[:8]
+                self.assertEqual(self._key(None, engine), pr10)
+                with mock.patch.object(ap, "_noise_reduction_engine", return_value=engine):
+                    self.assertEqual(ap.denoised_take_path("takes", "k1"),
+                                     os.path.join("takes", f"k1_denoised_{pr10}.wav"))
+
+    def test_settings_key(self):
+        expected = hashlib.sha1(b"2:30.0:fallback:3fa9c01b7d2e:28:50.0,150.0").hexdigest()[:8]
+        self.assertEqual(self._key(self.SETTINGS), expected)
+        self.assertNotEqual(self._key(self.SETTINGS), self._key(None))
+        self.assertNotEqual(self._key(self.SETTINGS, "dfn"), self._key(self.SETTINGS))
+        self.assertEqual(self._key(dict(self.SETTINGS)), self._key(self.SETTINGS))
+        changed = [dict(self.SETTINGS, profile_id="000000000000"),
+                   dict(self.SETTINGS, attenuation_db=30),
+                   dict(self.SETTINGS, notches_hz=[50.0]),
+                   dict(self.SETTINGS, notches_hz=[])]
+        keys = {self._key(s) for s in changed} | {self._key(self.SETTINGS)}
+        self.assertEqual(len(keys), len(changed) + 1)
+
+    def test_key_ignores_whether_the_profile_exists(self):
+        with mock.patch.object(ap, "CACHE_DIR", tempfile.mkdtemp(prefix="dm_key_")) as cache:
+            self.addCleanup(shutil.rmtree, cache, True)
+            with mock.patch.object(ap, "load_noise_profile_stats", side_effect=AssertionError("read a profile")), \
+                    mock.patch.object(ap, "noise_profile_wav_path", side_effect=AssertionError("read a profile")):
+                self._key(self.SETTINGS)
+
+
+class TestTakeCleanupSettings(unittest.TestCase):
+    """save_uploaded_take / toggle_take_noise_reduction with a take's nr_settings, no DeepFilterNet."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dm_take_nr_")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        for patcher in (mock.patch.object(ap, "CACHE_DIR", os.path.join(self.tmp, "cache")),
+                        mock.patch.object(ap, "get_deep_filter_path", return_value=None)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.take_dir = os.path.join(self.tmp, "takes")
+        os.makedirs(self.take_dir)
+        self.raw = os.path.join(self.take_dir, "k1_raw.wav")
+        ap.write_wav_mono(self.raw, white(-30.0, seconds=1.0) + sine(300, 0.2, seconds=1.0), SR)
+        shutil.copy2(self.raw, os.path.join(self.take_dir, "k1.wav"))
+        pid, _ = ap.save_noise_profile(white(-50.0), SR)
+        self.settings = ap.noise_cleanup_settings(pid)
+
+    def _toggle(self, settings):
+        return ap.toggle_take_noise_reduction("R", self.take_dir, "k1", enable_noise_reduction=True,
+                                              nr_settings=settings)
+
+    def test_toggle_reuses_tuned_file_after_profile_deleted(self):
+        tuned = ap.denoised_take_path(self.take_dir, "k1", self.settings)
+        ap.write_wav_mono(tuned, ap.read_wav_mono(self.raw) * 0.5, SR)
+        self.assertTrue(ap.delete_noise_profile(self.settings["profile_id"]))
+        with mock.patch.object(ap, "apply_noise_reduction") as nr:
+            out = self._toggle(self.settings)
+        nr.assert_not_called()
+        self.assertEqual(out["nr_settings"], self.settings)
+        self.assertTrue(os.path.isfile(tuned))
+        self.assertEqual(ap.read_wav_mono(out["wav_path"]).tolist(), ap.read_wav_mono(tuned).tolist())
+
+    def test_toggle_cleans_with_the_take_settings(self):
+        out = self._toggle(self.settings)
+        self.assertEqual(out["nr_settings"], self.settings)
+        tuned = ap.denoised_take_path(self.take_dir, "k1", self.settings)
+        self.assertTrue(os.path.isfile(tuned))
+        self.assertFalse(os.path.exists(ap.denoised_take_path(self.take_dir, "k1")))
+
+    def test_profile_gone_and_no_tuned_file_falls_back_to_standard(self):
+        ap.delete_noise_profile(self.settings["profile_id"])
+        out = self._toggle(self.settings)
+        self.assertIsNone(out["nr_settings"])
+        self.assertTrue(os.path.isfile(ap.denoised_take_path(self.take_dir, "k1")))
+        self.assertFalse(os.path.exists(ap.denoised_take_path(self.take_dir, "k1", self.settings)))
+
+    def test_upload_returns_settings_used(self):
+        with open(self.raw, "rb") as f:
+            body = f.read()
+        saved = ap.save_uploaded_take("R", self.take_dir, "k2", body, "take.wav",
+                                      enable_noise_reduction=True, nr_settings=self.settings)
+        self.assertEqual(saved["nr_settings"], self.settings)
+        self.assertEqual(saved["denoised_path"], ap.denoised_take_path(self.take_dir, "k2", self.settings))
+        self.assertTrue(os.path.isfile(saved["denoised_path"]))
+
+        ap.delete_noise_profile(self.settings["profile_id"])
+        saved = ap.save_uploaded_take("R", self.take_dir, "k3", body, "take.wav",
+                                      enable_noise_reduction=True, nr_settings=self.settings)
+        self.assertIsNone(saved["nr_settings"])
+        self.assertEqual(saved["denoised_path"], ap.denoised_take_path(self.take_dir, "k3"))
+        self.assertTrue(os.path.isfile(saved["denoised_path"]))
+
+        # Noise reduction off: nothing is cleaned; the settings are what the take would use.
+        saved = ap.save_uploaded_take("R", self.take_dir, "k4", body, "take.wav",
+                                      enable_noise_reduction=False, nr_settings=self.settings)
+        self.assertIsNone(saved["denoised_path"])
+        self.assertEqual(saved["nr_settings"], self.settings)
+
+
+class TestTakeSettingsApi(UploadCase):
+    """Routes pass the take's own nr_settings copy and store what was used."""
+
+    def _nr_take(self):
+        """A fitted take with noise reduction on (standard cleanup, faked)."""
+        with mock.patch.object(ap, "apply_noise_reduction", side_effect=_fake_denoise):
+            self._upload("t1000", delayed(time_stretched(self.ref, 1.06), 60), noise_reduction="true")
+        take = rooms.ROOMS[self.ROOM].picked_take("t1000")
+        self.assertNotIn("nr_settings", take)
+        self.assertTrue(take["noise_reduction"])
+        self.assertNotEqual(take["stretch"], 1.0)
+        return take
+
+    def _deleted_check(self):
+        pid, _ = ap.save_noise_profile(white(-50.0), SR)
+        settings = ap.noise_cleanup_settings(pid)
+        ap.delete_noise_profile(pid)
+        return settings
+
+    def test_original_speed_reuses_tuned_file_of_deleted_check(self):
+        self._room()
+        take = self._nr_take()
+        settings = self._deleted_check()
+        take["nr_settings"] = settings
+        take_dir = ap.take_dir(self.ROOM, "t1000")
+        tuned = ap.denoised_take_path(take_dir, take["take_id"], settings)
+        raw = ap.read_wav_mono(os.path.join(take_dir, f"{take['take_id']}_raw.wav"))
+        ap.write_wav_mono(tuned, raw * 0.5, SR)
+        with mock.patch.object(ap, "apply_noise_reduction") as nr:
+            res = self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes/{take['take_id']}/original_speed",
+                                   json={"user_id": "hostT"})
+        self.assertEqual(res.status_code, 200, res.text)
+        nr.assert_not_called()
+        self.assertEqual(take["stretch"], 1.0)
+        self.assertEqual(take["nr_settings"], settings)
+        self.assertEqual(res.json()["take"]["nr_settings"], settings)
+        self.assertTrue(os.path.isfile(tuned))
+        active = ap.read_wav_mono(os.path.join(take_dir, f"{take['take_id']}.wav"))
+        self.assertEqual(active.tolist(), ap.read_wav_mono(tuned).tolist())
+
+    def test_fallback_without_tuned_file_or_check_gets_standard_cleanup(self):
+        room = self._room()
+        self._upload("t1000", delayed(self.ref, 140))
+        take = room.picked_take("t1000")
+        self.assertNotIn("nr_settings", take)
+        settings = self._deleted_check()
+        take["nr_settings"] = settings
+        take_dir = ap.take_dir(self.ROOM, "t1000")
+        with mock.patch.object(ap, "get_deep_filter_path", return_value=None):
+            res = self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes/{take['take_id']}/noise_reduction",
+                                   json={"noise_reduction": True})
+            standard = ap.denoised_take_path(take_dir, take["take_id"])
+            tuned = ap.denoised_take_path(take_dir, take["take_id"], settings)
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertTrue(take["noise_reduction"])
+        self.assertNotIn("nr_settings", take)
+        self.assertNotIn("nr_settings", res.json()["take"])
+        self.assertTrue(os.path.isfile(standard))
+        self.assertFalse(os.path.exists(tuned))
+        room._sync_save_to_disk()
+        with open(self._state_file(), encoding="utf-8") as f:
+            self.assertNotIn("nr_settings", f.read())
 
 
 if __name__ == "__main__":

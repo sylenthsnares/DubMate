@@ -143,6 +143,14 @@ def _take_or_404(room, line_id: str, take_id: str):
     return line, take
 
 
+def _store_nr_settings(take: Dict[str, Any], result: Dict[str, Any]) -> None:
+    """Keeps the cleanup settings a take was (re)cleaned with; standard cleanup stores no field."""
+    if result.get("nr_settings") is not None:
+        take["nr_settings"] = result["nr_settings"]
+    else:
+        take.pop("nr_settings", None)
+
+
 @router.post("/api/rooms/{room_id}/lines/{line_id}/takes")
 async def upload_take(
     room_id: str,
@@ -185,7 +193,7 @@ async def upload_take(
                 content,
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
-                user_id=user_id,
+                nr_settings=None,
                 target_loudness_db=target_loudness,
                 # The original line's voice; a take recorded with the guide voice on can
                 # hear the guide itself, so it isn't lined up.
@@ -223,6 +231,7 @@ async def upload_take(
         "auto_gain_db": saved.get("auto_gain_db", 0.0),
         "recorded_at": time.time(),
     })
+    _store_nr_settings(take, saved)
     wire = room.wire_take(line_id, take)
 
     room.invalidate_exports()
@@ -291,7 +300,6 @@ async def toggle_take_noise_reduction_endpoint(
     line, take = _take_or_404(room, line_id, take_id)
 
     enable = bool(payload.get("noise_reduction", False))
-    user_id = take.get("user_id", "host")
     target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
 
     try:
@@ -302,12 +310,13 @@ async def toggle_take_noise_reduction_endpoint(
                 audio_processor.take_dir(room.room_id, line_id),
                 take_id,
                 enable_noise_reduction=enable,
-                user_id=user_id,
+                nr_settings=take.get("nr_settings"),
                 target_loudness_db=target_loudness,
                 # A fitted take stays fitted; its timing fields don't change.
                 stretch=float(take.get("stretch", 1.0)),
             )
         take["noise_reduction"] = enable
+        _store_nr_settings(take, toggled)
         take["audio_version"] = int(time.time() * 1000)
         take["peaks"] = toggled["peaks"]
         take["duration"] = toggled["duration"]
@@ -355,7 +364,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             audio_processor.take_dir(room.room_id, line_id),
             take_id,
             enable_noise_reduction=bool(take.get("noise_reduction", False)),
-            user_id=take.get("user_id", "host"),
+            nr_settings=take.get("nr_settings"),
             target_loudness_db=target_loudness,
             stretch=1.0,
         )
@@ -374,6 +383,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             if abs(int(take.get("offset_ms", 0)) - int(old_auto_offset)) < 5:
                 take["offset_ms"] = timing["auto_offset_ms"]
             take["stretch"] = 1.0
+            _store_nr_settings(take, written)
             take["auto_offset_ms"] = timing["auto_offset_ms"]
             take["timing_score"] = timing["timing_score"]
             take["aligned"] = timing["aligned"]
