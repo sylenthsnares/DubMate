@@ -187,7 +187,7 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
                 _set_room_status(
                     code,
                     "unauthorized",
-                    "Room codes aren't available in this version. "
+                    "Room codes aren't available. "
                     "Share the invite link instead.",
                     tunnel_url,
                 )

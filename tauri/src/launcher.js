@@ -1,4 +1,4 @@
-// launcher.js - Bridges the Tauri desktop window into DubMate Studio Pro.
+// launcher.js - Bridges the Tauri desktop window into DubMate.
 // The engine port is chosen at runtime (8000 unless taken), so never hardcode it.
 
 const splash = document.getElementById("splash");
@@ -384,7 +384,7 @@ function enterStudio() {
   if (isUpdating || isEntering || isInstallingBuilder || builderCheckPending) return;
   isEntering = true;
   updateStatus("Opening DubMate", "");
-  // Seamlessly load the full DubMate Studio Pro interface into the native window
+  // Seamlessly load the full DubMate interface into the native window
   window.location.replace(engineUrl());
 }
 
