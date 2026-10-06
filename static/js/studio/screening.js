@@ -1,7 +1,10 @@
 // studio/screening.js - Premiere screening theater: theater source, stem preload,
 // balance/presence mix, host-synced playback and the sample-accurate audio schedule.
+// Before the exported video is ready, each picked take plays the engine's render of its
+// voice chain (no browser effects); the theater switches to the exported video when ready.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { pickedTake } from './takes.js';
+import { resolveChain, levelGain } from './voice.js';
 
 export class ScreeningMethods {
   initScreeningEvents() {
@@ -140,6 +143,17 @@ export class ScreeningMethods {
     }
   }
 
+  /** Where the premiere keeps a picked take's render: its audio and its resolved chain. */
+  screeningRenderKey(line, take) {
+    return `${take.url}|${JSON.stringify(resolveChain(this.roomState.voice, line.character, take))}`;
+  }
+
+  /** The sound a picked take plays in the premiere: its render, or the take as recorded
+   *  when there is no render (voice effects not installed, or the render failed). */
+  screeningTakeBuffer(line, take) {
+    return this.screeningRenders.get(this.screeningRenderKey(line, take)) || this.screeningBuffers.get(take.url) || null;
+  }
+
   isScreeningBuffersReady() {
     if (!this.roomState) return true;
     if (this.roomState.pack.backing_url && !this.screeningBuffers.has(this.roomState.pack.backing_url)) {
@@ -147,12 +161,37 @@ export class ScreeningMethods {
     }
     for (const line of this.roomState.pack.lines) {
       const take = pickedTake(this.roomState.takes, line);
-      const targetUrl = (take && take.url) ? take.url : line.audio_url;
-      if (targetUrl && !this.screeningBuffers.has(targetUrl)) {
+      if (take && take.url) {
+        if (!this.screeningRenders.has(this.screeningRenderKey(line, take))) return false;
+      } else if (line.audio_url && !this.screeningBuffers.has(line.audio_url)) {
         return false;
       }
     }
     return true;
+  }
+
+  /** Fetches a picked take's render through its resolved chain. Without one (503 while voice
+   *  effects aren't installed, or a failed render) the take as recorded is loaded to play
+   *  instead, and the render is asked for again on the next play. */
+  async loadScreeningTake(line, take) {
+    const key = this.screeningRenderKey(line, take);
+    const chain = resolveChain(this.roomState.voice, line.character, take);
+    try {
+      const render = await this.requestTakeRender(this.roomState.room_id, line.line_id, take.take_id, chain,
+        { clientId: `${this.renderClientId()}-premiere` });
+      if (render.status === 200) {
+        this.screeningRenders.set(key, render.buffer);
+        return;
+      }
+    } catch (e) {
+      console.warn("[App] Premiere render failed; playing the take as recorded:", e);
+    }
+    if (!this.screeningBuffers.has(take.url)) {
+      try {
+        const raw = await this.audio.loadAudioBuffer(take.url);
+        if (raw) this.screeningBuffers.set(take.url, raw);
+      } catch (e) { }
+    }
   }
 
   async preloadScreeningAudio() {
@@ -173,24 +212,12 @@ export class ScreeningMethods {
         );
       }
 
-      // 2. Dialogue lines & takes in parallel
+      // 2. Picked takes' renders and the originals of lines without a take, in parallel
       for (const line of this.roomState.pack.lines) {
         const take = pickedTake(this.roomState.takes, line);
         if (take && take.url) {
-          if (!this.screeningBuffers.has(take.url)) {
-            loadTasks.push(
-              this.audio.loadAudioBuffer(take.url)
-                .then(b => {
-                  if (b) {
-                    this.screeningBuffers.set(take.url, b);
-                    // Pre-cache pitch-shifted buffer in background for 0ms instant playback
-                    if (Math.abs(take.pitch_semitones || 0) > 0.05) {
-                      try { this.audio.pitchShiftBuffer(b, take.pitch_semitones); } catch (e) { }
-                    }
-                  }
-                })
-                .catch(() => { })
-            );
+          if (!this.screeningRenders.has(this.screeningRenderKey(line, take))) {
+            loadTasks.push(this.loadScreeningTake(line, take));
           }
         } else if (line.audio_url && !this.screeningBuffers.has(line.audio_url)) {
           loadTasks.push(
@@ -254,10 +281,7 @@ export class ScreeningMethods {
     this.masterDialoguePresence = Math.max(-12.0, Math.min(12.0, val));
     this.renderPresenceUI(this.masterDialoguePresence, { syncSlider: false });
 
-    if (this.screeningVocalGainNode && this.audio?.ctx) {
-      const { vocalGain } = this.getScreeningStemGains();
-      this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
-    }
+    this.applyScreeningPresence();
 
     // Reset pre-rendered export cache since dialogue presence changed
     if (this.roomState) {
@@ -290,10 +314,17 @@ export class ScreeningMethods {
       vocalGain = 0.95 + balanceNorm * 0.35; // 0.95 up to 1.30
     }
 
-    const presenceMult = Math.pow(10.0, (this.masterDialoguePresence || 0.0) / 20.0);
-    vocalGain *= presenceMult;
-
     return { backingGain, vocalGain };
+  }
+
+  /** Each playing line's level: its take's level plus dialogue presence, clamped like the
+   *  export's (an original voice has level 0). */
+  applyScreeningPresence() {
+    if (!this.audio?.ctx) return;
+    const presence = this.masterDialoguePresence || 0.0;
+    for (const { node, gainDb } of this.screeningLineLevels || []) {
+      node.gain.setValueAtTime(levelGain(gainDb + presence), this.audio.ctx.currentTime);
+    }
   }
 
   updateScreeningControls() {
@@ -490,39 +521,36 @@ export class ScreeningMethods {
       this.screeningBackingGainNode = null;
     }
 
-    // 2. Shared Master Vocal Mix Bus
+    // 2. Shared vocal bus (the balance); each line has its own level into it
     const masterVocalGain = this.audio.ctx.createGain();
     masterVocalGain.gain.value = vocalGain;
     masterVocalGain.connect(this.audio.ctx.destination);
     this.screeningVocalGainNode = masterVocalGain;
+    this.screeningLineLevels = [];
+    const presence = this.masterDialoguePresence || 0.0;
+    const lineLevel = (gainDb) => {
+      const node = this.audio.ctx.createGain();
+      node.gain.value = levelGain(gainDb + presence);
+      node.connect(masterVocalGain);
+      this.screeningLineLevels.push({ node, gainDb });
+      return node;
+    };
 
     // 3. Schedule dialogue takes & unassigned original character clips
     for (const line of this.roomState.pack.lines) {
       const take = pickedTake(this.roomState.takes, line);
 
-      if (take && take.url && this.screeningBuffers.has(take.url)) {
+      const takeBuf = (take && take.url) ? this.screeningTakeBuffer(line, take) : null;
+      if (takeBuf) {
         const offsetSec = (take.offset_ms || 0) / 1000.0;
         const linePlayTime = line.start + offsetSec;
-        const rawBuf = this.screeningBuffers.get(take.url);
-        const takeDuration = rawBuf.duration || 3.0;
+        const takeDuration = takeBuf.duration || 3.0;
 
         // Line is audible if its sound ends after startTime
         if (linePlayTime + takeDuration > startTime) {
-          const shifted = (Math.abs(take.pitch_semitones || 0) > 0.05)
-            ? this.audio.pitchShiftBuffer(rawBuf, take.pitch_semitones)
-            : rawBuf;
-
           const source = this.audio.ctx.createBufferSource();
-          source.buffer = shifted;
-
-          const dsp = this.audio.buildVocalDSPChain({
-            reverbWet: take.reverb_wet || 0,
-            gainDb: take.gain_db || 0,
-            enableLowCut: true,
-          });
-
-          source.connect(dsp.input);
-          dsp.output.connect(masterVocalGain);
+          source.buffer = takeBuf;
+          source.connect(lineLevel(Number(take.gain_db) || 0));
 
           if (linePlayTime >= startTime) {
             const delta = linePlayTime - startTime;
@@ -541,7 +569,7 @@ export class ScreeningMethods {
         if (line.start + duration > startTime) {
           const source = this.audio.ctx.createBufferSource();
           source.buffer = origBuf;
-          source.connect(masterVocalGain);
+          source.connect(lineLevel(0));
 
           if (line.start >= startTime) {
             const delta = line.start - startTime;

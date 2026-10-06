@@ -17,6 +17,10 @@
 - **Takes Line Up Automatically**: takes now line up with the original line automatically. Use [ and ] to adjust; Auto goes back.
 - **Fitted Takes**: takes that run a little fast or slow are fitted to the line. Original speed undoes it.
 - **Timing Score**: each take shows how closely it follows the original timing, and deleting the take in the dub falls back to the best-timed one.
+- **Voice Panel**: each take has a Voice panel with four sounds to pick from, Clean, Warm, Radio and Monster, plus Level for how loud the take sits in the dub.
+- **All Effects One Click Away**: All effects opens low cut, gate, tone, de-ess, compress, pitch and reverb (with decay and pre-delay). Each effect can be switched off and has its own Mix.
+- **Use a Sound on More Lines**: a take's sound can be used on all of a character's lines, or by the host on every line.
+- **Steady Export Loudness**: exported videos are mastered to a steady streaming loudness with peaks limited, so dubs play at the same volume.
 - **Check Your Room**: Audio settings can listen to your room for 3 seconds and show a traffic light (Quiet, Some noise, Noisy) with advice when it applies: mains hum, a steady whine, a hissing mic, your computer already removing noise, or noise that kept changing. A check that can't be used saves nothing and says why.
 - **Cleanup Tuned to Your Room**: after a check, new takes are cleaned to suit your room: gentler in a quiet room, stronger in a noisy one, with hum and whine removed. Using a different microphone asks you to check again, and takes get standard cleanup until you do.
 - **Check Your Loudest Line**: an optional step on the room card. Say your loudest line and DubMate tells you whether to turn your mic up or down, and how much louder your voice is than the room. Nothing is saved.
@@ -42,6 +46,13 @@
 - **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
 - **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 - **Invites After a Restart**: after DubMate restarts, the room code of a continued session no longer works, so Copy invite gives a direct link instead.
+- **What You Preview Is What You Export**: takes now sound exactly the same in the booth, the premiere and the exported video, including low cut and compress, which used to change only the preview.
+- **Sound Changes Crossfade In**: when you change a sound or an effect, the take keeps playing and the new sound fades in as soon as it's ready. Presets are prepared in the background after you save a take, so switching between them is quick.
+- **Dialogue Presence**: dialogue presence now balances the voices against the music instead of changing the whole export's volume.
+- **Older Rooms Keep Their Sound**: takes recorded with pitch or reverb in earlier versions keep those settings. Pitch now sounds cleaner.
+- **Updates Bring What They Need**: when an update needs new parts, the desktop app downloads them while it installs the update, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
+- **Voice Effects on Older Desktop Installs**: a desktop app installed before this release updates without voice effects. Recording still works; the Voice panel and export ask you to download and install the latest DubMate.
+- **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.

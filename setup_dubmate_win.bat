@@ -29,7 +29,7 @@ if not defined PY ( where python3 >nul 2>&1 && set "PY=python3" )
 
 if not defined PY (
     color 0c
-    echo [ERROR] Python 3.9+ was not found on your system!
+    echo [ERROR] Python 3.10+ was not found on your system!
     echo.
     echo Please install Python 3.10+ from python.org or via Windows Terminal:
     echo   winget install -e --id Python.Python.3.12
@@ -38,10 +38,10 @@ if not defined PY (
     exit /b 1
 )
 
-%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)"
+%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 10) else 1)"
 if %errorlevel% neq 0 (
     color 0c
-    echo [ERROR] Python 3.9 or newer is required.
+    echo [ERROR] Python 3.10 or newer is required.
     echo Detected version is older. Please update Python.
     pause
     exit /b 1

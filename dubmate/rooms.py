@@ -16,17 +16,21 @@ import random
 import shutil
 import asyncio
 import threading
-from typing import Dict, List, Optional, Set, Any
+from typing import Dict, List, Optional, Set, Tuple, Any
 
 from fastapi import WebSocket, HTTPException
 
 import pack_loader
 import audio_processor
-from dubmate import common, packs_cache
+from dubmate import common, packs_cache, vocal_chain
 
 
 # room_state.json layout. Version 1 (no state_version) kept one take per line index.
+# Voice chains ("voice" and take "chain") are additive, so they stay version 2.
 STATE_VERSION = 2
+# Room state sent to the studio (to_state_dict). 3: the booth edits voice chains, so a
+# tab from before that stops applying state and asks for a reload (takes.js TAKE_STATE_VERSION).
+CLIENT_STATE_VERSION = 3
 
 
 def generate_room_code() -> str:
@@ -61,6 +65,13 @@ class Room:
         # Version 1 takes (keyed by line index, files in the old layout) whose files could
         # not be moved yet. Saved as they are and retried on the next start.
         self.pending_v1_takes: Dict[str, Any] = {}
+        # The room's voice chains: "session" is every line's sound, "characters" one
+        # character's; a take's own "chain" beats both (vocal_chain.resolve_chain).
+        self.voice: Dict[str, Any] = {"session": None, "characters": {}}
+        # Background level matching after a sound change (rooms_api.rematch_later): the
+        # (line_id, take_id) pairs still to match and the task matching them. Exports wait for it.
+        self.rematch_pending: Set[Tuple[str, str]] = set()
+        self.voice_job: Optional[asyncio.Task] = None
         self.status: str = "lobby"  # "lobby" | "recording" | "screening"
         self.exported_video_path: Optional[str] = None
         self.exported_video_9_16_path: Optional[str] = None
@@ -140,16 +151,25 @@ class Room:
             entry["picked"] = entry["takes"][max(ranked)[1]]["take_id"]
         return entry["picked"]
 
+    def take_sound(self, line: Dict[str, Any], take: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """The chain a take of this line plays through: its own, else its character's, else
+        the room's, else Clean."""
+        return vocal_chain.resolve_chain(self.voice, line.get("character"), take)
+
     def mix_takes(self) -> Dict[int, Dict[str, Any]]:
-        """{line index: copy of the picked take plus its wav_path} for the lines of the current
-        pack: the input of the render, export and project ZIP functions."""
+        """{line index: copy of the picked take plus its line_id, resolved chain, wav_path and
+        render_dir (the room's render cache)} for the lines of the current pack: the input of
+        the render, export and project ZIP functions."""
         out = {}
         for line in self.pack.lines:
             take = self.picked_take(line["line_id"])
             if take:
                 out[line["index"]] = {
                     **take,
+                    "line_id": line["line_id"],
+                    "chain": self.take_sound(line, take),
                     "wav_path": audio_processor.take_wav_path(self.room_id, line["line_id"], take["take_id"]),
+                    "render_dir": audio_processor.room_render_dir(self.room_id),
                 }
         return out
 
@@ -259,6 +279,7 @@ class Room:
                 "users": self.users,
                 "role_assignments": self.role_assignments,
                 "takes": self.takes,
+                "voice": self.voice,
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
                 "last_active_at": self.last_active_at,
@@ -282,12 +303,16 @@ class Room:
         has_export_16_9 = self.exported_video_path is not None and os.path.exists(self.exported_video_path)
         has_export = has_export_16_9
         return {
-            "state_version": STATE_VERSION,
+            "state_version": CLIENT_STATE_VERSION,
             "room_id": self.room_id,
             "pack": self.pack.to_dict(),
             "host_id": self.host_id,
             "users": self.users,
             "role_assignments": self.role_assignments,
+            "voice": {
+                **self.voice,
+                "presets": [{"id": pid, "name": p["name"], "chain": p["chain"]} for pid, p in vocal_chain.PRESETS.items()],
+            },
             "takes": {
                 line["line_id"]: self.wire_line(line["line_id"])
                 for line in self.pack.lines
@@ -540,6 +565,13 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         file_mtime = os.path.getmtime(state_file)
         with open(state_file, "r", encoding="utf-8") as f:
             data = json.load(f)
+        version = data.get("state_version")
+        if version not in (None, 1, STATE_VERSION):
+            # A newer DubMate wrote this room. Reading it as an older layout would
+            # drop its takes on the next save, so it is left exactly as it is.
+            print(f"[DubMate] Room {room_id} was saved by a newer DubMate (layout {version!r}); "
+                  f"it is left untouched and not loaded.")
+            return None
         pack = packs_cache.PACKS_CACHE.get(data.get("pack_id"))
         if not pack:
             return None
@@ -567,13 +599,21 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         except (TypeError, ValueError):
             presence = 0.0
         room.master_dialogue_presence_db = max(-12.0, min(12.0, presence))
-        if data.get("state_version") == STATE_VERSION:
+        if version == STATE_VERSION:
             room.takes = raw_takes
             v1_takes = data.get("pending_v1_takes") or {}
         else:
             v1_takes = raw_takes
+        changed = False
         if isinstance(v1_takes, dict) and v1_takes:
             _migrate_v1_takes(room, v1_takes)
+            changed = True
+        if isinstance(data.get("voice"), dict):
+            room.voice = _voice_from_disk(data["voice"])
+        else:
+            _migrate_legacy_sound(room)
+            changed = True
+        if changed:
             room._sync_save_to_disk()
         ROOMS[room_id.upper()] = room
         return room
@@ -593,6 +633,40 @@ def load_persisted_rooms():
         room = load_room_folder(r_id)
         if room:
             print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
+
+
+def _voice_from_disk(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Room.voice from room_state.json, each chain normalized; anything unreadable is left out."""
+    session = raw.get("session")
+    characters = raw.get("characters") if isinstance(raw.get("characters"), dict) else {}
+    return {
+        "session": vocal_chain.normalize_chain(session) if isinstance(session, dict) else None,
+        "characters": {name: vocal_chain.normalize_chain(chain) for name, chain in characters.items()
+                       if isinstance(name, str) and isinstance(chain, dict)},
+    }
+
+
+def _legacy_take_chain(take: Dict[str, Any]) -> None:
+    """Gives a take from before the voice chain its old Pitch and Reverb as its own chain
+    when either was set. A take that already has a chain, or had neither, is left as it is."""
+    if take.get("chain") is not None:
+        return
+    try:
+        pitch = float(take.get("pitch_semitones") or 0.0)
+        reverb = float(take.get("reverb_wet") or 0.0)
+    except (TypeError, ValueError):
+        return
+    if pitch != 0.0 or reverb > 0.02:
+        take["chain"] = vocal_chain.chain_from_legacy(pitch, reverb)
+
+
+def _migrate_legacy_sound(room: Room) -> None:
+    """A room saved without "voice" keeps its sound (documentation/design/effects-rack.md,
+    "Existing data"): only "chain" is added to takes; nothing is changed or removed."""
+    for entry in room.takes.values():
+        for take in (entry.get("takes") or []) if isinstance(entry, dict) else []:
+            if isinstance(take, dict):
+                _legacy_take_chain(take)
 
 
 def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
@@ -638,6 +712,7 @@ def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
             take_id="take1", audio_version=now_ms,
             has_raw=moved["has_raw"], noise_reduction=moved["noise_reduction"],
         )
+        _legacy_take_chain(take)
         entry = room.takes.get(line_id)
         if entry is None:
             take["number"] = 1

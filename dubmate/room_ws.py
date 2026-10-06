@@ -14,7 +14,7 @@ import traceback
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import audio_processor
-from dubmate import common, rooms
+from dubmate import common, rooms, rooms_api
 
 router = APIRouter()
 
@@ -104,7 +104,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 take_id = payload.get("take_id")
                 take = room.find_take(line_id, take_id) if isinstance(line_id, str) else None
                 if take:
-                    for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
+                    # Timing and level only; the take's sound changes with PUT .../chain.
+                    for key in ("offset_ms", "gain_db"):
                         if key in payload:
                             take[key] = payload[key]
                     room.invalidate_exports()
@@ -137,9 +138,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     try:
                         await _wait_for_cleanup_refresh(room)
                         out_path = room.export_out_path("16:9")
+                        takes = await rooms_api.mix_for_export(room)
                         await asyncio.to_thread(
                             audio_processor.export_dub_video,
-                            room.pack, room.mix_takes(), out_path,
+                            room.pack, takes, out_path,
                         )
                         room.exported_video_path = out_path
                         room.export_status["16:9"] = "ready"

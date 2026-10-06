@@ -1,6 +1,12 @@
 // audio_engine.js - High-Performance Voice DSP Engine, Lightweight Pitch Shifting & Shared Mix Busses
 import { takeAudioKey } from './studio/takes.js';
 import { clickTrainSamples } from './studio/timing.js';
+import { levelGain } from './studio/voice.js';
+
+// Booth crossfades between renders of a take (crossfadeTo).
+const CROSSFADE_S = 0.03;
+// A partial render hands back to the last whole render this long before it runs out.
+const PREFIX_HANDBACK_S = 0.05;
 
 export class AudioEngine {
   constructor() {
@@ -12,25 +18,20 @@ export class AudioEngine {
 
     // Buffer Caches & In-Flight Request Deduplication
     this.bufferCache = new Map();
-    // Source AudioBuffer -> Map<semitones.toFixed(2), shifted AudioBuffer>. Keyed by
-    // buffer identity, so shifted copies die with their source buffer.
-    this.pitchShiftCache = new WeakMap();
     this.inFlightRequests = new Map();
 
     // Active Audio Nodes
     this.currentPlayingNodes = [];
     this.activeTakeGain = null;
     this.activeOrigGain = null;
-    this.activeDSPNodes = null;
+    // The booth's take: its playing render, level and meter (previewTakeIsolated, crossfadeTo).
+    this.takeVoice = null;
     this.abState = 'A'; // 'A' = Dub Take, 'B' = Original Reference
 
     // Metronome & Monitoring Settings
     this.metronomeEnabled = true;
     this.metronomeVolume = 0.20; // Gentle -14dB
     this.backingVolume = 0.65;   // 65% calibrated DAW standard
-
-    // Shared Reverb Impulse Buffer
-    this.reverbBuffer = null;
 
     // --- Device Routing (see setPreferredInputDevice / setPreferredOutputDevice) ---
     // preferredInputId is fed into the getUserMedia deviceId constraint.
@@ -75,140 +76,12 @@ export class AudioEngine {
             this.ctx = new AudioCtx({ sampleRate: 44100 });
           } catch (e2) {}
         }
-        if (this.ctx) {
-          this._generateReverbImpulse(1.5, 0.5, 20); // Default studio room
-        }
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
-  }
-
-  // --- 1. Algorithmic Acoustic Room Impulse Generator ---
-  _generateReverbImpulse(decaySec = 1.5, roomSize = 0.5, preDelayMs = 20) {
-    if (!this.ctx) return null;
-    const rate = this.ctx.sampleRate;
-    const totalDuration = Math.min(2.0, Math.max(0.2, decaySec)); // Cap at 2.0s for zero CPU drag
-    const length = Math.floor(rate * totalDuration);
-    const preDelaySamples = Math.floor(rate * (preDelayMs / 1000.0));
-
-    const impulse = this.ctx.createBuffer(2, length, rate);
-    const left = impulse.getChannelData(0);
-    const right = impulse.getChannelData(1);
-
-    const decayConstant = 3.2 / Math.max(0.1, decaySec);
-    const diffusion = 0.5 + roomSize * 0.45;
-
-    let sumSqL = 0;
-    let sumSqR = 0;
-
-    for (let i = 0; i < length; i++) {
-      if (i < preDelaySamples) {
-        left[i] = 0;
-        right[i] = 0;
-        continue;
-      }
-
-      const t = (i - preDelaySamples) / rate;
-      const envelope = Math.exp(-decayConstant * t);
-
-      // Stereo decorrelated diffusion
-      const noiseL = (Math.random() * 2 - 1) * envelope;
-      const noiseR = (Math.random() * 2 - 1) * envelope;
-
-      const sL = noiseL * (1.0 - diffusion * 0.2) + noiseR * (diffusion * 0.2);
-      const sR = noiseR * (1.0 - diffusion * 0.2) + noiseL * (diffusion * 0.2);
-      left[i] = sL;
-      right[i] = sR;
-      sumSqL += sL * sL;
-      sumSqR += sR * sR;
-    }
-
-    // Normalize impulse response to unit L2 energy for exact mathematical parity with DSP render
-    const normL = Math.sqrt(sumSqL) || 1.0;
-    const normR = Math.sqrt(sumSqR) || 1.0;
-    for (let i = 0; i < length; i++) {
-      left[i] /= normL;
-      right[i] /= normR;
-    }
-
-    this.reverbBuffer = impulse;
-    return this.reverbBuffer;
-  }
-
-  updateReverbImpulse(decaySec = 1.5, roomSize = 0.5, preDelayMs = 20) {
-    if (!this.ctx) this.initContext();
-    return this._generateReverbImpulse(decaySec, roomSize, preDelayMs);
-  }
-
-  // --- 2. High-Speed Time-Invariant Pitch Shifter ---
-  // Pure time-invariant rotating overlap-add crossfader with linear sub-sample interpolation.
-  // Preserves 100% exact phrase duration, zero speed variation, with seamless phrase synchronicity.
-  pitchShiftBuffer(inputBuffer, pitchSemitones) {
-    if (!inputBuffer || Math.abs(pitchSemitones) < 0.05) {
-      return inputBuffer;
-    }
-
-    let shiftedBySemitones = this.pitchShiftCache.get(inputBuffer);
-    if (!shiftedBySemitones) {
-      shiftedBySemitones = new Map();
-      this.pitchShiftCache.set(inputBuffer, shiftedBySemitones);
-    }
-    const semitonesKey = pitchSemitones.toFixed(2);
-    if (shiftedBySemitones.has(semitonesKey)) {
-      return shiftedBySemitones.get(semitonesKey);
-    }
-
-    this.initContext();
-    const numChannels = inputBuffer.numberOfChannels;
-    const sampleRate = inputBuffer.sampleRate;
-    const inLength = inputBuffer.length;
-    const outBuffer = this.ctx.createBuffer(numChannels, inLength, sampleRate);
-
-    const pitchRatio = Math.max(0.25, Math.min(4.0, Math.pow(2.0, pitchSemitones / 12.0)));
-    // Optimal window size for human speech vocals (~46ms at 44.1k/48k)
-    const D = 2048.0;
-    const halfD = D / 2.0;
-    const twoPiOverD = (2.0 * Math.PI) / D;
-    const rateDiff = pitchRatio - 1.0;
-
-    for (let ch = 0; ch < numChannels; ch++) {
-      const inData = inputBuffer.getChannelData(ch);
-      const outData = outBuffer.getChannelData(ch);
-
-      for (let n = 0; n < inLength; n++) {
-        // Dual crossfading phases separated by 180 degrees (D / 2)
-        const phase1 = ((n * rateDiff) % D + D) % D;
-        const phase2 = (phase1 + halfD) % D;
-
-        // Raised-cosine / Hann windows (w1 + w2 = 1.0 strictly everywhere)
-        const w1 = 0.5 * (1.0 - Math.cos(phase1 * twoPiOverD));
-        const w2 = 0.5 * (1.0 - Math.cos(phase2 * twoPiOverD));
-
-        // Sub-sample linear interpolation for Reader 1
-        const f1 = n + phase1 - halfD;
-        const i1 = Math.floor(f1);
-        const frac1 = f1 - i1;
-        const i1_0 = Math.max(0, Math.min(inLength - 1, i1));
-        const i1_1 = Math.max(0, Math.min(inLength - 1, i1 + 1));
-        const s1 = (1.0 - frac1) * inData[i1_0] + frac1 * inData[i1_1];
-
-        // Sub-sample linear interpolation for Reader 2
-        const f2 = n + phase2 - halfD;
-        const i2 = Math.floor(f2);
-        const frac2 = f2 - i2;
-        const i2_0 = Math.max(0, Math.min(inLength - 1, i2));
-        const i2_1 = Math.max(0, Math.min(inLength - 1, i2 + 1));
-        const s2 = (1.0 - frac2) * inData[i2_0] + frac2 * inData[i2_1];
-
-        outData[n] = w1 * s1 + w2 * s2;
-      }
-    }
-
-    shiftedBySemitones.set(semitonesKey, outBuffer);
-    return outBuffer;
   }
 
   // --- 3. Gentle Metronome Acoustic Pip ---
@@ -712,8 +585,6 @@ export class AudioEngine {
         }
       }
     }
-    // pitchShiftCache needs no clearing: it is keyed by buffer identity, so
-    // shifted copies go when the evicted source buffer does.
   }
 
   async loadAudioBuffer(url, bypassCache = false) {
@@ -778,19 +649,10 @@ export class AudioEngine {
     }
     this.currentPlayingNodes = [];
 
-    // Fully tear down the previous per-preview DSP chain (high-pass filter,
-    // gain trim, reverb convolver + dry/wet sends, sub-mix)
-    // rather than just dropping references. buildVocalDSPChain() now returns
-    // every node it creates so all of them can be disconnected here, not just
-    // the 3 (input/gainNode/output) that used to be tracked. This runs before
-    // previewTakeIsolated()/playOriginalReference() build a fresh chain, since
-    // both call stopAllPlayback() first.
-    if (this.activeDSPNodes) {
-      for (const key of Object.keys(this.activeDSPNodes)) {
-        const node = this.activeDSPNodes[key];
-        if (node && typeof node.disconnect === 'function') {
-          try { node.disconnect(); } catch (e) {}
-        }
+    // Tear down the booth take's graph (crossfade gains, level, meter) too.
+    if (this.takeVoice) {
+      for (const node of [...this.takeVoice.nodes, this.takeVoice.level, this.takeVoice.analyser]) {
+        try { node.disconnect(); } catch (e) {}
       }
     }
     if (this.activeTakeGain && typeof this.activeTakeGain.disconnect === 'function') {
@@ -802,86 +664,143 @@ export class AudioEngine {
 
     this.activeTakeGain = null;
     this.activeOrigGain = null;
-    this.activeDSPNodes = null;
+    this.takeVoice = null;
   }
 
-  // --- 5. Studio Vocal DSP Chain ---
-  // No compressor: the exported mix never compresses takes, and auto gain is
-  // measured on the uncompressed take, so the preview must not compress either.
-  buildVocalDSPChain(options = {}) {
-    const {
-      reverbWet = 0,
-      gainDb = 0,
-      enableLowCut = true,
-    } = options;
-
-    const nodes = {};
-
-    // 1. High-Pass Filter (80Hz low-cut)
-    const highPass = this.ctx.createBiquadFilter();
-    highPass.type = 'highpass';
-    highPass.frequency.value = enableLowCut ? 80 : 10;
-    highPass.Q.value = 0.707;
-    nodes.input = highPass;
-
-    // 2. Volume Trim Gain Node
-    const gainNode = this.ctx.createGain();
-    gainNode.gain.value = Math.pow(10, gainDb / 20);
-    highPass.connect(gainNode);
-    nodes.gainNode = gainNode;
-
-    // 3. Reverb Sub-Mix
-    const submixGain = this.ctx.createGain();
-    if (reverbWet > 0.03 && this.reverbBuffer) {
-      const convolver = this.ctx.createConvolver();
-      convolver.buffer = this.reverbBuffer;
-
-      const dryGain = this.ctx.createGain();
-      const wetGain = this.ctx.createGain();
-
-      dryGain.gain.value = 1.0; // Keep vocal speech punchy and clear
-      wetGain.gain.value = reverbWet * 0.70;
-
-      gainNode.connect(dryGain);
-      gainNode.connect(convolver);
-      convolver.connect(wetGain);
-
-      dryGain.connect(submixGain);
-      wetGain.connect(submixGain);
-
-      // Tracked so stopAllPlayback() can fully tear down the reverb send/
-      // return chain instead of leaking it once the preview ends.
-      nodes.convolver = convolver;
-      nodes.dryGain = dryGain;
-      nodes.wetGain = wetGain;
-    } else {
-      gainNode.connect(submixGain);
-    }
-
-    nodes.output = submixGain;
-    return nodes;
-  }
-
+  /** The booth take's level, a gain after its render. */
   setGain(gainDb) {
-    if (this.activeDSPNodes && this.activeDSPNodes.gainNode && this.ctx) {
+    if (this.takeVoice && this.ctx) {
       try {
-        const linear = Math.pow(10.0, gainDb / 20.0);
-        this.activeDSPNodes.gainNode.gain.setValueAtTime(linear, this.ctx.currentTime);
+        this.takeVoice.level.gain.setValueAtTime(levelGain(gainDb), this.ctx.currentTime);
       } catch (e) {}
     }
   }
 
+  /** The booth take's output peak in dBFS (after its level), or null when it isn't playing. */
+  takeOutputDb() {
+    const analyser = this.takeVoice?.analyser;
+    if (!analyser || typeof analyser.getFloatTimeDomainData !== 'function') return null;
+    if (!this.takeMeterData || this.takeMeterData.length !== analyser.fftSize) {
+      this.takeMeterData = new Float32Array(analyser.fftSize);
+    }
+    analyser.getFloatTimeDomainData(this.takeMeterData);
+    let peak = 0;
+    for (const v of this.takeMeterData) peak = Math.max(peak, Math.abs(v));
+    return AudioEngine.amplitudeToDbFS(peak);
+  }
+
+  /** Where the booth take is now, in seconds of the take (negative before it starts), or null. */
+  takePositionS() {
+    if (!this.takeVoice || !this.ctx) return null;
+    return this.ctx.currentTime - this.takeVoice.origin;
+  }
+
+  // Starts `buffer` at context time `when`, `offset` seconds into it, through its own
+  // crossfade gain (starting at `gain`) into the take's level.
+  _startTakeSource(buffer, when, offset, gain) {
+    const tv = this.takeVoice;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    const fade = this.ctx.createGain();
+    fade.gain.value = gain;
+    source.connect(fade);
+    fade.connect(tv.level);
+    source.start(when, Math.max(0, offset));
+    this.currentPlayingNodes.push(source);
+    tv.nodes.push(fade);
+    const playing = { source, fade, buffer, readyAt: when };
+    source.onended = () => {
+      if (this.takeVoice === tv && tv.current === playing && tv.onEnded) tv.onEnded();
+    };
+    return playing;
+  }
+
+  static _equalPowerCurve(rising) {
+    const curve = new Float32Array(32);
+    for (let i = 0; i < curve.length; i++) {
+      const t = (i / (curve.length - 1)) * (Math.PI / 2);
+      curve[i] = rising ? Math.sin(t) : Math.cos(t);
+    }
+    return curve;
+  }
+
+  // Equal-power crossfade from `from` to `to` starting at context time `at`; `from` then stops.
+  _crossfade(from, to, at) {
+    to.fade.gain.setValueCurveAtTime(AudioEngine._equalPowerCurve(true), at, CROSSFADE_S);
+    to.readyAt = at + CROSSFADE_S;
+    if (!from) return;
+    from.fade.gain.cancelScheduledValues(at);
+    from.fade.gain.setValueCurveAtTime(AudioEngine._equalPowerCurve(false), at, CROSSFADE_S);
+    // Some browsers refuse a second stop() (a prefix already has one for its hand-back);
+    // it is silent from here on either way.
+    try { from.source.stop(at + CROSSFADE_S); } catch (e) {}
+  }
+
+  /**
+   * Switches the booth take to another render of it while it plays. Renders share the
+   * take's timeline, so the new one starts at the current position in the take (or `atS`
+   * seconds into it) with 30 ms equal-power ramps, and the old one stops. A `prefix`
+   * render covers only the take's start: unless another render replaces it first, the
+   * take goes back to the last whole render 50 ms before the prefix ends, so what plays
+   * is always a real render. Returns false when it didn't switch.
+   */
+  crossfadeTo(buffer, { atS = null, prefix = false } = {}) {
+    const tv = this.takeVoice;
+    if (!tv || !this.ctx || !buffer) return false;
+    const now = this.ctx.currentTime;
+
+    // A hand-back already under way is what plays now; one still ahead is called off.
+    if (tv.handback) {
+      const { from, to, at } = tv.handback;
+      tv.handback = null;
+      if (now >= at) {
+        tv.current = to;
+      } else {
+        to.source.onended = null;
+        try { to.source.stop(); } catch (e) {}
+        from.fade.gain.cancelScheduledValues(at);
+      }
+    }
+
+    const old = tv.current;
+    const at = Math.max(atS == null ? now : tv.origin + atS, now, tv.startAt, old ? old.readyAt : 0);
+    const position = at - tv.origin;
+    const runsOut = tv.origin + buffer.duration;   // context time the new render ends
+    if (position >= buffer.duration) return false;
+    if (prefix && runsOut - PREFIX_HANDBACK_S <= at + CROSSFADE_S) return false;   // ends before it's heard
+
+    const next = this._startTakeSource(buffer, at, position, 0);
+    this._crossfade(old, next, at);
+    tv.current = next;
+
+    if (!prefix) {
+      tv.fullBuffer = buffer;
+    } else if (tv.fullBuffer) {
+      const back = runsOut - PREFIX_HANDBACK_S;
+      const to = this._startTakeSource(tv.fullBuffer, back, back - tv.origin, 0);
+      this._crossfade(next, to, back);
+      tv.handback = { from: next, to, at: back };
+      // Once the prefix has stopped, the whole render is what plays.
+      next.source.onended = () => {
+        if (this.takeVoice === tv && tv.current === next) {
+          tv.current = to;
+          tv.handback = null;
+        }
+      };
+    }
+    return true;
+  }
+
   // --- 6. Isolated Preview & Real-Time A/B Switching ---
+  // takeBuffer is the take as the engine rendered it through its voice chain (the raw
+  // take while voice effects aren't installed); the level is a gain after it.
   previewTakeIsolated({
     backingBuffer,
     lineStartSec = 0,
     takeBuffer,
     origBuffer,
     offsetMs = 0,
-    pitchSemitones = 0,
-    reverbWet = 0,
     gainDb = 0,
-    enableLowCut = true,
     onEnded = null,
   }) {
     this.stopAllPlayback();
@@ -909,39 +828,36 @@ export class AudioEngine {
       this.currentPlayingNodes.push(backingSource);
     }
 
-    // 2. Process Vocal Take with Time-Invariant Pitch Shift
-    const processedTake = this.pitchShiftBuffer(takeBuffer, pitchSemitones);
-
-    // 3. Setup Take Vocal Chain (Channel A)
-    if (processedTake) {
-      const takeSource = this.ctx.createBufferSource();
-      takeSource.buffer = processedTake;
-
-      const dsp = this.buildVocalDSPChain({
-        reverbWet,
-        gainDb,
-        enableLowCut,
-      });
-      this.activeDSPNodes = dsp;
-
+    // 2. The take (Channel A): render -> crossfade gain -> level -> meter -> A/B gain
+    if (takeBuffer) {
+      const level = this.ctx.createGain();
+      level.gain.value = levelGain(gainDb);
+      const analyser = this.ctx.createAnalyser();
+      analyser.fftSize = 2048;
       this.activeTakeGain = this.ctx.createGain();
       this.activeTakeGain.gain.value = (this.abState === 'A') ? 1.0 : 0.0;
-
-      takeSource.connect(dsp.input);
-      dsp.output.connect(this.activeTakeGain);
+      level.connect(analyser);
+      analyser.connect(this.activeTakeGain);
       this.activeTakeGain.connect(this.ctx.destination);
 
       const takeDelay = Math.max(0, linePlayTime - previewStartSec);
       const takeSampleOffset = linePlayTime < 0 ? Math.abs(linePlayTime) : 0;
-      takeSource.start(now + takeDelay, takeSampleOffset);
-      this.currentPlayingNodes.push(takeSource);
-
-      takeSource.onended = () => {
-        if (onEnded) onEnded();
+      const startAt = now + takeDelay;
+      this.takeVoice = {
+        level,
+        analyser,
+        nodes: [],
+        origin: startAt - takeSampleOffset,   // context time of the take's first sample
+        startAt,
+        onEnded,
+        current: null,
+        fullBuffer: takeBuffer,
+        handback: null,
       };
+      this.takeVoice.current = this._startTakeSource(takeBuffer, startAt, takeSampleOffset, 1);
     }
 
-    // 4. Setup Original Reference Audio for Instant A/B Comparison (Channel B)
+    // 3. Setup Original Reference Audio for Instant A/B Comparison (Channel B)
     if (origBuffer) {
       const origSource = this.ctx.createBufferSource();
       origSource.buffer = origBuffer;

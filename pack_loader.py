@@ -558,13 +558,13 @@ def get_cached_line_peaks(pack_id: str, filename: str, file_path: str, columns: 
     return peaks
 
 
-# (abs path, mtime, size) -> measured speech-gated loudness of a pack line.
+# (abs path, mtime, size) -> integrated loudness (LUFS) of a pack line.
 _LINE_LOUDNESS_CACHE: Dict[Tuple[str, float, int], float] = {}
 _LINE_LOUDNESS_LOCK = threading.Lock()
 
 
 def measure_line_loudness(file_path: str) -> float:
-    """Speech-gated loudness (dBFS gated RMS) of an original pack line.
+    """Integrated loudness (LUFS, BS.1770) of an original pack line.
 
     Measured lazily (on take upload, not at pack load) and memoised in memory by
     path, mtime and size, so an edited or re-imported line is measured again.
@@ -578,7 +578,7 @@ def measure_line_loudness(file_path: str) -> float:
     if cached is not None:
         return cached
     import audio_processor  # lazy: keeps pack_loader importable without the DSP stack
-    loudness = float(audio_processor.calculate_speech_gated_loudness(audio_processor.read_wav_mono(abs_path)))
+    loudness = round(float(audio_processor.integrated_lufs(audio_processor.read_wav_mono(abs_path))), 2)
     with _LINE_LOUDNESS_LOCK:
         _LINE_LOUDNESS_CACHE[key] = loudness
     return loudness

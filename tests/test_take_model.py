@@ -377,12 +377,12 @@ class TestTakeHistory(RoomCase):
         room._sync_save_to_disk()
         self.assertIn("t99999", self._reload().takes)
 
-    def test_state_payload_is_version_2(self):
+    def test_state_payload_is_version_3(self):
         room = self._room()
         self._add(room, "t3000", 300, audio_version=1234, noise_reduction=True, peaks=[[0.1, 0.2]])
         self._add(room, "t3000", 400, audio_version=5, peaks=[[0.3, 0.4]])
         state = room.to_state_dict()
-        self.assertEqual(state["state_version"], 2)
+        self.assertEqual(state["state_version"], 3)   # the wire version; the saved file stays 2
         entry = state["takes"]["t3000"]
         self.assertEqual((entry["picked"], entry["next_number"]), ("k400", 3))
         older, newest = entry["takes"]
@@ -676,7 +676,7 @@ class TestTakeRoutes(RoomCase):
         first = self._upload("t1000", 300)
         self._upload("t1000", 600)
         state = room.to_state_dict()
-        self.assertEqual(state["state_version"], 2)
+        self.assertEqual(state["state_version"], 3)   # the wire version; the saved file stays 2
         older, newest = state["takes"]["t1000"]["takes"]
         self.assertNotIn("peaks", older)
         self.assertTrue(newest["peaks"])

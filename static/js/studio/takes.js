@@ -3,8 +3,9 @@
 // Pure functions: no DOM, no app state.
 
 // Room state version this client understands. A tab loaded before a DubMate update
-// stops applying state from a server with a different version.
-export const TAKE_STATE_VERSION = 2;
+// stops applying state from a server with a different version. 3: takes and the room
+// carry voice chains, and the booth edits them (rooms.CLIENT_STATE_VERSION).
+export const TAKE_STATE_VERSION = 3;
 
 // Room state keeps takes by stable line ID:
 // takes[line.line_id] = { picked: take_id, next_number, takes: [take, ...] oldest first }.

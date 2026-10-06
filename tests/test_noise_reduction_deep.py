@@ -406,6 +406,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             takes_dict = {
                 0: {
                     "wav_path": saved["wav_path"],
+                    "render_dir": audio_processor.room_render_dir(test_room),
                     "offset_ms": 0,
                     "pitch_semitones": 0.0,
                     "reverb_wet": 0.15,
@@ -422,9 +423,10 @@ class TestDeepNoiseReduction(unittest.TestCase):
             self.assertTrue(os.path.isfile(mix_out))
             self.assertGreater(os.path.getsize(mix_out), 10000)
 
-            # Master mix should pass limiter cleanly
+            # The master stage keeps the mix under -1 dBTP
             mix_data = audio_processor.read_wav_mono(mix_out, sr)
             self.assertLessEqual(np.max(np.abs(mix_data)), 1.0)
+            self.assertLessEqual(audio_processor.true_peak_db(mix_data), audio_processor.TRUE_PEAK_CEILING_DB + 0.01)
 
             # 2. Test export_dub_video
             video_out = os.path.join(room_dir, "master_dub_video.mp4")
@@ -457,6 +459,8 @@ class TestDeepNoiseReduction(unittest.TestCase):
                 manifest = json.loads(zf.read(manifest_name))
                 root = manifest_name.split("/")[0]
                 self.assertIsNotNone(manifest["files"]["master_vocal_mix"])
+                self.assertEqual(manifest["master"]["target_lufs"], audio_processor.MASTER_TARGET_LUFS)
+                self.assertIsInstance(manifest["master"]["gain_db"], float)
                 for key in ("clean_video", "backing_track", "master_vocal_mix"):
                     rel = manifest["files"][key]
                     if rel is not None:
