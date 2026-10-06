@@ -558,8 +558,8 @@ def align_take_timing(take: np.ndarray, reference: np.ndarray, start_offset_ms: 
     start_idx = int(np.argmin(np.abs(offsets - start)))
     best_ms = int(offsets[b])
     if scores[b] < 0.5 or best_ms - lo <= 10 or hi - best_ms <= 10:
-        plain_scores = plain[0]
-        score = float(plain_scores[start_idx])
+        # Uncorrelated or inverted envelopes score 0: the score runs 0 to 1.
+        score = min(1.0, max(0.0, float(plain[0][start_idx])))
         return {"auto_offset_ms": start,
                 "timing_score": round(score, 2) + 0.0 if math.isfinite(score) else None,
                 "stretch": 1.0, "aligned": False}

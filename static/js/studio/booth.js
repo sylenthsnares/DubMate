@@ -1339,10 +1339,10 @@ export class BoothMethods {
     if (!open) return;
 
     const picked = pickedTake(this.roomState.takes, line);
-    const scored = (t) => Number.isFinite(t.timing_score);
+    const scored = (t) => Number.isFinite(t.timing_score) && t.timing_score >= 0;
     let bestTimed = null;
     for (const take of takes) {
-      if (scored(take) && (!bestTimed || take.timing_score >= bestTimed.timing_score)) bestTimed = take;
+      if (scored(take) && take.timing_score > 0 && (!bestTimed || take.timing_score >= bestTimed.timing_score)) bestTimed = take;
     }
     for (const take of takes) {
       const row = document.createElement('div');

@@ -240,6 +240,18 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     if (scores[1].dataset.tip !== SCORE_TIP) fail(`score tip: ${scores[1].dataset.tip}`);
     if (!scores[1].classList.contains("best") || scores[0].classList.contains("best")) fail("best-timed take not highlighted alone");
     console.log("PASS: Takes panel shows Timing N%, highlights the best, nothing for null");
+
+    await showLine(env, [
+      mk("z1", 1, { timing_score: -0.06 }),
+      mk("z2", 2, { timing_score: 0 }),
+    ], "z2");
+    if (!env.app.takeHistoryOpen) $(env, "btn-take-history").click();
+    const zRows = [...$(env, "take-history-panel").querySelectorAll(".take-history-row")];
+    const zScores = zRows.map((r) => r.querySelector(".take-history-timing"));
+    if (zScores[0]) fail("a negative score shown");
+    if (zScores[1]?.textContent !== "Timing 0%") fail(`zero score: ${zScores[1] && zScores[1].textContent}`);
+    if (zScores[1].classList.contains("best")) fail("a 0% take highlighted as best");
+    console.log("PASS: Takes panel hides negative scores and never highlights 0%");
   }
 
   // 7. Upload: a fitted take never reuses the local recording; an unfitted one does.

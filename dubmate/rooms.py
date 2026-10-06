@@ -107,7 +107,8 @@ class Room:
 
     def remove_take(self, line_id: str, take_id: str) -> Optional[str]:
         """Deletes a take's files and entry. A deleted picked take falls back to the remaining
-        take with the highest timing_score (unscored takes rank lowest; ties go to the newest),
+        take with the highest timing_score (unscored or zero-scored takes rank lowest; ties go
+        to the newest),
         and the line's entry goes with its last take. Returns the picked take_id afterwards,
         or None when the line has no takes left."""
         entry = self.takes.get(line_id)
@@ -120,9 +121,8 @@ class Room:
             del self.takes[line_id]
             return None
         if entry["picked"] == take_id:
-            ranked = [(t.get("timing_score") is not None, t.get("timing_score") or 0.0, n)
-                      for n, t in enumerate(entry["takes"])]
-            entry["picked"] = entry["takes"][max(ranked)[2]]["take_id"]
+            ranked = [(max(0.0, t.get("timing_score") or 0.0), n) for n, t in enumerate(entry["takes"])]
+            entry["picked"] = entry["takes"][max(ranked)[1]]["take_id"]
         return entry["picked"]
 
     def mix_takes(self) -> Dict[int, Dict[str, Any]]:

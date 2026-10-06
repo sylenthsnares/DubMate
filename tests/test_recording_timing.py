@@ -124,6 +124,16 @@ class AlignTakeTimingTests(unittest.TestCase):
         self.assertEqual(res["auto_offset_ms"], 0)
         self.assertEqual(res["stretch"], 1.0)
 
+    def test_unaligned_score_runs_0_to_1(self):
+        for seed in range(12):
+            noise = np.random.default_rng(seed).standard_normal(len(self.ref)) * 0.1
+            for take in (noise, speech_like(seed=seed + 100)):
+                res = align_take_timing(take, self.ref, 0)
+                self.assertSane(res)
+                if res["timing_score"] is not None:
+                    self.assertGreaterEqual(res["timing_score"], 0.0)
+                    self.assertLessEqual(res["timing_score"], 1.0)
+
     def test_different_lines_not_aligned(self):
         res = align_take_timing(speech_like(seed=42), self.ref, 0)
         self.assertSane(res)
@@ -172,6 +182,13 @@ class TestBestTimedFallback(TimingRoomCase):
     def test_unscored_takes_rank_lowest(self):
         room = self._room_with(0.2, None, None)
         self.assertEqual(room.remove_take("t1000", "k500"), "k300")
+
+    def test_negative_or_zero_scores_rank_with_unscored(self):
+        room = self._room_with(0.1, -0.06, 0.0, None)
+        self.assertEqual(room.remove_take("t1000", "k600"), "k300")
+        room = self._room_with(-0.06, 0.0, None)
+        room.pick_take("t1000", "k400")
+        self.assertEqual(room.remove_take("t1000", "k400"), "k500")
 
     def test_all_unscored_falls_back_to_newest(self):
         room = self._room_with(None, None, None)
