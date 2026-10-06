@@ -73,12 +73,13 @@ All of this goes into one PR.
 
 1. **Take model.** Stable line IDs, take history and picking a take. Most of what follows needs this. **M/L** (done).
 2. **Recording timing.** Latency auto-calibration, then auto-align takes. The best-timed take is highlighted in the Takes panel and picked when the picked take is deleted; a new take is still always picked (`design/recording-timing.md`, decision 11). Owner to confirm: the original line said auto-align pre-selects the best-timed take; as built it only does so on the delete fallback. Trim being analysis-only (decision 9) also needs the owner's yes or no. **M + M** (done).
-3. **Effects rack.**
+3. **Effects rack.** (`design/effects-rack.md`)
    - Built on pedalboard and fed by the take model.
    - Presets, a progressive rack, and optimistic preview.
    - Compressor and Low Cut come back with export parity.
    - The loudness master.
-   - **L**
+   - Owner to confirm: the design's "Decided overnight, revisit" list. Items 1 (loudness measured by a numpy port of pyloudnorm, not the package, to keep scipy out), 2 (reverb keeps DubMate's own room impulse), 11 (the booth and live premiere play real renders without the master stage) and 12 (project ZIP stems carry the master gain) bend an owner instruction and need a yes or no.
+   - **L** (done).
 4. **Calibrate Mic, diagnose + tune**, plus bundling DeepFilterNet. Write the fallback as a small numpy-only stationary gate (the approach noisereduce uses), so scipy stays out after PR 2 drops it. **M**
 5. **Pack Builder.**
    - Stem preview **S/M** (done).
