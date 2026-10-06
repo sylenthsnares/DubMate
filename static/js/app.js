@@ -11,6 +11,7 @@ import { BoothMethods } from './studio/booth.js';
 import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
+import { SessionMethods } from './studio/sessions.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
@@ -1308,6 +1309,7 @@ class DubMateApp {
     }
 
     if (viewName === 'landing') {
+      if (this.isEngineLocal()) this.loadRecentSessions();
       if (!this.packs || this.packs.length === 0) {
         this.fetchPacks();
       } else {
@@ -1531,7 +1533,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

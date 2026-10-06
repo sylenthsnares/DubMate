@@ -416,6 +416,8 @@ export class LobbyMethods {
       url.searchParams.set('room', this.roomState.room_id);
       window.history.pushState({}, '', url);
 
+      // Read before connecting: the socket join resets this user's saved status.
+      const savedLine = this.savedLineIndex();
       this.socket.connect(this.roomState.room_id, this.user.id, this.user.name, this.user.color);
 
       this.headerRoomBadge.style.display = 'inline-flex';
@@ -434,7 +436,7 @@ export class LobbyMethods {
         this.broadcastMyStatus('screening');
       } else if (this.roomState.status === 'recording') {
         this.showView('booth');
-        this.loadBoothLine(this.findFirstAssignedLine());
+        this.loadBoothLine(savedLine ?? this.findFirstAssignedLine());
         this.broadcastMyStatus('booth');
       } else {
         this.showView('lobby');
@@ -447,6 +449,17 @@ export class LobbyMethods {
       this.showToast(this.friendlyError(err, "Couldn't join that room. Try again."));
       this.showView('landing');
     }
+  }
+
+  /** The line this user was on when they last left this room, or null. Line 0 counts
+   * only if they were in the booth (it is also the default for someone who never was). */
+  savedLineIndex() {
+    const me = this.roomState?.users?.[this.user.id];
+    const lines = this.roomState?.pack?.lines;
+    if (!me || !Array.isArray(lines)) return null;
+    const line = me.current_line;
+    if (!Number.isInteger(line) || line < 0 || line >= lines.length) return null;
+    return (line > 0 || me.location === 'booth') ? line : null;
   }
 
   // --- Live Cast Activity HUD & Premiere Gate ---

@@ -1097,6 +1097,65 @@ body::after {
   padding: 20px;
 }
 
+/* Continue where you left off (landing, own computer only) */
+.recent-sessions {
+  margin-bottom: 24px;
+}
+
+.recent-sessions-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recent-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.recent-session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.recent-session-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--foreground);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-session-meta {
+  font-size: 12px;
+  color: var(--foreground-muted);
+  margin-top: 2px;
+}
+
+.recent-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.recent-session-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .badge-accent {
   font-family: var(--font-mono);
   font-size: 11px;
