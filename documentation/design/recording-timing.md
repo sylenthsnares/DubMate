@@ -63,7 +63,7 @@ New optional fields on each take, set by the upload route:
 
 ### Files
 
-Unchanged layout (`takes/<line_id>/<take_id>.wav`, `_raw.wav`, `_denoised_<key>.wav`). The active `<take_id>.wav` becomes `stretch(source)`, where source is the denoised or raw file. A new `audio_processor._write_active_take(source_wav, target_wav, stretch)` writes it: a copy at 1.0, ffmpeg `atempo` otherwise, always to `<target>.tmp.wav` then `os.replace`, so a failed pass leaves the previous active file intact. `_raw.wav` is never altered. Duration, peaks and auto gain are measured from the active file after it is written. Preview, premiere, render and ZIP all read the active file, so a fitted take sounds the same everywhere.
+Unchanged layout (`takes/<line_id>/<take_id>.wav`, `_raw.wav`, `_denoised_<key>.wav`). The active `<take_id>.wav` becomes `stretch(source)`, where source is the denoised or raw file. A new `audio_processor._write_active_take(source_wav, target_wav, stretch)` writes it: a copy at 1.0, ffmpeg `atempo` otherwise, always to `<target>.tmp.wav` then `os.replace`, so a failed pass leaves the previous active file intact. `_raw.wav` is never altered. Duration, peaks and auto gain are measured from the active file after it is written. `atempo` starts its output about 20 ms early (it drops half a window at the head), so after a fitted write the offset and score are measured again on the written file (offset only); the envelope result is kept if that pass isn't confident. Preview, premiere, render and ZIP all read the active file, so a fitted take sounds the same everywhere.
 
 ## Alignment (engine)
 

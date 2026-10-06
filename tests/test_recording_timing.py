@@ -1,10 +1,14 @@
 """Take timing: alignment math (audio_processor.align_take_timing) on synthetic signals,
-auto-aligned offsets on upload, the best-timed delete fallback, and rooms saved before it."""
+auto-aligned offsets on upload, fitted (stretched) takes and Original speed, the best-timed
+delete fallback, and rooms saved before it."""
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 import numpy as np
@@ -179,7 +183,7 @@ class TestBestTimedFallback(TimingRoomCase):
         self.assertEqual(room.remove_take("t1000", "k300"), "k400")
 
 
-class TestAlignedUpload(TimingRoomCase):
+class UploadCase(TimingRoomCase):
     @classmethod
     def setUpClass(cls):
         import app
@@ -203,6 +207,8 @@ class TestAlignedUpload(TimingRoomCase):
             pass
         return msg
 
+
+class TestAlignedUpload(UploadCase):
     def test_late_take_is_lined_up(self):
         room = self._room()
         with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
@@ -258,6 +264,177 @@ class TestAlignedUpload(TimingRoomCase):
         self.assertEqual((take["offset_ms"], take["start_offset_ms"], take["auto_offset_ms"]), (20, 20, 20))
         self.assertIsNone(take["timing_score"])
         self.assertFalse(take["aligned"])
+
+
+class TestWriteActiveTake(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="dm_active_take_")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.source = os.path.join(self.dir, "k1_raw.wav")
+        self.target = os.path.join(self.dir, "k1.wav")
+        audio_processor.write_wav_mono(self.source, speech_like(duration=2.0), SR)
+
+    def _bytes(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_plain_copy_at_one(self):
+        audio_processor._write_active_take(self.source, self.target, 1.0004)
+        self.assertEqual(self._bytes(self.target), self._bytes(self.source))
+        self.assertEqual(sorted(os.listdir(self.dir)), ["k1.wav", "k1_raw.wav"])
+
+    def test_stretch_shortens(self):
+        audio_processor._write_active_take(self.source, self.target, 1.06)
+        n_src = len(audio_processor.read_wav_mono(self.source))
+        n_out = len(audio_processor.read_wav_mono(self.target))
+        # atempo also drops about 20 ms at the head.
+        self.assertAlmostEqual(n_out / n_src, 1 / 1.06, delta=0.02)
+        self.assertEqual(sorted(os.listdir(self.dir)), ["k1.wav", "k1_raw.wav"])
+
+    def test_failed_pass_keeps_previous_audio(self):
+        audio_processor._write_active_take(self.source, self.target, 1.0)
+        before = self._bytes(self.target)
+
+        def half_written(src, dst, *a, **k):
+            with open(dst, "wb") as f:
+                f.write(b"partial")
+            raise subprocess.CalledProcessError(1, "ffmpeg")
+
+        with mock.patch.object(audio_processor, "_ffmpeg_to_mono_wav", side_effect=half_written):
+            with self.assertRaises(subprocess.CalledProcessError):
+                audio_processor._write_active_take(self.source, self.target, 1.06)
+        self.assertEqual(self._bytes(self.target), before)
+        self.assertEqual(sorted(os.listdir(self.dir)), ["k1.wav", "k1_raw.wav"])
+
+
+def _fake_denoise(src, dst, *a, **k):
+    shutil.copy2(src, dst)
+    return dst
+
+
+class TestFittedTakes(UploadCase):
+    def _slow_take(self):
+        return delayed(time_stretched(self.ref, 1.06), 60)
+
+    def _files(self, take):
+        d = audio_processor.take_dir(self.ROOM, "t1000")
+        return os.path.join(d, f"{take['take_id']}.wav"), os.path.join(d, f"{take['take_id']}_raw.wav")
+
+    def _samples(self, path):
+        return len(audio_processor.read_wav_mono(path))
+
+    def _original_speed(self, take_id, user_id="hostT", line_id="t1000"):
+        return self.client.post(f"/api/rooms/{self.ROOM}/lines/{line_id}/takes/{take_id}/original_speed",
+                                json={"user_id": user_id})
+
+    def test_slow_take_is_fitted(self):
+        room = self._room()
+        slow = self._slow_take()
+        wire = self._upload("t1000", slow)
+        take = room.picked_take("t1000")
+        active, raw = self._files(take)
+        self.assertNotEqual(take["stretch"], 1.0)
+        self.assertLessEqual(abs(take["stretch"] - 1.06), 0.01)
+        self.assertTrue(take["aligned"])
+        self.assertEqual(take["offset_ms"] % 5, 0)
+        self.assertEqual(wire["stretch"], take["stretch"])
+        self.assertEqual(self._samples(raw), len(slow))
+        self.assertLess(take["duration"], len(slow) / SR)
+        self.assertAlmostEqual(self._samples(active) / len(slow), 1 / take["stretch"], delta=0.02)
+        self.assertAlmostEqual(take["duration"], self._samples(active) / SR, places=3)
+        # The offset lines up the file as written, not an ideal stretch of it.
+        on_file = align_take_timing(audio_processor.read_wav_mono(active), self.ref, 0, allow_stretch=False)
+        self.assertLessEqual(abs(take["auto_offset_ms"] - on_file["auto_offset_ms"]), 5)
+        self.assertNotIn(f"{take['take_id']}.tmp.wav", os.listdir(os.path.dirname(active)))
+
+    def test_noise_reduction_switch_keeps_the_fit(self):
+        room = self._room()
+        self._upload("t1000", self._slow_take())
+        take = room.picked_take("t1000")
+        active, raw = self._files(take)
+        fitted_len = self._samples(active)
+        timing = {f: take[f] for f in TIMING_FIELDS + ("offset_ms",)}
+        with mock.patch.object(audio_processor, "apply_noise_reduction", side_effect=_fake_denoise):
+            for enable in (True, False):
+                res = self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes/{take['take_id']}/noise_reduction",
+                                       json={"noise_reduction": enable})
+                self.assertEqual(res.status_code, 200, res.text)
+                self.assertLessEqual(abs(self._samples(active) - fitted_len), SR // 100)
+        self.assertEqual({f: take[f] for f in timing}, timing)
+
+    def test_original_speed_restores_recorded_speed(self):
+        room = self._room()
+        slow = self._slow_take()
+        self._upload("t1000", slow, gain_db=0.0, auto_gain="true")
+        take = room.picked_take("t1000")
+        active, raw = self._files(take)
+        fitted_auto = take["auto_offset_ms"]
+        room.exported_video_path = "old.mp4"
+        version = take["audio_version"]
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+            res = self._original_speed(take["take_id"])
+            msg = self._until(ws, "take_params_updated")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(take["stretch"], 1.0)
+        self.assertEqual(self._samples(active), len(slow))
+        self.assertAlmostEqual(take["duration"], len(slow) / SR, places=3)
+        self.assertEqual(take["auto_offset_ms"] % 5, 0)
+        self.assertEqual(take["offset_ms"], take["auto_offset_ms"])
+        self.assertNotEqual(take["auto_offset_ms"], fitted_auto)
+        self.assertGreater(take["audio_version"], version)
+        self.assertEqual(take["gain_db"], take["auto_gain_db"])
+        self.assertIsNone(room.exported_video_path)
+        self.assertEqual(res.json()["take"]["stretch"], 1.0)
+        self.assertEqual(msg["payload"], {"line_id": "t1000", "take_id": take["take_id"],
+                                          "url": res.json()["take"]["url"]})
+
+    def test_original_speed_keeps_a_nudged_offset(self):
+        room = self._room()
+        self._upload("t1000", self._slow_take())
+        take = room.picked_take("t1000")
+        take["offset_ms"] = take["auto_offset_ms"] + 40
+        nudged = take["offset_ms"]
+        res = self._original_speed(take["take_id"])
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(take["stretch"], 1.0)
+        self.assertEqual(take["offset_ms"], nudged)
+
+    def test_original_speed_on_unfitted_take_changes_nothing(self):
+        room = self._room()
+        self._upload("t1000", delayed(self.ref, 140))
+        take = room.picked_take("t1000")
+        before = dict(take)
+        room.exported_video_path = "old.mp4"
+        res = self._original_speed(take["take_id"])
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["take"]["take_id"], take["take_id"])
+        self.assertEqual(take, before)
+        self.assertEqual(room.exported_video_path, "old.mp4")
+
+    def test_original_speed_guards(self):
+        room = self._room()
+        self._upload("t1000", self._slow_take())
+        take = room.picked_take("t1000")
+        room.role_assignments["Ana"] = ["actorA"]
+        self.assertEqual(self._original_speed(take["take_id"], user_id="otherU").status_code, 403)
+        self.assertNotEqual(take["stretch"], 1.0)
+        self.assertEqual(self._original_speed("nope1234").status_code, 404)
+        self.assertEqual(self._original_speed(take["take_id"], line_id="t9999").status_code, 404)
+        self.assertEqual(self._original_speed(take["take_id"], user_id="actorA").status_code, 200)
+        self.assertEqual(take["stretch"], 1.0)
+
+    def test_project_zip_manifest_has_stretch(self):
+        room = self._room()
+        self._upload("t1000", self._slow_take())
+        stretch = room.picked_take("t1000")["stretch"]
+        zip_out = os.path.join(self.cache, "project.zip")
+        audio_processor.build_project_zip(self.pack, room.mix_takes(), output_zip_path=zip_out, room_id=self.ROOM)
+        with zipfile.ZipFile(zip_out) as zf:
+            name = next(n for n in zf.namelist() if n.endswith("project_manifest.json"))
+            manifest = json.loads(zf.read(name))
+        lines = {l["line_id"]: l for l in manifest["lines"]}
+        self.assertEqual(lines["t1000"]["stretch"], stretch)
+        self.assertEqual(lines["t3000"]["stretch"], 1.0)
 
 
 class TestRoomSavedBeforeTiming(TimingRoomCase):

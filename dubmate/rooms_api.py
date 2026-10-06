@@ -304,6 +304,8 @@ async def toggle_take_noise_reduction_endpoint(
                 enable_noise_reduction=enable,
                 user_id=user_id,
                 target_loudness_db=target_loudness,
+                # A fitted take stays fitted; its timing fields don't change.
+                stretch=float(take.get("stretch", 1.0)),
             )
         take["noise_reduction"] = enable
         take["audio_version"] = int(time.time() * 1000)
@@ -329,6 +331,73 @@ async def toggle_take_noise_reduction_endpoint(
     except Exception as ex:
         print(f"[ToggleNoiseReductionError] {ex}")
         raise HTTPException(status_code=400, detail=str(ex))
+
+
+@router.post("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/original_speed")
+async def take_original_speed(room_id: str, line_id: str, take_id: str, payload: Dict[str, Any]):
+    """Plays a fitted take at the speed it was recorded: the active audio is rewritten
+    without stretch and its automatic timing is matched again (offset only). A take that
+    wasn't nudged moves to the new automatic timing; a nudged one keeps its offset."""
+    room = rooms.room_or_404(room_id)
+    user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
+    line, take = _take_or_404(room, line_id, take_id)
+    _require_line_actor(room, line, user_id)
+    if float(take.get("stretch", 1.0)) == 1.0:
+        return {"status": "ok", "line_id": line_id, "take": room.wire_take(line_id, take)}
+
+    target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
+
+    def rewrite():
+        # Reuses the noise-reduction switch to rewrite the active file from its current
+        # source (cleaned or raw) at 1.0 and re-measure it.
+        written = audio_processor.toggle_take_noise_reduction(
+            room.room_id,
+            audio_processor.take_dir(room.room_id, line_id),
+            take_id,
+            enable_noise_reduction=bool(take.get("noise_reduction", False)),
+            user_id=take.get("user_id", "host"),
+            target_loudness_db=target_loudness,
+            stretch=1.0,
+        )
+        timing = audio_processor.match_take_timing(
+            audio_processor.read_wav_mono(written["wav_path"]),
+            os.path.join(room.pack.folder, line["filename"]),
+            int(take.get("start_offset_ms", take.get("offset_ms", 0))),
+            allow_stretch=False,
+        )
+        return written, timing
+
+    try:
+        async with room.processing_lock:
+            written, timing = await asyncio.to_thread(rewrite)
+            old_auto_offset = take.get("auto_offset_ms", take.get("offset_ms", 0))
+            if abs(int(take.get("offset_ms", 0)) - int(old_auto_offset)) < 5:
+                take["offset_ms"] = timing["auto_offset_ms"]
+            take["stretch"] = 1.0
+            take["auto_offset_ms"] = timing["auto_offset_ms"]
+            take["timing_score"] = timing["timing_score"]
+            take["aligned"] = timing["aligned"]
+            take["audio_version"] = int(time.time() * 1000)
+            take["peaks"] = written["peaks"]
+            take["duration"] = written["duration"]
+            old_auto_gain = take.get("auto_gain_db")
+            if old_auto_gain is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto_gain)) < 0.05:
+                take["gain_db"] = written["auto_gain_db"]
+            take["speech_loudness_db"] = written["speech_loudness_db"]
+            take["target_loudness_db"] = written["target_loudness_db"]
+            take["auto_gain_db"] = written["auto_gain_db"]
+    except Exception as ex:
+        print(f"[OriginalSpeedError] {ex}")
+        raise HTTPException(status_code=400, detail=str(ex))
+
+    wire = room.wire_take(line_id, take)
+    room.invalidate_exports()
+    await room.broadcast("take_params_updated", {
+        "line_id": line_id,
+        "take_id": take_id,
+        "url": wire["url"],
+    })
+    return {"status": "ok", "line_id": line_id, "take": wire}
 
 
 @router.get("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/peaks")
