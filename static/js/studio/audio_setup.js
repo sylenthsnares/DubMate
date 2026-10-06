@@ -307,6 +307,7 @@ export class AudioSetupMethods {
     if (this.modalAudioSettings) {
       this.modalAudioSettings.style.display = 'none';
     }
+    this.cancelMicSync();
     this.audioSetup.firstRunMode = false;
     this.setExportsFeedback('', null);
     this.showPackBuilderRemoveConfirm(false);
@@ -417,6 +418,7 @@ export class AudioSetupMethods {
       );
       this.renderDeviceNote(this.audioOutputNote, outputResult, devices, 'output device');
     }
+    this.renderMicSyncRow();
 
     return devices;
   }
@@ -500,6 +502,7 @@ export class AudioSetupMethods {
       safeStorageRemove(ls, AUDIO_INPUT_DEVICE_KEY);
     }
     this.audio.setPreferredInputDevice(next || null);
+    this.renderMicSyncRow();
 
     // Re-point the meter at the newly selected capture device.
     if (this.isAudioSettingsOpen()) {
@@ -516,6 +519,7 @@ export class AudioSetupMethods {
     } else {
       safeStorageRemove(ls, AUDIO_OUTPUT_DEVICE_KEY);
     }
+    this.renderMicSyncRow();
 
     let routed = { ok: false, reason: 'unsupported' };
     try {

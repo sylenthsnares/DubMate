@@ -4545,6 +4545,11 @@ svg {
   color: var(--accent-red-soft);
 }
 
+.mic-sync-panel {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+}
+
 @media (max-width: 640px) {
   .audio-recovery-grid {
     grid-template-columns: 1fr;

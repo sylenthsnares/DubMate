@@ -1649,6 +1649,25 @@
           </p>
         </div>
 
+        <!-- Mic sync: the measured delay of this microphone and output pair.
+             Driven by MicSyncMethods in studio/mic_sync.js. -->
+        <div class="audio-device-row" id="mic-sync-row">
+          <span class="form-label">Timing</span>
+          <div class="audio-path-row">
+            <p id="mic-sync-status" class="audio-device-note" style="flex: 1; margin: 0;" aria-live="polite">Not synced yet</p>
+            <button id="btn-mic-sync" class="btn btn-secondary btn-sm" type="button">Sync your mic</button>
+          </div>
+          <div id="mic-sync-panel" class="audio-inline-feedback mic-sync-panel" style="display: none;">
+            <p id="mic-sync-message" style="margin: 0;" role="status" aria-live="polite"></p>
+            <div class="modal-actions" style="margin-top: 10px; justify-content: flex-end; gap: 8px;">
+              <button id="btn-cancel-mic-sync" class="btn btn-ghost btn-sm" type="button">Cancel</button>
+              <button id="btn-start-mic-sync" class="btn btn-primary btn-sm" type="button">Start</button>
+              <button id="btn-start-clapping" class="btn btn-primary btn-sm" type="button"
+                style="display: none;">Start clapping</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Export folder (backed by GET/POST /api/config -> exports_dir).
              Hidden entirely when the running backend does not report the key. -->
         <div class="audio-device-row" id="audio-exports-row" style="display: none;">

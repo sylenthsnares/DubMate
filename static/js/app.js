@@ -304,6 +304,13 @@ class DubMateApp {
     this.btnRemovePackBuilderText = document.getElementById('btn-remove-packbuilder-text');
     this.btnCancelRemovePackBuilder = document.getElementById('btn-cancel-remove-packbuilder');
     this.btnConfirmRemovePackBuilder = document.getElementById('btn-confirm-remove-packbuilder');
+    this.micSyncStatus = document.getElementById('mic-sync-status');
+    this.btnMicSync = document.getElementById('btn-mic-sync');
+    this.micSyncPanel = document.getElementById('mic-sync-panel');
+    this.micSyncMessage = document.getElementById('mic-sync-message');
+    this.btnStartMicSync = document.getElementById('btn-start-mic-sync');
+    this.btnStartClapping = document.getElementById('btn-start-clapping');
+    this.btnCancelMicSync = document.getElementById('btn-cancel-mic-sync');
 
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
@@ -817,6 +824,7 @@ class DubMateApp {
     }
 
     this.initAudioSettingsEvents();
+    this.initMicSyncEvents();
 
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
