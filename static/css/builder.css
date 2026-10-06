@@ -55,7 +55,7 @@
 
 .builder-step.active .step-num {
   background: var(--primary);
-  color: #120e0b;
+  color: var(--panel-deep);
   border-color: var(--primary);
   box-shadow: 0 0 8px rgba(217, 119, 6, 0.4);
 }
@@ -91,8 +91,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #16a34a;
-  box-shadow: 0 0 6px #16a34a;
+  background: var(--accent-teal);
+  box-shadow: 0 0 6px var(--accent-teal);
 }
 
 .builder-main-container {
@@ -190,7 +190,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 .ingest-tab-btn.active {
   background: rgba(217, 119, 6, 0.18);
   color: var(--primary);
-  border: 1px solid rgba(217, 119, 6, 0.35);
+  border: 1px solid var(--accent-amber-glow);
   box-shadow: 0 0 10px rgba(217, 119, 6, 0.15);
 }
 
@@ -230,7 +230,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 }
 
 .url-importer-icon {
-  color: #ef4444;
+  color: var(--accent-red-bright);
   margin-bottom: 12px;
   display: flex;
   align-items: center;
@@ -324,8 +324,8 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .fetch-step-row.completed .fetch-stage-indicator {
   background: rgba(34, 197, 94, 0.25);
-  color: #22c55e;
-  border: 1px solid #22c55e;
+  color: var(--accent-green-bright);
+  border: 1px solid var(--accent-green-bright);
 }
 
 .mini-spinner {
@@ -461,11 +461,11 @@ body:has(#view-step-editor.active) .builder-main-container {
   width: 54px;
   height: 54px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #d97706 0%, #92400e 100%);
+  background: linear-gradient(135deg, var(--primary) 0%, #92400e 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ffffff;
+  color: var(--white);
   box-shadow: 0 0 20px rgba(217, 119, 6, 0.4);
 }
 
@@ -498,7 +498,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .builder-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #cca458 0%, #d97706 100%);
+  background: linear-gradient(90deg, var(--accent-brass) 0%, var(--primary) 100%);
   box-shadow: 0 0 12px rgba(217, 119, 6, 0.5);
   border-radius: var(--radius-full);
   transition: width 300ms ease;
@@ -666,7 +666,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  box-shadow: 0 0 10px rgba(217, 119, 6, 0.35);
+  box-shadow: 0 0 10px var(--accent-amber-glow);
 }
 
 .deck-timecode-hud {
@@ -676,7 +676,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   background: #0c0907;
   padding: 3px 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid #3d2c1c;
+  border: 1px solid var(--border-panel);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
@@ -684,7 +684,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   font-family: var(--font-mono);
   font-size: 8.5px;
   font-weight: 900;
-  color: #cca458;
+  color: var(--accent-brass);
   letter-spacing: 0.5px;
 }
 
@@ -692,7 +692,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
-  color: #f7eedd;
+  color: var(--foreground-ivory);
 }
 
 .btn-audio-source-toggle {
@@ -701,16 +701,16 @@ body:has(#view-step-editor.active) .builder-main-container {
   gap: 5px;
   font-size: 10px;
   font-weight: 700;
-  color: #cca458;
+  color: var(--accent-brass);
   background: rgba(204, 164, 88, 0.08);
-  border-color: #3d2c1c;
+  border-color: var(--border-panel);
   padding: 3px 8px;
 }
 
 .btn-audio-source-toggle:hover {
   background: rgba(204, 164, 88, 0.16);
-  border-color: #cca458;
-  color: #ffffff;
+  border-color: var(--border-gold);
+  color: var(--white);
 }
 
 .deck-tier-bottom {
@@ -742,13 +742,13 @@ body:has(#view-step-editor.active) .builder-main-container {
 }
 
 .btn-cue-add-highlight {
-  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
-  color: #ffffff;
+  background: linear-gradient(135deg, var(--primary) 0%, #b45309 100%);
+  color: var(--white);
   font-weight: 800;
   font-size: 11px;
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid #f59e0b;
+  border: 1px solid var(--primary-hover);
   box-shadow: 0 0 12px rgba(217, 119, 6, 0.4);
   display: inline-flex;
   align-items: center;
@@ -758,7 +758,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 }
 
 .btn-cue-add-highlight:hover {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary) 100%);
   box-shadow: 0 0 16px rgba(245, 158, 11, 0.6);
   transform: translateY(-1px);
 }
@@ -780,7 +780,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 .btn-whisper-ai-deck:hover {
   background: rgba(147, 51, 234, 0.28);
   border-color: #a855f7;
-  color: #ffffff;
+  color: var(--white);
 }
 
 .deck-zoom-group {
@@ -797,7 +797,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   font-family: var(--font-mono);
   font-size: 8.5px;
   font-weight: 800;
-  color: #cca458;
+  color: var(--accent-brass);
   margin-right: 2px;
 }
 
@@ -844,7 +844,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #cca458;
+  background: var(--accent-brass);
   opacity: 0.6;
 }
 
@@ -852,14 +852,14 @@ body:has(#view-step-editor.active) .builder-main-container {
 .timeline-splitter-handle.dragging .splitter-grip-line {
   width: 150px;
   height: 6px;
-  background: linear-gradient(90deg, #cca458 0%, #d97706 50%, #cca458 100%);
-  border-color: #f59e0b;
+  background: linear-gradient(90deg, var(--accent-brass) 0%, var(--primary) 50%, var(--accent-brass) 100%);
+  border-color: var(--primary-hover);
   box-shadow: 0 0 14px rgba(217, 119, 6, 0.7);
 }
 
 .timeline-splitter-handle:hover .splitter-dot,
 .timeline-splitter-handle.dragging .splitter-dot {
-  background: #ffffff;
+  background: var(--white);
   opacity: 1;
 }
 
@@ -915,7 +915,7 @@ body.resizing-timeline * {
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 700;
-  color: #22c55e;
+  color: var(--accent-green-bright);
   background: rgba(34, 197, 94, 0.12);
   border: 1px solid rgba(34, 197, 94, 0.3);
   padding: 2px 7px;
@@ -981,8 +981,8 @@ body.resizing-timeline * {
   font-family: var(--font-mono);
   font-weight: 900;
   font-size: 10px;
-  background: linear-gradient(135deg, #d97706 0%, #92400e 100%);
-  color: #ffffff;
+  background: linear-gradient(135deg, var(--primary) 0%, #92400e 100%);
+  color: var(--white);
   padding: 2px 5px;
   border-radius: 3px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
@@ -1020,7 +1020,7 @@ body.resizing-timeline * {
 .channel-title-input:focus {
   background: rgba(18, 14, 11, 0.95);
   border-color: var(--primary);
-  color: #ffffff;
+  color: var(--white);
   box-shadow: 0 0 6px rgba(217, 119, 6, 0.4);
   cursor: text;
 }
@@ -1034,8 +1034,8 @@ body.resizing-timeline * {
 }
 
 .channel-indicator.active {
-  background: #22c55e;
-  box-shadow: 0 0 6px #22c55e;
+  background: var(--accent-green-bright);
+  box-shadow: 0 0 6px var(--accent-green-bright);
 }
 
 .timeline-canvas-scroll-container {
@@ -1177,7 +1177,7 @@ body.resizing-timeline * {
   font-size: 9.5px;
   font-weight: 700;
   font-family: var(--font-mono);
-  color: #ffffff;
+  color: var(--white);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1188,7 +1188,7 @@ body.resizing-timeline * {
 .segment-inline-delete-btn {
   background: rgba(220, 38, 38, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.35);
-  color: #ffffff;
+  color: var(--white);
   border-radius: 50%;
   width: 17px;
   height: 17px;
@@ -1216,7 +1216,7 @@ body.resizing-timeline * {
 
 .segment-inline-delete-btn:hover {
   transform: scale(1.18);
-  background: #dc2626;
+  background: var(--accent-red);
   box-shadow: 0 0 8px rgba(220, 38, 38, 0.7);
 }
 
@@ -1313,7 +1313,7 @@ body.resizing-timeline * {
 
 .btn-del-track:hover {
   background: rgba(220, 38, 38, 0.85);
-  color: #ffffff;
+  color: var(--white);
 }
 
 .char-color-chip {
@@ -1378,8 +1378,8 @@ body.resizing-timeline * {
 }
 
 .chip-del-btn:hover {
-  background: #dc2626;
-  color: #ffffff;
+  background: var(--accent-red);
+  color: var(--white);
 }
 
 .btn-add-char {
@@ -1479,8 +1479,8 @@ body.resizing-timeline * {
 }
 
 .btn-delete-cue:hover {
-  color: #ffffff;
-  background: #dc2626;
+  color: var(--white);
+  background: var(--accent-red);
 }
 
 .cue-card-body {
@@ -1597,7 +1597,7 @@ body.resizing-timeline * {
   padding: 24px;
   border-radius: var(--radius-lg);
   background: linear-gradient(180deg, rgba(22, 163, 74, 0.15) 0%, rgba(18, 14, 11, 0.8) 100%);
-  border: 1px solid #16a34a;
+  border: 1px solid var(--accent-teal);
   text-align: center;
 }
 
@@ -1609,7 +1609,7 @@ body.resizing-timeline * {
 .success-title {
   font-size: 18px;
   font-weight: 800;
-  color: #22c55e;
+  color: var(--accent-green-bright);
   margin-bottom: 6px;
 }
 

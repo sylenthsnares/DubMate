@@ -157,7 +157,7 @@ function fakeRoom(app) {
   }
 
   // 3. Anything other than a bare loopback http origin is ignored; with no home
-  //    (a browser-only guest) leaving keeps today's behaviour.
+  //    (a browser-only guest) leaving shows the "You left" view (test_left_room.js).
   for (const bad of [null, "https://evil.test", `${HOME}/x?y`, "javascript:alert(1)", "http://user:pw@127.0.0.1:8123", "http://10.0.0.5:8000"]) {
     const q = bad === null ? "" : `&home=${encodeURIComponent(bad)}`;
     const { w, app, navigations } = await boot(`https://abc.trycloudflare.com/?room=DUB-AB12${q}`);
@@ -167,7 +167,7 @@ function fakeRoom(app) {
     app.roomState = fakeRoom(app);
     app.leaveRoom();
     if (navigations.length) fail(`navigated for home=${bad}: ${JSON.stringify(navigations)}`);
-    if (app.currentView !== "landing") fail(`no home screen for home=${bad}`);
+    if (app.currentView !== "left") fail(`no "You left" view for home=${bad}`);
   }
   console.log("PASS: B2 invalid or missing ?home= values are ignored");
 

@@ -329,7 +329,13 @@ export class ExportMethods {
    * successful save was completely silent. Checks res.ok, takes the blob,
    * clicks a throwaway anchor and revokes late.
    *
-   * Returns true only if the file actually reached the browser.
+   * `exportSubfolder` is for routes that write the file into the Render & Export
+   * folder before sending it ('' for the folder itself). On the engine's own
+   * computer that file is the user's copy, so the response is dropped and the
+   * toast names the folder instead of saving a second copy to Downloads.
+   *
+   * Returns true only if the file actually reached the browser (or, with
+   * `exportSubfolder` on the engine's computer, the export folder).
    */
   async saveRemoteFile(url, filename, options = {}) {
     const {
@@ -338,7 +344,9 @@ export class ExportMethods {
       startMessage = '',
       doneMessage = 'Download saved',
       errorText = "Couldn't download that file. Try again.",
+      exportSubfolder = null,
     } = options;
+    const keepOnEngine = exportSubfolder !== null && this.isEngineLocal();
 
     if (!url) {
       this.showToast(errorText);
@@ -368,6 +376,19 @@ export class ExportMethods {
           detail = (await res.json())?.detail || detail;
         } catch { /* not JSON; the status is all we have */ }
         throw new Error(detail);
+      }
+
+      if (keepOnEngine) {
+        // The server finished writing the file before it started answering.
+        try { await res.body?.cancel(); } catch { /* nothing left to read */ }
+        const dir = await this.fetchExportsDir();
+        if (!dir) {
+          this.showToast('Saved in your export folder.');
+        } else {
+          const sep = dir.includes('\\') ? '\\' : '/';
+          this.showToast(`Saved to ${exportSubfolder ? `${dir}${sep}${exportSubfolder}` : dir}`);
+        }
+        return true;
       }
 
       const blob = await res.blob();
@@ -475,6 +496,8 @@ export class ExportMethods {
       startMessage: "Preparing project files…",
       doneMessage: "Project files downloaded",
       errorText: "Couldn't build the project files. Try again.",
+      // rooms_api writes the ZIP straight into the export folder.
+      exportSubfolder: '',
     });
   }
 
