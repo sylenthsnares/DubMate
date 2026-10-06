@@ -1048,6 +1048,7 @@ body.resizing-timeline * {
   background: rgba(10, 8, 6, 0.9);
   height: 100%;
   min-height: 0;
+  touch-action: none;
 }
 
 .timeline-canvas-scroll-container.panning {
@@ -1125,6 +1126,7 @@ body.resizing-timeline * {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  touch-action: none;
 }
 
 .builder-segment-block:hover {
@@ -1146,11 +1148,20 @@ body.resizing-timeline * {
   opacity: 0.8;
   transition: opacity 120ms ease, width 120ms ease;
   z-index: 5;
+  touch-action: none;
 }
 
 .builder-segment-handle:hover {
   opacity: 1;
   width: 10px;
+}
+
+/* Fingers need bigger handles than a mouse pointer. */
+@media (pointer: coarse) {
+  .builder-segment-handle,
+  .builder-segment-handle:hover {
+    width: 16px;
+  }
 }
 
 .handle-left {

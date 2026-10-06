@@ -339,8 +339,10 @@ export class PackBuilderApp {
       }
     }, { passive: false });
 
-    // 10. Timeline Canvas Pan (Grab to Pan & Click to Seek)
-    this.timelineScrollWrap.addEventListener('mousedown', (e) => {
+    // 10. Timeline Canvas Pan (Grab to Pan & Click to Seek). Pointer Events
+    // cover mouse, touch and pen with one path.
+    this.timelineScrollWrap.addEventListener('pointerdown', (e) => {
+      if (e.isPrimary === false) return;
       // Don't initiate pan if clicked on a segment handle, block, delete button, or interactive element
       if (e.target.closest('.builder-segment-handle') || e.target.closest('.builder-segment-block') || e.target.closest('.segment-inline-delete-btn') || e.target.closest('button') || e.target.closest('input')) {
         return;
@@ -351,11 +353,13 @@ export class PackBuilderApp {
       this.hasMovedPastThreshold = false;
       this.timelineScrollWrap.classList.add('panning');
       document.body.style.userSelect = 'none';
+      this.capturePointer(this.timelineScrollWrap, e);
     });
 
-    // 11. Drag handlers for segment blocks, handles, and panning
-    window.addEventListener('mousemove', (e) => this.handleGlobalMouseMove(e));
-    window.addEventListener('mouseup', (e) => this.handleGlobalMouseUp(e));
+    // 11. Drag handlers for segment blocks, handles, panning and the splitter
+    window.addEventListener('pointermove', (e) => this.handleGlobalPointerMove(e));
+    window.addEventListener('pointerup', (e) => this.handleGlobalPointerUp(e));
+    window.addEventListener('pointercancel', (e) => this.handleGlobalPointerUp(e, true));
 
     // 12. Character management
     this.btnAddCharacter.addEventListener('click', () => this.promptAddCharacter());
@@ -398,9 +402,11 @@ export class PackBuilderApp {
       document.body.classList.add('resizing-timeline');
     };
 
-    this.timelineSplitterHandle.addEventListener('mousedown', (e) => {
+    this.timelineSplitterHandle.addEventListener('pointerdown', (e) => {
+      if (e.isPrimary === false) return;
       e.preventDefault();
       startResize(e.clientY);
+      this.capturePointer(this.timelineSplitterHandle, e);
     });
 
     // Double-click to reset to default height (240px)
@@ -1192,11 +1198,11 @@ export class PackBuilderApp {
       deleteBtn.setAttribute('aria-label', 'Delete line');
       deleteBtn.dataset.tip = 'Delete line';
 
-      // Prevent mousedown / mouseup from triggering segment block drag or deselect
-      deleteBtn.addEventListener('mousedown', (e) => {
+      // Prevent pointerdown / pointerup from triggering segment block drag or deselect
+      deleteBtn.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
       });
-      deleteBtn.addEventListener('mouseup', (e) => {
+      deleteBtn.addEventListener('pointerup', (e) => {
         e.stopPropagation();
       });
       deleteBtn.addEventListener('click', (e) => {
@@ -1212,8 +1218,10 @@ export class PackBuilderApp {
       block.appendChild(contentWrap);
       block.appendChild(handleR);
 
-      // Mouse drag handlers on segment block
-      block.addEventListener('mousedown', (e) => {
+      // Drag handlers on segment block (mouse, touch and pen). Capture goes on
+      // the scroll wrap: this block is replaced by every re-render mid-drag.
+      block.addEventListener('pointerdown', (e) => {
+        if (e.isPrimary === false) return;
         if (e.target.closest('.segment-inline-delete-btn')) {
           e.stopPropagation();
           return;
@@ -1224,6 +1232,7 @@ export class PackBuilderApp {
           this.selectSegment(idx);
           this.startDrag(idx, 'move', e.clientX, e.clientY);
         }
+        this.capturePointer(this.timelineScrollWrap, e);
         e.stopPropagation();
       });
 
@@ -1472,7 +1481,25 @@ export class PackBuilderApp {
     document.body.style.userSelect = 'none';
   }
 
-  handleGlobalMouseMove(e) {
+  /** Keeps a drag's pointer events coming to `el` even when the pointer leaves it. */
+  capturePointer(el, e) {
+    this._pointerId = e.pointerId;
+    this._pointerCaptureEl = el;
+    try { el.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
+  }
+
+  releaseCapturedPointer() {
+    const el = this._pointerCaptureEl;
+    const id = this._pointerId;
+    this._pointerCaptureEl = null;
+    this._pointerId = null;
+    try {
+      if (el && el.hasPointerCapture(id)) el.releasePointerCapture(id);
+    } catch (err) { /* pointer already gone */ }
+  }
+
+  handleGlobalPointerMove(e) {
+    if (this._pointerId != null && e.pointerId !== this._pointerId) return;
     // 0. Handle Timeline Vertical Resizing
     if (this.isResizingTimeline) {
       const clientY = e.clientY;
@@ -1540,7 +1567,10 @@ export class PackBuilderApp {
     this.updateCardTimecode(this.dragSegmentIndex);
   }
 
-  handleGlobalMouseUp(e) {
+  /** Ends a drag, pan or resize. A cancelled pointer (`cancelled`) never seeks or selects. */
+  handleGlobalPointerUp(e, cancelled = false) {
+    if (this._pointerId != null && e.pointerId !== this._pointerId) return;
+    this.releaseCapturedPointer();
     // 0. End Timeline Vertical Resizing
     if (this.isResizingTimeline) {
       this.isResizingTimeline = false;
@@ -1566,7 +1596,7 @@ export class PackBuilderApp {
       document.body.style.userSelect = '';
 
       // If user clicked without dragging, seek to click position
-      if (!this.hasMovedPastThreshold && e && e.target) {
+      if (!cancelled && !this.hasMovedPastThreshold && e && e.target) {
         const rect = this.timelineViewport.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const targetTime = Math.max(0, Math.min(this.duration, clickX / this.pixelsPerSecond));
@@ -1589,7 +1619,7 @@ export class PackBuilderApp {
         this.renderTimelineSegments();
         this.renderSegmentsList();
         this.syncSegmentsToServer();
-      } else if (modifiedIdx !== null && this.segments[modifiedIdx]) {
+      } else if (!cancelled && modifiedIdx !== null && this.segments[modifiedIdx]) {
         this.selectSegment(modifiedIdx);
         this.seekTo(this.segments[modifiedIdx].start);
       }

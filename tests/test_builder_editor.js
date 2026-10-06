@@ -6,6 +6,9 @@
  * plays beside it; in full mode the video's own sound plays. When the voice
  * track can't play (load error, or the browser refuses play()), the editor
  * switches to full audio and says so once.
+ *
+ * The timeline takes mouse, touch and pen through one Pointer Events path:
+ * line drags, handle trims, pan/seek and the splitter.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -15,7 +18,10 @@ const { buildStudioBundle } = require("./helpers/studio_dom");
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(PROJECT_ROOT, "static", "builder.html"), "utf8");
-const bundle = buildStudioBundle("static/js/pack_builder.js");
+const BOOT = "new PackBuilderApp();";
+const builderSource = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "pack_builder.js"), "utf8");
+// Expose the app instance so the timeline checks can set segments and zoom.
+const bundle = buildStudioBundle("static/js/pack_builder.js").replace(BOOT, "window.__builderApp = " + BOOT);
 const { JSDOM, VirtualConsole } = jsdom;
 
 const FALLBACK_TOAST = "Voices-only playback isn't available, so you're hearing the full audio.";
@@ -49,6 +55,12 @@ async function bootEditor() {
     get: () => () => ({ addColorStop: () => {} }),
   });
   w.scrollTo = () => {};
+  w.Element.prototype.scrollIntoView = () => {};
+  // jsdom has no pointer capture; record what the app asks for.
+  const captures = [];
+  w.Element.prototype.setPointerCapture = function (id) { captures.push(["set", this.id, id]); this._capturedId = id; };
+  w.Element.prototype.hasPointerCapture = function (id) { return this._capturedId === id; };
+  w.Element.prototype.releasePointerCapture = function (id) { captures.push(["release", this.id, id]); this._capturedId = undefined; };
 
   const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   w.fetch = (url) => {
@@ -111,7 +123,7 @@ async function bootEditor() {
   const text = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent);
   const toasts = () => Array.from(doc.querySelectorAll("#toast-container .toast")).map(text);
   return {
-    w, doc, video, audio, media, toasts,
+    w, doc, video, audio, media, toasts, captures, app: w.__builderApp,
     play: () => doc.getElementById("btn-play-pause").click(),
     toggle: () => doc.getElementById("btn-toggle-audio-track").click(),
     label: () => text(doc.getElementById("label-active-track")),
@@ -187,6 +199,100 @@ async function bootEditor() {
     ed.w.close();
   }
 
-  console.log("All Pack Builder editor playback checks passed.");
+  // (e) timeline drags with Pointer Events (jsdom 25 has no PointerEvent).
+  {
+    check(!/addEventListener\(\s*['"]mouse(down|move|up)['"]/.test(builderSource), "pack_builder.js has no mousedown/mousemove/mouseup listeners left");
+
+    const ed = await bootEditor();
+    const { w, doc, app, captures } = ed;
+    check(!!app, "the test can reach the builder app");
+    const wrap = doc.getElementById("timeline-scroll-wrap");
+    const pointer = (target, type, x, y = 50, opts = {}) => {
+      const ev = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+      Object.defineProperty(ev, "pointerId", { value: opts.id ?? 1 });
+      Object.defineProperty(ev, "pointerType", { value: opts.type ?? "mouse" });
+      Object.defineProperty(ev, "isPrimary", { value: opts.primary ?? true });
+      target.dispatchEvent(ev);
+    };
+    const reset = () => {
+      app.duration = 10;
+      app.pixelsPerSecond = 100;
+      app.segments = [{ start: 2, end: 4, text: "Hi", character: "Speaker 1" }];
+      app.renderTimelineSegments();
+      captures.length = 0;
+    };
+    const block = () => doc.querySelector("#timeline-segments-overlay .builder-segment-block");
+    const seg = () => app.segments[0];
+
+    // Body drag moves the line by dx / pixelsPerSecond, capture on the scroll wrap.
+    reset();
+    pointer(block(), "pointerdown", 300);
+    check(app.isDragging && app.dragType === "move", "pressing a line's body starts a move");
+    check(captures.some(([k, id]) => k === "set" && id === "timeline-scroll-wrap"), "a line drag captures the pointer on the scroll wrap");
+    pointer(wrap, "pointermove", 350);
+    check(seg().start === 2.5 && seg().end === 4.5, "dragging a line 50 px at 100 px/s moves it by 0.5 s");
+    pointer(wrap, "pointerup", 350);
+    check(!app.isDragging, "pointerup ends the drag");
+    check(captures.some(([k, id]) => k === "release" && id === "timeline-scroll-wrap"), "pointerup releases the capture");
+
+    // End handle trims only the end.
+    reset();
+    pointer(block().querySelector(".handle-right"), "pointerdown", 400);
+    pointer(wrap, "pointermove", 450);
+    pointer(wrap, "pointerup", 450);
+    check(seg().start === 2 && seg().end === 4.5, "dragging the end handle changes only the end");
+
+    // A finger drags the same way.
+    reset();
+    pointer(block(), "pointerdown", 300, 50, { id: 7, type: "touch" });
+    pointer(wrap, "pointermove", 250, 50, { id: 7, type: "touch" });
+    pointer(wrap, "pointerup", 250, 50, { id: 7, type: "touch" });
+    check(seg().start === 1.5 && seg().end === 3.5 && !app.isDragging, "a touch drag moves the line the same way");
+
+    // A second finger is ignored, both as a new press and mid-drag.
+    reset();
+    pointer(block(), "pointerdown", 300, 50, { id: 8, type: "touch", primary: false });
+    check(!app.isDragging && !app.isPanning, "a non-primary pointer does not start a drag");
+    pointer(block(), "pointerdown", 300, 50, { id: 7, type: "touch" });
+    pointer(wrap, "pointermove", 500, 50, { id: 8, type: "touch", primary: false });
+    pointer(wrap, "pointerup", 500, 50, { id: 8, type: "touch", primary: false });
+    check(app.isDragging && seg().start === 2, "a second finger neither moves nor ends the drag");
+    pointer(wrap, "pointerup", 300, 50, { id: 7, type: "touch" });
+    check(!app.isDragging, "the first finger still ends the drag");
+
+    // pointercancel ends a drag or pan without seeking or selecting.
+    reset();
+    app.selectedSegmentIndex = null;
+    ed.video.currentTime = 7;
+    pointer(block(), "pointerdown", 300);
+    app.selectedSegmentIndex = null;
+    pointer(wrap, "pointercancel", 300);
+    check(!app.isDragging && ed.video.currentTime === 7 && app.selectedSegmentIndex === null, "pointercancel ends a line drag without seeking or selecting");
+    check(captures.some(([k]) => k === "release"), "pointercancel releases the capture");
+    pointer(wrap, "pointerdown", 500);
+    check(app.isPanning, "pressing empty timeline starts a pan");
+    pointer(wrap, "pointercancel", 500);
+    check(!app.isPanning && ed.video.currentTime === 7, "pointercancel ends a pan without seeking");
+
+    // A plain click on empty timeline still seeks (mouse behaviour unchanged).
+    pointer(wrap, "pointerdown", 500);
+    pointer(wrap, "pointerup", 500);
+    check(ed.video.currentTime === 5, "clicking empty timeline seeks to that point");
+
+    // The splitter changes the timeline's height.
+    const splitter = doc.getElementById("timeline-splitter-handle");
+    const panel = doc.querySelector(".editor-bottom-timeline-panel");
+    captures.length = 0;
+    pointer(splitter, "pointerdown", 0, 500);
+    check(app.isResizingTimeline, "pressing the splitter starts a resize");
+    check(captures.some(([k, id]) => k === "set" && id === "timeline-splitter-handle"), "the splitter captures the pointer on itself");
+    pointer(splitter, "pointermove", 0, 400);
+    check(panel.style.height === "340px", "dragging the splitter up 100 px makes the timeline 100 px taller");
+    pointer(splitter, "pointerup", 0, 400);
+    check(!app.isResizingTimeline, "pointerup ends the resize");
+    w.close();
+  }
+
+  console.log("All Pack Builder editor playback and timeline checks passed.");
   process.exit(0);
 })().catch((err) => fail(err && err.stack || err));
