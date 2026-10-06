@@ -156,7 +156,7 @@ pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> 
 
     let latest_clean = release.tag_name.trim().trim_start_matches('v');
     let current_clean = current_version.trim().trim_start_matches('v');
-    let app_py_exists = crate::find_app_py(app).is_some();
+    let app_py_exists = crate::paths::find_app_py(app).is_some();
 
     // Only move forward. String equality alone would happily "update" the user onto an
     // older tag if the release feed ever pointed at one.

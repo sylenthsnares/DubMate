@@ -15,6 +15,18 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _sys.path.insert(0, BASE_DIR)
 INDEX_HTML = os.path.join(BASE_DIR, "static", "index.html")
 STYLE_CSS = os.path.join(BASE_DIR, "static", "css", "style.css")
+RUST_SRC_DIR = os.path.join(BASE_DIR, "tauri", "src-tauri", "src")
+
+
+def _rust_source():
+    """Every tauri/src-tauri/src/*.rs, sorted and concatenated, so moving code
+    between modules does not hide it from these checks."""
+    parts = []
+    for name in sorted(os.listdir(RUST_SRC_DIR)):
+        if name.endswith(".rs"):
+            with open(os.path.join(RUST_SRC_DIR, name), "r", encoding="utf-8") as f:
+                parts.append(f.read())
+    return "\n".join(parts)
 
 
 class TestLoadingScreensAndLockouts(unittest.TestCase):
@@ -130,8 +142,7 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         self.assertTrue(conf.get("app", {}).get("withGlobalTauri", False), "withGlobalTauri must be enabled")
         self.assertEqual(conf.get("build", {}).get("frontendDist"), "../src", "frontendDist should point to ../src")
 
-        with open(main_rs_path, "r", encoding="utf-8") as f:
-            rs = f.read()
+        rs = _rust_source()
         self.assertIn('emit("server-error"', rs)
         self.assertIn('emit("startup-progress"', rs)
         self.assertIn('emit("server-ready"', rs)
@@ -197,9 +208,7 @@ class TestEnginePortIsDynamic(unittest.TestCase):
         )
 
     def test_rust_selects_a_free_port(self):
-        path = os.path.join(BASE_DIR, "tauri", "src-tauri", "src", "main.rs")
-        with open(path, encoding="utf-8") as f:
-            body = f.read()
+        body = _rust_source()
         self.assertIn("fn find_available_port", body)
         self.assertIn('env("DUBMATE_PORT"', body)
 

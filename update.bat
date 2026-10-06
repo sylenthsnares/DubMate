@@ -54,18 +54,14 @@ if not exist "%~dp0.venv\Scripts\python.exe" (
     call "%~dp0setup_dubmate_win.bat"
 ) else (
     "%~dp0.venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
-    "%~dp0.venv\Scripts\python.exe" -m pip install --upgrade -r "%~dp0requirements.txt"
-    if %errorlevel% neq 0 (
+    "%~dp0.venv\Scripts\python.exe" -m pip install --upgrade -r "%~dp0requirements.txt" || (
         echo [NOTICE] Pip install returned a non-zero code. Retrying with explicit flags...
         "%~dp0.venv\Scripts\python.exe" -m pip install -r "%~dp0requirements.txt"
     )
     :: If user already has torch/demucs installed in .venv, upgrade builder requirements too
-    "%~dp0.venv\Scripts\python.exe" -c "import torch" >nul 2>&1
-    if %errorlevel% equ 0 (
-        if exist "%~dp0requirements_builder.txt" (
-            echo Updating Pack Builder AI dependencies...
-            "%~dp0.venv\Scripts\python.exe" -m pip install --upgrade -r "%~dp0requirements_builder.txt"
-        )
+    "%~dp0.venv\Scripts\python.exe" -c "import torch" >nul 2>&1 && if exist "%~dp0requirements_builder.txt" (
+        echo Updating Pack Builder AI dependencies...
+        "%~dp0.venv\Scripts\python.exe" -m pip install --upgrade -r "%~dp0requirements_builder.txt"
     )
 )
 
@@ -78,12 +74,8 @@ if not exist "%~dp0tools\ffmpeg.exe" (
     call "%~dp0setup_dubmate_win.bat"
 )
 if not exist "%~dp0tools\cloudflared.exe" (
-    if exist "%~dp0cloudflared.exe" (
-        copy /y "%~dp0cloudflared.exe" "%~dp0tools\cloudflared.exe" >nul 2>&1
-    ) else (
-        echo Downloading cloudflared.exe into tools\...
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile '%~dp0tools\cloudflared.exe' -UseBasicParsing"
-    )
+    echo Downloading cloudflared.exe into tools\...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile '%~dp0tools\cloudflared.exe' -UseBasicParsing"
 )
 
 echo.
