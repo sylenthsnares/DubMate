@@ -425,6 +425,24 @@
       </div>
     </section>
 
+    <!-- 1b. LEFT THE ROOM (browser guests with no DubMate of their own) -->
+    <section id="view-left" class="view-section" aria-label="You left the room">
+      <div class="hero-banner">
+        <h1 class="hero-title">You left the room</h1>
+        <p class="hero-subtitle">Enter a room code to join again.</p>
+      </div>
+      <div class="glass-card" style="width: 100%; max-width: 420px; margin: 0 auto; padding: 20px;">
+        <div class="form-group">
+          <label class="form-label" for="input-left-room-code">Room code</label>
+          <input type="text" id="input-left-room-code" class="form-input code-input" placeholder="e.g. DUB789"
+            maxlength="6" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="btn-left-join-room" class="btn btn-secondary btn-lg" style="width: 100%;">
+          <span>Join room</span>
+        </button>
+      </div>
+    </section>
+
 
     <!-- 2. ROOM CASTING LOBBY VIEW -->
     <section id="view-lobby" class="view-section" aria-label="Lobby">

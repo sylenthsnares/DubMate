@@ -180,6 +180,7 @@ class DubMateApp {
       lobby: document.getElementById('view-lobby'),
       booth: document.getElementById('view-booth'),
       screening: document.getElementById('view-screening'),
+      left: document.getElementById('view-left'),
     };
 
     // Header & Studio Breadcrumbs
@@ -223,6 +224,8 @@ class DubMateApp {
     this.btnCreateRoom = document.getElementById('btn-create-room');
     this.btnJoinRoom = document.getElementById('btn-join-room');
     this.inputRoomCode = document.getElementById('input-room-code');
+    this.inputLeftRoomCode = document.getElementById('input-left-room-code');
+    this.btnLeftJoinRoom = document.getElementById('btn-left-join-room');
 
     // Lobby elements
     this.lobbyPackTitle = document.getElementById('lobby-pack-title');
@@ -546,6 +549,9 @@ class DubMateApp {
 
     this.btnCreateRoom.addEventListener('click', () => this.createRoom());
     this.btnJoinRoom.addEventListener('click', () => this.joinRoomFromInput());
+    if (this.btnLeftJoinRoom) {
+      this.btnLeftJoinRoom.addEventListener('click', () => this.joinRoomFromInput(this.inputLeftRoomCode));
+    }
     if (this.btnRescanPacks) {
       this.btnRescanPacks.addEventListener('click', () => this.rescanPacksDirectory());
     }
@@ -1287,6 +1293,9 @@ class DubMateApp {
     // The home screen lists the packs of the engine serving this page. On a
     // host's tunnel page that is the host's engine, so go back to our own.
     if (viewName === 'landing' && this.goHome()) return;
+    // A browser guest who left stays on the "You left" view (a failed rejoin
+    // must not fall back to the host's home screen).
+    if (viewName === 'landing' && this.currentView === 'left') viewName = 'left';
     document.body.classList.remove('resizing');
     this.currentView = viewName;
     this.cancelCurrentCountdown();
@@ -1374,6 +1383,7 @@ class DubMateApp {
       connectionBanner.style.display = 'none';
       connectionBanner.classList.remove('is-recovered');
     }
+    const wasHost = this.isHost();
     this.resetRoomSession();
     this.selectedPackId = null;
 
@@ -1387,6 +1397,12 @@ class DubMateApp {
     if (this.studioBreadcrumbs) this.studioBreadcrumbs.style.display = 'none';
     if (this.castActivityBar) this.castActivityBar.style.display = 'none';
 
+    // A guest who joined from a plain browser link has no DubMate of their own
+    // to go back to, and the home screen here would list the host's packs.
+    if (!wasHost && !getHomeOrigin()) {
+      this.showView('left');
+      return;
+    }
     this.showView('landing');
     this.showToast('You left the room');
   }
@@ -2307,8 +2323,8 @@ class DubMateApp {
     }
   }
 
-  joinRoomFromInput() {
-    const code = (this.inputRoomCode?.value || '').trim().toUpperCase();
+  joinRoomFromInput(input = this.inputRoomCode) {
+    const code = (input?.value || '').trim().toUpperCase();
     if (!code) {
       this.showToast("Enter a room code.");
       return;
