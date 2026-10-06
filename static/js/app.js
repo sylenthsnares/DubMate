@@ -10,6 +10,7 @@ import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
 import { PackMethods } from './studio/packs.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
+import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
 class DubMateApp {
   constructor() {
@@ -213,6 +214,8 @@ class DubMateApp {
     this.btnRecordMain = document.getElementById('btn-record-main');
     this.recordIcon = document.getElementById('record-icon');
     this.recordStatusLabel = document.getElementById('record-status-label');
+    this.btnTakeHistory = document.getElementById('btn-take-history');
+    this.takeHistoryPanel = document.getElementById('take-history-panel');
     this.btnPlayOrig = document.getElementById('btn-play-orig');
     this.btnPreviewTake = document.getElementById('btn-preview-take');
     this.sliderNudge = document.getElementById('slider-nudge');
@@ -719,14 +722,14 @@ class DubMateApp {
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
-      const take = this.roomState?.takes?.[this.currentLineIndex];
+      const take = this.takeForLine(this.currentLineIndex);
       if (take && take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, val);
       this.syncTakeParams();
     });
 
     if (this.btnAutoMatchGain) {
       this.btnAutoMatchGain.addEventListener('click', () => {
-        const take = this.roomState?.takes?.[this.currentLineIndex];
+        const take = this.takeForLine(this.currentLineIndex);
         if (take && take.auto_gain_db !== undefined) {
           const targetGain = parseFloat(take.auto_gain_db);
           this.sliderGain.value = targetGain;
@@ -777,6 +780,7 @@ class DubMateApp {
     this.btnPrevLine.addEventListener('click', () => this.stepLine(-1));
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
+    this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
 
     // Studio Noise Reduction Synchronization & Calibration Listeners
     const onNoiseToggleChange = (e) => {
@@ -899,13 +903,14 @@ class DubMateApp {
     // idempotent, so running it again here is harmless.
     this.socket.on('*', (data) => {
       if (data.state) {
-        this.applyIncomingState(data);
+        if (!this.applyIncomingState(data)) return;
 
         if (this.currentView === 'lobby') {
           this.renderLobbyState();
         }
         if (this.currentView === 'booth') {
           this.renderTimelineChips();
+          this.renderTakeHistory();
         }
         this.renderCastActivityHUD();
         this.updateScreeningControls();
@@ -913,7 +918,7 @@ class DubMateApp {
     });
 
     this.socket.on('user_status_updated', (data) => {
-      this.applyIncomingState(data);
+      if (!this.applyIncomingState(data)) return;
       if (this.roomState && data.payload?.user) {
         this.roomState.users[data.payload.user_id] = data.payload.user;
         this.renderCastActivityHUD();
@@ -921,13 +926,13 @@ class DubMateApp {
     });
 
     this.socket.on('take_recorded', async (data) => {
-      this.applyIncomingState(data);
+      if (!this.applyIncomingState(data)) return;
       const lineIdx = data.payload?.line_index;
+      const take = this.takeForLine(lineIdx);
       // Invalidate old take buffer from audio engine cache immediately
-      this.audio.evictTakeCache(lineIdx);
+      this.audio.evictTakeCache(take);
 
       // Preload updated buffer for instant premiere playback
-      const take = this.roomState?.takes?.[lineIdx];
       if (take && take.url) {
         try {
           const freshBuf = await this.audio.loadAudioBuffer(take.url, true);
@@ -941,7 +946,7 @@ class DubMateApp {
       this.renderTimelineChips();
       this.renderCastActivityHUD();
 
-      const userName = data.payload?.user_name || this.roomState?.takes?.[lineIdx]?.user_name || 'Cast member';
+      const userName = data.payload?.user_name || take?.user_name || 'Cast member';
       if (data.payload?.user_id === this.user.id) {
         this.showToast("Take saved");
       } else {
@@ -949,19 +954,26 @@ class DubMateApp {
       }
     });
 
-    this.socket.on('take_cleared', (data) => {
-      this.applyIncomingState(data);
+    // Someone put another take in the dub, or deleted one: the line now plays a different take.
+    const onTakeChanged = (data) => {
       const lineIdx = data.payload?.line_index;
-      this.audio.evictTakeCache(lineIdx);
+      if (data.type === 'take_deleted') {
+        // Look the take up before the new state drops it
+        const line = this.roomState?.pack?.lines?.[lineIdx];
+        this.audio.evictTakeCache(lineTakes(this.roomState?.takes, line).find((t) => t.take_id === data.payload?.take_id));
+      }
+      if (!this.applyIncomingState(data)) return;
       if (lineIdx === this.currentLineIndex) {
         this.loadBoothLine(lineIdx);
       }
       this.renderTimelineChips();
       this.renderCastActivityHUD();
-    });
+    };
+    this.socket.on('take_picked', onTakeChanged);
+    this.socket.on('take_deleted', onTakeChanged);
 
     this.socket.on('status_changed', (data) => {
-      this.applyIncomingState(data);
+      if (!this.applyIncomingState(data)) return;
       const newStatus = data.payload?.status || data.status;
       if (newStatus === 'recording' && this.currentView === 'lobby') {
         this.showView('booth');
@@ -974,7 +986,7 @@ class DubMateApp {
     });
 
     this.socket.on('warp_to_screening', (data) => {
-      this.applyIncomingState(data);
+      if (!this.applyIncomingState(data)) return;
       this.cancelCurrentCountdown();
       if (this.crumbPremiereLive) {
         this.crumbPremiereLive.style.display = 'inline-block';
@@ -1001,7 +1013,7 @@ class DubMateApp {
     });
 
     this.socket.on('export_ready', (data) => {
-      this.applyIncomingState(data);
+      if (!this.applyIncomingState(data)) return;
       const payload = data.payload || data;
       if (payload && (payload.download_url || payload.export_video_url || payload.download_url_16_9)) {
         this.handleExportSuccess(payload);
@@ -1037,23 +1049,34 @@ class DubMateApp {
    * Merges a socket message's room state into this.roomState. Local take peaks
    * are kept when the incoming take carries none, and the local line is always
    * kept. Safe to call more than once for the same message.
+   * Returns false, and changes nothing, when the state comes from a different
+   * DubMate version than this page (a tab left open across an update).
    */
   applyIncomingState(data) {
-    if (!data || !data.state) return;
+    if (!data || !data.state) return false;
     const incoming = data.state;
+    if (incoming.state_version !== TAKE_STATE_VERSION) {
+      this.showStaleTabNotice();
+      return false;
+    }
     if (!this.roomState) {
       this.roomState = incoming;
     } else {
-      // Preserve local take peaks if incoming take state does not specify them
-      const oldTakes = this.roomState.takes || {};
-      const newTakes = incoming.takes || {};
+      // Only the picked take carries peaks; keep the ones this tab already has.
+      const knownPeaks = new Map();
+      for (const entry of Object.values(this.roomState.takes || {})) {
+        for (const take of entry?.takes || []) {
+          if (take.peaks && take.peaks.length > 0) knownPeaks.set(take.take_id, take.peaks);
+        }
+      }
       const mergedTakes = {};
-
-      for (const [k, take] of Object.entries(newTakes)) {
-        const oldTake = oldTakes[k];
-        mergedTakes[k] = {
-          ...take,
-          peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (oldTake?.peaks || []),
+      for (const [lineId, entry] of Object.entries(incoming.takes || {})) {
+        mergedTakes[lineId] = {
+          ...entry,
+          takes: (entry.takes || []).map((take) => ({
+            ...take,
+            peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (knownPeaks.get(take.take_id) || []),
+          })),
         };
       }
 
@@ -1068,6 +1091,19 @@ class DubMateApp {
         current_line: this.currentLineIndex,
       };
     }
+    return true;
+  }
+
+  /** A persistent notice for a tab whose code is older or newer than the room's engine. */
+  showStaleTabNotice() {
+    this.isStaleTab = true;
+    const banner = document.getElementById('connection-banner');
+    const text = document.getElementById('connection-banner-text');
+    if (!banner || !text) return;
+    clearTimeout(this._connectionBannerTimer);
+    banner.classList.remove('is-recovered');
+    banner.style.display = 'flex';
+    text.innerText = 'DubMate was updated. Reload this page to keep going.';
   }
 
   initVideoPrompterSplitter() {
@@ -1417,6 +1453,7 @@ class DubMateApp {
    * had quietly stopped working.
    */
   renderConnectionState({ state, retryInMs } = {}) {
+    if (this.isStaleTab) return; // the reload notice stays up
     const banner = document.getElementById('connection-banner');
     const text = document.getElementById('connection-banner-text');
     if (!banner || !text) return;

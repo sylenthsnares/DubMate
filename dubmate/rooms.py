@@ -11,6 +11,7 @@ time, so a changed setting or a rescan is always seen.
 import os
 import json
 import time
+import uuid
 import random
 import shutil
 import asyncio
@@ -21,6 +22,10 @@ from fastapi import WebSocket, HTTPException
 import pack_loader
 import audio_processor
 from dubmate import common, packs_cache
+
+
+# room_state.json layout. Version 1 (no state_version) kept one take per line index.
+STATE_VERSION = 2
 
 
 def generate_room_code() -> str:
@@ -48,8 +53,13 @@ class Room:
         if pack.characters:
             self.role_assignments[pack.characters[0]] = [host_id]
 
-        # Takes: line_index -> take info dict
-        self.takes: Dict[int, Dict[str, Any]] = {}
+        # Takes by stable line ID: {"picked": take_id or None, "next_number": int,
+        # "takes": [take, ...] oldest first}. Entries for lines not in the current pack
+        # are kept but never shown or mixed.
+        self.takes: Dict[str, Dict[str, Any]] = {}
+        # Version 1 takes (keyed by line index, files in the old layout) whose files could
+        # not be moved yet. Saved as they are and retried on the next start.
+        self.pending_v1_takes: Dict[str, Any] = {}
         self.status: str = "lobby"  # "lobby" | "recording" | "screening"
         self.exported_video_path: Optional[str] = None
         self.exported_video_9_16_path: Optional[str] = None
@@ -61,6 +71,96 @@ class Room:
         # Take processing runs in a worker thread; this keeps one room's uploads and
         # noise-reduction toggles serialized without blocking other rooms.
         self.processing_lock = asyncio.Lock()
+
+    def line_entry(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """The line's take history, or None if it has no takes."""
+        return self.takes.get(line_id)
+
+    def picked_take(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """The take used in the dub for this line, or None."""
+        entry = self.takes.get(line_id)
+        if not entry:
+            return None
+        return next((t for t in entry["takes"] if t["take_id"] == entry["picked"]), None)
+
+    def add_take(self, line_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Adds a take to the line and picks it. Older takes are kept. fields may carry the
+        take_id its files were saved under; otherwise a new one is made."""
+        entry = self.takes.setdefault(line_id, {"picked": None, "next_number": 1, "takes": []})
+        take = {"take_id": uuid.uuid4().hex[:8], **fields, "number": entry["next_number"]}
+        entry["next_number"] += 1
+        entry["takes"].append(take)
+        entry["picked"] = take["take_id"]
+        return take
+
+    def find_take(self, line_id: str, take_id: str) -> Optional[Dict[str, Any]]:
+        """The line's take with this ID, or None."""
+        entry = self.takes.get(line_id)
+        return next((t for t in entry["takes"] if t["take_id"] == take_id), None) if entry else None
+
+    def pick_take(self, line_id: str, take_id: str) -> Optional[Dict[str, Any]]:
+        """Puts a take in the dub. Returns it, or None if the line has no such take."""
+        take = self.find_take(line_id, take_id)
+        if take:
+            self.takes[line_id]["picked"] = take_id
+        return take
+
+    def remove_take(self, line_id: str, take_id: str) -> Optional[str]:
+        """Deletes a take's files and entry. A deleted picked take falls back to the newest
+        remaining one, and the line's entry goes with its last take. Returns the picked
+        take_id afterwards, or None when the line has no takes left."""
+        entry = self.takes.get(line_id)
+        if not entry:
+            return None
+        if any(t["take_id"] == take_id for t in entry["takes"]):
+            audio_processor.delete_take_files(audio_processor.take_dir(self.room_id, line_id, create=False), take_id)
+            entry["takes"] = [t for t in entry["takes"] if t["take_id"] != take_id]
+        if not entry["takes"]:
+            del self.takes[line_id]
+            return None
+        if entry["picked"] == take_id:
+            entry["picked"] = entry["takes"][-1]["take_id"]
+        return entry["picked"]
+
+    def mix_takes(self) -> Dict[int, Dict[str, Any]]:
+        """{line index: copy of the picked take plus its wav_path} for the lines of the current
+        pack: the input of the render, export and project ZIP functions."""
+        out = {}
+        for line in self.pack.lines:
+            take = self.picked_take(line["line_id"])
+            if take:
+                out[line["index"]] = {
+                    **take,
+                    "wav_path": audio_processor.take_wav_path(self.room_id, line["line_id"], take["take_id"]),
+                }
+        return out
+
+    def find_line(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """The current pack's line with this ID, or None."""
+        return next((l for l in self.pack.lines if l["line_id"] == line_id), None)
+
+    def wire_take(self, line_id: str, take: Dict[str, Any]) -> Dict[str, Any]:
+        """A take as clients read it: the stored fields plus an audio url that changes
+        whenever the audio does."""
+        return {
+            **take,
+            "url": f"/api/rooms/{self.room_id}/lines/{line_id}/takes/{take['take_id']}/audio?v={take.get('audio_version', 0)}",
+        }
+
+    def wire_line(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """The line's take history as clients read it. Only the picked take carries peaks,
+        so a line with many takes doesn't bloat every broadcast; the others are fetched on
+        demand."""
+        entry = self.takes.get(line_id)
+        if not entry:
+            return None
+        takes = []
+        for take in entry["takes"]:
+            wire = self.wire_take(line_id, take)
+            if take["take_id"] != entry["picked"]:
+                wire.pop("peaks", None)
+            takes.append(wire)
+        return {"picked": entry["picked"], "next_number": entry["next_number"], "takes": takes}
 
     def invalidate_exports(self):
         """Drops renders made from takes or mix settings that just changed.
@@ -127,6 +227,7 @@ class Room:
             room_dir = audio_processor.get_room_cache_dir(self.room_id)
             state_file = os.path.join(room_dir, "room_state.json")
             data = {
+                "state_version": STATE_VERSION,
                 "room_id": self.room_id,
                 "pack_id": self.pack.pack_id,
                 "host_id": self.host_id,
@@ -136,6 +237,8 @@ class Room:
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
             }
+            if self.pending_v1_takes:
+                data["pending_v1_takes"] = self.pending_v1_takes
             tmp_file = state_file + ".tmp"
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -150,30 +253,16 @@ class Room:
         has_export_16_9 = self.exported_video_path is not None and os.path.exists(self.exported_video_path)
         has_export = has_export_16_9
         return {
+            "state_version": STATE_VERSION,
             "room_id": self.room_id,
             "pack": self.pack.to_dict(),
             "host_id": self.host_id,
             "users": self.users,
             "role_assignments": self.role_assignments,
             "takes": {
-                str(k): {
-                    "user_id": v.get("user_id"),
-                    "user_name": v.get("user_name"),
-                    "duration": v.get("duration"),
-                    "peaks": v.get("peaks"),
-                    "offset_ms": v.get("offset_ms", 0),
-                    "pitch_semitones": v.get("pitch_semitones", 0.0),
-                    "reverb_wet": v.get("reverb_wet", 0.0),
-                    "gain_db": v.get("gain_db", 0.0),
-                    "noise_reduction": v.get("noise_reduction", False),
-                    "has_raw": v.get("has_raw", True),
-                    "speech_loudness_db": v.get("speech_loudness_db"),
-                    "target_loudness_db": v.get("target_loudness_db"),
-                    "auto_gain_db": v.get("auto_gain_db", 0.0),
-                    "url": v.get("url"),
-                    "recorded_at": v.get("recorded_at"),
-                }
-                for k, v in self.takes.items()
+                line["line_id"]: self.wire_line(line["line_id"])
+                for line in self.pack.lines
+                if line["line_id"] in self.takes
             },
             "status": self.status,
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
@@ -295,11 +384,72 @@ def load_persisted_rooms():
                     room = Room(r_id, pack, host_id, host_name, host_color)
                     room.users = data.get("users", room.users)
                     room.role_assignments = data.get("role_assignments", room.role_assignments)
-                    raw_takes = data.get("takes", {})
-                    room.takes = {int(k): v for k, v in raw_takes.items()}
+                    raw_takes = data.get("takes") or {}
                     room.status = data.get("status", "lobby")
                     room.exported_video_path = data.get("exported_video_path")
+                    if data.get("state_version") == STATE_VERSION:
+                        room.takes = raw_takes
+                        v1_takes = data.get("pending_v1_takes") or {}
+                    else:
+                        v1_takes = raw_takes
+                    if isinstance(v1_takes, dict) and v1_takes:
+                        _migrate_v1_takes(room, v1_takes)
+                        room._sync_save_to_disk()
                     ROOMS[r_id.upper()] = room
                     print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
             except Exception as ex:
                 print(f"[DubMate] Error restoring room {r_id}: {ex}")
+
+
+def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
+    """Moves a version 1 room (one take per line index, take_line_<i>*.wav in the room folder)
+    to takes by line ID: each take becomes take1 of the line now at its index. A take for an
+    index outside the current pack keeps its files where they are.
+
+    Each take moves all or nothing. One whose files can't be moved (held open by another
+    program) keeps its old files and goes to room.pending_v1_takes, which is saved with the
+    room and retried on the next start; the rest of the room loads and works meanwhile. If
+    the line got new takes in the meantime, the old take is added after them and the pick is
+    left alone. Safe to rerun after a crash: files already moved are found in their new place."""
+    lines = room.pack.lines
+    now_ms = int(time.time() * 1000)
+    pending: Dict[str, Any] = {}
+    for key, old in raw_takes.items():
+        try:
+            index = int(key)
+        except (TypeError, ValueError):
+            print(f"[DubMate] Room {room.room_id}: skipped a take with an unreadable line number {key!r}.")
+            continue
+        if not 0 <= index < len(lines) or not isinstance(old, dict):
+            print(f"[DubMate] Room {room.room_id}: take for line {index + 1} is not in this scene; its files stay in the room folder.")
+            continue
+        line_id = lines[index]["line_id"]
+        if room.find_take(line_id, "take1"):
+            continue  # already migrated
+        try:
+            moved = audio_processor.migrate_legacy_take_files(
+                room.room_id, index, line_id, "take1", bool(old.get("noise_reduction", False))
+            )
+        except Exception as ex:
+            print(f"[DubMate] Room {room.room_id}: could not move the take for line {index + 1} to the new "
+                  f"layout ({type(ex).__name__}: {ex}). Its files are unchanged and it will be retried on the "
+                  f"next start; until then the line plays without it.")
+            pending[key] = old
+            continue
+        if not moved["has_audio"]:
+            print(f"[DubMate] Room {room.room_id}: take for line {index + 1} has no audio on disk; dropped.")
+            continue
+        take = {k: v for k, v in old.items() if k not in ("wav_path", "url")}
+        take.update(
+            take_id="take1", audio_version=now_ms,
+            has_raw=moved["has_raw"], noise_reduction=moved["noise_reduction"],
+        )
+        entry = room.takes.get(line_id)
+        if entry is None:
+            take["number"] = 1
+            room.takes[line_id] = {"picked": "take1", "next_number": 2, "takes": [take]}
+        else:
+            take["number"] = entry["next_number"]
+            entry["next_number"] += 1
+            entry["takes"].append(take)
+    room.pending_v1_takes = pending

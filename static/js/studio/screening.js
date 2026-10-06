@@ -1,6 +1,7 @@
 // studio/screening.js - Premiere screening theater: theater source, stem preload,
 // balance/presence mix, host-synced playback and the sample-accurate audio schedule.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
+import { pickedTake } from './takes.js';
 
 export class ScreeningMethods {
   initScreeningEvents() {
@@ -145,7 +146,7 @@ export class ScreeningMethods {
       return false;
     }
     for (const line of this.roomState.pack.lines) {
-      const take = this.roomState.takes[line.index];
+      const take = pickedTake(this.roomState.takes, line);
       const targetUrl = (take && take.url) ? take.url : line.audio_url;
       if (targetUrl && !this.screeningBuffers.has(targetUrl)) {
         return false;
@@ -174,7 +175,7 @@ export class ScreeningMethods {
 
       // 2. Dialogue lines & takes in parallel
       for (const line of this.roomState.pack.lines) {
-        const take = this.roomState.takes[line.index];
+        const take = pickedTake(this.roomState.takes, line);
         if (take && take.url) {
           if (!this.screeningBuffers.has(take.url)) {
             loadTasks.push(
@@ -497,7 +498,7 @@ export class ScreeningMethods {
 
     // 3. Schedule dialogue takes & unassigned original character clips
     for (const line of this.roomState.pack.lines) {
-      const take = this.roomState.takes[line.index];
+      const take = pickedTake(this.roomState.takes, line);
 
       if (take && take.url && this.screeningBuffers.has(take.url)) {
         const offsetSec = (take.offset_ms || 0) / 1000.0;

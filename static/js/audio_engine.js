@@ -1,4 +1,5 @@
 // audio_engine.js - High-Performance Voice DSP Engine, Lightweight Pitch Shifting & Shared Mix Busses
+import { takeAudioKey } from './studio/takes.js';
 
 export class AudioEngine {
   constructor() {
@@ -711,10 +712,12 @@ export class AudioEngine {
     }
   }
 
-  evictTakeCache(lineIndex) {
-    if (lineIndex !== undefined && lineIndex !== null) {
+  /** Drops every cached version of this take's audio (any ?v=). */
+  evictTakeCache(take) {
+    const audioKey = takeAudioKey(take);
+    if (audioKey) {
       for (const key of Array.from(this.bufferCache.keys())) {
-        if (key.includes(`/takes/${lineIndex}/audio`)) {
+        if (takeAudioKey({ url: key }) === audioKey) {
           this.bufferCache.delete(key);
         }
       }

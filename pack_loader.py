@@ -967,6 +967,20 @@ def transcode_to_mp4(orig_video_path: str, target_mp4_path: str) -> bool:
     return False
 
 
+def assign_line_ids(lines: List[Dict[str, Any]]) -> None:
+    """Gives each line a stable ID from its cue start in milliseconds (e.g. 't44048').
+    Lines on the same millisecond get '-2', '-3', ... in list order."""
+    used = set()
+    for line in lines:
+        base = f"t{round(float(line['start']) * 1000)}"
+        line_id, n = base, 1
+        while line_id in used:
+            n += 1
+            line_id = f"{base}-{n}"
+        used.add(line_id)
+        line["line_id"] = line_id
+
+
 class PackInfo:
     def __init__(self, pack_id: str, folder: str, name: str):
         self.pack_id = pack_id
@@ -1040,6 +1054,7 @@ def load_persistent_pack_cache():
                     pack.backing_track_path = entry.get("backing_track_path")
                     pack.duration = d.get("duration", 0.0)
                     pack.lines = d.get("lines", [])
+                    assign_line_ids(pack.lines)
                     pack.characters = d.get("characters", [])
                     pack.mean_vocal_loudness_db = d.get("mean_vocal_loudness_db", -21.0)
                     PACK_OBJECT_CACHE[full_path] = (cur_mtime, pack)
@@ -1302,6 +1317,7 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
             "image": entry.get("image"),
         })
 
+    assign_line_ids(lines)
     pack.lines = lines
     if pack.duration <= 0.0 and lines:
         pack.duration = max(l["end"] for l in lines)

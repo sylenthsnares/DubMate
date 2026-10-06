@@ -117,7 +117,7 @@ DubMate
 │   ├── static/css/style.css   # Warm Wood & Analog Hardware Studio design system
 │   ├── static/css/builder.css # Pack Builder styles
 │   ├── static/js/app.js       # Core application controller & stage state machine
-│   ├── static/js/studio/      # Studio feature modules mixed into app.js (audio_setup.js, booth.js, export.js, lobby.js, packs.js, screening.js)
+│   ├── static/js/studio/      # Studio feature modules mixed into app.js (audio_setup.js, booth.js, export.js, lobby.js, packs.js, screening.js, takes.js)
 │   ├── static/js/ui_common.js # Shared UI helpers (escapeHtml, toasts, mode dropdown, mixin)
 │   ├── static/js/pack_builder.js # Pack Builder timeline controller & SSE client
 │   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Reverb)

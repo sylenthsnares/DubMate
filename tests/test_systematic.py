@@ -201,8 +201,9 @@ class TestSystematicDualEngine(unittest.TestCase):
             with open(wav_tmp, "rb") as f:
                 wav_bytes = f.read()
                 
+            line_id = res_state.json()["pack"]["lines"][0]["line_id"]
             res_take = self.client.post(
-                f"/api/rooms/{room_id}/takes/0",
+                f"/api/rooms/{room_id}/lines/{line_id}/takes",
                 files={"file": ("take.wav", wav_bytes, "audio/wav")},
                 data={
                     "user_id": user_id,
@@ -217,7 +218,8 @@ class TestSystematicDualEngine(unittest.TestCase):
             self.assertEqual(res_take.json()["status"], "ok")
             
             # 4. Fetch take audio
-            res_get_take = self.client.get(f"/api/rooms/{room_id}/takes/0/audio")
+            take_id = res_take.json()["take"]["take_id"]
+            res_get_take = self.client.get(f"/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/audio")
             self.assertEqual(res_get_take.status_code, 200)
             self.assertIn("audio/", res_get_take.headers.get("content-type", ""))
         finally:
@@ -266,8 +268,9 @@ class TestSystematicDualEngine(unittest.TestCase):
             with open(wav_tmp, "rb") as f:
                 wav_bytes = f.read()
 
+            line_id = res_room.json()["state"]["pack"]["lines"][0]["line_id"]
             res_take = self.client.post(
-                f"/api/rooms/{room_id}/takes/0",
+                f"/api/rooms/{room_id}/lines/{line_id}/takes",
                 files={"file": ("take.wav", wav_bytes, "audio/wav")},
                 data={
                     "user_id": user_id,

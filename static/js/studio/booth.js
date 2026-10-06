@@ -2,6 +2,7 @@
 // waveform/nudge, A/B preview and noise reduction.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { WaveformRenderer } from '../waveform.js';
+import { pickedTake, lineTakes, takeCount } from './takes.js';
 
 export class BoothMethods {
   toggleFilterLines() {
@@ -11,6 +12,11 @@ export class BoothMethods {
     }
     this.renderTimelineChips();
     this.showToast(this.filterMyLinesOnly ? "Showing your lines" : "Showing all lines");
+  }
+
+  /** The take used in the dub for the line at this index, or undefined. */
+  takeForLine(index) {
+    return pickedTake(this.roomState?.takes, this.roomState?.pack?.lines?.[index]);
   }
 
   /** Your assigned character, or any line when nobody is cast and you host. */
@@ -137,7 +143,7 @@ export class BoothMethods {
     const lineCap = (line.caption || line.text || '').trim();
     this.stageCaptionText.innerText = lineCap ? `“${lineCap}”` : `(${line.character}, no subtitle)`;
 
-    const take = this.roomState.takes[index];
+    const take = pickedTake(this.roomState.takes, line);
     if (take) {
       this.sliderNudge.value = take.offset_ms || 0;
       this.nudgeDisplay.innerText = (take.offset_ms || 0) + ' ms';
@@ -180,6 +186,7 @@ export class BoothMethods {
 
     this.recordState = 'idle';
     this.updateRecordButtonUI(take);
+    this.renderTakeHistory();
     this.setABMode('A');
 
     // 1. INSTANT WAVEFORM RENDERING (0ms latency via precomputed peaks)
@@ -188,19 +195,18 @@ export class BoothMethods {
 
     // Fallback: If take exists but peaks are not yet loaded in state, fetch on-demand or check cache
     if (take && (!takePeaks || takePeaks.length === 0)) {
-      if (this.takePeaksCache?.has(index)) {
-        takePeaks = this.takePeaksCache.get(index);
+      if (this.takePeaksCache?.has(take.take_id)) {
+        takePeaks = this.takePeaksCache.get(take.take_id);
       } else {
         // Asynchronously fetch compact peaks from dedicated endpoint
-        fetch(`/api/rooms/${this.roomState.room_id}/takes/${index}/peaks`)
+        fetch(`/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}/peaks`)
           .then(r => r.ok ? r.json() : null)
           .then(pData => {
             if (pData && pData.peaks && pData.peaks.length > 0 && currentSeq === this.loadLineSeq) {
               if (!this.takePeaksCache) this.takePeaksCache = new Map();
-              this.takePeaksCache.set(index, pData.peaks);
-              if (this.roomState?.takes?.[index]) {
-                this.roomState.takes[index].peaks = pData.peaks;
-              }
+              this.takePeaksCache.set(take.take_id, pData.peaks);
+              const shownTake = this.takeForLine(index);
+              if (shownTake?.take_id === take.take_id) shownTake.peaks = pData.peaks;
               this.waveform.setData({ takePeaks: pData.peaks });
             }
           })
@@ -237,10 +243,9 @@ export class BoothMethods {
           if ((!takePeaks || takePeaks.length === 0) && takeBuf) {
             takePeaks = WaveformRenderer.extractPeaksFromBuffer(takeBuf, 100);
             if (!this.takePeaksCache) this.takePeaksCache = new Map();
-            this.takePeaksCache.set(index, takePeaks);
-            if (this.roomState?.takes?.[index]) {
-              this.roomState.takes[index].peaks = takePeaks;
-            }
+            this.takePeaksCache.set(take.take_id, takePeaks);
+            const shownTake = this.takeForLine(index);
+            if (shownTake?.take_id === take.take_id) shownTake.peaks = takePeaks;
             this.setWaveformForLine(line, take, origPeaks, takePeaks);
           }
         } catch (e) {
@@ -295,7 +300,7 @@ export class BoothMethods {
       if (nLine && nLine.audio_url) {
         this.audio.loadAudioBuffer(nLine.audio_url).catch(() => { });
       }
-      const nTake = this.roomState.takes?.[nIdx];
+      const nTake = pickedTake(this.roomState.takes, nLine);
       if (nTake && nTake.url) {
         this.audio.loadAudioBuffer(nTake.url).catch(() => { });
       }
@@ -304,11 +309,13 @@ export class BoothMethods {
 
   updateRecordButtonUI(take = null) {
     if (!take) {
-      take = this.roomState?.takes?.[this.currentLineIndex];
+      take = this.takeForLine(this.currentLineIndex);
     }
 
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const isMyLine = this.canRecordLine(line);
+    // Only the line's actor can delete its takes; hide the button for everyone else.
+    if (this.btnClearTake) this.btnClearTake.style.display = isMyLine ? '' : 'none';
 
     if (!isMyLine) {
       this.btnRecordMain.className = 'btn-big-record locked';
@@ -336,7 +343,7 @@ export class BoothMethods {
       this.btnRecordMain.className = 'btn-big-record';
       if (take) {
         this.recordIcon.innerText = '↺';
-        this.recordStatusLabel.innerText = `Recorded by ${take.user_name} (${take.duration}s)`;
+        this.recordStatusLabel.innerText = `Take ${take.number} by ${take.user_name} (${take.duration}s)`;
       } else {
         this.recordIcon.innerText = '●';
         this.recordStatusLabel.innerText = 'Press Space to record';
@@ -356,7 +363,7 @@ export class BoothMethods {
       }
 
       const chip = document.createElement('div');
-      const hasTake = !!(this.roomState.takes && this.roomState.takes[idx]);
+      const hasTake = takeCount(this.roomState.takes, l) > 0;
       const isActive = idx === this.currentLineIndex;
 
       chip.className = `chip-item ${isActive ? 'active' : ''} ${hasTake ? 'done' : ''} ${isMyLine ? 'my-line' : ''}`;
@@ -416,6 +423,7 @@ export class BoothMethods {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     this.isPlayingReference = false;
     this.isPlayingTake = false;
+    this.playingHistoryTakeId = null;
     this.audio.stopAllPlayback();
     if (this.stageVideo) {
       this.stageVideo.pause();
@@ -484,7 +492,7 @@ export class BoothMethods {
     this.stopBoothPlayback();
 
     const line = this.roomState.pack.lines[this.currentLineIndex];
-    const take = this.roomState?.takes?.[this.currentLineIndex];
+    const take = this.takeForLine(this.currentLineIndex);
 
     if (!take || !take.url) {
       this.showToast("Record a take first");
@@ -505,11 +513,20 @@ export class BoothMethods {
       return;
     }
 
+    await this.playTakeOverScene(line, this.currentTakeBuffer, {
+      offsetMs: parseInt(this.sliderNudge.value, 10),
+      pitch: parseFloat(this.sliderPitch.value),
+      reverb: parseFloat(this.sliderReverb.value) / 100.0,
+      gain: parseFloat(this.sliderGain.value),
+    });
+  }
+
+  /** Plays a take buffer over the scene from the line's start with the given settings. */
+  async playTakeOverScene(line, takeBuffer, { offsetMs, pitch, reverb, gain }) {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     const token = this.activePlaybackToken;
     this.isPlayingTake = true;
 
-    const offsetMs = parseInt(this.sliderNudge.value, 10);
     const offsetSec = offsetMs / 1000.0;
     const previewStartSec = Math.max(0, line.start + Math.min(0, offsetSec));
 
@@ -520,13 +537,10 @@ export class BoothMethods {
       await this.stageVideo.play();
     } catch (e) { }
 
-    const pitch = parseFloat(this.sliderPitch.value);
-    const reverb = parseFloat(this.sliderReverb.value) / 100.0;
-    const gain = parseFloat(this.sliderGain.value);
     const lowcut = this.checkLowcut.checked;
 
     const startAudioTime = performance.now();
-    const previewDurationSec = Math.max(line.duration || 3.0, (this.currentTakeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
+    const previewDurationSec = Math.max(line.duration || 3.0, (takeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
 
     const animPlayhead = () => {
       if (token !== this.activePlaybackToken) return;
@@ -544,7 +558,7 @@ export class BoothMethods {
     this.audio.previewTakeIsolated({
       backingBuffer: this.backingBuffer,
       lineStartSec: line.start,
-      takeBuffer: this.currentTakeBuffer,
+      takeBuffer,
       origBuffer: this.origBuffer,
       offsetMs,
       pitchSemitones: pitch,
@@ -597,14 +611,14 @@ export class BoothMethods {
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
 
-    if (this.roomState && this.roomState.takes && this.roomState.takes[lineIdx]) {
-      this.roomState.takes[lineIdx].offset_ms = offsetMs;
-      this.roomState.takes[lineIdx].pitch_semitones = pitch;
-      this.roomState.takes[lineIdx].reverb_wet = reverb;
-      this.roomState.takes[lineIdx].gain_db = gain;
-    }
+    const take = this.roomState && this.takeForLine(lineIdx);
+    if (!take) return;
+    take.offset_ms = offsetMs;
+    take.pitch_semitones = pitch;
+    take.reverb_wet = reverb;
+    take.gain_db = gain;
 
-    this.socket.updateTakeParams(lineIdx, {
+    this.socket.updateTakeParams(this.roomState.pack.lines[lineIdx].line_id, take.take_id, {
       offset_ms: offsetMs,
       pitch_semitones: pitch,
       reverb_wet: reverb,
@@ -628,7 +642,7 @@ export class BoothMethods {
       this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
     }
 
-    const currentTake = this.roomState?.takes?.[this.currentLineIndex];
+    const currentTake = this.takeForLine(this.currentLineIndex);
     if (currentTake && this.views.booth.classList.contains('active') && !this.isProcessingTake) {
       this.toggleTakeNoiseReduction(this.currentLineIndex, this.applyNoiseReduction);
     }
@@ -737,7 +751,7 @@ export class BoothMethods {
       this.showToast("Mic calibrated");
 
       // If active line has a take with noise reduction enabled, re-apply with new profile
-      const take = this.roomState?.takes?.[this.currentLineIndex];
+      const take = this.takeForLine(this.currentLineIndex);
       if (take && this.applyNoiseReduction && !this.isProcessingTake) {
         this.toggleTakeNoiseReduction(this.currentLineIndex, true);
       }
@@ -794,19 +808,21 @@ export class BoothMethods {
     }
     this.showToast("Mic calibration reset");
 
-    const take = this.roomState?.takes?.[this.currentLineIndex];
+    const take = this.takeForLine(this.currentLineIndex);
     if (take && this.applyNoiseReduction && !this.isProcessingTake) {
       this.toggleTakeNoiseReduction(this.currentLineIndex, true);
     }
   }
 
   async toggleTakeNoiseReduction(lineIndex, enable) {
-    if (!this.roomState || !this.roomState.takes || !this.roomState.takes[lineIndex]) {
+    const target = this.roomState && this.takeForLine(lineIndex);
+    if (!target) {
       return;
     }
+    const lineId = this.roomState.pack.lines[lineIndex].line_id;
 
     try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}/noise_reduction`, {
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/lines/${lineId}/takes/${target.take_id}/noise_reduction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ noise_reduction: enable }),
@@ -817,15 +833,17 @@ export class BoothMethods {
       }
 
       const data = await res.json();
-      if (data.take) {
-        this.roomState.takes[lineIndex] = data.take;
+      const entryTakes = lineTakes(this.roomState.takes, this.roomState.pack.lines[lineIndex]);
+      const pos = data.take ? entryTakes.findIndex((t) => t.take_id === data.take.take_id) : -1;
+      if (pos >= 0) {
+        entryTakes[pos] = data.take;
       }
 
-      this.audio.evictTakeCache(lineIndex);
+      this.audio.evictTakeCache(this.takeForLine(lineIndex));
 
       if (lineIndex === this.currentLineIndex) {
         const line = this.roomState.pack.lines[lineIndex];
-        const take = this.roomState.takes[lineIndex];
+        const take = this.takeForLine(lineIndex);
         let origPeaks = line.peaks || [];
         let takePeaks = take ? (take.peaks || []) : [];
 
@@ -1092,7 +1110,7 @@ export class BoothMethods {
     const gain = parseFloat(this.sliderGain.value);
     // Ask the server to apply this take's scene-matched gain unless the slider was moved
     // off 0 / off the previous take's auto gain (the slider still shows that take's level).
-    const prevTake = this.roomState?.takes?.[lineIndex];
+    const prevTake = this.takeForLine(lineIndex);
     const prevAuto = prevTake ? parseFloat(prevTake.auto_gain_db) : NaN;
     const autoGain = gain === 0 || (!Number.isNaN(prevAuto) && Math.abs(gain - prevAuto) < 0.05);
 
@@ -1108,7 +1126,8 @@ export class BoothMethods {
     formData.append('auto_gain', autoGain ? 'true' : 'false');
 
     try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}`, {
+      const lineId = this.roomState.pack.lines[lineIndex].line_id;
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/lines/${lineId}/takes`, {
         method: 'POST',
         body: formData,
       });
@@ -1116,11 +1135,11 @@ export class BoothMethods {
         throw new Error(`Server returned status ${res.status}`);
       }
       const data = await res.json();
-      if (data.take) {
+      if (data.line) {
         if (!this.roomState.takes) this.roomState.takes = {};
-        this.roomState.takes[lineIndex] = data.take;
+        this.roomState.takes[lineId] = data.line;
       }
-      this.audio.evictTakeCache(lineIndex);
+      this.audio.evictTakeCache(this.takeForLine(lineIndex));
       if (recordedBuffer) {
         this.currentTakeBuffer = recordedBuffer;
         if (data.take && data.take.url) {
@@ -1191,14 +1210,157 @@ export class BoothMethods {
     }
   }
 
+  /** Deletes the take in the dub; the line falls back to its newest other take. */
   clearCurrentTake() {
+    return this.deleteTake(this.takeForLine(this.currentLineIndex));
+  }
+
+  /** Deletes one of the current line's takes after a confirm. */
+  async deleteTake(take) {
     if (this.isProcessingTake) return;
     this.cancelCurrentCountdown();
-    if (confirm("Delete this take?")) {
-      this.socket.clearTake(this.currentLineIndex);
-      this.audio.evictTakeCache(this.currentLineIndex);
-      delete this.roomState.takes[this.currentLineIndex];
-      this.loadBoothLine(this.currentLineIndex);
+    const lineIndex = this.currentLineIndex;
+    const line = this.roomState?.pack?.lines?.[lineIndex];
+    if (!line || !take) {
+      this.showToast("Record a take first");
+      return;
+    }
+    if (!confirm(`Delete take ${take.number}? This can't be undone.`)) return;
+
+    try {
+      const res = await fetch(
+        `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}?user_id=${encodeURIComponent(this.user.id)}`,
+        { method: 'DELETE' },
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      this.audio.evictTakeCache(take);
+      if (data.line) {
+        this.roomState.takes[line.line_id] = data.line;
+      } else {
+        delete this.roomState.takes[line.line_id];
+      }
+      this.showToast("Take deleted");
+      if (lineIndex === this.currentLineIndex) this.loadBoothLine(lineIndex);
+    } catch (err) {
+      this.showToast(this.friendlyError(err, "That take wasn't deleted. Try again."));
+    }
+  }
+
+  // --- Take history ---
+
+  toggleTakeHistory() {
+    this.takeHistoryOpen = !this.takeHistoryOpen;
+    this.renderTakeHistory();
+  }
+
+  /** The "Takes (N)" button and its panel. Shown only with 2+ takes on a line you can record. */
+  renderTakeHistory() {
+    if (!this.btnTakeHistory || !this.takeHistoryPanel) return;
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (line?.line_id !== this.takeHistoryLineId) {
+      // A different line starts with the history closed.
+      this.takeHistoryLineId = line?.line_id;
+      this.takeHistoryOpen = false;
+    }
+    const takes = line ? lineTakes(this.roomState.takes, line) : [];
+    const show = !!line && takes.length >= 2 && this.canRecordLine(line);
+    const open = show && !!this.takeHistoryOpen;
+    this.btnTakeHistory.parentElement.style.display = show ? '' : 'none';
+    this.btnTakeHistory.innerText = `Takes (${takes.length})`;
+    this.btnTakeHistory.setAttribute('aria-expanded', String(open));
+    this.takeHistoryPanel.style.display = open ? '' : 'none';
+    this.takeHistoryPanel.closest('.record-btn-container')?.classList.toggle('take-history-open', open);
+    this.takeHistoryPanel.innerHTML = '';
+    if (!open) return;
+
+    const picked = pickedTake(this.roomState.takes, line);
+    for (const take of takes) {
+      const row = document.createElement('div');
+      row.className = 'take-history-row' + (take === picked ? ' picked' : '');
+      const label = document.createElement('span');
+      label.className = 'take-history-label';
+      label.textContent = `Take ${take.number} · ${take.user_name || 'Cast member'} · ${(Number(take.duration) || 0).toFixed(1)}s`;
+      row.appendChild(label);
+
+      const addButton = (text, cls, onClick, tip) => {
+        const btn = document.createElement('button');
+        btn.className = `btn btn-xs ${cls}`;
+        btn.textContent = text;
+        if (tip) btn.dataset.tip = tip;
+        btn.addEventListener('click', onClick);
+        row.appendChild(btn);
+        return btn;
+      };
+      addButton('Play', 'btn-secondary take-history-play', () => this.playHistoryTake(take));
+      if (take === picked) {
+        const badge = document.createElement('span');
+        badge.className = 'take-history-picked';
+        badge.textContent = 'In the dub';
+        row.appendChild(badge);
+      } else {
+        addButton('Use', 'btn-primary take-history-use', () => this.pickTake(take), 'Use this take in the dub');
+      }
+      const del = addButton('✕', 'btn-ghost take-history-delete', () => this.deleteTake(take), 'Delete this take');
+      del.setAttribute('aria-label', `Delete take ${take.number}`);
+      this.takeHistoryPanel.appendChild(row);
+    }
+  }
+
+  /** Plays a take from the history over the scene with its own settings; sliders stay put. */
+  async playHistoryTake(take) {
+    this.cancelCurrentCountdown();
+    const wasThisTake = this.isPlayingTake && this.playingHistoryTakeId === take.take_id;
+    this.stopBoothPlayback();
+    if (wasThisTake || !take.url) return;
+
+    const line = this.roomState.pack.lines[this.currentLineIndex];
+    let buffer = null;
+    try {
+      buffer = await this.audio.loadAudioBuffer(take.url);
+    } catch (e) {
+      console.warn("[App] Error loading take audio:", e);
+    }
+    if (!buffer) {
+      this.showToast("The take is still loading. Try again in a moment.");
+      return;
+    }
+    if (line !== this.roomState?.pack?.lines?.[this.currentLineIndex]) return;
+    this.playingHistoryTakeId = take.take_id;
+    await this.playTakeOverScene(line, buffer, {
+      offsetMs: take.offset_ms || 0,
+      pitch: take.pitch_semitones || 0,
+      reverb: take.reverb_wet || 0,
+      gain: take.gain_db || 0,
+    });
+  }
+
+  /** Puts one of the current line's takes in the dub. */
+  async pickTake(take) {
+    if (this.isProcessingTake) return;
+    const lineIndex = this.currentLineIndex;
+    const line = this.roomState?.pack?.lines?.[lineIndex];
+    if (!line || !take) return;
+    try {
+      const res = await fetch(
+        `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}/pick`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: this.user.id }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.line) this.roomState.takes[line.line_id] = data.line;
+      this.showToast(`Take ${take.number} is in the dub`);
+      if (lineIndex === this.currentLineIndex) this.loadBoothLine(lineIndex);
+    } catch (err) {
+      this.showToast(this.friendlyError(err, "That take wasn't picked. Try again."));
     }
   }
 }

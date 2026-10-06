@@ -268,11 +268,7 @@ export class RoomSocket {
     this.send('set_status', { status });
   }
 
-  updateTakeParams(lineIndex, params) {
-    this.send('update_take_params', { line_index: lineIndex, ...params });
-  }
-
-  clearTake(lineIndex) {
-    this.send('clear_take', { line_index: lineIndex });
+  updateTakeParams(lineId, takeId, params) {
+    this.send('update_take_params', { line_id: lineId, take_id: takeId, ...params });
   }
 }

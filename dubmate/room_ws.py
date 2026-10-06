@@ -87,28 +87,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     await room.broadcast("status_changed", {"status": new_status})
 
             elif msg_type == "update_take_params":
-                raw_idx = payload.get("line_index")
-                try:
-                    line_idx = int(raw_idx)
-                except (TypeError, ValueError):
-                    line_idx = None
-                if line_idx is not None and line_idx in room.takes:
+                line_id = payload.get("line_id")
+                take_id = payload.get("take_id")
+                take = room.find_take(line_id, take_id) if isinstance(line_id, str) else None
+                if take:
                     for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
                         if key in payload:
-                            room.takes[line_idx][key] = payload[key]
+                            take[key] = payload[key]
                     room.invalidate_exports()
-                    await room.broadcast("take_params_updated", {"line_index": line_idx})
-
-            elif msg_type == "clear_take":
-                raw_idx = payload.get("line_index")
-                try:
-                    line_idx = int(raw_idx)
-                except (TypeError, ValueError):
-                    line_idx = None
-                if line_idx is not None and line_idx in room.takes:
-                    del room.takes[line_idx]
-                    room.invalidate_exports()
-                    await room.broadcast("take_cleared", {"line_index": line_idx})
+                    await room.broadcast("take_params_updated", {"line_id": line_id, "take_id": take_id})
 
             elif msg_type == "set_user_status":
                 if user_id in room.users:
@@ -134,7 +121,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                         out_path = room.export_out_path("16:9")
                         await asyncio.to_thread(
                             audio_processor.export_dub_video,
-                            room.pack, dict(room.takes), out_path,
+                            room.pack, room.mix_takes(), out_path,
                         )
                         room.exported_video_path = out_path
                         await room.broadcast("export_ready", room.export_ready_payload("16:9"))
