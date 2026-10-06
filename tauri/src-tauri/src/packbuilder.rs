@@ -36,23 +36,23 @@ const PACKBUILDER_EXPECTED_BYTES: f64 = 2.0 * 1024.0 * 1024.0 * 1024.0;
 fn friendly_component_name(package: &str) -> &'static str {
     let p = package.to_ascii_lowercase();
     if p.starts_with("nvidia-") || p.starts_with("triton") || p.starts_with("cuda") {
-        "GPU acceleration libraries"
+        "graphics card support"
     } else if p.starts_with("torch") {
-        "the neural network engine"
+        "the processing engine"
     } else if p.starts_with("demucs") || p.starts_with("julius") || p.starts_with("dora") {
-        "the vocal separation model"
+        "voice separation"
     } else if p.contains("whisper") || p.starts_with("tiktoken") {
-        "the speech recognition model"
+        "speech recognition"
     } else if p.starts_with("yt-dlp") || p.starts_with("yt_dlp") {
-        "the video downloader"
+        "the link importer"
     } else if p.starts_with("numpy") || p.starts_with("scipy") || p.starts_with("numba")
         || p.starts_with("llvmlite") || p.starts_with("sympy") || p.starts_with("mpmath")
     {
-        "audio maths libraries"
+        "audio tools"
     } else if p.starts_with("pykakasi") {
         "Japanese text support"
     } else {
-        "supporting components"
+        "supporting files"
     }
 }
 
@@ -153,16 +153,16 @@ impl PipProgressParser {
                 ),
             ),
             "installing" => (
-                "Unpacking and installing".to_string(),
+                "Installing".to_string(),
                 if self.install_count > 0 {
-                    format!("{} components", self.install_count)
+                    "Almost there".to_string()
                 } else {
                     "Almost there".to_string()
                 },
             ),
             _ => (
                 "Finishing up".to_string(),
-                "Restarting the studio engine".to_string(),
+                "Restarting DubMate".to_string(),
             ),
         };
 
@@ -245,10 +245,10 @@ mod packbuilder_progress_tests {
 
     #[test]
     fn maps_packages_to_language_a_person_understands() {
-        assert_eq!(friendly_component_name("torch"), "the neural network engine");
-        assert_eq!(friendly_component_name("nvidia-cublas-cu12"), "GPU acceleration libraries");
-        assert_eq!(friendly_component_name("openai-whisper"), "the speech recognition model");
-        assert_eq!(friendly_component_name("some-random-dep"), "supporting components");
+        assert_eq!(friendly_component_name("torch"), "the processing engine");
+        assert_eq!(friendly_component_name("nvidia-cublas-cu12"), "graphics card support");
+        assert_eq!(friendly_component_name("openai-whisper"), "speech recognition");
+        assert_eq!(friendly_component_name("some-random-dep"), "supporting files");
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod packbuilder_progress_tests {
         // Announcing the next file means the first one landed.
         let second = p.push("Downloading demucs-4.0.1.whl (50.0 MB)");
         assert!(second.detail.starts_with("100 MB of"), "got {}", second.detail);
-        assert_eq!(second.headline, "Downloading the vocal separation model");
+        assert_eq!(second.headline, "Downloading voice separation");
     }
 
     #[test]
@@ -442,9 +442,9 @@ pub async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
         PackBuilderProgress {
             phase: "finalizing".to_string(),
             headline: "Finishing up".to_string(),
-            detail: "Restarting the studio engine".to_string(),
+            detail: "Restarting DubMate".to_string(),
             percent: 98.0,
-            raw: "Restarting Studio Engine...".to_string(),
+            raw: "Restarting DubMate".to_string(),
         },
     );
     kill_sidecars(&app);

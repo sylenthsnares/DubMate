@@ -115,20 +115,20 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
         Some(p) => p,
         None => {
             eprintln!("[Sidecar Error] app.py not found in working directory or resources!");
-            let _ = app.emit("server-error", "app.py not found in application directory or resources. If this is a new installation, please apply the update bundle.");
-            let _ = app.emit("startup-progress", "Error: Application files missing.");
+            let _ = app.emit("server-error", "Some of DubMate's files are missing. Restart DubMate to download them, or reinstall it.");
+            let _ = app.emit("startup-progress", "Files missing");
             return;
         }
     };
     let app_dir = app_py_path.parent().unwrap_or(&app_py_path);
 
-    let _ = app.emit("startup-progress", "Resolving Python runtime...");
+    let _ = app.emit("startup-progress", "Starting DubMate");
 
     // 1. Resolve and Spawn Python FastAPI sidecar
     let mut spawned = false;
     if let Some(py_exe) = find_python_exe(&app) {
         println!("[DubMate] Launching Python from: {:?}", py_exe);
-        let _ = app.emit("startup-progress", format!("Launching Python engine ({:?})...", py_exe.file_name().unwrap_or_default()));
+        let _ = app.emit("startup-progress", "Starting DubMate");
 
         let port = find_available_port(DEFAULT_ENGINE_PORT);
         {
@@ -186,7 +186,7 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
 
     if !spawned {
         eprintln!("[Sidecar Error] Unable to launch Python runtime!");
-        let _ = app.emit("server-error", "Unable to start Python runtime. Please ensure Python is installed or reinstall DubMate Studio.");
+        let _ = app.emit("server-error", "DubMate couldn't start. Reinstall DubMate to fix this.");
         return;
     }
 
@@ -301,7 +301,7 @@ fn spawn_engine(
                     *b = trimmed.to_string();
                 }
                 if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error") {
-                    let _ = app_err_clone.emit("startup-progress", format!("Python: {}", line.trim()));
+                    let _ = app_err_clone.emit("startup-progress", "Still starting");
                 }
             }
         }
@@ -322,7 +322,7 @@ fn spawn_engine(
                         format!("Process exited with status {:?}", status.code())
                     }
                 };
-                let _ = app_exit_clone.emit("server-error", format!("Studio engine error: {}", err_msg));
+                let _ = app_exit_clone.emit("server-error", format!("DubMate stopped while starting. Click Try again to restart it.\n\nDetails: {}", err_msg));
             }
         }
     });
@@ -339,8 +339,8 @@ async fn wait_for_engine(app: &tauri::AppHandle, engine_port: u16) -> bool {
         .build()
         .unwrap_or_default();
 
-    for i in 1..=60 {
-        let _ = app.emit("startup-progress", format!("Connecting to Studio Engine... ({}/60)", i));
+    for _attempt in 1..=60 {
+        let _ = app.emit("startup-progress", "Starting DubMate");
         if let Ok(resp) = client.get(&health_url).send().await {
             if resp.status().is_success() {
                 let _ = app.emit("server-ready", engine_port);
@@ -352,7 +352,7 @@ async fn wait_for_engine(app: &tauri::AppHandle, engine_port: u16) -> bool {
     }
 
     eprintln!("[Sidecar Error] Studio engine did not respond on http://127.0.0.1:{} within 30 seconds", engine_port);
-    let _ = app.emit("server-error", format!("Studio engine did not respond on port {} in time. Click Retry to restart it.", engine_port));
+    let _ = app.emit("server-error", "DubMate didn't start in time. Click Try again to restart it.");
     false
 }
 
@@ -376,7 +376,7 @@ fn start_tunnel(app: &tauri::AppHandle, engine_port: u16) {
             report_tunnel_failure(
                 app,
                 engine_port,
-                "The bundled cloudflared component could not be found.".to_string(),
+                "Online invites are unavailable because a DubMate file is missing. Reinstall DubMate to fix this. Friends on your network can still join.".to_string(),
             );
             return;
         }
@@ -386,10 +386,11 @@ fn start_tunnel(app: &tauri::AppHandle, engine_port: u16) {
     let (mut rx, child) = match spawned {
         Ok(pair) => pair,
         Err(e) => {
+            eprintln!("[DubMate] cloudflared spawn failed: {e}");
             report_tunnel_failure(
                 app,
                 engine_port,
-                format!("The public tunnel could not be started ({e})."),
+                "Online invites couldn't start. Friends on your network can still join.".to_string(),
             );
             return;
         }
@@ -448,7 +449,7 @@ fn start_tunnel(app: &tauri::AppHandle, engine_port: u16) {
             report_tunnel_failure(
                 &app_clone,
                 engine_port,
-                "The public tunnel stopped before it came up. Your network may be blocking Cloudflare tunnels.".to_string(),
+                "Online invites stopped before they were ready. Your network may be blocking them. Friends on your network can still join.".to_string(),
             );
         }
     });
@@ -469,7 +470,7 @@ fn start_tunnel(app: &tauri::AppHandle, engine_port: u16) {
                 &watchdog_app,
                 engine_port,
                 format!(
-                    "The public tunnel did not come up within {TUNNEL_READY_TIMEOUT_SECS} seconds. Local and LAN play still work; friends on other networks cannot join yet."
+                    "Online invites didn't start within {TUNNEL_READY_TIMEOUT_SECS} seconds. Friends on your network can still join; friends elsewhere can't yet."
                 ),
             );
         }

@@ -175,7 +175,7 @@ pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> 
             current_version: current_clean.to_string(),
             latest_version: latest_clean.to_string(),
             changelog: if !app_py_exists {
-                "Initial Setup: Downloading DubMate core application bundle...".to_string()
+                "Downloading DubMate. This happens once.".to_string()
             } else {
                 release.body.unwrap_or_else(|| "General improvements and fixes.".to_string())
             },

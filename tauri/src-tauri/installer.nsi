@@ -495,7 +495,7 @@ FunctionEnd
       Pop $R9
       Sleep 2000
     ${Else}
-      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "DubMate Studio is currently running and must be closed before it can be updated.$\r$\n$\r$\nClick OK to close it now, or Cancel to quit the installer." IDOK dubmate_do_kill
+      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "DubMate is open. Close it to continue.$\r$\n$\r$\nClick OK to close it now, or Cancel to quit the installer." IDOK dubmate_do_kill
       Abort
       dubmate_do_kill:
       nsExec::ExecToStack 'taskkill /F /T /IM "${MAINBINARYNAME}.exe"'
@@ -797,7 +797,7 @@ SectionEnd
 ;
 ; The marker path MUST stay at $INSTDIR\packbuilder.optin (next to the main .exe),
 ; which is where the Rust launcher looks for it.
-Section /o "Pack Builder AI pipeline (~2 GB, downloaded on first launch)" SecPackBuilder
+Section /o "Pack Builder (about 2 GB, downloaded on first launch)" SecPackBuilder
   ; Declared in KB. The section itself only writes a 1-byte marker, so without
   ; this the components page space estimate would not move when it is ticked.
   AddSize 2097152
@@ -806,17 +806,17 @@ Section /o "Pack Builder AI pipeline (~2 GB, downloaded on first launch)" SecPac
   ClearErrors
   FileOpen $0 "$INSTDIR\packbuilder.optin" w
   ${If} ${Errors}
-    DetailPrint "Could not record the Pack Builder opt-in; enable it later from the app."
+    DetailPrint "Could not save the Pack Builder choice. Run the installer again to add it."
   ${Else}
     FileWrite $0 "1"
     FileClose $0
-    DetailPrint "Pack Builder AI pipeline will be downloaded on first launch."
+    DetailPrint "Pack Builder will download when you first start DubMate."
   ${EndIf}
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "${PRODUCTNAME} and everything it needs to run. Required."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecPackBuilder} "Adds automatic vocal/instrumental separation (Demucs) and speech-to-text transcription (Whisper) for building your own scene packs. Roughly 2 GB is downloaded into the install folder on first launch, with a progress bar. The core dubbing studio works fully without it."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "${PRODUCTNAME} and everything it needs to run."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecPackBuilder} "Make your own scene packs from any video. DubMate separates the voices and writes out the lines. About 2 GB downloads when you first start DubMate. Everything else works without it."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; Called from .onInit. Defined here because ${SecPackBuilder} only exists after the
