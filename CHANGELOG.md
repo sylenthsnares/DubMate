@@ -28,6 +28,11 @@
 - **Use Standard Cleanup**: forgets your room check. New takes get standard cleanup; takes already cleaned keep their sound until you refresh them.
 - **Guests' Room Checks**: a guest's room check lasts until the host restarts DubMate. After that the guest's row says "Not checked yet" and their earlier takes keep the cleanup they were made with.
 - **Stems**: the Stems button next to Project files saves the voices and the music and effects as separate WAV files, plus one per character, to finish the mix in another editor. They all start with the scene and have the same length. Played together they have the video's balance and loudness, without its peak limiting. While stems or a video are being made, Refresh older takes waits and says "An export is running. Refresh older takes when it's done."
+- **Continue Where You Left Off**: your last 5 sessions are kept. The landing page lists them with how many lines are recorded and when you last worked on them. Continue reopens a session with its takes, casting and dialogue level, back on the line you were recording.
+- **Remove a Session**: remove a session from that list. Its takes are deleted; videos you saved stay in your export folder.
+- **Keyboard Shortcuts**: press ? (or the ? button in the header) for a list of keyboard shortcuts, grouped by where they work.
+- **Share a Scene**: Share on a scene saves it as a file to send to a friend and shows where the file is. Your friend adds it with Import pack.
+- **Get This Scene**: members who joined a room from their own DubMate can download the host's scene and add it to their own scenes with Import pack.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -41,6 +46,7 @@
 - **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
 - **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
 - **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
+- **Invites After a Restart**: after DubMate restarts, the room code of a continued session no longer works, so Copy invite gives a direct link instead.
 - **What You Preview Is What You Export**: takes now sound exactly the same in the booth, the premiere and the exported video, including low cut and compress, which used to change only the preview.
 - **Sound Changes Crossfade In**: when you change a sound or an effect, the take keeps playing and the new sound fades in as soon as it's ready. Presets are prepared in the background after you save a take, so switching between them is quick.
 - **Dialogue Presence**: dialogue presence now balances the voices against the music instead of changing the whole export's volume.
@@ -71,7 +77,9 @@
 - **Pack Builder Errors Are Shown**: failed processing, cover uploads and romanization now show an error instead of stalling silently.
 - **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old dialogue lines or the old cover behind, and stuck FFmpeg steps now time out with a clear error.
 - **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
+- **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
 - **Record Button Pulse**: the record button pulses while recording again.
+- **Bigger Timing Nudge on More Keyboards**: Shift with [ or ] nudges a take by 100 ms on keyboard layouts where Shift turns those keys into { and }.
 - **Stale State in Room Events**: room events are applied before they are handled, so a new take shows up right away; joining another room no longer carries over the previous room's line, takes or audio; and a render finishing mid-take no longer cuts the microphone.
 - **Pitch Shift Mix-Up**: two different takes of the same length could share one cached pitch-shifted version.
 - **Pack Import Safety**: archive entries disguised under `__MACOSX` names are now checked like every other file.

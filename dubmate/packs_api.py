@@ -10,6 +10,7 @@ import os
 import json
 import asyncio
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -240,6 +241,9 @@ async def export_pack_zip(pack_id: str):
             headers={
                 "Content-Disposition": f'attachment; filename="{zip_filename}"',
                 "Cache-Control": "no-cache",
+                # The saved file's name, so the studio can show where it is. Headers
+                # are latin-1, so anything else (a non-ASCII pack id) is %-encoded.
+                "X-DubMate-File": quote(os.path.basename(zip_path), safe=" !#$&'()+,;=@[]^`{}"),
             }
         )
     except Exception as ex:

@@ -3,7 +3,8 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-import { showToast, initModeDropdown, initTooltips, mixin } from './ui_common.js';
+import { showToast, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
+import { initShortcutSheet } from './shortcuts.js';
 import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
 import { ScreeningMethods } from './studio/screening.js';
@@ -12,6 +13,7 @@ import { VoiceRackMethods } from './studio/voice_rack.js';
 import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
+import { SessionMethods } from './studio/sessions.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
@@ -185,6 +187,7 @@ class DubMateApp {
     this.castOnlineCount = document.getElementById('cast-online-count');
     this.btnStartSession = document.getElementById('btn-start-session');
     this.btnCopyInvite = document.getElementById('btn-copy-invite');
+    this.btnGetScene = document.getElementById('btn-get-scene');
 
     // Stage / Booth elements
     this.stageVideo = document.getElementById('stage-video');
@@ -443,6 +446,10 @@ class DubMateApp {
     this.initVideoExpand();
     this.initModeDropdown();
     initTooltips();
+    initShortcutSheet({
+      opener: document.getElementById('btn-shortcuts'),
+      isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
+    });
     this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
@@ -605,6 +612,7 @@ class DubMateApp {
 
     // Global shortcut '/' to quickly focus the scene pack search bar
     document.addEventListener('keydown', (e) => {
+      if (isDialogOpen()) return;
       if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
         if (this.inputPackSearch && this.views.landing?.classList.contains('active')) {
           e.preventDefault();
@@ -615,6 +623,7 @@ class DubMateApp {
     });
 
     this.btnCopyInvite.addEventListener('click', () => this.copyRoomLink());
+    if (this.btnGetScene) this.btnGetScene.addEventListener('click', () => this.getThisScene());
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
     this.btnStartSession.addEventListener('click', () => {
@@ -774,9 +783,13 @@ class DubMateApp {
     this.initRoomCheckEvents();
 
     // Studio & Screening Keyboard Shortcuts
-    // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
+    // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift most layouts report { / }.
+    // The list the user sees is SHORTCUT_GROUPS in shortcuts.js; keep the two in step.
     // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
     window.addEventListener('keydown', (e) => {
+      // The shortcut sheet (or another openDialog window) handles its own keys.
+      if (isDialogOpen()) return;
+
       // Escape key closes modals if they are open and not actively rendering
       if (e.key === 'Escape') {
         if (this.isAudioSettingsOpen()) {
@@ -813,11 +826,11 @@ class DubMateApp {
         if (e.code === 'Space') {
           e.preventDefault();
           this.toggleRecording();
-        } else if (e.key === '[') {
+        } else if (e.key === '[' || e.key === '{') {
           e.preventDefault();
           const delta = e.shiftKey ? -100 : -25;
           this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
-        } else if (e.key === ']') {
+        } else if (e.key === ']' || e.key === '}') {
           e.preventDefault();
           const delta = e.shiftKey ? 100 : 25;
           this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
@@ -1269,6 +1282,7 @@ class DubMateApp {
     }
 
     if (viewName === 'landing') {
+      if (this.isEngineLocal()) this.loadRecentSessions();
       if (!this.packs || this.packs.length === 0) {
         this.fetchPacks();
       } else {
@@ -1492,7 +1506,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

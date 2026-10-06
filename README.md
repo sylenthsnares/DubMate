@@ -103,6 +103,7 @@ DubMate
 │   │   ├── packs_api.py       # /api/packs routes
 │   │   ├── rooms.py           # Room model, room table & persistence
 │   │   ├── rooms_api.py       # Room REST routes: create, takes, export, downloads
+│   │   ├── sessions_api.py    # Recent sessions: list, continue, remove (own computer only)
 │   │   ├── room_ws.py         # Room WebSocket endpoint
 │   │   ├── room_registry.py   # Public room-code registry (worker) & /api/tunnel
 │   │   └── builder_api.py     # /api/builder Pack Builder routes
@@ -118,7 +119,8 @@ DubMate
 │   ├── static/css/builder.css # Pack Builder styles
 │   ├── static/js/app.js       # Core application controller & stage state machine
 │   ├── static/js/studio/      # Studio feature modules mixed into app.js (audio_setup.js, booth.js, export.js, lobby.js, mic_sync.js, packs.js, screening.js, takes.js, timing.js)
-│   ├── static/js/ui_common.js # Shared UI helpers (escapeHtml, toasts, mode dropdown, mixin)
+│   ├── static/js/ui_common.js # Shared UI helpers (escapeHtml, toasts, mode dropdown, dialogs, mixin)
+│   ├── static/js/shortcuts.js # Keyboard shortcut list and the "?" sheet
 │   ├── static/js/pack_builder.js # Pack Builder timeline controller & SSE client
 │   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Reverb)
 │   ├── static/js/knob.js      # Tactile 270° rotary guitar amp dial components

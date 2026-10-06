@@ -123,6 +123,9 @@ export class LobbyMethods {
             // The shell told the engine the tunnel failed, so say what went wrong
             // rather than implying it is still on its way.
             this.showToast(share.message || "Couldn't go online. Only people on your network can join.");
+          } else if (share.state === 'not_published' && share.message) {
+            // A continued session: its code was published by an earlier run.
+            this.showToast(share.message);
           } else {
             this.showToast(share.direct_url
               ? "Your room code isn't ready yet. Use Copy invite to share a direct link."
@@ -156,7 +159,9 @@ export class LobbyMethods {
     if (share && !share.code_is_live) {
       if (share.direct_url) {
         text = share.direct_url;
-        message = "Room code isn't ready yet, so the invite link was copied instead.";
+        message = share.state === 'not_published'
+          ? 'Invite link copied.'
+          : "Room code isn't ready yet, so the invite link was copied instead.";
       } else {
         message = `Room code ${code} copied. It only works on your network for now.`;
       }
@@ -411,6 +416,8 @@ export class LobbyMethods {
       url.searchParams.set('room', this.roomState.room_id);
       window.history.pushState({}, '', url);
 
+      // Read before connecting: the socket join resets this user's saved status.
+      const savedLine = this.savedLineIndex();
       this.socket.connect(this.roomState.room_id, this.user.id, this.user.name, this.user.color);
 
       this.headerRoomBadge.style.display = 'inline-flex';
@@ -429,7 +436,7 @@ export class LobbyMethods {
         this.broadcastMyStatus('screening');
       } else if (this.roomState.status === 'recording') {
         this.showView('booth');
-        this.loadBoothLine(this.findFirstAssignedLine());
+        this.loadBoothLine(savedLine ?? this.findFirstAssignedLine());
         this.broadcastMyStatus('booth');
       } else {
         this.showView('lobby');
@@ -442,6 +449,32 @@ export class LobbyMethods {
       this.showToast(this.friendlyError(err, "Couldn't join that room. Try again."));
       this.showView('landing');
     }
+  }
+
+  /** Downloads the room's scene so a member can add it with Import pack at home. */
+  getThisScene() {
+    const pack = this.roomState?.pack;
+    if (!pack) return Promise.resolve(false);
+    const title = pack.name || pack.id || 'Scene';
+    const safeName = (pack.name || pack.id || 'pack').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return this.saveRemoteFile(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`, `${safeName}.zip`, {
+      control: this.btnGetScene,
+      doneMessage: `Downloaded "${title}". Add it with Import pack in your DubMate.`,
+      errorText: "Couldn't download that pack. Try again.",
+    });
+  }
+
+  /** The line this user was on when they last left this room, or null. Line 0 counts
+   * only if they were in the booth (it is also the default for someone who never was).
+   * A line they can't record (someone else's character) is not reopened. */
+  savedLineIndex() {
+    const me = this.roomState?.users?.[this.user.id];
+    const lines = this.roomState?.pack?.lines;
+    if (!me || !Array.isArray(lines)) return null;
+    const line = me.current_line;
+    if (!Number.isInteger(line) || line < 0 || line >= lines.length) return null;
+    if (line === 0 && me.location !== 'booth') return null;
+    return this.canRecordLine(lines[line]) ? line : null;
   }
 
   // --- Live Cast Activity HUD & Premiere Gate ---
@@ -556,6 +589,11 @@ export class LobbyMethods {
 
     if (this.lobbyPackTitle) this.lobbyPackTitle.innerText = this.roomState.pack.name;
     if (this.lobbyLineCount) this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} lines`;
+    if (this.btnGetScene) {
+      // Members who came from their own DubMate can take the scene home with them.
+      const home = getHomeOrigin();
+      this.btnGetScene.hidden = !(home && home !== window.location.origin && !this.isHost());
+    }
 
     const users = Object.values(this.roomState.users || {});
     if (this.castOnlineCount) this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} online`;

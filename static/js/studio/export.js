@@ -1,5 +1,6 @@
 // studio/export.js - Master export modal, render/export, downloads and the saved-path line.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
+import { joinLocalPath } from '../ui_common.js';
 
 export class ExportMethods {
   initExportEvents() {
@@ -358,6 +359,7 @@ export class ExportMethods {
       doneMessage = 'Download saved',
       errorText = "Couldn't download that file. Try again.",
       exportSubfolder = null,
+      onSaved = null, // (res, dir) => {}: replaces the "Saved to" toast when kept on the engine
     } = options;
     const keepOnEngine = exportSubfolder !== null && this.isEngineLocal();
 
@@ -395,11 +397,12 @@ export class ExportMethods {
         // The server finished writing the file before it started answering.
         try { await res.body?.cancel(); } catch { /* nothing left to read */ }
         const dir = await this.fetchExportsDir();
-        if (!dir) {
+        if (onSaved) {
+          onSaved(res, dir);
+        } else if (!dir) {
           this.showToast('Saved in your export folder.');
         } else {
-          const sep = dir.includes('\\') ? '\\' : '/';
-          this.showToast(`Saved to ${exportSubfolder ? `${dir}${sep}${exportSubfolder}` : dir}`);
+          this.showToast(`Saved to ${exportSubfolder ? joinLocalPath(dir, exportSubfolder) : dir}`);
         }
         return true;
       }

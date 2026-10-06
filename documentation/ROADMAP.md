@@ -90,11 +90,15 @@ All of this goes into one PR.
    - Pointer Events for touch and pen **M** (done).
    - Speaker detection **M** (done).
    - Non-verbal lines **M** (done). For now they are only found on transcribed clips, not on subtitle imports, pending owner confirmation (see `documentation/design/pack-builder-upgrades.md`, "Decided overnight").
-6. **Export and sessions.**
+6. **Export and sessions.** Done: stems export (`design/stems-export.md`), and sessions, the shortcut sheet and sharing (`design/sessions-and-sharing.md`).
    - Stems export **S** (done, `design/stems-export.md`). Owner to confirm: the design's "Decided overnight, revisit" list, mainly 32-bit float WAV (CapCut unchecked) and the master stage's gain applied without its limiter.
-   - Keyboard shortcut sheet **S**.
-   - Session autosave/resume **M**.
-   - Pack sharing **M**.
+   - Keyboard shortcut sheet **S** (done).
+   - Session autosave/resume **M** (done). The last 5 sessions are kept and listed under Continue where you left off.
+   - Pack sharing **M** (done). Share on a scene card, plus Get this scene and Import pack for members who joined from their own DubMate.
+   - Follow-ups:
+     - Booth arrow keys to move between lines. They must skip events already handled and slider, radio and tab targets, because knobs use the arrow keys.
+     - Engine-to-engine "Add to my scenes", where the member's own DubMate fetches and imports the host's scene directly.
+     - Tighten `POST /api/config`, `POST /api/rooms` and pack import against LAN callers.
 
 ## Later
 - **Host hand-off, done properly.** Move takes, casting and the pack to the new host's engine, re-register the room code, and redirect everyone. **L**

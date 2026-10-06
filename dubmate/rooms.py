@@ -15,6 +15,7 @@ import uuid
 import random
 import shutil
 import asyncio
+import threading
 from typing import Dict, List, Optional, Set, Tuple, Any
 
 from fastapi import WebSocket, HTTPException
@@ -86,6 +87,16 @@ class Room:
         # running background task. Renders are refused while anyone's refresh runs.
         self.cleanup_refreshing: Dict[str, int] = {}
         self.cleanup_refresh_task: Optional[asyncio.Task] = None
+        # Session details, saved with the room. last_active_at is the last change time;
+        # creator_id is the host_id the room was made with (host promotion never changes
+        # it); created_here says the room was made on the engine's own computer.
+        self.last_active_at: float = time.time()
+        self.creator_id: str = host_id
+        self.created_here: bool = True
+        # Set (under _save_lock) when the room's folder is deleted, so no later save,
+        # queued or mid-thread, can bring the folder back.
+        self.deleted: bool = False
+        self._save_lock = threading.Lock()
 
     def line_entry(self, line_id: str) -> Optional[Dict[str, Any]]:
         """The line's take history, or None if it has no takes."""
@@ -228,6 +239,7 @@ class Room:
         }
 
     def mark_dirty(self):
+        self.last_active_at = time.time()
         self._save_dirty = True
         if self._save_task is None or self._save_task.done():
             try:
@@ -250,6 +262,12 @@ class Room:
             print(f"[RoomPersistence] Error in debounced save: {ex}")
 
     def _sync_save_to_disk(self):
+        with self._save_lock:
+            if self.deleted:
+                return
+            self._write_state_file()
+
+    def _write_state_file(self):
         try:
             room_dir = audio_processor.get_room_cache_dir(self.room_id)
             state_file = os.path.join(room_dir, "room_state.json")
@@ -264,6 +282,10 @@ class Room:
                 "voice": self.voice,
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
+                "last_active_at": self.last_active_at,
+                "creator_id": self.creator_id,
+                "created_here": self.created_here,
+                "master_dialogue_presence_db": self.master_dialogue_presence_db,
             }
             if self.pending_v1_takes:
                 data["pending_v1_takes"] = self.pending_v1_takes
@@ -324,6 +346,11 @@ class Room:
 
 ROOMS: Dict[str, Room] = {}
 
+# Codes of room folders whose room_state.json load_room_folder could not load for a
+# reason other than a missing pack (bad contents, a newer layout). Their summaries are
+# unreadable, so the Continue card offers only Remove.
+UNLOADABLE_ROOMS: Set[str] = set()
+
 
 def room_or_404(room_id: str) -> Room:
     room = ROOMS.get(room_id.upper())
@@ -332,123 +359,292 @@ def room_or_404(room_id: str) -> Room:
     return room
 
 
-def prune_sessions(keep_room_id: Optional[str] = None):
+RECENT_SESSIONS_KEEP = 5
+
+# Held by room creation (which prunes), Continue and Remove, so a concurrent create
+# can't insert a room that an older prune then removes, and Continue can't load a
+# session that Remove is deleting. Built lazily so it binds to the server's loop.
+SESSIONS_LOCK: Optional[asyncio.Lock] = None
+
+
+def sessions_lock() -> asyncio.Lock:
+    global SESSIONS_LOCK
+    if SESSIONS_LOCK is None:
+        SESSIONS_LOCK = asyncio.Lock()
+    return SESSIONS_LOCK
+
+
+def _rooms_dir() -> str:
+    return os.path.join(audio_processor.CACHE_DIR, "rooms")
+
+
+def _count_recorded(pack: Optional[pack_loader.PackInfo], takes: Dict[str, Any], v1_takes: Dict[str, Any]) -> int:
+    """Lines of the pack with a picked take. v1 takes are keyed by line index. Without the
+    pack, every line entry with a pick counts."""
+    picked = {lid for lid, e in takes.items() if isinstance(e, dict) and e.get("picked")}
+    if pack is None:
+        return len(picked) + len(v1_takes)
+    count = 0
+    for line in pack.lines:
+        if line["line_id"] in picked or str(line["index"]) in v1_takes:
+            count += 1
+    return count
+
+
+def _summary_from_room(room: Room) -> Dict[str, Any]:
+    has_takes = bool(room.takes or room.pending_v1_takes)
+    return {
+        "room_id": room.room_id.upper(),
+        "pack_id": room.pack.pack_id,
+        "pack_name": room.pack.name,
+        "pack_found": True,
+        "recorded_lines": _count_recorded(room.pack, room.takes, room.pending_v1_takes),
+        "total_lines": len(room.pack.lines),
+        "last_active_at": room.last_active_at,
+        "status": room.status,
+        "readable": True,
+        "listed": bool(room.created_here) and has_takes,
+    }
+
+
+def _summary_from_folder(room_id: str, folder: str) -> Dict[str, Any]:
+    state_file = os.path.join(folder, "room_state.json")
+    summary = {
+        "room_id": room_id.upper(), "pack_id": None, "pack_name": None, "pack_found": False,
+        "recorded_lines": 0, "total_lines": 0, "last_active_at": 0.0, "status": None,
+        "readable": True, "listed": False,
+    }
+    if not os.path.isfile(state_file):
+        try:
+            summary["last_active_at"] = os.path.getmtime(folder)
+        except OSError:
+            pass
+        return summary
+    try:
+        file_mtime = os.path.getmtime(state_file)
+        with open(state_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("room_state.json is not an object")
+        if room_id.upper() in UNLOADABLE_ROOMS:
+            raise ValueError("room_state.json could not be loaded")
+    except Exception:
+        try:
+            summary["last_active_at"] = os.path.getmtime(folder)
+        except OSError:
+            pass
+        summary.update(readable=False, listed=True)
+        return summary
+    pack_id = data.get("pack_id")
+    pack = packs_cache.PACKS_CACHE.get(pack_id) if isinstance(pack_id, str) else None
+    raw_takes = data.get("takes") if isinstance(data.get("takes"), dict) else {}
+    pending = data.get("pending_v1_takes") if isinstance(data.get("pending_v1_takes"), dict) else {}
+    if data.get("state_version") == STATE_VERSION:
+        takes, v1_takes = raw_takes, pending
+    else:
+        takes, v1_takes = {}, raw_takes
+    last_active = data.get("last_active_at")
+    created_here = data.get("created_here")
+    summary.update(
+        pack_id=pack_id,
+        pack_name=pack.name if pack else pack_id,
+        pack_found=pack is not None,
+        recorded_lines=_count_recorded(pack, takes, v1_takes),
+        total_lines=len(pack.lines) if pack else 0,
+        last_active_at=float(last_active) if isinstance(last_active, (int, float)) else file_mtime,
+        status=data.get("status", "lobby"),
+        listed=(created_here if isinstance(created_here, bool) else True) and bool(takes or v1_takes),
+    )
+    return summary
+
+
+def session_summaries() -> List[Dict[str, Any]]:
+    """One summary per folder under <CACHE_DIR>/rooms: {room_id, pack_id, pack_name,
+    pack_found, recorded_lines, total_lines, last_active_at, status, readable, listed}.
+    Loaded rooms are summarised from memory, other folders from their room_state.json.
+    readable is False when the file isn't a JSON object or load_room_folder failed on it.
+    listed is True for an unreadable folder (so the user can see and remove it), and
+    otherwise for a room made on this computer that has takes."""
+    rooms_dir = _rooms_dir()
+    if not os.path.isdir(rooms_dir):
+        return []
+    out = []
+    for name in os.listdir(rooms_dir):
+        folder = os.path.join(rooms_dir, name)
+        if not os.path.isdir(folder):
+            continue
+        room = ROOMS.get(name.upper())
+        out.append(_summary_from_room(room) if room else _summary_from_folder(name, folder))
+    return out
+
+
+def recent_sessions(keep: int = RECENT_SESSIONS_KEEP) -> List[Dict[str, Any]]:
+    """The listed sessions, newest first, cut to keep: exactly the rows the card shows
+    and the sessions prune_sessions keeps."""
+    listed = [s for s in session_summaries() if s["listed"]]
+    listed.sort(key=lambda s: s["last_active_at"], reverse=True)
+    return listed[:max(0, keep)]
+
+
+def _forget_room(room_id: str) -> None:
+    """Marks a loaded room deleted (so no save can bring its folder back) and drops it
+    from ROOMS."""
+    room = ROOMS.pop(room_id, None)
+    UNLOADABLE_ROOMS.discard(room_id.upper())
+    if room is not None and isinstance(room, Room):
+        with room._save_lock:
+            room.deleted = True
+
+
+def prune_sessions(keep_room_id: Optional[str] = None, keep: int = RECENT_SESSIONS_KEEP):
     """
-    Strict Single-Session Retention Policy:
-    Ensures only the latest / active session is kept on disk and in memory.
-    Purges all older room folders and their takes to keep the server ultra-light.
+    Keeps the host's recent sessions and deletes the rest, oldest first. Kept:
+    - keep_room_id, or when none is given the newest folder by last_active_at;
+    - rooms with connected sockets (deleting them broke a live session's takes);
+    - the `keep` sessions recent_sessions() returns.
+    The last rule uses the same function as the Continue card, so the card shows exactly
+    what is kept: a row the user can see is never pruned. Rooms made by guests are
+    deleted unless kept by the first two rules.
 
     The exports folder is never touched. It is the user's folder (often one they
     chose), the host is told a render or project ZIP is "saved" there, and it can
-    hold files DubMate didn't write. Pruning it deleted those on the next new room.
+    hold files DubMate didn't write.
     """
-    rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
-    if not os.path.isdir(rooms_dir):
-        return
+    from dubmate import room_registry  # lazy: room_registry imports this module
 
-    room_folders = []
-    for r_id in os.listdir(rooms_dir):
-        full_path = os.path.join(rooms_dir, r_id)
-        if os.path.isdir(full_path):
-            try:
-                mtime = os.path.getmtime(full_path)
-            except Exception:
-                mtime = 0
-            room_folders.append((r_id, full_path, mtime))
+    rooms_dir = _rooms_dir()
+    summaries = session_summaries()
+    summaries.sort(key=lambda s: s["last_active_at"])  # oldest first
 
-    # Sort newest first
-    room_folders.sort(key=lambda x: x[2], reverse=True)
-
-    retained_id = None
     if keep_room_id:
-        retained_id = keep_room_id.upper()
-    elif room_folders:
-        retained_id = room_folders[0][0].upper()
+        retained = {keep_room_id.upper()}
+    elif summaries:
+        retained = {summaries[-1]["room_id"]}
+    else:
+        retained = set()
+    retained |= {rid.upper() for rid, rm in ROOMS.items() if getattr(rm, "sockets", None)}
+    retained |= {s["room_id"] for s in recent_sessions(keep)}
 
-    # Never purge a room that still has connected actors. This previously deleted
-    # other live sessions' rooms and their recorded takes the moment anyone created
-    # a new room, breaking every REST call for that room's cast mid-session.
-    active_ids = {rid.upper() for rid, rm in ROOMS.items() if getattr(rm, "sockets", None)}
-
-    # Delete all other room directories
-    for r_id, full_path, _ in room_folders:
-        if retained_id and r_id.upper() == retained_id:
+    names = {name.upper(): name for name in os.listdir(rooms_dir)} if os.path.isdir(rooms_dir) else {}
+    deleted = []
+    for s in summaries:
+        room_id = s["room_id"]
+        if room_id in retained:
             continue
-        if r_id.upper() in active_ids:
-            print(f"[DubMate Cache Pruner] Keeping active session: {r_id}")
-            continue
+        _forget_room(room_id)
+        folder = os.path.join(rooms_dir, names.get(room_id, room_id))
         try:
-            shutil.rmtree(full_path, ignore_errors=True)
-            print(f"[DubMate Cache Pruner] Purged older session: {r_id}")
+            shutil.rmtree(folder, ignore_errors=True)
+            print(f"[DubMate Cache Pruner] Purged older session: {room_id}")
         except Exception as ex:
-            print(f"[DubMate Cache Pruner] Could not delete {r_id}: {ex}")
+            print(f"[DubMate Cache Pruner] Could not delete {room_id}: {ex}")
+        deleted.append(room_id)
 
-    # Prune in-memory ROOMS
-    to_delete = [
-        r for r in list(ROOMS.keys())
-        if (not retained_id or r.upper() != retained_id) and r.upper() not in active_ids
-    ]
-    for r in to_delete:
-        ROOMS.pop(r, None)
+    # Loaded rooms with no folder yet (never saved) follow the same rule.
+    for room_id in [r for r in ROOMS if r.upper() not in retained]:
+        _forget_room(room_id)
+        deleted.append(room_id.upper())
+
+    for room_id in deleted:
+        room_registry.WORKER_PENDING_ROOMS.pop(room_id, None)
+        room_registry.WORKER_ROOM_STATUS.pop(room_id, None)
+
+
+def new_room_code() -> str:
+    """A room code that is neither loaded nor has a folder on disk, so a new room can
+    never mix its takes with a kept session's."""
+    rooms_dir = _rooms_dir()
+    while True:
+        code = generate_room_code()
+        if code.upper() not in ROOMS and not os.path.exists(os.path.join(rooms_dir, code)):
+            return code
+
+
+def load_room_folder(room_id: str) -> Optional[Room]:
+    """Loads one room folder into ROOMS and returns the room, or None when its pack is
+    missing or its room_state.json can't be read. Fields older builds didn't save fall
+    back: last_active_at to the state file's time (read before any migration save),
+    creator_id to host_id, created_here to True, the presence level to 0. Every user is
+    marked offline, since nobody is connected yet."""
+    room_folder = os.path.join(audio_processor.CACHE_DIR, "rooms", room_id)
+    state_file = os.path.join(room_folder, "room_state.json")
+    if not os.path.isfile(state_file):
+        return None
+    try:
+        file_mtime = os.path.getmtime(state_file)
+        with open(state_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        version = data.get("state_version")
+        if version not in (None, 1, STATE_VERSION):
+            # A newer DubMate wrote this room. Reading it as an older layout would
+            # drop its takes on the next save, so it is left exactly as it is.
+            print(f"[DubMate] Room {room_id} was saved by a newer DubMate (layout {version!r}); "
+                  f"it is left untouched and not loaded.")
+            UNLOADABLE_ROOMS.add(room_id.upper())
+            return None
+        pack = packs_cache.PACKS_CACHE.get(data.get("pack_id"))
+        if not pack:
+            return None
+        host_id = data.get("host_id", "host")
+        users = data.get("users", {})
+        host_user = users.get(host_id, {})
+        host_name = host_user.get("name", "Host")
+        host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
+        room = Room(room_id, pack, host_id, host_name, host_color)
+        room.users = data.get("users", room.users)
+        for user in room.users.values():
+            if isinstance(user, dict):
+                user["is_online"] = False
+        room.role_assignments = data.get("role_assignments", room.role_assignments)
+        raw_takes = data.get("takes") or {}
+        room.status = data.get("status", "lobby")
+        room.exported_video_path = data.get("exported_video_path")
+        last_active = data.get("last_active_at")
+        room.last_active_at = float(last_active) if isinstance(last_active, (int, float)) else file_mtime
+        room.creator_id = data.get("creator_id") or host_id
+        created_here = data.get("created_here")
+        room.created_here = created_here if isinstance(created_here, bool) else True
+        try:
+            presence = float(data.get("master_dialogue_presence_db") or 0.0)
+        except (TypeError, ValueError):
+            presence = 0.0
+        room.master_dialogue_presence_db = max(-12.0, min(12.0, presence))
+        if version == STATE_VERSION:
+            room.takes = raw_takes
+            v1_takes = data.get("pending_v1_takes") or {}
+        else:
+            v1_takes = raw_takes
+        changed = False
+        if isinstance(v1_takes, dict) and v1_takes:
+            _migrate_v1_takes(room, v1_takes)
+            changed = True
+        if isinstance(data.get("voice"), dict):
+            room.voice = _voice_from_disk(data["voice"])
+        else:
+            _migrate_legacy_sound(room)
+            changed = True
+        if changed:
+            room._sync_save_to_disk()
+        ROOMS[room_id.upper()] = room
+        UNLOADABLE_ROOMS.discard(room_id.upper())
+        return room
+    except Exception as ex:
+        print(f"[DubMate] Error restoring room {room_id}: {ex}")
+        UNLOADABLE_ROOMS.add(room_id.upper())
+        return None
 
 
 def load_persisted_rooms():
     prune_sessions()
-    registry = packs_cache.PACKS_CACHE
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
         return
     for r_id in os.listdir(rooms_dir):
-        room_folder = os.path.join(rooms_dir, r_id)
-        if not os.path.isdir(room_folder):
+        if not os.path.isdir(os.path.join(rooms_dir, r_id)):
             continue
-
-        state_file = os.path.join(room_folder, "room_state.json")
-        if os.path.isfile(state_file):
-            try:
-                with open(state_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                version = data.get("state_version")
-                if version not in (None, 1, STATE_VERSION):
-                    # A newer DubMate wrote this room. Reading it as an older layout would
-                    # drop its takes on the next save, so it is left exactly as it is.
-                    print(f"[DubMate] Room {r_id} was saved by a newer DubMate (layout {version!r}); "
-                          f"it is left untouched and not loaded.")
-                    continue
-                pack_id = data.get("pack_id")
-                pack = registry.get(pack_id)
-                if pack:
-                    host_id = data.get("host_id", "host")
-                    users = data.get("users", {})
-                    host_user = users.get(host_id, {})
-                    host_name = host_user.get("name", "Host")
-                    host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
-                    room = Room(r_id, pack, host_id, host_name, host_color)
-                    room.users = data.get("users", room.users)
-                    room.role_assignments = data.get("role_assignments", room.role_assignments)
-                    raw_takes = data.get("takes") or {}
-                    room.status = data.get("status", "lobby")
-                    room.exported_video_path = data.get("exported_video_path")
-                    if version == STATE_VERSION:
-                        room.takes = raw_takes
-                        v1_takes = data.get("pending_v1_takes") or {}
-                    else:
-                        v1_takes = raw_takes
-                    changed = False
-                    if isinstance(v1_takes, dict) and v1_takes:
-                        _migrate_v1_takes(room, v1_takes)
-                        changed = True
-                    if isinstance(data.get("voice"), dict):
-                        room.voice = _voice_from_disk(data["voice"])
-                    else:
-                        _migrate_legacy_sound(room)
-                        changed = True
-                    if changed:
-                        room._sync_save_to_disk()
-                    ROOMS[r_id.upper()] = room
-                    print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
-            except Exception as ex:
-                print(f"[DubMate] Error restoring room {r_id}: {ex}")
+        room = load_room_folder(r_id)
+        if room:
+            print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
 
 
 def _voice_from_disk(raw: Dict[str, Any]) -> Dict[str, Any]:
