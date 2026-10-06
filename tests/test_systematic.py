@@ -26,6 +26,7 @@ PROJECT_ROOT = _sys.path[0]
 import pack_loader
 import audio_processor
 import app
+from dubmate import vocal_chain
 
 class TestSystematicDualEngine(unittest.TestCase):
 
@@ -98,28 +99,17 @@ class TestSystematicDualEngine(unittest.TestCase):
         try:
             audio_processor.write_wav_mono(wav_path, sine, sr)
             
-            # Test pitch up 3 semitones + reverb + gain (verifying reverb tail preservation)
-            processed = audio_processor.apply_audio_effects(
-                wav_path,
-                pitch_semitones=3.0,
-                reverb_wet=0.3,
-                gain_db=2.0,
-                sr=sr
-            )
+            # Test pitch up 3 semitones + reverb (verifying reverb tail preservation)
+            audio = audio_processor.read_wav_mono(wav_path, sr)
+            processed = vocal_chain.render(audio, vocal_chain.chain_from_legacy(3, 0.3), sr)
             self.assertGreater(len(processed), len(sine), "Reverb effect must preserve natural decay tail")
             self.assertTrue(np.all(np.isfinite(processed)))
-            
+
             # Test pitch down 4 semitones (dry: no reverb tail, duration preserved within frame tolerance)
-            processed_down = audio_processor.apply_audio_effects(
-                wav_path,
-                pitch_semitones=-4.0,
-                reverb_wet=0.0,
-                gain_db=0.0,
-                sr=sr
-            )
+            processed_down = vocal_chain.render(audio, vocal_chain.chain_from_legacy(-4, 0.0), sr)
             self.assertAlmostEqual(len(processed_down) / sr, len(sine) / sr, delta=0.02)
             self.assertTrue(np.all(np.isfinite(processed_down)))
-            
+
             # Test the master stage: a hugely hot input comes out at -16 LUFS under -1 dBTP
             hot_audio = sine * 5.0  # Huge peak
             limited, info = audio_processor.master_stage(hot_audio, sr)

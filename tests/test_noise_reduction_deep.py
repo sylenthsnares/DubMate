@@ -369,6 +369,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
             takes_dict = {
                 0: {
                     "wav_path": saved["wav_path"],
+                    "render_dir": audio_processor.room_render_dir(test_room),
                     "offset_ms": 0,
                     "pitch_semitones": 0.0,
                     "reverb_wet": 0.15,

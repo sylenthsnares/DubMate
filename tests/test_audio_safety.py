@@ -146,26 +146,31 @@ class TestGainClamping(unittest.TestCase):
         tone = (0.2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
         self.audio_path = os.path.join(self.tmp_dir, "tone.wav")
         audio_processor.write_wav_mono(self.audio_path, tone, self.sr)
+        self.take = {"wav_path": self.audio_path, "render_dir": os.path.join(self.tmp_dir, "renders")}
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
+    def _render(self, gain_db):
+        return audio_processor._render_take(self.take, self.sr, gain_db, "test")
+
     def test_extreme_positive_gain_db_does_not_overflow(self):
-        result = audio_processor.apply_audio_effects(self.audio_path, gain_db=1_000_000.0, sr=self.sr)
+        result = self._render(1_000_000.0)
         self.assertTrue(np.all(np.isfinite(result)), "Extreme gain_db produced non-finite audio")
         # Clamped to GAIN_DB_MAX, so the multiplier is bounded, not astronomically large.
         max_mult = 10.0 ** (audio_processor.GAIN_DB_MAX / 20.0)
         self.assertLessEqual(float(np.max(np.abs(result))), max_mult * 1.01)
 
     def test_extreme_negative_gain_db_does_not_underflow_to_nan(self):
-        result = audio_processor.apply_audio_effects(self.audio_path, gain_db=-1_000_000.0, sr=self.sr)
+        result = self._render(-1_000_000.0)
         self.assertTrue(np.all(np.isfinite(result)))
 
     def test_gain_db_clamped_to_configured_bounds(self):
-        clamped_high = float(np.clip(500.0, audio_processor.GAIN_DB_MIN, audio_processor.GAIN_DB_MAX))
-        clamped_low = float(np.clip(-500.0, audio_processor.GAIN_DB_MIN, audio_processor.GAIN_DB_MAX))
-        self.assertEqual(clamped_high, audio_processor.GAIN_DB_MAX)
-        self.assertEqual(clamped_low, audio_processor.GAIN_DB_MIN)
+        unity = self._render(0.0)
+        peak = float(np.max(np.abs(unity)))
+        for gain_db, bound in ((500.0, audio_processor.GAIN_DB_MAX), (-500.0, audio_processor.GAIN_DB_MIN)):
+            result = self._render(gain_db)
+            self.assertAlmostEqual(float(np.max(np.abs(result))) / peak, 10.0 ** (bound / 20.0), delta=10.0 ** (bound / 20.0) * 1e-4)
 
 
 class TestMasterLimiterCeiling(unittest.TestCase):

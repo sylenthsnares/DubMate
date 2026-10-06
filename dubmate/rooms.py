@@ -126,15 +126,18 @@ class Room:
         return entry["picked"]
 
     def mix_takes(self) -> Dict[int, Dict[str, Any]]:
-        """{line index: copy of the picked take plus its wav_path} for the lines of the current
-        pack: the input of the render, export and project ZIP functions."""
+        """{line index: copy of the picked take plus its line_id, wav_path and render_dir (the
+        room's render cache)} for the lines of the current pack: the input of the render,
+        export and project ZIP functions."""
         out = {}
         for line in self.pack.lines:
             take = self.picked_take(line["line_id"])
             if take:
                 out[line["index"]] = {
                     **take,
+                    "line_id": line["line_id"],
                     "wav_path": audio_processor.take_wav_path(self.room_id, line["line_id"], take["take_id"]),
+                    "render_dir": audio_processor.room_render_dir(self.room_id),
                 }
         return out
 

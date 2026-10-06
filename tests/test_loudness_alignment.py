@@ -28,6 +28,7 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.test_dir = tempfile.mkdtemp(prefix="dubmate_loudness_test_")
+        cls.render_dir = os.path.join(cls.test_dir, "renders")
         cls.client = TestClient(app.app)
         cls.sr = 44100
 
@@ -154,8 +155,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         g2 = audio_processor.calculate_take_auto_gain(t2_path, target_lufs=ref2)["auto_gain_db"]
 
         takes_dict = {
-            0: {"wav_path": t1_path, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": g1},
-            1: {"wav_path": t2_path, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": g2},
+            0: {"wav_path": t1_path, "render_dir": self.render_dir, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": g1},
+            1: {"wav_path": t2_path, "render_dir": self.render_dir, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": g2},
         }
         mixed_wav = os.path.join(self.test_dir, "balanced_mix.wav")
         audio_processor.render_dub_mix(pack, takes_dict, mixed_wav, sr=self.sr)
@@ -196,7 +197,7 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
 
         pack = pack_loader.load_pack(pack_dir)
         takes_dict = {
-            0: {"wav_path": ref_path, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": 0.0}
+            0: {"wav_path": ref_path, "render_dir": self.render_dir, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": 0.0}
         }
 
         loud_0db = audio_processor.integrated_lufs(audio_processor._mix_scene(pack, takes_dict, self.sr, presence_db=0.0), self.sr)
@@ -308,7 +309,9 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         """Swapping to quieter denoised audio re-measures the take and moves a matched gain with it."""
         pack = self._make_pack("pack_b3_nr", [-20.0])
         self._make_room("LOUDB5", pack)
-        take = self._upload("LOUDB5", 0, -26.0, auto_gain="true")
+        # -24, not -26: the take is measured through its low cut, and at -26 the halved
+        # take's auto gain would sit on the +12 dB clamp.
+        take = self._upload("LOUDB5", 0, -24.0, auto_gain="true")
         before = take["auto_gain_db"]
 
         def half_level(input_wav, output_wav, *args, **kwargs):

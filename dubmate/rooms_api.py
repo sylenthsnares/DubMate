@@ -121,6 +121,35 @@ def _line_target_loudness(pack, line) -> float:
     return measured
 
 
+def _render_level(room, line_id: str, take_id: str, wav_path: str, chain, target_lufs: float):
+    """The take's matched level measured on its render through chain
+    ({"loudness_lufs", "target_lufs", "auto_gain_db"}), or None when the voice effects
+    aren't installed or the render failed."""
+    try:
+        path, _ = audio_processor.render_take_cached(
+            wav_path, chain, audio_processor.room_render_dir(room.room_id),
+            meta={"line_id": line_id, "take_id": take_id})
+    except audio_processor.EffectsUnavailable:
+        return None
+    except Exception as ex:
+        print(f"[Loudness] Could not render take {take_id} of line {line_id} for its level: {ex}")
+        return None
+    return audio_processor.calculate_take_auto_gain(path, target_lufs=target_lufs)
+
+
+def _rematch_level(take: Dict[str, Any], level, measured: Dict[str, Any]) -> None:
+    """Stores a take's new matched level (from _render_level, or when that is None the
+    one measured on the take's own audio, without loudness_lufs). A take that was sitting
+    at its auto gain moves to the new auto gain."""
+    if level is None:
+        level = {"target_lufs": measured["target_lufs"], "auto_gain_db": measured["auto_gain_db"]}
+        take.pop("loudness_lufs", None)
+    old_auto = take.get("auto_gain_db")
+    if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
+        take["gain_db"] = level["auto_gain_db"]
+    take.update(level)
+
+
 def _require_line_actor(room, line, user_id: str) -> None:
     """403 when the line's character has assigned actors and user_id is neither one of
     them nor the host. Unassigned lines are open to everyone, and in a solo room
@@ -199,6 +228,13 @@ async def upload_take(
         audio_processor.delete_take_files(take_dir, take_id)
         raise HTTPException(status_code=400, detail=str(ex))
 
+    # The level is matched on the take's sound through its chain. Without the voice
+    # effects it stays the one measured on the take itself, and loudness_lufs is left out.
+    chain = audio_processor.take_chain({"pitch_semitones": pitch_semitones, "reverb_wet": reverb_wet})
+    level = await asyncio.to_thread(_render_level, room, line_id, take_id, saved["wav_path"], chain, target_loudness)
+    if level is None:
+        level = {"target_lufs": saved.get("target_lufs"), "auto_gain_db": saved.get("auto_gain_db", 0.0)}
+
     take = room.add_take(line_id, {
         "take_id": take_id,
         "user_id": user_id,
@@ -216,12 +252,10 @@ async def upload_take(
         "reverb_wet": reverb_wet,
         # auto_gain: the client asked for the scene-matched level, applied here so the
         # take_recorded broadcast already carries it.
-        "gain_db": saved.get("auto_gain_db", 0.0) if auto_gain else gain_db,
+        "gain_db": level["auto_gain_db"] if auto_gain else gain_db,
         "noise_reduction": saved.get("noise_reduction", noise_reduction),
         "has_raw": True,
-        "loudness_lufs": saved.get("loudness_lufs"),
-        "target_lufs": saved.get("target_lufs"),
-        "auto_gain_db": saved.get("auto_gain_db", 0.0),
+        **level,
         "recorded_at": time.time(),
     })
     wire = room.wire_take(line_id, take)
@@ -308,18 +342,15 @@ async def toggle_take_noise_reduction_endpoint(
                 # A fitted take stays fitted; its timing fields don't change.
                 stretch=float(take.get("stretch", 1.0)),
             )
+            level = await asyncio.to_thread(_render_level, room, line_id, take_id, toggled["wav_path"],
+                                            audio_processor.take_chain(take), target_loudness)
         take["noise_reduction"] = enable
         take["audio_version"] = int(time.time() * 1000)
         take["peaks"] = toggled["peaks"]
         take["duration"] = toggled["duration"]
         # The swapped audio has a different level: re-match, and keep a take that was
         # sitting at its auto gain on the new auto gain.
-        old_auto = take.get("auto_gain_db")
-        if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
-            take["gain_db"] = toggled["auto_gain_db"]
-        take["loudness_lufs"] = toggled["loudness_lufs"]
-        take["target_lufs"] = toggled["target_lufs"]
-        take["auto_gain_db"] = toggled["auto_gain_db"]
+        _rematch_level(take, level, toggled)
         wire = room.wire_take(line_id, take)
         room.invalidate_exports()
         await room.broadcast("take_params_updated", {
@@ -366,11 +397,12 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             int(take.get("start_offset_ms", take.get("offset_ms", 0))),
             allow_stretch=False,
         )
-        return written, timing
+        level = _render_level(room, line_id, take_id, written["wav_path"], audio_processor.take_chain(take), target_loudness)
+        return written, timing, level
 
     try:
         async with room.processing_lock:
-            written, timing = await asyncio.to_thread(rewrite)
+            written, timing, level = await asyncio.to_thread(rewrite)
             old_auto_offset = take.get("auto_offset_ms", take.get("offset_ms", 0))
             if abs(int(take.get("offset_ms", 0)) - int(old_auto_offset)) < 5:
                 take["offset_ms"] = timing["auto_offset_ms"]
@@ -381,12 +413,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             take["audio_version"] = int(time.time() * 1000)
             take["peaks"] = written["peaks"]
             take["duration"] = written["duration"]
-            old_auto_gain = take.get("auto_gain_db")
-            if old_auto_gain is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto_gain)) < 0.05:
-                take["gain_db"] = written["auto_gain_db"]
-            take["loudness_lufs"] = written["loudness_lufs"]
-            take["target_lufs"] = written["target_lufs"]
-            take["auto_gain_db"] = written["auto_gain_db"]
+            _rematch_level(take, level, written)
     except Exception as ex:
         print(f"[OriginalSpeedError] {ex}")
         raise HTTPException(status_code=400, detail=str(ex))
@@ -552,12 +579,15 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
         out_path = room.export_out_path(aspect_ratio)
         # ffmpeg render is fully synchronous; off-loading keeps it from stalling the
         # event loop (and therefore every other room's websocket) for its whole duration.
-        await asyncio.to_thread(
-            audio_processor.export_dub_video,
-            room.pack, room.mix_takes(), out_path,
-            aspect_ratio="9:16" if is_9_16 else "16:9",
-            master_dialogue_presence_db=room.master_dialogue_presence_db,
-        )
+        try:
+            await asyncio.to_thread(
+                audio_processor.export_dub_video,
+                room.pack, room.mix_takes(), out_path,
+                aspect_ratio="9:16" if is_9_16 else "16:9",
+                master_dialogue_presence_db=room.master_dialogue_presence_db,
+            )
+        except audio_processor.EffectsUnavailable as ex:
+            raise HTTPException(status_code=503, detail=str(ex))
         if is_9_16:
             room.exported_video_9_16_path = out_path
         else:
@@ -600,6 +630,8 @@ async def download_room_project_zip(room_id: str):
                 bitrate="192k",
             )
         )
+    except audio_processor.EffectsUnavailable as ex:
+        raise HTTPException(status_code=503, detail=str(ex))
     except Exception as ex:
         print(f"[ProjectZipError] Error generating project ZIP for {room_id}: {ex}")
         raise HTTPException(status_code=500, detail="Couldn't build the project files. Try again.")

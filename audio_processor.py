@@ -16,14 +16,15 @@ import functools
 import shutil
 import zipfile
 import tempfile
+import threading
 import subprocess
 import numpy as np
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, cpu_h264_args, CACHE_DIR, PackInfo
 from pack_loader import compute_waveform_peaks  # re-exported: app.py and tests use audio_processor.compute_waveform_peaks
-from dubmate.vocal_chain import get_reverb_impulse, _fft_convolve  # the reverb lives with the voice chain; apply_audio_effects still uses it
-from dubmate.vocal_chain import _pedalboard_module  # the master limiter
+from dubmate import vocal_chain
+from dubmate.vocal_chain import _fft_convolve  # K-weighting runs through the reverb's FFT convolution
 from pack_loader import (
     run_subprocess as _run_subprocess,
     SUBPROCESS_TIMEOUT_PROBE,
@@ -60,6 +61,23 @@ ORIGINAL_LINE_LEVEL = 0.90  # unrecorded lines fall back to the original referen
 NR_ATTENUATION_DB = 30.0
 # Bump whenever the denoise chain changes, so cached cleaned takes are rebuilt.
 NR_VERSION = 2
+
+# Render cache (render_take_cached): bump RENDER_VERSION whenever a render's samples change
+# for the same take and chain, so old cached renders are never played again.
+RENDER_VERSION = 1
+RENDER_CACHE_MAX_BYTES = 500 * 1024 * 1024
+RENDER_KEEP_RECENT_S = 600       # eviction never deletes a render used in the last 10 minutes
+RENDER_TMP_MAX_AGE_S = 3600      # stray temp files older than this are removed on eviction
+
+EFFECTS_DOWNLOAD_MESSAGE = "Voice effects need a one-time download. Check your connection and restart DubMate."
+
+
+class EffectsUnavailable(RuntimeError):
+    """The voice effects (pedalboard) aren't installed yet, so nothing can be rendered or exported."""
+
+    def __init__(self, message: str = EFFECTS_DOWNLOAD_MESSAGE):
+        super().__init__(message)
+
 
 # Only these characters are allowed in filesystem-derived identifiers (room_id, user_id, ...).
 _SAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
@@ -536,7 +554,9 @@ def true_peak_db(x: np.ndarray) -> float:
 def _limit_true_peak(x: np.ndarray, sr: int) -> Tuple[np.ndarray, float]:
     """Brickwall limiter at MASTER_LIMITER_CEILING_DB (true peak), then a static trim if the
     result still reads above TRUE_PEAK_CEILING_DB. Returns (audio, true peak in dBTP)."""
-    pb = _pedalboard_module()
+    if not vocal_chain.available():
+        raise EffectsUnavailable()
+    pb = vocal_chain._pedalboard_module()
     audio = np.ascontiguousarray(_sanitize_finite_audio(x, context="master limiter input")).reshape(-1)
     if not len(audio):
         return audio, -120.0
@@ -563,7 +583,7 @@ def master_stage(mix: np.ndarray, sr: int = SR) -> Tuple[np.ndarray, Dict[str, f
     MASTER_TARGET_LUFS integrated (gain clamped to +/-24 dB, skipped at or below -70 LUFS),
     then limited to TRUE_PEAK_CEILING_DB true peak. Length is unchanged.
     Returns (audio, {"lufs_in", "gain_db", "true_peak_db"}).
-    Raises RuntimeError when the limiter (pedalboard) isn't available.
+    Raises EffectsUnavailable when the limiter (pedalboard) isn't available.
     """
     audio = _sanitize_finite_audio(mix, context="master_stage input")
     lufs_in = integrated_lufs(audio, sr)
@@ -1009,75 +1029,178 @@ def toggle_take_noise_reduction(
     }
 
 
-def apply_audio_effects(
-    audio_path: str,
-    pitch_semitones: float = 0.0,
-    reverb_wet: float = 0.0,
-    gain_db: float = 0.0,
-    sr: int = SR
-) -> np.ndarray:
-    """
-    Applies high-fidelity vocal DSP chain:
-    1. 80Hz low-cut filter (removes rumble / mic plosives)
-    2. Time-invariant pitch shift (preserves exact line duration)
-    3. Direct linear volume gain (dB trim)
-    4. Acoustic room convolution reverb (maintains 100% dry vocal punch + lush room space)
-    """
-    # Clamp client-supplied gain to a sane audio range so 10 ** (gain_db / 20) can never overflow.
-    clamped_gain_db = float(np.clip(gain_db, GAIN_DB_MIN, GAIN_DB_MAX))
-    if clamped_gain_db != gain_db:
-        print(f"[AudioProcessor] WARNING: gain_db={gain_db} out of safe range; clamped to {clamped_gain_db} dB.")
-    gain_db = clamped_gain_db
+# --- Voice chain renders (documentation/design/effects-rack.md, "Rendering") ---
+# Memo of take file hashes: (path, mtime_ns, size) -> sha1 hex. A take rewritten in place
+# gets a new mtime or size, so it is hashed again.
+_FILE_SHA1: Dict[Tuple[str, int, int], str] = {}
+_RENDER_LOCKS: Dict[str, threading.Lock] = {}
+_RENDER_LOCKS_GUARD = threading.Lock()
 
-    # 1. 80Hz Low-cut filter (always applied)
-    filters = ["highpass=f=80"]
 
-    # 2. Time-Invariant Pitch Shift via asetrate + atempo
-    if abs(pitch_semitones) > 0.01:
-        ratio = 2.0 ** (pitch_semitones / 12.0)
-        target_rate = int(sr * ratio)
-        tempo = 1.0 / ratio
-        
-        tempo_filters = []
-        rem_tempo = tempo
-        while rem_tempo < 0.5:
-            tempo_filters.append("atempo=0.5")
-            rem_tempo /= 0.5
-        while rem_tempo > 2.0:
-            tempo_filters.append("atempo=2.0")
-            rem_tempo /= 2.0
-        tempo_filters.append(f"atempo={rem_tempo:.4f}")
-        tempo_str = ",".join(tempo_filters)
-        filters.append(f"asetrate={target_rate},{tempo_str},aresample={sr}")
+def room_render_dir(room_id: str) -> str:
+    """<room dir>/renders: the room's render cache (created by the first render)."""
+    return os.path.join(get_room_cache_dir(room_id), "renders")
 
-    fd, tmp_out = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
+
+def take_chain(take: Dict[str, Any]) -> Dict[str, Any]:
+    """A take's normalized chain: its own "chain", else its old pitch and reverb on Clean."""
+    if isinstance(take.get("chain"), dict):
+        return vocal_chain.normalize_chain(take["chain"])
+    return vocal_chain.chain_from_legacy(float(take.get("pitch_semitones") or 0.0), float(take.get("reverb_wet") or 0.0))
+
+
+def _file_sha1(path: str) -> str:
+    st = os.stat(path)
+    memo_key = (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+    digest = _FILE_SHA1.get(memo_key)
+    if digest is None:
+        h = hashlib.sha1()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        digest = h.hexdigest()
+        _FILE_SHA1[memo_key] = digest
+    return digest
+
+
+def render_key(wav_path: str, chain: Dict[str, Any], until_ms: Optional[int] = None) -> str:
+    """The cache key of a render: the take's bytes, the chain's sound (not its preset label),
+    the prefix length, RENDER_VERSION and the pedalboard version."""
+    sound = {k: v for k, v in vocal_chain.normalize_chain(chain).items() if k != "preset"}
+    parts = [
+        str(RENDER_VERSION),
+        str(getattr(vocal_chain._pedalboard_module(), "__version__", "")),
+        _file_sha1(wav_path),
+        json.dumps(sound, sort_keys=True, separators=(",", ":")),
+        "full" if until_ms is None else str(int(until_ms)),
+    ]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def _render_lock(key: str) -> threading.Lock:
+    with _RENDER_LOCKS_GUARD:
+        return _RENDER_LOCKS.setdefault(key, threading.Lock())
+
+
+def _touch(path: str) -> None:
     try:
-        _ffmpeg_to_mono_wav(audio_path, tmp_out, sr, SUBPROCESS_TIMEOUT_PROCESS,
-                            "apply_audio_effects filter chain for " + repr(audio_path), af=",".join(filters))
-        audio = read_wav_mono(tmp_out, sr)
-    except Exception as ex:
-        print(f"[AudioProcessor] WARNING: DSP filter chain FAILED for {audio_path!r} (pitch/low-cut NOT applied); returning unprocessed audio. Reason: {ex}")
-        audio = read_wav_mono(audio_path, sr)
-    finally:
-        _remove_quietly(tmp_out)
+        os.utime(path, None)
+    except OSError:
+        pass
 
-    # 3. Volume Gain Trim (Exact dB scaling directly applied to waveform)
-    if abs(gain_db) > 0.01:
-        gain_mult = 10.0 ** (gain_db / 20.0)
-        audio = audio * np.float32(gain_mult)
 
-    # 4. Studio Acoustic Room Convolution Reverb
-    # Direct vocal stays at 100% punch; lush room reflections and natural reverb decay ring out seamlessly
-    if reverb_wet > 0.02 and len(audio) > 0:
-        impulse = get_reverb_impulse(decay_sec=1.5, sr=sr)
-        wet = _fft_convolve(audio, impulse)
-        out_audio = np.zeros(len(wet), dtype=np.float32)
-        out_audio[:len(audio)] = audio
-        out_audio += wet * np.float32(reverb_wet * 0.70)
-        audio = out_audio
+def _commit_render_file(tmp: str, target: str) -> None:
+    """Moves a finished temp file onto its cache name. If another program holds the name
+    (Windows) and the file is already there, the existing file is kept: renders are
+    deterministic, so it has the same content."""
+    try:
+        os.replace(tmp, target)
+    except PermissionError:
+        _remove_quietly(tmp)
+        if not os.path.isfile(target):
+            raise
 
-    return audio
+
+def _evict_renders(render_dir: str, max_bytes: int) -> None:
+    """Keeps the render folder under max_bytes by deleting the least recently used files.
+    Files used in the last RENDER_KEEP_RECENT_S are never deleted; files that can't be
+    deleted (being played, on Windows) or are already gone are skipped. Temp files older
+    than RENDER_TMP_MAX_AGE_S are left over from a crash and removed."""
+    now = time.time()
+    files = []
+    total = 0
+    try:
+        entries = list(os.scandir(render_dir))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if not entry.is_file():
+                continue
+            st = entry.stat()
+        except OSError:
+            continue
+        if entry.name.endswith(".tmp"):
+            if now - st.st_mtime > RENDER_TMP_MAX_AGE_S:
+                try:
+                    os.remove(entry.path)
+                except (PermissionError, FileNotFoundError):
+                    pass
+            continue
+        total += st.st_size
+        files.append((st.st_mtime, st.st_size, entry.path))
+    for mtime, size, path in sorted(files):
+        if total <= max_bytes or now - mtime < RENDER_KEEP_RECENT_S:
+            break
+        try:
+            os.remove(path)
+            total -= size
+        except (PermissionError, FileNotFoundError):
+            continue
+
+
+def render_take_cached(
+    wav_path: str,
+    chain: Dict[str, Any],
+    render_dir: str,
+    until_s: Optional[float] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    The take's sound through its chain, rendered once and cached: the one entry point for
+    preview and export. Writes <render_dir>/<key>.wav (mono 16-bit, 44.1 kHz) and <key>.json
+    ({"line_id", "take_id", "duration", "peak_db"} plus "lufs" for full renders; line_id and
+    take_id come from meta). until_s renders only the take's start (vocal_chain.render).
+    Returns (wav path, info). Raises EffectsUnavailable when the voice effects aren't installed.
+    """
+    if not vocal_chain.available():
+        raise EffectsUnavailable()
+    chain = vocal_chain.normalize_chain(chain)
+    until_ms = None if until_s is None else max(0, int(round(float(until_s) * 1000.0)))
+    key = render_key(wav_path, chain, until_ms)
+    wav_out = os.path.join(render_dir, f"{key}.wav")
+    info_out = os.path.join(render_dir, f"{key}.json")
+
+    with _render_lock(key):
+        if os.path.isfile(wav_out) and os.path.isfile(info_out):
+            try:
+                with open(info_out, "r", encoding="utf-8") as fh:
+                    info = json.load(fh)
+                _touch(wav_out)
+                _touch(info_out)
+                return wav_out, info
+            except (OSError, ValueError):
+                pass  # unreadable info: render again
+
+        audio = vocal_chain.render(read_wav_mono(wav_path, SR), chain, SR,
+                                   until_s=None if until_ms is None else until_ms / 1000.0)
+        audio = np.clip(_sanitize_finite_audio(audio, context="render of " + repr(wav_path)), -1.0, 1.0)
+        peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+        meta = meta or {}
+        info = {
+            "line_id": meta.get("line_id"),
+            "take_id": meta.get("take_id"),
+            "duration": round(len(audio) / float(SR), 3),
+            "peak_db": round(20.0 * math.log10(peak), 2) if peak > 1e-6 else -120.0,
+        }
+        if until_ms is None:
+            info["lufs"] = round(integrated_lufs(audio, SR), 2)
+
+        os.makedirs(render_dir, exist_ok=True)
+        tmp = os.path.join(render_dir, f"{key}.{os.getpid()}.{threading.get_ident()}.tmp")
+        info_tmp = tmp[:-4] + ".json.tmp"
+        try:
+            with open(info_tmp, "w", encoding="utf-8") as fh:
+                json.dump(info, fh)
+            _commit_render_file(info_tmp, info_out)
+            write_wav_mono(tmp, audio, SR)
+            _commit_render_file(tmp, wav_out)
+        finally:
+            _remove_quietly(info_tmp)
+            _remove_quietly(tmp)
+
+    _evict_renders(render_dir, RENDER_CACHE_MAX_BYTES)
+    return wav_out, info
 
 
 def _timeline_samples(pack: PackInfo, sr: int) -> int:
@@ -1090,17 +1213,24 @@ def _timeline_samples(pack: PackInfo, sr: int) -> int:
 
 def _render_take(take_info: Dict[str, Any], sr: int, gain_db: float, log_tag: str) -> Optional[np.ndarray]:
     """
-    Runs a take through apply_audio_effects with its pitch/reverb and the given gain.
-    If that fails, falls back to the unprocessed take audio. Returns None when the take
-    cannot be read at all; what that means is the caller's failure policy.
+    The take's cached render through its chain (take_chain) times its level, gain_db clamped
+    to GAIN_DB_MIN..GAIN_DB_MAX. take_info needs "wav_path" and "render_dir". If the render
+    fails, falls back to the unprocessed take audio. Returns None when the take cannot be
+    read at all; what that means is the caller's failure policy. EffectsUnavailable is
+    raised: an export never goes out without its effects.
     """
     wav_path = take_info["wav_path"]
-    pitch = float(take_info.get("pitch_semitones", 0.0))
-    reverb = float(take_info.get("reverb_wet", 0.0))
+    clamped_gain_db = float(np.clip(gain_db, GAIN_DB_MIN, GAIN_DB_MAX))
+    if clamped_gain_db != gain_db:
+        print(f"[{log_tag}] WARNING: gain_db={gain_db} out of safe range; clamped to {clamped_gain_db} dB.")
     try:
-        return apply_audio_effects(wav_path, pitch_semitones=pitch, reverb_wet=reverb, gain_db=gain_db, sr=sr)
+        path, _ = render_take_cached(wav_path, take_chain(take_info), take_info["render_dir"],
+                                     meta={"line_id": take_info.get("line_id"), "take_id": take_info.get("take_id")})
+        return read_wav_mono(path, sr) * np.float32(10.0 ** (clamped_gain_db / 20.0))
+    except EffectsUnavailable:
+        raise
     except Exception as ex:
-        print(f"[{log_tag}] WARNING: apply_audio_effects failed ({wav_path!r}): {ex}. Falling back to unprocessed take audio.")
+        print(f"[{log_tag}] WARNING: voice chain render failed ({wav_path!r}): {ex}. Falling back to unprocessed take audio.")
     try:
         return read_wav_mono(wav_path, sr)
     except Exception as ex:
@@ -1137,7 +1267,8 @@ def _mix_scene(
     The scene's unmastered mono mix: backing x BACKING_TRACK_LEVEL, each take at its
     offset with its effects, gain and presence_db, and the original voice
     (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take.
-    takes_dict format: {line_index: {"wav_path": str, "offset_ms": int, "pitch_semitones": float, "reverb_wet": float, "gain_db": float}}
+    takes_dict format (Room.mix_takes): {line_index: {"wav_path": str, "render_dir": str,
+    "offset_ms": int, "gain_db": float, and "chain" or the old "pitch_semitones" / "reverb_wet"}}
     """
     total_samples = _timeline_samples(pack, sr)
     mix_buffer = np.zeros(total_samples, dtype=np.float32)
@@ -1309,6 +1440,12 @@ def convert_file_to_mp3(src_path: str, dst_path: str, sr: int = SR, bitrate: str
     return dst_path
 
 
+def _sound_name(chain: Dict[str, Any]) -> str:
+    """The chain's preset name ("Warm"), or "Custom" when it isn't an untouched preset."""
+    preset = vocal_chain.PRESETS.get(chain.get("preset") or "")
+    return preset["name"] if preset else "Custom"
+
+
 def _project_cue_sheet(
     pack: PackInfo, room_id: str, sr: int, bitrate: str, manifest_lines: List[Dict[str, Any]]
 ) -> str:
@@ -1330,8 +1467,8 @@ def _project_cue_sheet(
             out.extend([
                 f"  Actor     : {entry['actor_name']}",
                 f"  Dialogue  : \"{entry['text']}\"",
-                f"  DSP Tuning: Offset: {entry['offset_ms']:+d}ms | Pitch: {entry['pitch_semitones']:+.1f}st"
-                f" | Reverb: {int(entry['reverb_wet'] * 100)}% | Gain: {entry['gain_db']:+.1f}dB",
+                f"  DSP Tuning: Offset: {entry['offset_ms']:+d}ms | Sound: {_sound_name(entry['chain'])}"
+                f" | Gain: {entry['gain_db']:+.1f}dB",
                 f"  File      : {entry['take_file']}",
             ])
         else:
@@ -1499,6 +1636,7 @@ def build_project_zip(
                 "take_file": None,
                 "offset_ms": 0,
                 "stretch": 1.0,
+                "chain": None,
                 "pitch_semitones": 0.0,
                 "reverb_wet": 0.0,
                 "gain_db": 0.0,
@@ -1511,8 +1649,7 @@ def build_project_zip(
             if take_info and os.path.isfile(take_info.get("wav_path", "")):
                 actor_name = take_info.get("user_name", "Actor")
                 offset_ms = int(take_info.get("offset_ms", 0))
-                pitch = float(take_info.get("pitch_semitones", 0.0))
-                reverb = float(take_info.get("reverb_wet", 0.0))
+                chain = take_chain(take_info)
                 gain = float(take_info.get("gain_db", 0.0))
 
                 processed_audio = _render_take(take_info, sr, gain, f"ProjectZip line {idx}")
@@ -1545,8 +1682,11 @@ def build_project_zip(
                 line_entry["offset_ms"] = offset_ms
                 # The take file is already fitted at this speed (1.0 = as recorded).
                 line_entry["stretch"] = float(take_info.get("stretch", 1.0))
-                line_entry["pitch_semitones"] = pitch
-                line_entry["reverb_wet"] = reverb
+                line_entry["chain"] = chain
+                # The old keys, read from the chain (0 when that effect is off).
+                nodes = chain["nodes"]
+                line_entry["pitch_semitones"] = float(nodes["pitch"]["semitones"]) if nodes["pitch"]["on"] else 0.0
+                line_entry["reverb_wet"] = float(nodes["reverb"]["mix"]) if nodes["reverb"]["on"] else 0.0
                 line_entry["gain_db"] = gain
             else:
                 orig_path = os.path.join(pack.folder, line.get("filename", ""))
