@@ -105,7 +105,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
         try:
             saved = audio_processor.save_uploaded_take(
                 test_room,
-                line_index=0,
+                room_dir, "take_line_0",
                 audio_bytes=take_bytes,
                 enable_noise_reduction=True,
                 user_id=test_user
@@ -118,7 +118,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertTrue(os.path.isfile(saved["denoised_path"]))
 
             raw_wav = os.path.join(room_dir, "take_line_0_raw.wav")
-            denoised_wav = audio_processor.denoised_take_path(room_dir, 0)
+            denoised_wav = audio_processor.denoised_take_path(room_dir, "take_line_0")
             self.assertEqual(saved["denoised_path"], denoised_wav)
             active_wav = os.path.join(room_dir, "take_line_0.wav")
 
@@ -132,7 +132,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             # Toggle to raw (noise reduction off)
             toggled_off = audio_processor.toggle_take_noise_reduction(
                 test_room,
-                line_index=0,
+                room_dir, "take_line_0",
                 enable_noise_reduction=False,
                 user_id=test_user
             )
@@ -142,7 +142,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             # Toggle back to denoised (noise reduction on)
             toggled_on = audio_processor.toggle_take_noise_reduction(
                 test_room,
-                line_index=0,
+                room_dir, "take_line_0",
                 enable_noise_reduction=True,
                 user_id=test_user
             )
@@ -159,7 +159,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
         take_bytes = generate_synthetic_wav_bytes(1.0, add_noise=True)
         try:
             saved = audio_processor.save_uploaded_take(
-                test_room, line_index=0, audio_bytes=take_bytes, enable_noise_reduction=True
+                test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=True
             )
             old_denoised = saved["denoised_path"]
             raw_wav = os.path.join(room_dir, "take_line_0_raw.wav")
@@ -172,14 +172,14 @@ class TestStudioNoiseReduction(unittest.TestCase):
 
             # Same settings: the cached cleaned take is reused.
             with mock.patch.object(audio_processor, "apply_noise_reduction") as nr:
-                audio_processor.toggle_take_noise_reduction(test_room, 0, enable_noise_reduction=True)
+                audio_processor.toggle_take_noise_reduction(test_room, room_dir, "take_line_0", enable_noise_reduction=True)
             nr.assert_not_called()
 
             # Changed setting: a fresh cleaned file is written and the old ones are removed.
             with mock.patch.object(audio_processor, "NR_ATTENUATION_DB", 20.0):
-                new_denoised = audio_processor.denoised_take_path(room_dir, 0)
+                new_denoised = audio_processor.denoised_take_path(room_dir, "take_line_0")
                 self.assertNotEqual(new_denoised, old_denoised)
-                toggled = audio_processor.toggle_take_noise_reduction(test_room, 0, enable_noise_reduction=True)
+                toggled = audio_processor.toggle_take_noise_reduction(test_room, room_dir, "take_line_0", enable_noise_reduction=True)
             self.assertTrue(toggled["noise_reduction"])
             self.assertTrue(os.path.isfile(new_denoised))
             self.assertFalse(os.path.exists(old_denoised))
@@ -188,7 +188,7 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertTrue(os.path.isfile(raw_wav))
 
             # A new recording saved without noise reduction drops the stale cleaned take.
-            audio_processor.save_uploaded_take(test_room, line_index=0, audio_bytes=take_bytes, enable_noise_reduction=False)
+            audio_processor.save_uploaded_take(test_room, room_dir, "take_line_0", audio_bytes=take_bytes, enable_noise_reduction=False)
             self.assertFalse(os.path.exists(new_denoised))
             self.assertTrue(os.path.isfile(raw_wav))
         finally:

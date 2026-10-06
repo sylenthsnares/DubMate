@@ -86,7 +86,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
 
         saved = audio_processor.save_uploaded_take(
             room_id=room_id,
-            line_index=line_index,
+            take_dir=audio_processor.get_room_cache_dir(room_id),
+            stem=f"take_line_{line_index}",
             audio_bytes=audio_bytes,
             filename_hint="take.wav",
             target_loudness_db=-20.0

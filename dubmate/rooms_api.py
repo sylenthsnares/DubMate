@@ -158,7 +158,8 @@ async def upload_take(
             saved = await asyncio.to_thread(
                 audio_processor.save_uploaded_take,
                 room.room_id,
-                line_index,
+                audio_processor.get_room_cache_dir(room.room_id),
+                f"take_line_{line_index}",
                 content,
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
@@ -224,7 +225,8 @@ async def toggle_take_noise_reduction_endpoint(
             toggled = await asyncio.to_thread(
                 audio_processor.toggle_take_noise_reduction,
                 room.room_id,
-                line_index,
+                audio_processor.get_room_cache_dir(room.room_id),
+                f"take_line_{line_index}",
                 enable_noise_reduction=enable,
                 user_id=user_id,
                 target_loudness_db=target_loudness,

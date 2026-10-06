@@ -132,22 +132,31 @@ def _noise_reduction_engine() -> str:
     return "dfn" if df_bin and os.path.isfile(df_bin) else "fallback"
 
 
-def denoised_take_path(room_dir: str, line_index: int) -> str:
-    """Path of a line's cleaned take for the current noise-reduction settings.
+def denoised_take_path(take_dir: str, stem: str) -> str:
+    """Path of a take's cleaned audio for the current noise-reduction settings.
     The name carries a short hash of (NR_VERSION, attenuation, engine), so changed settings
     point at a file that does not exist yet and the take is cleaned again."""
     key_src = f"{NR_VERSION}:{NR_ATTENUATION_DB}:{_noise_reduction_engine()}"
     key = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:8]
-    return os.path.join(room_dir, f"take_line_{line_index}_denoised_{key}.wav")
+    return os.path.join(take_dir, f"{stem}_denoised_{key}.wav")
 
 
-def _remove_old_denoised_takes(room_dir: str, line_index: int, keep: Optional[str] = None) -> None:
-    """Deletes take_line_{line_index}_denoised*.wav files other than keep. Raw takes are never touched."""
-    prefix = f"take_line_{line_index}_denoised"
+def _remove_old_denoised_takes(take_dir: str, stem: str, keep: Optional[str] = None) -> None:
+    """Deletes <stem>_denoised*.wav files in take_dir other than keep. Raw takes are never touched."""
+    prefix = f"{stem}_denoised"
     keep_name = os.path.basename(keep) if keep else None
-    for name in os.listdir(room_dir):
+    for name in os.listdir(take_dir):
         if name.startswith(prefix) and name.endswith(".wav") and name != keep_name:
-            _remove_quietly(os.path.join(room_dir, name))
+            _remove_quietly(os.path.join(take_dir, name))
+
+
+def delete_take_files(take_dir: str, stem: str) -> None:
+    """Deletes a take's active, raw and cleaned files. Files that can't be removed are skipped."""
+    if not os.path.isdir(take_dir):
+        return
+    _remove_quietly(os.path.join(take_dir, f"{stem}.wav"))
+    _remove_quietly(os.path.join(take_dir, f"{stem}_raw.wav"))
+    _remove_old_denoised_takes(take_dir, stem)
 
 
 def get_room_cache_dir(room_id: str) -> str:
@@ -158,6 +167,59 @@ def get_room_cache_dir(room_id: str) -> str:
     _ensure_within_directory(path, rooms_root)
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def take_dir(room_id: str, line_id: str) -> str:
+    """Returns (and creates) <room dir>/takes/<line_id>, guarding against path traversal via line_id."""
+    takes_root = os.path.join(get_room_cache_dir(room_id), "takes")
+    path = os.path.join(takes_root, _sanitize_id_token(line_id))
+    _ensure_within_directory(path, takes_root)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def take_wav_path(room_id: str, line_id: str, take_id: str) -> str:
+    """Path of a take's active audio file."""
+    return os.path.join(take_dir(room_id, line_id), f"{_sanitize_id_token(take_id)}.wav")
+
+
+def migrate_legacy_take_files(
+    room_id: str, line_index: int, line_id: str, take_id: str, noise_reduction: bool
+) -> Dict[str, Any]:
+    """Moves an old-layout take (take_line_<i>*.wav in the room folder) to takes/<line_id>/<take_id>*.wav.
+    Files already moved are left alone, so a rerun is harmless. If the active file is missing, it is
+    rebuilt from the cleaned file for the current settings (noise reduction on) or from the raw file,
+    in which case noise reduction is reported off so state matches what plays.
+    Returns {"has_audio", "has_raw", "noise_reduction"}."""
+    room_dir = get_room_cache_dir(room_id)
+    dest_dir = take_dir(room_id, line_id)
+    old_stem = f"take_line_{int(line_index)}"
+    new_stem = _sanitize_id_token(take_id)
+    for name in os.listdir(room_dir):
+        if not name.endswith(".wav"):
+            continue
+        base = name[:-4]
+        if base == old_stem:
+            suffix = ""
+        elif base == old_stem + "_raw" or base.startswith(old_stem + "_denoised"):
+            suffix = base[len(old_stem):]
+        else:
+            continue
+        dest = os.path.join(dest_dir, new_stem + suffix + ".wav")
+        if not os.path.exists(dest):
+            os.replace(os.path.join(room_dir, name), dest)
+
+    active = os.path.join(dest_dir, f"{new_stem}.wav")
+    raw = os.path.join(dest_dir, f"{new_stem}_raw.wav")
+    nr = bool(noise_reduction)
+    if not os.path.isfile(active):
+        denoised = denoised_take_path(dest_dir, new_stem)
+        if nr and os.path.isfile(denoised):
+            shutil.copy2(denoised, active)
+        elif os.path.isfile(raw):
+            shutil.copy2(raw, active)
+            nr = False
+    return {"has_audio": os.path.isfile(active), "has_raw": os.path.isfile(raw), "noise_reduction": nr}
 
 
 def _read_wav_mono_direct(path: str, sr: int) -> Optional[np.ndarray]:
@@ -423,7 +485,8 @@ def apply_noise_reduction(
 
 def save_uploaded_take(
     room_id: str,
-    line_index: int,
+    take_dir: str,
+    stem: str,
     audio_bytes: bytes,
     filename_hint: str = "take.webm",
     enable_noise_reduction: bool = False,
@@ -432,18 +495,17 @@ def save_uploaded_take(
 ) -> Dict[str, Any]:
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
-    Preserves pristine raw audio (take_line_{index}_raw.wav) and generates denoised
-    audio (take_line_{index}_denoised_{key}.wav, see denoised_take_path) when requested.
+    Writes <take_dir>/<stem>.wav (active), preserves pristine raw audio (<stem>_raw.wav) and
+    generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested.
     Calculates speech-gated loudness and smart auto-gain calibration against scene target.
     Returns active path, duration, waveform peaks, auto_gain_db, and noise reduction status.
     """
     if not audio_bytes or len(audio_bytes) < 32:
         raise ValueError("Uploaded audio stream is empty or incomplete.")
 
-    room_dir = get_room_cache_dir(room_id)
-    target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
-    raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
-    denoised_wav = denoised_take_path(room_dir, line_index)
+    target_wav = os.path.join(take_dir, f"{stem}.wav")
+    raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
+    denoised_wav = denoised_take_path(take_dir, stem)
 
     try:
         _transcode_upload(audio_bytes, filename_hint, raw_wav, SUBPROCESS_TIMEOUT_PROCESS, "take upload transcoding")
@@ -464,10 +526,10 @@ def save_uploaded_take(
     # A new raw take makes every earlier cleaned version of this line stale.
     if enable_noise_reduction:
         apply_noise_reduction(raw_wav, denoised_wav, profile_path)
-        _remove_old_denoised_takes(room_dir, line_index, keep=denoised_wav)
+        _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
         shutil.copy2(denoised_wav, target_wav)
     else:
-        _remove_old_denoised_takes(room_dir, line_index)
+        _remove_old_denoised_takes(take_dir, stem)
         shutil.copy2(raw_wav, target_wav)
 
     audio_data = read_wav_mono(target_wav)
@@ -489,13 +551,13 @@ def save_uploaded_take(
         "speech_loudness_db": gain_match["take_loudness_db"],
         "target_loudness_db": gain_match["target_loudness_db"],
         "auto_gain_db": gain_match["auto_gain_db"],
-        "url": f"/api/rooms/{room_id}/takes/{line_index}/audio",
     }
 
 
 def toggle_take_noise_reduction(
     room_id: str,
-    line_index: int,
+    take_dir: str,
+    stem: str,
     enable_noise_reduction: bool,
     user_id: Optional[str] = None,
     target_loudness_db: Optional[float] = None,
@@ -505,16 +567,15 @@ def toggle_take_noise_reduction(
     Generates denoised audio on-demand if missing, and re-measures the
     swapped audio's loudness and auto gain against target_loudness_db.
     """
-    room_dir = get_room_cache_dir(room_id)
-    target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
-    raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
-    denoised_wav = denoised_take_path(room_dir, line_index)
+    target_wav = os.path.join(take_dir, f"{stem}.wav")
+    raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
+    denoised_wav = denoised_take_path(take_dir, stem)
 
     if not os.path.exists(raw_wav):
         if os.path.exists(target_wav):
             shutil.copy2(target_wav, raw_wav)
         else:
-            raise FileNotFoundError(f"No take audio found for line {line_index}")
+            raise FileNotFoundError(f"No take audio found for {stem}")
 
     profile_path = None
     if user_id:
@@ -529,7 +590,7 @@ def toggle_take_noise_reduction(
     if enable_noise_reduction:
         if not os.path.exists(denoised_wav) or os.path.getsize(denoised_wav) < 100:
             apply_noise_reduction(raw_wav, denoised_wav, profile_path)
-            _remove_old_denoised_takes(room_dir, line_index, keep=denoised_wav)
+            _remove_old_denoised_takes(take_dir, stem, keep=denoised_wav)
         shutil.copy2(denoised_wav, target_wav)
     else:
         shutil.copy2(raw_wav, target_wav)
@@ -549,7 +610,6 @@ def toggle_take_noise_reduction(
         "speech_loudness_db": gain_match["take_loudness_db"],
         "target_loudness_db": gain_match["target_loudness_db"],
         "auto_gain_db": gain_match["auto_gain_db"],
-        "url": f"/api/rooms/{room_id}/takes/{line_index}/audio",
     }
 
 

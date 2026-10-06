@@ -95,5 +95,101 @@ class TestPackLineIds(unittest.TestCase):
                          ["t1001", "t44048", "t44048-2"])
 
 
+class TestTakeFiles(unittest.TestCase):
+    """Take files by directory and stem, and moving old-layout takes into takes/<line_id>/."""
+
+    ROOM = "TAKE_FILES_ROOM"
+
+    def setUp(self):
+        self.cache = tempfile.mkdtemp(prefix="dm_take_files_")
+        patcher = mock.patch.object(audio_processor, "CACHE_DIR", self.cache)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, self.cache, True)
+        self.room_dir = audio_processor.get_room_cache_dir(self.ROOM)
+
+    def _wav(self, path, freq):
+        sr = audio_processor.SR
+        tone = (0.2 * np.sin(2 * np.pi * freq * np.arange(sr // 4) / sr)).astype(np.float32)
+        audio_processor.write_wav_mono(path, tone, sr)
+        with open(path, "rb") as f:
+            return f.read()
+
+    def _legacy(self, index, *suffixes):
+        """Writes take_line_<index><suffix>.wav files (distinct audio each) and returns {suffix: bytes}."""
+        out = {}
+        for n, suffix in enumerate(suffixes):
+            out[suffix] = self._wav(os.path.join(self.room_dir, f"take_line_{index}{suffix}.wav"), 200 + 50 * n)
+        return out
+
+    def _read(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_take_dir_stays_inside_room(self):
+        takes_root = os.path.join(self.room_dir, "takes")
+        path = audio_processor.take_dir(self.ROOM, "../../evil")
+        self.assertTrue(os.path.isdir(path))
+        self.assertEqual(os.path.dirname(os.path.realpath(path)), os.path.realpath(takes_root))
+        self.assertNotIn("..", os.path.basename(path))
+        with self.assertRaises(ValueError):
+            audio_processor.take_dir(self.ROOM, "../..")
+        self.assertEqual(audio_processor.take_wav_path(self.ROOM, "t1000", "take2"),
+                         os.path.join(takes_root, "t1000", "take2.wav"))
+
+    def test_delete_take_files_removes_only_that_stem(self):
+        d = audio_processor.take_dir(self.ROOM, "t1000")
+        mine = ["take1.wav", "take1_raw.wav", "take1_denoised.wav", "take1_denoised_abcd1234.wav"]
+        others = ["take10.wav", "take10_raw.wav", "take10_denoised_abcd1234.wav", "take2.wav"]
+        for name in mine + others:
+            self._wav(os.path.join(d, name), 300)
+        audio_processor.delete_take_files(d, "take1")
+        self.assertEqual(sorted(os.listdir(d)), sorted(others))
+
+    def test_migrate_moves_every_variant_byte_identically(self):
+        key_suffix = os.path.basename(audio_processor.denoised_take_path(self.room_dir, "take_line_0"))[len("take_line_0"):-4]
+        before = self._legacy(0, "", "_raw", key_suffix, "_denoised")
+        other = self._legacy(10, "", "_raw")
+        result = audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", True)
+        self.assertEqual(result, {"has_audio": True, "has_raw": True, "noise_reduction": True})
+        d = os.path.join(self.room_dir, "takes", "t1000")
+        for suffix, data in before.items():
+            self.assertEqual(self._read(os.path.join(d, f"take1{suffix}.wav")), data)
+            self.assertFalse(os.path.exists(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")))
+        for suffix, data in other.items():
+            self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_10{suffix}.wav")), data)
+
+        listing = sorted(os.listdir(d))
+        again = audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", True)
+        self.assertEqual(again, result)
+        self.assertEqual(sorted(os.listdir(d)), listing)
+        for suffix, data in before.items():
+            self.assertEqual(self._read(os.path.join(d, f"take1{suffix}.wav")), data)
+
+    def test_missing_active_uses_cleaned_file_when_noise_reduction_on(self):
+        denoised_name = os.path.basename(audio_processor.denoised_take_path(self.room_dir, "take_line_0"))
+        files = self._legacy(0, "_raw", denoised_name[len("take_line_0"):-4])
+        result = audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", True)
+        self.assertEqual(result, {"has_audio": True, "has_raw": True, "noise_reduction": True})
+        active = os.path.join(self.room_dir, "takes", "t1000", "take1.wav")
+        self.assertEqual(self._read(active), files[denoised_name[len("take_line_0"):-4]])
+
+    def test_missing_active_uses_raw_and_turns_noise_reduction_off(self):
+        files = self._legacy(0, "_raw", "_denoised")  # only a cleaned file from older settings
+        result = audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", True)
+        self.assertEqual(result, {"has_audio": True, "has_raw": True, "noise_reduction": False})
+        active = os.path.join(self.room_dir, "takes", "t1000", "take1.wav")
+        self.assertEqual(self._read(active), files["_raw"])
+
+        files = self._legacy(1, "_raw")
+        result = audio_processor.migrate_legacy_take_files(self.ROOM, 1, "t2000", "take1", False)
+        self.assertEqual(result, {"has_audio": True, "has_raw": True, "noise_reduction": False})
+        self.assertEqual(self._read(os.path.join(self.room_dir, "takes", "t2000", "take1.wav")), files["_raw"])
+
+    def test_nothing_to_move(self):
+        result = audio_processor.migrate_legacy_take_files(self.ROOM, 3, "t3000", "take1", False)
+        self.assertEqual(result, {"has_audio": False, "has_raw": False, "noise_reduction": False})
+
+
 if __name__ == "__main__":
     unittest.main()
