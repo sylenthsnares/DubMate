@@ -272,6 +272,9 @@ class Room:
                 if line["line_id"] in self.takes
             },
             "status": self.status,
+            # Whose older takes are being refreshed, so a tab that missed cleanup_refreshed
+            # (a dropped socket) still learns the refresh ended.
+            "cleanup_refreshing": sorted(self.cleanup_refreshing),
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
             "has_export": has_export,
             "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,

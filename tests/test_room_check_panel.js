@@ -307,7 +307,15 @@ async function upload(env) {
     if (text($(kept, "room-check-sentence")) !== "Something was very loud while DubMate listened. Check again in a quiet moment.") fail("clipped copy");
     if (kept.w.localStorage.getItem(KEY) !== storedCheck()) fail("an unusable check changed the stored one");
     if (kept.calls.some((c) => c.method === "DELETE")) fail("an unusable check deleted the stored one");
-    console.log("PASS: a silent or clipped check says why and stores nothing");
+
+    // The loudest line keeps comparing against the room level of the check still in use.
+    const floor = await boot(HOST);
+    await runCheck(floor);
+    if (floor.app.roomCheckFloorDb !== OK_REPORT.speech_floor_db) fail(`room level after a check: ${floor.app.roomCheckFloorDb}`);
+    floor.post = { profile_id: null, report: { ...OK_REPORT, clipped: true, speech_floor_db: -20 } };
+    await runCheck(floor);
+    if (floor.app.roomCheckFloorDb !== OK_REPORT.speech_floor_db) fail(`an unusable check changed the room level to ${floor.app.roomCheckFloorDb}`);
+    console.log("PASS: a silent or clipped check says why, stores nothing and keeps the room level");
   }
 
   // 4. A different microphone asks for a new check and its takes get standard cleanup.
@@ -521,6 +529,36 @@ async function upload(env) {
     env.toasts.length = 0;
     env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u1", count: 1, failed: 1 }, state });
     if (JSON.stringify(env.toasts) !== JSON.stringify(["DubMate couldn't refresh 1 of your older takes. Try again."])) fail(`failed toasts: ${JSON.stringify(env.toasts)}`);
+
+    // A missed cleanup_refreshed (dropped socket): the next room state ends the refresh, and
+    // one still running shows after a reload. State is ignored while my request is on its way.
+    const deliver = (type, roomState) => {
+      const msg = { type, payload: {}, state: roomState };
+      env.app.socket.emit(type, msg);
+      env.app.socket.emit("*", msg);
+    };
+    const refreshingNow = () => btn.disabled && text($(env, "room-check-refresh-text")) === "Refreshing older takes…";
+    setRoom(takesWith(OLD_ID));
+    const realFetch = env.w.fetch;
+    let answer = null;
+    env.w.fetch = (input, opts) => (/cleanup\/refresh$/.test(String(input))
+      ? new Promise((resolve) => { answer = () => resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: "ok", refreshing: 2 }) }); })
+      : realFetch(input, opts));
+    btn.click();
+    await until(() => answer, "the refresh request");
+    deliver("user_joined", { ...env.app.roomState, cleanup_refreshing: [] });
+    if (!refreshingNow()) fail("room state from before the request ended the refresh");
+    answer();
+    await tick(20);
+    env.w.fetch = realFetch;
+    deliver("user_joined", { ...env.app.roomState, cleanup_refreshing: ["u2", "u1"] });
+    if (!refreshingNow()) fail("refresh not shown while the engine runs it");
+    deliver("user_joined", { ...env.app.roomState, takes: takesWith(null), cleanup_refreshing: ["u2"] });
+    if (refreshingNow() || shown(refresh)) fail("a missed cleanup_refreshed left the row refreshing");
+    deliver("user_joined", { ...env.app.roomState, cleanup_refreshing: ["u1"] });
+    if (!refreshingNow()) fail("a refresh still running is not shown from room state");
+    deliver("user_joined", { ...env.app.roomState, cleanup_refreshing: [] });
+    if (refreshingNow()) fail("refresh still shown once room state says it ended");
 
     // A new check: the takes are older than it. A render in progress refuses with its reason.
     env.w.localStorage.setItem(KEY, storedCheck({ profile_id: NEW_ID }));

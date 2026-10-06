@@ -909,6 +909,7 @@ class DubMateApp {
     this.socket.on('*', (data) => {
       if (data.state) {
         if (!this.applyIncomingState(data)) return;
+        this.syncRefreshingFromState();
 
         if (this.currentView === 'lobby') {
           this.renderLobbyState();

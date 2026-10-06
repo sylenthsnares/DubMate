@@ -251,8 +251,11 @@ class TestRefreshWhileRunning(RefreshCase):
         task = self.room.cleanup_refresh_task
         self.assertEqual(self._refresh(), {"status": "ok", "refreshing": 2})
         self.assertIs(self.room.cleanup_refresh_task, task)
+        # Room state says whose refresh runs, for a tab that misses cleanup_refreshed.
+        self.assertEqual(self.room.to_state_dict()["cleanup_refreshing"], ["u1"])
         self.gate.set()
         self._wait()
+        self.assertEqual(self.room.to_state_dict()["cleanup_refreshing"], [])
         self.assertEqual(self.nr.call_count, 2)
         self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 2, "failed": 0}])
 

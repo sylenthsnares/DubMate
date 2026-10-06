@@ -215,6 +215,8 @@ export class RoomCheckMethods {
     this.roomCheckFloorDb = null;
     // The room whose older takes are being refreshed, or null.
     this.roomCheckRefreshingRoom = null;
+    // True while my Refresh request is on its way (room state may predate it).
+    this.roomCheckRefreshPosting = false;
     if (this.btnRoomCheck) this.btnRoomCheck.addEventListener('click', () => this.openRoomCheckPanel());
     if (this.btnStartRoomCheck) this.btnStartRoomCheck.addEventListener('click', () => this.runRoomCheck());
     if (this.btnCancelRoomCheck) this.btnCancelRoomCheck.addEventListener('click', () => this.cancelRoomCheck());
@@ -445,7 +447,11 @@ export class RoomCheckMethods {
         if (kept && previous && previous.profile_id !== profileId) this.deleteRoomProfile(previous.profile_id);
       }
       this.showRoomCheckPanel(null);
-      this.roomCheckFloorDb = Number.isFinite(data.report.speech_floor_db) ? data.report.speech_floor_db : null;
+      // A silent or clipped check measured nothing useful: the loudest line keeps comparing
+      // against the check that is still in use.
+      if (!model.unusable) {
+        this.roomCheckFloorDb = Number.isFinite(data.report.speech_floor_db) ? data.report.speech_floor_db : null;
+      }
       this.showRoomCard(model);
       if (this.btnRoomCheck) this.btnRoomCheck.focus();
     } finally {
@@ -539,6 +545,7 @@ export class RoomCheckMethods {
     const check = readRoomCheck(roomCheckStorage());
     const roomId = this.roomState.room_id;
     this.roomCheckRefreshingRoom = roomId;
+    this.roomCheckRefreshPosting = true;
     this.renderRoomCheckRow();
     let failure = null;
     try {
@@ -554,10 +561,26 @@ export class RoomCheckMethods {
       }
     } catch (err) {
       failure = this.friendlyError(err, ROOM_REFRESH_FAILED);
+    } finally {
+      this.roomCheckRefreshPosting = false;
     }
     if (failure === null) return;
     if (this.roomCheckRefreshingRoom === roomId) this.roomCheckRefreshingRoom = null;
     this.showToast(failure);
+    this.renderRoomCheckRow();
+  }
+
+  /**
+   * Follows the room state's list of people whose older takes are being refreshed, so a
+   * tab that missed cleanup_refreshed (a dropped socket) stops showing the refresh, and a
+   * reloaded one shows a refresh still running. Not while my request is on its way.
+   */
+  syncRefreshingFromState() {
+    const state = this.roomState;
+    if (!state || !this.user || this.roomCheckRefreshPosting || !Array.isArray(state.cleanup_refreshing)) return;
+    const running = state.cleanup_refreshing.includes(this.user.id);
+    if (running === this.isRefreshingOlderTakes()) return;
+    this.roomCheckRefreshingRoom = running ? state.room_id : null;
     this.renderRoomCheckRow();
   }
 
