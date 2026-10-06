@@ -252,6 +252,9 @@
     }
     .tech-details summary::-webkit-details-marker { display: none; }
     .tech-details summary:hover { color: var(--text-muted); }
+    .error-details {
+      margin: -8px 0 16px 0;
+    }
     .tech-log {
       margin-top: 8px;
       font-family: monospace;
@@ -312,6 +315,10 @@
     <div class="error-icon">⚠️</div>
     <h3 id="error-title" class="error-title">DubMate didn't start</h3>
     <p id="error-msg" class="error-msg">Click Try again, or open DubMate in your browser.</p>
+    <details id="error-details" class="tech-details error-details" style="display: none;">
+      <summary>Show details</summary>
+      <div id="error-raw" class="tech-log"></div>
+    </details>
     <div class="error-actions">
       <button id="btn-retry" class="btn btn-primary">Try again</button>
       <button id="btn-open-browser" class="btn btn-secondary">Open in browser</button>
