@@ -4,55 +4,56 @@
 
 ## Platform
 
-web
+Web app served by a local engine, wrapped in a desktop app (Windows, macOS). Friends join a room from their own DubMate or from a browser link.
 
 ## Users
 
-Semi-pro voice actors, streamers, anime content creators, and collaborative ADR dubbing groups producing polished scene dubs for social media, YouTube, and portfolio showcases.
+Hobbyist voice actors and groups of friends who dub anime and film scenes for fun, for social media, or for a portfolio. Most are not audio engineers. A smaller group wants real control over their sound and would otherwise open a separate editor to fix it.
 
 ## Product Purpose
 
-DubMate Studio Pro is a high-performance web Digital Audio Workstation (DAW) and multiplayer scene dubbing suite. It enables actors to cast character roles, record voice lines with visual waveform alignment against original dialogue, shape voice tracks with studio-grade DSP (time-invariant pitch shifting, acoustic reverb, de-hum low-cut), and screen the synchronized dubbed scene together live before exporting a master MP4 video.
+Dub a scene without editing software. Pick a scene, cast the characters, record your lines against the video, and watch the finished dub together. DubMate handles the tedious parts: removing the original voices, lining up and levelling takes, cleaning up room noise, and rendering the video.
+
+The Pack Builder turns any video into a scene that can be dubbed.
 
 ## Positioning
 
-The only browser-native ADR voice dubbing studio combining sub-millisecond visual waveform sync, hardware-calibrated Web Audio DSP, and synchronized multiplayer premiere theater without requiring heavy desktop software installation.
+Simple by default, deep on request. A friend who opens an invite link can record a line in a minute. Someone who cares about their sound has an effects chain, take history and exact timing a click away, and never needs to export the takes and finish them elsewhere.
 
 ## Operating Context
 
-Desktop studio workstations and creator setups using headphones and dedicated USB/XLR microphones. Fast keyboard-driven workflow (`Space` for instant punch-in recording, `[` / `]` for micro-nudge sync adjustments, quick line stepping) in low-light studio environments.
+Recording at a desk with headphones and a USB or XLR mic, often in an untreated room. Sessions are social: people record on their own, then watch the dub together. Recording relies on the keyboard (Space to record, `[` and `]` to nudge timing, arrows to move between lines).
 
 ## Capabilities and Constraints
 
-- **Audio Engine**: Real-time Web Audio API with non-destructive DSP graph (gain boost, pitch shift, convolution reverb, biquad low-cut filter).
-- **Dual-Waveform Sync**: Interactive canvas with millisecond visual envelope matching, mouse/touch drag scrubbing, and fine-tuning nudges (-800ms to +800ms).
-- **Pack Authoring (Pack Builder)**: 1-click browser scene creator using GPU-first Demucs stem separation, Whisper auto-transcription, interactive waveform cue editor, and subtitle file import.
-- **Collaboration**: Real-time WebSocket room synchronization for casting assignments, actor readiness HUD, and synchronized host premiere playback.
-- **Master Export**: Server-side FFmpeg pipeline merging multi-track actor audio takes with background M&E (Music & Effects) stems into high-bitrate MP4 video.
-- **Performance**: Zero layout-thrashing animations, GPU-accelerated transforms, sub-160ms micro-interactions.
+- Two surfaces: the studio, where you record and watch dubs, and the Pack Builder, where you make scenes.
+- What you hear while editing is what you export. Effects are rendered by the engine for both preview and export. Controls react instantly while the audio catches up.
+- Takes are levelled automatically. Nobody gets instructions about input levels except during mic setup.
+- Recording, effects and rendering run on the user's machine. The only things that go online are room codes, the connection for remote friends, and updates.
+- Advanced controls stay hidden until someone asks for them.
 
 ## Brand Commitments
 
-- **Name**: DubMate Studio Pro
-- **Aesthetic**: Pro-Audio DAW & Broadcast Hardware Suite (Obsidian dark surfaces, precision faders, on-air tally lights, VU amber meters, hardware-style tactile controls).
-- **Tone**: Professional, focused, precision-engineered, zero generic AI slop.
+- **Name:** DubMate. "Studio" and "Pack Builder" label the two surfaces and are not part of the name.
+- **Look:** a warm, dark analog studio with tactile controls that stay readable at a glance. The look should never get in the way of recording.
+- **Voice:** plain and short. Text says what something does for the user, not how it works. There is no hype, no technical names unless the user must act on them, and no lines that only show off effort. Secondary explanations go in tooltips.
 
 ## Evidence on Hand
 
-- Fully functional FastAPI + WebSocket backend (`app.py`, `pack_builder.py`, `pack_loader.py`, `audio_processor.py`).
-- Complete client-side audio engine (`audio_engine.js`, `waveform.js`, `room_socket.js`, `pack_builder.js`).
-- Shipped scene packs with split vocal and backing audio tracks in `Packs/`.
+- A working studio, Pack Builder, multiplayer rooms and video export.
+- Scene packs in `Packs/`, with separated voice and background tracks.
 
 ## Product Principles
 
-1. **Precision Hardware Tactility**: Every fader, knob, toggle, and record trigger must evoke high-end studio rack equipment.
-2. **Speed & Zero Friction**: Keyboard-driven actions (`Space`, `[`, `]`, `Enter`) must respond instantaneously without animation lag or layout thrash.
-3. **Hierarchy of Focus**: Video viewport, dialogue prompter, and dual waveform alignment command the center of visual attention; controls remain crisp and uncluttered.
-4. **Frictionless Collaboration**: Casting assignments, live actor status, and the transition from booth recording to group premiere theater are transparent and seamless.
+1. **The video and the line come first.** The prompter, the video and the record button own the screen. Everything else waits until it's needed.
+2. **Automate what needs no creative judgement.** Timing, levels, noise and casting should be handled for the user, with a way to override each one.
+3. **Never fake it.** A preview never sounds different from the export, and no UI text claims something the app doesn't do.
+4. **Hide depth, don't remove it.** Presets first, the full rack one click away. A guest never sees a control they don't understand.
+5. **Respond instantly.** Keys and controls react immediately. Slow work happens behind the scenes, without blocking the screen.
 
 ## Accessibility & Inclusion
 
-- WCAG 2.1 AA compliant text contrast across all dark surfaces (minimum 4.8:1 for secondary copy, 7:1+ for dialogue).
-- Full keyboard navigation with distinct `:focus-visible` studio rings.
-- Explicit ARIA names, ranges, and live value text for all DSP sliders and nudge controls.
-- `prefers-reduced-motion` compliance providing intentional non-moving state changes.
+- WCAG 2.1 AA contrast on every dark surface.
+- Full keyboard use with visible focus rings. Tooltips open on focus as well as on hover.
+- Every slider and control has an accessible name and value.
+- Respects `prefers-reduced-motion`.
