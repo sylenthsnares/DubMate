@@ -170,7 +170,7 @@ Automated tests use synthetic room tone, stubbed audio and a faked `deep-filter`
 4. **Use standard cleanup** deletes the engine copy right away. Takes keep their tuned cleanup until Refresh. The one exception is a missing cleaned file on an install without DeepFilterNet, which then gets standard cleanup.
 5. Silent or clipped checks save nothing. A changing-noise check is saved, with the advice to check again.
 6. `NR_VERSION` stays 2; the standard chain and key are unchanged.
-7. The loud-line check runs in the browser only. Its "Good" range is −12 to −4 dB peak, advice aims for −8, and an "up" suggestion never lands a peak above −6.
+7. The loud-line check runs in the browser only. A shout should peak around −10 to −6 dB, so its "Good" range is −10 to −6 dB peak, advice aims for −8, and an "up" suggestion never lands a peak above −6.
 8. Rumble appears only in the tooltip, and DC offset only in the stats (the brief lists both; neither needs an action).
 9. Thresholds as specified in the brief; the rest chosen here: tones more than 10 dB over the local median; hiss at ≥ −3 dB relative to mids and only in a room that isn't Good; changing noise above 6 dB p90−p10; notches Q 30 for hum and other steady tones (the brief asks for hum and whine; ROADMAP only names hum); at most 50 stored checks.
 10. The dead calibration modal and its booth code are removed; `AudioEngine.recordNoiseProfile` becomes a plain clip recorder. The check lives inline in Audio settings, like **Sync your mic**.

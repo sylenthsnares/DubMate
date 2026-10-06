@@ -34,10 +34,11 @@ const ROOM_SAVE_FAILED = "DubMate couldn't finish the check. Try again.";
 const ROOM_MIC_FAILED = "Can't read this microphone. Try another one or press Rescan.";
 const ROOM_REFRESH_FAILED = "DubMate couldn't refresh your older takes. Try again.";
 
-// The loudest-line check, in dB of peak: Good from -12 to -4, advice aims at -8 and an
-// "up" never lands the loudest line above -6, so a shout keeps its headroom.
-const LOUD_GOOD_MIN_DB = -12;
-const LOUD_GOOD_MAX_DB = -4;
+// The loudest-line check, in dB of peak: a shout should peak around -10 to -6, so Good is
+// -10 to -6, advice aims at -8 and an "up" never lands the loudest line above -6, so a
+// shout keeps its headroom.
+const LOUD_GOOD_MIN_DB = -10;
+const LOUD_GOOD_MAX_DB = -6;
 const LOUD_TARGET_DB = -8;
 const LOUD_UP_CEILING_DB = -6;
 const LOUD_CLIP_DB = -0.1;

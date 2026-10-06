@@ -172,15 +172,20 @@ function report(extra = {}) {
     console.log("PASS: silent and clipped checks carry the reason; unreadable reports give no card");
   }
 
-  // 6. Loudest-line advice: Good from -12 to -4, aim at -8, "up" never above -6.
+  // 6. Loudest-line advice: a shout should peak around -10 to -6, so Good is -10 to -6,
+  // advice aims at -8 and an "up" never lands above -6.
   {
     const UNHEARD = { text: "DubMate couldn't hear you. Try again, a bit louder.", snrText: "" };
     eq(rc.loudLineAdvice(-8, -20, -58), { text: "Good level.", snrText: "Your voice is about 38 dB louder than the room." }, "good");
-    eq(rc.loudLineAdvice(-12, -24, -60).text, "Good level.", "good, low edge");
-    eq(rc.loudLineAdvice(-4, -16, -60).text, "Good level.", "good, high edge");
+    eq(rc.loudLineAdvice(-10, -22, -60).text, "Good level.", "good, low edge");
+    eq(rc.loudLineAdvice(-6, -18, -60).text, "Good level.", "good, high edge");
+    eq(rc.loudLineAdvice(-5.6, -18, -60).text, "Turn your mic down by about 2 dB.", "just above Good");
+    eq(rc.loudLineAdvice(-4, -16, -60).text, "Turn your mic down by about 4 dB.", "down from -4");
     eq(rc.loudLineAdvice(-2.6, -14, -60).text, "Turn your mic down by about 5 dB.", "down");
+    eq(rc.loudLineAdvice(-10.4, -22, -60).text, "Turn your mic up by about 2 dB.", "just below Good");
+    eq(rc.loudLineAdvice(-12, -24, -60).text, "Turn your mic up by about 4 dB.", "up from -12");
     eq(rc.loudLineAdvice(-12.4, -24, -60).text, "Turn your mic up by about 4 dB.", "up");
-    for (let peak = -44.9; peak < -12; peak += 0.1) {
+    for (let peak = -44.9; peak < -10; peak += 0.1) {
       const m = /up by about (\d+) dB/.exec(rc.loudLineAdvice(peak, peak - 12, -70).text);
       if (!m) fail(`no up advice at ${peak}`);
       const up = Number(m[1]);
