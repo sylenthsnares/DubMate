@@ -15,8 +15,8 @@ zero speaker turns, pipeline order, completion message, tests, package pin and s
 | **Voices only / Full audio** now changes what you hear, not only the waveform. "Voices only" (the default, as today) plays the separated voice track in sync with the muted video; "Full audio" plays the video's own sound. | Existing toggle in the editor's transport deck. Tooltip: "Hear and see voices only, or the full audio". Toast on switch: "Playing voices only" / "Playing full audio". | 1 (visible control, unchanged place) |
 | When voices-only playback can't run (voices weren't separated, the track can't load, or the browser blocks it), the editor switches to full audio and says so. | Toast: "Voices-only playback isn't available, so you're hearing the full audio." | 1, shown only when it applies |
 | **Touch and pen** work on the timeline: drag a line, drag its edges, drag the empty timeline to scroll, tap to move the playhead, drag the splitter to resize. Mouse behaves exactly as before. | Timeline | 0 (no control) |
-| **Detecting who speaks**: lines are split between characters by voice ("Speaker 1", "Speaker 2", ...), instead of alternating on pauses. Rough is fine: the existing character menu on each line fixes mistakes. | New processing stage "Detect who speaks" (desc: "Gives each voice its own character"). Progress "Detecting who speaks"; first time only "Downloading speaker detection (about 35 MB, first time only)", or "about 55 MB" when the desktop app also has to fetch the detector itself. | 0 (automatic) |
-| If speaker detection is not installed, can't be downloaded, finds no voices or fails, speakers are guessed from pauses as today, and the editor says so. | One-line notice above the line list (`#editor-notice`), e.g. "Speaker detection isn't installed, so speakers were guessed from pauses. Check who says each line." | 1, shown only when it applies |
+| **Detecting who speaks**: lines are split between characters by voice ("Speaker 1", "Speaker 2", ...), instead of alternating on pauses. Rough is fine: the existing character menu on each line fixes mistakes. | New processing stage "Detect who speaks" (desc: "Gives each voice its own character"). Progress "Detecting who speaks"; first time only "Downloading speaker detection (about 35 MB, first time only)". | 0 (automatic) |
+| If speaker detection is not installed, can't be downloaded, finds no voices or fails, speakers are guessed from pauses as today, and the editor says so. | One-line notice above the line list (`#editor-notice`), e.g. "Speaker detection couldn't run, so speakers were guessed from pauses. Check who says each line." When it isn't installed, the notice says how to add it instead (see How it works). | 1, shown only when it applies |
 | **Non-verbal lines**: grunts, efforts, screams and laughs that the transcript skipped become lines to record. They have no text. | Line card shows a "No words" badge (tooltip: "A grunt, laugh or other sound without words. Record it like any other line."). Text box placeholder: "No words. Type a cue like (laughs) if you want." Timeline label: `[Speaker 1] (no words)`. | 1 badge, 2 tooltip |
 | **Result summary** when the editor opens. | Toast: "Found 14 lines, 2 without words" (or "Found 14 lines"). The progress message keeps the same text, but the editor replaces it within 600 ms, so the toast is what people actually see. | 1 |
 
@@ -129,15 +129,19 @@ Any exception inside it is logged and the lines are kept as they were.
 
 **Speaker detection** (`pack_builder.detect_speaker_turns(vocals_wav, on_progress=None) -> (turns | None, notice)`):
 
-1. `import sherpa_onnx`. On ImportError:
-   - Desktop (`_addon_dir()` is not None): `_install_speaker_package(addon)` runs
-     `sys.executable -m pip install --no-input --no-deps --target <addon> sherpa-onnx==1.13.8 sherpa-onnx-core==1.13.8`
-     (`subprocess.run`, 300 s timeout, hidden console on Windows), then
-     `importlib.invalidate_caches()` and imports again. No `--upgrade`, so existing folders
-     in the add-on (such as `bin/`) are left alone. This is how installs made before this
-     release get speaker detection without the 2 GB Pack Builder download.
-   - If that fails, or on a source install: `(None, "Speaker detection isn't installed, so speakers were guessed from pauses. Check who says each line.")`.
-     Source installs get the package from `update.bat`/`update.sh`.
+1. `import sherpa_onnx`. The running engine never installs packages. The package comes
+   with the Pack Builder (`requirements_builder.txt`), so fresh add-on installs and
+   `update.bat`/`update.sh` get it. On ImportError the turns are None and the notice says
+   how to add it:
+   - Desktop (`_addon_dir()` is not None): "Speaker detection isn't installed, so speakers
+     were guessed from pauses. To add it, remove Pack Builder in Audio settings, then run the
+     DubMate installer again and tick Pack Builder." That is the existing flow: Audio settings
+     "Remove Pack Builder" deletes the add-on and its opt-in, and the installer's Pack Builder
+     box writes the opt-in again, so the launcher downloads it on the next start. The engine
+     has no way to add one package to the add-on in place, and the desktop updater does not
+     re-run `requirements_builder.txt`, so an update alone does not bring it.
+   - Source install: "... To add it, run update.bat (Windows) or update.sh (macOS and Linux),
+     then restart DubMate."
 2. `_ensure_speaker_models()` downloads any missing files under a module lock. It uses
    `urllib.request.urlopen` with a 60 s timeout. On failure it returns
    `(None, "Couldn't download speaker detection, ...")`, and the next build tries again.
@@ -216,17 +220,16 @@ There is no pack or session format change:
 - Packs are byte-compatible.
 - Builder sessions are in memory and expire after 2 h.
 - The model folder is new; nothing is moved or deleted.
-- Existing desktop Pack Builder installs are topped up in place (one pinned package added to
-  the add-on folder on first use). Nothing already there is replaced or deleted.
+- Existing desktop Pack Builder installs are not changed. They keep guessing speakers from
+  pauses, with the notice, until Pack Builder is reinstalled.
 
 Tests guarding this:
 
 - A pack assembled with a non-verbal, empty-caption line round-trips through `load_pack` with
   `caption == ""`, the right character and the right timing.
 - `PUT /segments` without `nonverbal` returns segments without the key, as it does today.
-- The top-up builds exactly the pip command above (no `--upgrade`, `--no-deps`, target is the
-  add-on folder) against a fake add-on folder with a stubbed `subprocess.run`, and is never
-  attempted on a source install.
+- Without the package, neither a source install nor a fake add-on folder runs anything
+  (`subprocess.run` stubbed and asserted unused), and each gets its own notice.
 
 ## Tests (no network, no real models)
 
@@ -259,8 +262,8 @@ Tests guarding this:
 - Studio prompter wording for lines without text.
 - Pinch-zoom on the timeline.
 - Transcoding the stem to a smaller format for preview.
-- A general "update Pack Builder's packages" mechanism in the launcher. Only the one pinned
-  package is topped up, by the engine.
+- A general "update Pack Builder's packages" mechanism in the launcher. Desktop installs from
+  before this release get speaker detection by reinstalling Pack Builder.
 - Running speaker detection in a separate process (only if the macOS check below fails).
 
 ## Risks
@@ -268,9 +271,8 @@ Tests guarding this:
 - **Torch and onnxruntime in one process.** On macOS a duplicate OpenMP runtime can abort the
   engine, and a fallback can't catch that. Hands-on check 1. If it aborts, the follow-up is to
   run `detect_speaker_turns` in a child Python process; that is not in this PR.
-- **Engine-side pip top-up.** It writes into the add-on folder from the running engine. If pip
-  is missing from the runtime, the folder is read-only, or PyPI is unreachable, the user gets
-  the "isn't installed" notice and the next build tries again. Hands-on check 4.
+- **Older desktop installs** have no speaker detection until Pack Builder is reinstalled
+  (about 2 GB again). The notice says how.
 - **Embedded Windows Python** (`._pth`) must load the sherpa-onnx-core DLLs from the add-on
   folder. Only a regular Python was tested. Hands-on check 4.
 - **CPU time.** Diarization of a 30-minute clip may take a few minutes on CPU. Progress is
@@ -290,9 +292,10 @@ Tests guarding this:
 2. macOS desktop app: open the editor with "Voices only" and press play. You hear the voices,
    or you get the fallback toast and the full audio. Never silence.
 3. Windows, CPU only: time speaker detection on a real 30-minute voice stem.
-4. Windows desktop install made before this release (Pack Builder installed): build a pack.
-   The top-up installs into `ai-packages`, `import sherpa_onnx` works with the embedded
-   runtime, speakers are detected, and "Remove Pack Builder" deletes the package and models.
+4. Windows desktop install made before this release (Pack Builder installed): build a pack
+   and see the "isn't installed" notice. Remove Pack Builder, run the installer with Pack
+   Builder ticked, build again: `import sherpa_onnx` works with the embedded runtime,
+   speakers are detected, and "Remove Pack Builder" deletes the package and models.
 5. Tablet or touchscreen laptop, and a pen: drag lines, edges, the splitter and the timeline.
    Then repeat with a mouse and confirm nothing changed.
 6. Listen to non-verbal lines on two real clips, one with crowd noise. Few false lines, and no
@@ -311,8 +314,11 @@ Tests guarding this:
 5. Models live in `<add-on folder>/dubmate-models/speakers` (found from `sys.path`, not the
    install root, so macOS matches), or `<cache>/models/speakers` for source installs. A failed
    download is retried on the next build.
-6. Existing desktop installs get `sherpa-onnx==1.13.8` by an engine-side pinned pip top-up on
-   first use (about 19 MB), instead of a 2 GB Pack Builder re-download or a launcher change.
+6. Existing desktop installs do not get `sherpa-onnx` automatically. The engine-side pip
+   top-up was removed (the running engine must not install packages), so they fall back to
+   the pause guess and the notice tells the user to remove Pack Builder in Audio settings and
+   run the installer again with Pack Builder ticked. Source installs are told to run
+   `update.bat`/`update.sh`. `sherpa-onnx` stays in `requirements_builder.txt`.
 7. `sherpa-onnx` is pinned to `==1.13.8`, the version tested with this config.
 8. The speaker count is automatic (cluster threshold 0.5), with no UI.
 9. Zero speaker turns is treated as "detection failed": pause guess plus notice.
@@ -336,7 +342,7 @@ Each step is one commit and keeps `python tests/run_all_tests.py` green.
    `PUT /segments`, pipeline-driver test, pack round-trip test.
 4. **Non-verbal lines and notices (editor).** Badge, placeholder, timeline label,
    `#editor-notice` for `warning`, result toast.
-5. **Speaker detection (engine core).** Requirement pin, `_addon_dir`, package top-up, pinned
+5. **Speaker detection (engine core).** Requirement pin, `_addon_dir`, pinned
    model download, `detect_speaker_turns`, overlap mapping, README licences, `HEAVY_MODULES`.
 6. **Speaker detection (pipeline and editor).** New stage, notices, progress, pipeline test.
 7. **Changelog and roadmap.**

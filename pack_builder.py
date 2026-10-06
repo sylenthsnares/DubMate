@@ -15,7 +15,6 @@ import time
 import datetime
 import shutil
 import hashlib
-import importlib
 import threading
 import subprocess
 from typing import Dict, List, Optional, Tuple, Any
@@ -991,7 +990,6 @@ def add_nonverbal_segments(segments: List[Dict[str, Any]], vocals_wav: str, dura
 
 
 SPEAKER_CLUSTER_THRESHOLD = 0.5   # lower splits voices more eagerly, higher merges them
-SPEAKER_PACKAGES = ("sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8")
 SPEAKER_SEGMENTATION_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/"
     "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
@@ -1012,12 +1010,19 @@ SPEAKER_MODELS = (
      "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2",
      None),
 )
-SPEAKER_NOTICE_NOT_INSTALLED = "Speaker detection isn't installed, so speakers were guessed from pauses. Check who says each line."
+# The package comes with the Pack Builder (requirements_builder.txt); the engine never installs it.
+SPEAKER_NOTICE_NOT_INSTALLED_DESKTOP = (
+    "Speaker detection isn't installed, so speakers were guessed from pauses. To add it, remove "
+    "Pack Builder in Audio settings, then run the DubMate installer again and tick Pack Builder."
+)
+SPEAKER_NOTICE_NOT_INSTALLED_SOURCE = (
+    "Speaker detection isn't installed, so speakers were guessed from pauses. To add it, run "
+    "update.bat (Windows) or update.sh (macOS and Linux), then restart DubMate."
+)
 SPEAKER_NOTICE_NO_DOWNLOAD = "Couldn't download speaker detection, so speakers were guessed from pauses. Check who says each line."
 SPEAKER_NOTICE_NO_VOICES = "Speaker detection couldn't tell the voices apart, so speakers were guessed from pauses. Check who says each line."
 SPEAKER_NOTICE_FAILED = "Speaker detection couldn't run, so speakers were guessed from pauses. Check who says each line."
 SPEAKER_DOWNLOAD_MESSAGE = "Downloading speaker detection (about 35 MB, first time only)"
-SPEAKER_DOWNLOAD_WITH_PACKAGE_MESSAGE = "Downloading speaker detection (about 55 MB, first time only)"
 
 _SPEAKER_LOCK = threading.Lock()
 
@@ -1045,26 +1050,9 @@ def _speaker_models_dir() -> str:
     return os.path.join(pack_loader.CACHE_DIR, "models", "speakers")
 
 
-def _install_speaker_package(addon: str) -> bool:
-    """
-    Tops up a desktop add-on installed before speaker detection existed with the one
-    pinned package. No --upgrade, so nothing already in the folder is replaced.
-    """
-    cmd = [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps", "--target", addon, *SPEAKER_PACKAGES]
-    try:
-        with _SPEAKER_LOCK:
-            res = subprocess.run(cmd, timeout=300, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if res.returncode != 0:
-            tail = res.stderr or b""
-            if isinstance(tail, bytes):
-                tail = tail.decode("utf-8", "replace")
-            print(f"[PackBuilder] Installing speaker detection failed ({res.returncode}): {tail[-400:]}")
-            return False
-        importlib.invalidate_caches()
-        return True
-    except Exception as ex:
-        print(f"[PackBuilder] Installing speaker detection failed: {ex}")
-        return False
+def _speaker_not_installed_notice() -> str:
+    """How to get speaker detection: through the Pack Builder add-on on desktop, the update script otherwise."""
+    return SPEAKER_NOTICE_NOT_INSTALLED_DESKTOP if _addon_dir() else SPEAKER_NOTICE_NOT_INSTALLED_SOURCE
 
 
 def _download_to(url: str, path: str) -> str:
@@ -1149,25 +1137,14 @@ def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[Li
     on_progress(fraction, message) runs 0.88-0.90 while downloading (first time only, with
     the download message) and 0.90-0.98 while detecting (message "").
     """
-    download_message = SPEAKER_DOWNLOAD_MESSAGE
     try:
         try:
             import sherpa_onnx
-        except ImportError:
-            addon = _addon_dir()
-            if addon is not None:
-                download_message = SPEAKER_DOWNLOAD_WITH_PACKAGE_MESSAGE
-                if on_progress:
-                    on_progress(0.88, download_message)
-            if addon is None or not _install_speaker_package(addon):
-                return None, SPEAKER_NOTICE_NOT_INSTALLED
-            try:
-                import sherpa_onnx
-            except ImportError as ex:
-                print(f"[PackBuilder] Speaker detection still can't load after installing: {ex}")
-                return None, SPEAKER_NOTICE_NOT_INSTALLED
+        except ImportError as ex:
+            print(f"[PackBuilder] Speaker detection isn't installed: {ex}")
+            return None, _speaker_not_installed_notice()
 
-        if not _ensure_speaker_models((lambda f: on_progress(0.88 + 0.02 * f, download_message)) if on_progress else None):
+        if not _ensure_speaker_models((lambda f: on_progress(0.88 + 0.02 * f, SPEAKER_DOWNLOAD_MESSAGE)) if on_progress else None):
             return None, SPEAKER_NOTICE_NO_DOWNLOAD
 
         folder = _speaker_models_dir()

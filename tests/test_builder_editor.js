@@ -350,7 +350,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
 
   // (g) the speaker detection stage, and its notice after the separation notice.
   {
-    const notice = "Speaker detection isn't installed, so speakers were guessed from pauses. Check who says each line.";
+    const notice = "Speaker detection isn't installed, so speakers were guessed from pauses. To add it, remove Pack Builder in Audio settings, then run the DubMate installer again and tick Pack Builder.";
     const ed = await bootEditor({ warning: "Basic separation. " + notice, segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] },
       (w, send) => {
         const stage = (id) => w.document.getElementById(id).classList.contains("active");

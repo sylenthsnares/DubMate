@@ -23,7 +23,7 @@
 - **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
 - **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
-- **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB (desktop installs from before this release: about 55 MB). If that isn't possible, speakers are guessed from pauses as before and the editor says so.
+- **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
 - **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 
 ### Removed

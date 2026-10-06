@@ -1106,7 +1106,7 @@ NOTE This is a test subtitle file
                 p.stop()
 
     def test_21_speaker_detection_not_installed_on_source(self):
-        """A source install without the package gets the notice and never runs pip."""
+        """A source install without the package gets the update-script notice and never runs pip."""
         import sys
         from unittest import mock
         runs = []
@@ -1119,15 +1119,18 @@ NOTE This is a test subtitle file
             turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
             self.assertIsNone(turns)
             self.assertEqual(notice, "Speaker detection isn't installed, so speakers were guessed from pauses. "
-                                     "Check who says each line.")
+                                     "To add it, run update.bat (Windows) or update.sh (macOS and Linux), "
+                                     "then restart DubMate.")
             self.assertEqual(runs, [])
         finally:
             for p in reversed(patches):
                 p.stop()
 
-    def test_22_speaker_package_top_up_in_addon(self):
-        """A desktop add-on without the package gets exactly one pinned, no-upgrade pip install, then imports it."""
-        import subprocess
+    def test_22_speaker_detection_in_addon(self):
+        """
+        A desktop add-on without the package gets the reinstall notice and the engine never
+        installs anything; with the package, models live in the add-on folder.
+        """
         import sys
         from unittest import mock
         addon = os.path.join(self.tmp_dir, "ai-packages")
@@ -1139,20 +1142,21 @@ NOTE This is a test subtitle file
         runs = []
         patches, fake, script = self._speaker_env(addon=addon)
         try:
-            pip = {"returncode": 0}
-
-            def fake_run(cmd, **kwargs):
-                runs.append((cmd, kwargs))
-                if pip["returncode"] == 0:
-                    sys.modules["sherpa_onnx"] = fake
-                return subprocess.CompletedProcess(cmd, pip["returncode"], b"", b"no pip")
-
-            sys.modules["sherpa_onnx"] = None  # import fails; restored by the slot patch
-            patches.append(mock.patch.object(pack_builder.subprocess, "run", fake_run))
+            patches.append(mock.patch.object(pack_builder.subprocess, "run", lambda *a, **k: runs.append(a)))
             patches[-1].start()
             sys.path.insert(1, os.path.join(self.tmp_dir, "not-it", "ai-packages"))
-
             self.assertEqual(pack_builder._addon_dir(), addon)
+            self.assertFalse(hasattr(pack_builder, "_install_speaker_package"))
+
+            sys.modules["sherpa_onnx"] = None  # import fails; restored by the slot patch
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
+            self.assertIsNone(turns)
+            self.assertEqual(notice, "Speaker detection isn't installed, so speakers were guessed from pauses. "
+                                     "To add it, remove Pack Builder in Audio settings, then run the DubMate "
+                                     "installer again and tick Pack Builder.")
+            self.assertEqual(runs, [])
+
+            sys.modules["sherpa_onnx"] = fake
             folder = self._touch_speaker_models()
             self.assertEqual(folder, os.path.join(addon, "dubmate-models", "speakers"))
             script["segments"] = [(3.0, 4.0, 1), (0.5, 2.0, 0)]
@@ -1162,15 +1166,9 @@ NOTE This is a test subtitle file
                 progress.append(fraction)
                 messages.append(message)
             turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"), on_progress)
-
-            self.assertEqual(len(runs), 1)
-            cmd, kwargs = runs[0]
-            self.assertEqual(cmd, [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps", "--target", addon,
-                                   "sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8"])
-            self.assertNotIn("--upgrade", cmd)
-            self.assertEqual(kwargs.get("timeout"), 300)
             self.assertEqual(notice, "")
             self.assertEqual(turns, [(0.5, 2.0, 0), (3.0, 4.0, 1)])
+            self.assertEqual(runs, [])
 
             config = script["config"]
             self.assertEqual(config.segmentation.pyannote.window_shift_ratio, 0.1)
@@ -1181,19 +1179,9 @@ NOTE This is a test subtitle file
             self.assertEqual((config.min_duration_on, config.min_duration_off), (0.3, 0.5))
             self.assertEqual(str(script["samples"].dtype), "float32")
             self.assertEqual(script["callbacks"], [0, 0])
-            self.assertTrue(progress and all(0.88 <= f <= 0.98 for f in progress))
+            self.assertTrue(progress and all(0.90 <= f <= 0.98 for f in progress))
             self.assertAlmostEqual(progress[-1], 0.98)
-            self.assertEqual(messages[0], "Downloading speaker detection (about 55 MB, first time only)")
-            self.assertEqual(messages[-1], "")
-
-            # A failed top-up is the "isn't installed" notice.
-            runs.clear()
-            pip["returncode"] = 1
-            sys.modules["sherpa_onnx"] = None
-            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
-            self.assertIsNone(turns)
-            self.assertEqual(notice, pack_builder.SPEAKER_NOTICE_NOT_INSTALLED)
-            self.assertEqual(len(runs), 1)
+            self.assertEqual(set(messages), {""})  # models already there: no download message
         finally:
             for p in reversed(patches):
                 p.stop()
