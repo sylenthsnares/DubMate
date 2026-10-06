@@ -9,6 +9,7 @@ import { ExportMethods } from './studio/export.js';
 import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
 import { MicSyncMethods } from './studio/mic_sync.js';
+import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
@@ -45,10 +46,8 @@ class DubMateApp {
     this.isPreloadingScreening = false;
     this.isReadyForScreening = false;
 
-    // Noise Reduction & Mic Profile Calibration State
+    // Noise Reduction State
     this.applyNoiseReduction = localStorage.getItem('dubmate_noise_reduction') !== 'false';
-    this.isCalibratingMic = false;
-    this.hasCustomNoiseProfile = false;
     this.pendingJoinRoomId = null;
 
     // Public registry status for the current room, refreshed while it publishes.
@@ -240,29 +239,12 @@ class DubMateApp {
     this.sliderPredelay = document.getElementById('slider-predelay');
     this.valPredelay = document.getElementById('val-predelay');
 
-    // Studio Noise Reduction & Mic Profile Calibration Elements
+    // Studio Noise Reduction Elements
     this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
     this.checkNoiseReduction = document.getElementById('check-noise-reduction');
     this.checkRackNoiseReduction = document.getElementById('check-rack-noise-reduction');
-    this.btnCalibrateMic = document.getElementById('btn-calibrate-mic');
-    this.calibrateIcon = document.getElementById('calibrate-icon');
-    this.calibrateLabel = document.getElementById('calibrate-label');
-    this.btnResetNoiseProfile = document.getElementById('btn-reset-noise-profile');
-    this.badgeNoiseStatus = document.getElementById('badge-noise-status');
     this.boothProcessingTitle = document.getElementById('booth-processing-title');
     this.boothProcessingSub = document.getElementById('booth-processing-sub');
-
-    // Mic Calibration Modal Elements
-    this.modalMicCalibration = document.getElementById('modal-mic-calibration');
-    this.calibModalBadge = document.getElementById('calib-modal-badge');
-    this.calibModalTitle = document.getElementById('calib-modal-title');
-    this.calibModalStatus = document.getElementById('calib-modal-status');
-    this.calibTimerText = document.getElementById('calib-timer-text');
-    this.calibPhaseText = document.getElementById('calib-phase-text');
-    this.calibProgressBar = document.getElementById('calib-progress-bar');
-    this.calibModalIcon = document.getElementById('calib-modal-icon');
-    this.calibRadarRing = document.getElementById('calib-radar-ring');
-    this.btnCancelCalibration = document.getElementById('btn-cancel-calibration');
 
     // Audio Device Setup Panel Elements
     this.modalAudioSettings = document.getElementById('modal-audio-settings');
@@ -314,6 +296,20 @@ class DubMateApp {
     this.btnStartMicSync = document.getElementById('btn-start-mic-sync');
     this.btnStartClapping = document.getElementById('btn-start-clapping');
     this.btnCancelMicSync = document.getElementById('btn-cancel-mic-sync');
+    this.roomCheckStatus = document.getElementById('room-check-status');
+    this.btnRoomCheck = document.getElementById('btn-room-check');
+    this.roomCheckPanel = document.getElementById('room-check-panel');
+    this.roomCheckMessage = document.getElementById('room-check-message');
+    this.roomCheckProgress = document.getElementById('room-check-progress');
+    this.roomCheckProgressFill = document.getElementById('room-check-progress-fill');
+    this.btnStartRoomCheck = document.getElementById('btn-start-room-check');
+    this.btnCancelRoomCheck = document.getElementById('btn-cancel-room-check');
+    this.roomCheckCard = document.getElementById('room-check-card');
+    this.roomCheckVerdict = document.getElementById('room-check-verdict');
+    this.roomCheckLight = document.getElementById('room-check-light');
+    this.roomCheckWord = document.getElementById('room-check-word');
+    this.roomCheckSentence = document.getElementById('room-check-sentence');
+    this.roomCheckAdvice = document.getElementById('room-check-advice');
 
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
@@ -796,7 +792,7 @@ class DubMateApp {
     this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
     this.btnOriginalSpeed?.addEventListener('click', () => this.playAtOriginalSpeed());
 
-    // Studio Noise Reduction Synchronization & Calibration Listeners
+    // Studio Noise Reduction Synchronization Listeners
     const onNoiseToggleChange = (e) => {
       this.setNoiseReduction(e.target.checked);
     };
@@ -819,18 +815,9 @@ class DubMateApp {
       this.checkRackNoiseReduction.addEventListener('change', onNoiseToggleChange);
     }
 
-    if (this.btnCalibrateMic) {
-      this.btnCalibrateMic.addEventListener('click', () => this.calibrateMicNoiseProfile());
-    }
-    if (this.btnResetNoiseProfile) {
-      this.btnResetNoiseProfile.addEventListener('click', () => this.resetMicNoiseProfile());
-    }
-    if (this.btnCancelCalibration) {
-      this.btnCancelCalibration.addEventListener('click', () => this.cancelMicNoiseCalibration());
-    }
-
     this.initAudioSettingsEvents();
     this.initMicSyncEvents();
+    this.initRoomCheckEvents();
 
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
@@ -840,10 +827,6 @@ class DubMateApp {
       if (e.key === 'Escape') {
         if (this.isAudioSettingsOpen()) {
           this.closeAudioSettings();
-          return;
-        }
-        if (this.modalMicCalibration && this.modalMicCalibration.style.display !== 'none') {
-          this.cancelMicNoiseCalibration();
           return;
         }
         if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
@@ -1538,7 +1521,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, PackMethods, LobbyMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

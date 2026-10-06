@@ -42,10 +42,14 @@ function validEntry(entry) {
 }
 
 // The chosen device, else the system default entry, else the first one listed.
-function deviceLabel(list, selectedId) {
+export function chosenDevice(list, selectedId) {
   const devices = Array.isArray(list) ? list : [];
-  const device = (selectedId && devices.find((d) => d.deviceId === selectedId))
-    || devices.find((d) => d.deviceId === 'default') || devices[0];
+  return (selectedId && devices.find((d) => d.deviceId === selectedId))
+    || devices.find((d) => d.deviceId === 'default') || devices[0] || null;
+}
+
+export function deviceLabel(list, selectedId) {
+  const device = chosenDevice(list, selectedId);
   return device ? (device.label || device.deviceId) : '';
 }
 
