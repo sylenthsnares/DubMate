@@ -186,6 +186,7 @@ export class BoothMethods {
 
     this.recordState = 'idle';
     this.updateRecordButtonUI(take);
+    this.updateTimingCaption();
     this.renderTakeHistory();
     this.setABMode('A');
 
@@ -601,6 +602,59 @@ export class BoothMethods {
     this.waveform.render();
     if (syncSocket) {
       this.syncTakeParams();
+    }
+    this.updateTimingCaption();
+  }
+
+  /** "Lined up automatically" by the timing readout until the take is nudged, and
+   *  Original speed on a fitted take. "Nudged" is derived: 5 ms or more off auto_offset_ms. */
+  updateTimingCaption() {
+    if (!this.timingCaption) return;
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    const take = this.roomState && this.takeForLine(this.currentLineIndex);
+    const stretch = Number(take?.stretch ?? 1);
+    const fitted = !!take && Number.isFinite(stretch) && stretch !== 1;
+    const auto = !!take && take.aligned === true && typeof take.auto_offset_ms === 'number'
+      && Math.abs(parseInt(this.sliderNudge.value, 10) - take.auto_offset_ms) < 5;
+    this.timingCaption.textContent = fitted ? 'Lined up and fitted to the line' : 'Lined up automatically';
+    this.timingCaption.style.display = auto ? '' : 'none';
+    if (this.btnOriginalSpeed) {
+      this.btnOriginalSpeed.style.display = fitted && this.canRecordLine(line) ? '' : 'none';
+    }
+  }
+
+  /** Undoes a fitted take's speed change. The engine rewrites the audio and re-times it. */
+  async playAtOriginalSpeed() {
+    if (this.isProcessingTake || this.originalSpeedBusy) return;
+    const lineIndex = this.currentLineIndex;
+    const line = this.roomState?.pack?.lines?.[lineIndex];
+    const take = this.roomState && this.takeForLine(lineIndex);
+    if (!line || !take) return;
+    this.originalSpeedBusy = true;
+    try {
+      const res = await fetch(
+        `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}/original_speed`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: this.user.id }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      // The take_params_updated broadcast carries the same state; apply the reply now so
+      // the booth doesn't wait on the socket (its handler doesn't reload the line).
+      const entryTakes = lineTakes(this.roomState.takes, line);
+      const pos = data.take ? entryTakes.findIndex((t) => t.take_id === data.take.take_id) : -1;
+      if (pos >= 0) entryTakes[pos] = { ...data.take, peaks: data.take.peaks || entryTakes[pos].peaks };
+      this.audio.evictTakeCache(take);
+      if (lineIndex === this.currentLineIndex) await this.loadBoothLine(lineIndex);
+    } catch (err) {
+      this.showToast(this.friendlyError(err, "Couldn't change the take's speed. Try again."));
+    } finally {
+      this.originalSpeedBusy = false;
     }
   }
 
@@ -1146,7 +1200,9 @@ export class BoothMethods {
         this.roomState.takes[lineId] = data.line;
       }
       this.audio.evictTakeCache(this.takeForLine(lineIndex));
-      if (recordedBuffer) {
+      // A fitted take's audio differs from what was recorded; preview the engine's copy.
+      const fitted = Number(data.take?.stretch ?? 1) !== 1;
+      if (recordedBuffer && !fitted) {
         this.currentTakeBuffer = recordedBuffer;
         if (data.take && data.take.url) {
           this.screeningBuffers.set(data.take.url, recordedBuffer);
@@ -1283,6 +1339,11 @@ export class BoothMethods {
     if (!open) return;
 
     const picked = pickedTake(this.roomState.takes, line);
+    const scored = (t) => Number.isFinite(t.timing_score);
+    let bestTimed = null;
+    for (const take of takes) {
+      if (scored(take) && (!bestTimed || take.timing_score >= bestTimed.timing_score)) bestTimed = take;
+    }
     for (const take of takes) {
       const row = document.createElement('div');
       row.className = 'take-history-row' + (take === picked ? ' picked' : '');
@@ -1290,6 +1351,14 @@ export class BoothMethods {
       label.className = 'take-history-label';
       label.textContent = `Take ${take.number} · ${take.user_name || 'Cast member'} · ${(Number(take.duration) || 0).toFixed(1)}s`;
       row.appendChild(label);
+      if (scored(take)) {
+        const timing = document.createElement('span');
+        timing.className = 'take-history-timing' + (take === bestTimed ? ' best' : '');
+        timing.textContent = `Timing ${Math.round(take.timing_score * 100)}%`;
+        timing.dataset.tip = "How closely this take follows the original line's timing";
+        timing.tabIndex = 0;
+        row.appendChild(timing);
+      }
 
       const addButton = (text, cls, onClick, tip) => {
         const btn = document.createElement('button');

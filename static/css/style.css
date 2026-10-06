@@ -2133,6 +2133,13 @@ body.resizing .resize-grip-pill {
   text-align: right;
 }
 
+/* "Lined up automatically": a quiet note by the readout, not a badge */
+.timing-caption {
+  font-size: 11px;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+
 /* Timeline Strip Chips (Dark Brown Theme with Gold Outline Glow) */
 .timeline-chips-wrapper {
   margin-top: 2px;
@@ -2610,6 +2617,17 @@ body.resizing .resize-grip-pill {
   font-weight: 700;
   color: var(--accent-brass);
   white-space: nowrap;
+}
+.take-history-timing {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+/* The best-timed take's figure, lightly lifted */
+.take-history-timing.best {
+  color: var(--accent-brass);
+  font-weight: 700;
 }
 
 /* The open take history hangs over the cards below it */

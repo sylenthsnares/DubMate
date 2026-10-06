@@ -685,7 +685,7 @@
               <div class="nudge-buttons">
                 <button class="btn-nudge" data-nudge="-100" data-tip="100 ms earlier">-100ms</button>
                 <button class="btn-nudge" data-nudge="-25" data-tip="25 ms earlier">-25ms</button>
-                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Reset timing">0 ms</button>
+                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Back to the automatic timing">Auto</button>
                 <button class="btn-nudge" data-nudge="25" data-tip="25 ms later">+25ms</button>
                 <button class="btn-nudge" data-nudge="100" data-tip="100 ms later">+100ms</button>
               </div>
@@ -694,6 +694,10 @@
                 aria-valuetext="0 milliseconds"
                 data-tip="Move your take earlier or later. Shortcut: [ and ]. You can also drag your waveform.">
               <span id="nudge-display" class="nudge-value-readout">0 ms</span>
+              <span id="timing-caption" class="timing-caption" tabindex="0" style="display: none;"
+                data-tip="DubMate matched this take to the original line. Use [ and ] to adjust it."></span>
+              <button id="btn-original-speed" class="btn btn-ghost btn-xs" style="display: none;"
+                data-tip="Play this take at the speed you recorded it">Original speed</button>
             </div>
           </div>
 
