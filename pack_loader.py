@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import threading
 import urllib.parse
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -345,9 +346,28 @@ class PackValidationError(Exception):
 # Memory cache for fast pack indexing: full_path -> (mtime, PackInfo)
 PACK_OBJECT_CACHE: Dict[str, tuple[float, Any]] = {}
 PACK_INDEX_CACHE_FILE = os.path.join(CACHE_DIR, "pack_index.json")
-DURATION_CACHE: Dict[str, float] = {}
+# (path, mtime) -> duration in seconds; a rewritten file gets a fresh probe.
+DURATION_CACHE: Dict[Tuple[str, float], float] = {}
 
 _TS_REGEX = re.compile(r"_(\d+)-(\d{1,3})(?:\.[A-Za-z0-9]+)?$")
+
+# Explicit subprocess timeouts (seconds) so a wedged ffmpeg/DeepFilterNet process can never
+# block a request thread forever. Tuned generously for slow media work while still bounded.
+SUBPROCESS_TIMEOUT_PROBE = 60      # tiny clips / 1s noise-profile samples
+SUBPROCESS_TIMEOUT_PROCESS = 180   # per-take transcodes, filter chains, denoise passes
+SUBPROCESS_TIMEOUT_RENDER = 300    # full mix renders, video export, project zip encoding
+
+
+def run_subprocess(cmd, timeout: float, context: str = "ffmpeg", **kwargs):
+    """Runs a subprocess (ffmpeg / DeepFilterNet / etc.) with an explicit timeout so a wedged
+    child process can never block the calling thread forever. Converts subprocess.TimeoutExpired
+    into a clear, loggable RuntimeError instead of leaving it as an opaque bare-except case."""
+    try:
+        return subprocess.run(cmd, check=True, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as ex:
+        msg = "[AudioProcessor] " + context + " timed out after " + str(timeout) + "s (cmd: " + str(cmd[0] if cmd else "?") + ")"
+        print(msg)
+        raise RuntimeError(msg) from ex
 
 
 def _tool_search_dirs() -> List[str]:
@@ -393,15 +413,8 @@ def get_ffprobe_path() -> str:
 
 
 def get_deep_filter_path() -> Optional[str]:
-    """Finds deep-filter binary in project-local tools folder or system PATH."""
-    for name in ("deep-filter.exe", "deep-filter"):
-        local_tool = os.path.join(BASE_DIR, "tools", name)
-        if os.path.isfile(local_tool) and (os.access(local_tool, os.X_OK) or name.endswith(".exe")):
-            return local_tool
-    tool = shutil.which("deep-filter")
-    if tool:
-        return tool
-    return None
+    """Finds deep-filter in the bundled tool dirs, then system PATH."""
+    return _find_media_tool("deep-filter")
 
 
 import wave
@@ -411,14 +424,18 @@ def probe_duration(file_path: str) -> float:
     if not file_path or not os.path.exists(file_path):
         return 0.0
 
-    if file_path in DURATION_CACHE:
-        return DURATION_CACHE[file_path]
+    try:
+        cache_key = (file_path, os.path.getmtime(file_path))
+    except OSError:
+        return 0.0
+    if cache_key in DURATION_CACHE:
+        return DURATION_CACHE[cache_key]
 
     if file_path.lower().endswith(".wav"):
         try:
             with wave.open(file_path, "rb") as w:
                 dur = round(w.getnframes() / float(w.getframerate()), 3)
-                DURATION_CACHE[file_path] = dur
+                DURATION_CACHE[cache_key] = dur
                 return dur
         except Exception:
             pass
@@ -431,7 +448,7 @@ def probe_duration(file_path: str) -> float:
         ]
         out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True, timeout=2.0).strip()
         dur = round(float(out), 3)
-        DURATION_CACHE[file_path] = dur
+        DURATION_CACHE[cache_key] = dur
         return dur
     except Exception:
         return 0.0
@@ -442,6 +459,26 @@ try:
     os.makedirs(PEAKS_CACHE_DIR, exist_ok=True)
 except Exception:
     pass
+
+
+def compute_waveform_peaks(data: "np.ndarray", columns: int = 120) -> List[Tuple[float, float]]:
+    """Calculates min/max peak pairs for rendering waveforms."""
+    import numpy as np  # lazy: pack_loader must stay cheap to import
+    n = len(data)
+    if n == 0 or columns <= 0:
+        return []
+    step = n / float(columns)
+    arr = np.asarray(data, dtype=np.float32)
+    peaks = []
+    for c in range(columns):
+        a = int(c * step)
+        b = max(a + 1, int((c + 1) * step))
+        chunk = arr[a:b]
+        if len(chunk) > 0:
+            peaks.append((round(float(chunk.min()), 3), round(float(chunk.max()), 3)))
+        else:
+            peaks.append((0.0, 0.0))
+    return peaks
 
 
 def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List[List[float]]:
@@ -472,19 +509,7 @@ def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List
                     samples = np.frombuffer(raw, dtype=dtype).astype(np.float32) / scale
                     if n_channels > 1:
                         samples = samples[::n_channels]
-                    
-                    n = len(samples)
-                    step = n / float(columns)
-                    peaks = []
-                    for c in range(columns):
-                        a = int(c * step)
-                        b = max(a + 1, int((c + 1) * step))
-                        chunk = samples[a:b]
-                        if len(chunk) > 0:
-                            peaks.append([round(float(chunk.min()), 3), round(float(chunk.max()), 3)])
-                        else:
-                            peaks.append([0.0, 0.0])
-                    return peaks
+                    return [list(p) for p in compute_waveform_peaks(samples, columns)]
         except Exception:
             pass
 
@@ -501,18 +526,7 @@ def extract_waveform_peaks_from_file(file_path: str, columns: int = 100) -> List
         if proc.returncode == 0 and len(raw) > 0:
             import numpy as np
             samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-            n = len(samples)
-            step = n / float(columns)
-            peaks = []
-            for c in range(columns):
-                a = int(c * step)
-                b = max(a + 1, int((c + 1) * step))
-                chunk = samples[a:b]
-                if len(chunk) > 0:
-                    peaks.append([round(float(chunk.min()), 3), round(float(chunk.max()), 3)])
-                else:
-                    peaks.append([0.0, 0.0])
-            return peaks
+            return [list(p) for p in compute_waveform_peaks(samples, columns)]
     except Exception:
         pass
 
@@ -777,8 +791,9 @@ def extract_character_and_caption(caption_text: str, filename: str) -> tuple[str
     return char_name, display_cap
 
 
-_DETECTED_ENCODER: Optional[str] = None
-_CACHED_ENCODER_INFO: Optional[Dict[str, Any]] = None
+# Probed once per process; get_h264_encoder_args derives the encoder name from it.
+_ENCODER_INFO: Optional[Dict[str, Any]] = None
+_ENCODER_LOCK = threading.Lock()
 
 
 def preflight_probe_hardware_encoder() -> Dict[str, Any]:
@@ -786,61 +801,68 @@ def preflight_probe_hardware_encoder() -> Dict[str, Any]:
     Probes system video encoding capabilities and caches optimal hardware encoder settings.
     Logs clear diagnostics and ensures zero-latency runtime exports.
     """
-    global _DETECTED_ENCODER, _CACHED_ENCODER_INFO
-    if _CACHED_ENCODER_INFO is not None:
-        return _CACHED_ENCODER_INFO
+    global _ENCODER_INFO
+    with _ENCODER_LOCK:
+        if _ENCODER_INFO is not None:
+            return _ENCODER_INFO
 
-    ff = get_ffmpeg_path()
-    candidates = [
-        ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"], "NVIDIA NVENC (GeForce / RTX)", "NVIDIA", True),
-        ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"], "AMD AMF (Radeon RX)", "AMD", True),
-        ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"], "Intel QuickSync (Arc / Core iGPU)", "Intel", True),
-        ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"], "Apple Silicon VideoToolbox (M1/M2/M3/M4)", "Apple", True),
-    ]
+        ff = get_ffmpeg_path()
+        candidates = [
+            ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4"], "NVIDIA NVENC (GeForce / RTX)", "NVIDIA", True),
+            ("h264_amf", ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "speed"], "AMD AMF (Radeon RX)", "AMD", True),
+            ("h264_qsv", ["-c:v", "h264_qsv", "-preset", "veryfast"], "Intel QuickSync (Arc / Core iGPU)", "Intel", True),
+            ("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", "5000k"], "Apple Silicon VideoToolbox (M1/M2/M3/M4)", "Apple", True),
+        ]
 
-    detected = None
-    for name, probe_args, desc, vendor, is_hw in candidates:
-        try:
-            test_cmd = [
-                ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
-                *probe_args, "-f", "null", "-"
-            ]
-            res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if res.returncode == 0:
-                detected = {
-                    "encoder": name,
-                    "description": desc,
-                    "vendor": vendor,
-                    "is_hardware": is_hw,
-                }
-                _DETECTED_ENCODER = name
-                break
-        except Exception:
-            continue
+        detected = None
+        for name, probe_args, desc, vendor, is_hw in candidates:
+            try:
+                test_cmd = [
+                    ff, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.1:size=640x360:rate=30",
+                    *probe_args, "-f", "null", "-"
+                ]
+                res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if res.returncode == 0:
+                    detected = {
+                        "encoder": name,
+                        "description": desc,
+                        "vendor": vendor,
+                        "is_hardware": is_hw,
+                    }
+                    break
+            except Exception:
+                continue
 
-    if detected is None:
-        cpu_cores = os.cpu_count() or 4
-        threads = max(1, min(cpu_cores, 8))
-        detected = {
-            "encoder": "libx264",
-            "description": f"Universal Multi-Core CPU (libx264 - {threads} threads)",
-            "vendor": "CPU",
-            "is_hardware": False,
-            "threads": threads,
-        }
-        _DETECTED_ENCODER = "libx264"
+        if detected is None:
+            cpu_cores = os.cpu_count() or 4
+            threads = max(1, min(cpu_cores, 8))
+            detected = {
+                "encoder": "libx264",
+                "description": f"Universal Multi-Core CPU (libx264 - {threads} threads)",
+                "vendor": "CPU",
+                "is_hardware": False,
+                "threads": threads,
+            }
 
-    _CACHED_ENCODER_INFO = detected
-    badge = "[Hardware Accelerated]" if detected["is_hardware"] else "[Multi-Core CPU]"
-    print(f"[DubMate Acceleration] {badge} {detected['description']}")
-    return _CACHED_ENCODER_INFO
+        _ENCODER_INFO = detected
+        badge = "[Hardware Accelerated]" if detected["is_hardware"] else "[Multi-Core CPU]"
+        print(f"[DubMate Acceleration] {badge} {detected['description']}")
+        return _ENCODER_INFO
 
 
 def get_hardware_encoder_info() -> Dict[str, Any]:
     """Returns cached hardware encoder info, running pre-flight probe if needed."""
-    if _CACHED_ENCODER_INFO is None:
+    info = _ENCODER_INFO
+    if info is None:
         return preflight_probe_hardware_encoder()
-    return _CACHED_ENCODER_INFO
+    return info
+
+
+def cpu_h264_args(crf: int, preset: str) -> List[str]:
+    """libx264 arguments using 1..8 threads (bounded by the available cores)."""
+    cpu_cores = os.cpu_count() or 4
+    threads = str(max(1, min(cpu_cores, 8)))
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", threads]
 
 
 def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
@@ -852,33 +874,28 @@ def get_h264_encoder_args(crf: int = 22, usage: str = "export") -> List[str]:
     4. Apple Silicon VideoToolbox (macOS M1/M2/M3/M4)
     5. Universal Multi-Threaded CPU (libx264 scaled to available cores)
     """
-    global _DETECTED_ENCODER
-    if _DETECTED_ENCODER is None:
-        preflight_probe_hardware_encoder()
+    encoder = get_hardware_encoder_info()["encoder"]
 
     # Hardware-specific parameters
-    if _DETECTED_ENCODER == "h264_nvenc":
+    if encoder == "h264_nvenc":
         preset = "p2" if usage == "web_preview" else "p4"
         return ["-c:v", "h264_nvenc", "-preset", preset, "-b:v", "4000k" if usage == "web_preview" else "6000k"]
 
-    if _DETECTED_ENCODER == "h264_amf":
+    if encoder == "h264_amf":
         quality = "speed" if usage == "web_preview" else "quality"
         bitrate = "2500k" if usage == "web_preview" else "5000k"
         return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", quality, "-rc", "cbr", "-b:v", bitrate]
 
-    if _DETECTED_ENCODER == "h264_qsv":
+    if encoder == "h264_qsv":
         preset = "faster" if usage == "web_preview" else "veryfast"
         return ["-c:v", "h264_qsv", "-preset", preset, "-b:v", "3000k" if usage == "web_preview" else "5000k"]
 
-    if _DETECTED_ENCODER == "h264_videotoolbox":
+    if encoder == "h264_videotoolbox":
         bitrate = "3000k" if usage == "web_preview" else "5000k"
         return ["-c:v", "h264_videotoolbox", "-b:v", bitrate]
 
-    # Universal multi-threaded CPU fallback (dynamically scales to 50%-75% of available CPU cores, max 8)
-    cpu_cores = os.cpu_count() or 4
-    threads = str(max(1, min(cpu_cores, 8)))
-    preset = "faster" if usage == "web_preview" else "veryfast"
-    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-threads", threads]
+    # Universal multi-threaded CPU fallback
+    return cpu_h264_args(crf, "faster" if usage == "web_preview" else "veryfast")
 
 
 def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
@@ -886,7 +903,13 @@ def get_web_video_path(pack_folder: str, orig_video_path: str) -> str:
     pack_name = os.path.basename(pack_folder)
     cached_mp4 = os.path.join(CACHE_DIR, f"{pack_name}_web.mp4")
     if os.path.isfile(cached_mp4) and os.path.getsize(cached_mp4) > 1000:
-        return cached_mp4
+        # The cache is stale once the source video is replaced.
+        try:
+            fresh = os.path.getmtime(cached_mp4) >= os.path.getmtime(orig_video_path)
+        except (OSError, TypeError):
+            fresh = True  # source unreadable: nothing to re-transcode from
+        if fresh:
+            return cached_mp4
     if transcode_to_mp4(orig_video_path, cached_mp4):
         return cached_mp4
     return orig_video_path
@@ -896,50 +919,34 @@ def transcode_to_mp4(orig_video_path: str, target_mp4_path: str) -> bool:
     """Transcodes a video to lightweight 720p 30fps H.264 MP4 without audio for fast web streaming."""
     ffmpeg = get_ffmpeg_path()
     tmp_target = target_mp4_path + ".tmp.mp4"
-    encoder_args = get_h264_encoder_args(crf=25, usage="web_preview")
-    
-    # 1. Attempt with primary detected encoder
-    try:
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", orig_video_path,
-            "-vf", "scale='min(1280,iw)':-2",
-            "-r", "30",
-            *encoder_args,
-            "-pix_fmt", "yuv420p",
-            "-an",  # Strip audio track completely so reference video cannot bleed
-            "-movflags", "+faststart",
-            tmp_target
-        ]
-        subprocess.run(cmd, check=True)
-        if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
-            os.replace(tmp_target, target_mp4_path)
-            return True
-    except Exception as ex:
-        print(f"[transcode_to_mp4] Primary encoder failed on {orig_video_path}: {ex}. Trying CPU libx264...")
+    primary_args = get_h264_encoder_args(crf=25, usage="web_preview")
+    cpu_args = cpu_h264_args(25, "faster")
+    # Retry on CPU libx264 only when the primary encoder is something else.
+    attempts = [primary_args] if primary_args == cpu_args else [primary_args, cpu_args]
 
-    # 2. Fallback to CPU libx264
     try:
-        cpu_cores = os.cpu_count() or 4
-        threads = str(max(1, min(cpu_cores, 8)))
-        fallback_args = ["-c:v", "libx264", "-crf", "25", "-preset", "faster", "-threads", threads]
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", orig_video_path,
-            "-vf", "scale='min(1280,iw)':-2",
-            "-r", "30",
-            *fallback_args,
-            "-pix_fmt", "yuv420p",
-            "-an",
-            "-movflags", "+faststart",
-            tmp_target
-        ]
-        subprocess.run(cmd, check=True)
-        if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
-            os.replace(tmp_target, target_mp4_path)
-            return True
-    except Exception as ex:
-        print(f"[transcode_to_mp4] Fallback CPU transcode failed on {orig_video_path}: {ex}")
+        for encoder_args in attempts:
+            try:
+                cmd = [
+                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", orig_video_path,
+                    "-vf", "scale='min(1280,iw)':-2",
+                    "-r", "30",
+                    *encoder_args,
+                    "-pix_fmt", "yuv420p",
+                    "-an",  # Strip audio track completely so reference video cannot bleed
+                    "-movflags", "+faststart",
+                    tmp_target
+                ]
+                run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="transcode_to_mp4 of " + repr(orig_video_path))
+                if os.path.isfile(tmp_target) and os.path.getsize(tmp_target) > 100:
+                    os.replace(tmp_target, target_mp4_path)
+                    return True
+            except Exception as ex:
+                if encoder_args is attempts[-1]:
+                    print(f"[transcode_to_mp4] Fallback CPU transcode failed on {orig_video_path}: {ex}")
+                else:
+                    print(f"[transcode_to_mp4] Primary encoder failed on {orig_video_path}: {ex}. Trying CPU libx264...")
     finally:
         if os.path.exists(tmp_target):
             try:
@@ -972,10 +979,7 @@ class PackInfo:
 
     def ensure_web_ready(self):
         """Ensures the web video is converted to web-ready MP4."""
-        cached = os.path.join(CACHE_DIR, f"{self.pack_id}_web.mp4")
-        if not os.path.isfile(cached) or os.path.getsize(cached) < 1000:
-            if transcode_to_mp4(self.video_path, cached):
-                self.web_video_path = cached
+        self.web_video_path = get_web_video_path(self.folder, self.video_path)
 
     def to_dict(self) -> Dict[str, Any]:
         quoted_id = urllib.parse.quote(self.pack_id)

@@ -17,15 +17,16 @@ import subprocess
 import numpy as np
 from typing import Dict, List, Optional, Any, Tuple, Union
 
-from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, CACHE_DIR, PackInfo
+from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, cpu_h264_args, CACHE_DIR, PackInfo
+from pack_loader import compute_waveform_peaks  # re-exported: app.py and tests use audio_processor.compute_waveform_peaks
+from pack_loader import (
+    run_subprocess as _run_subprocess,
+    SUBPROCESS_TIMEOUT_PROBE,
+    SUBPROCESS_TIMEOUT_PROCESS,
+    SUBPROCESS_TIMEOUT_RENDER,
+)
 
 SR = 44100  # Standard audio sample rate
-
-# Explicit subprocess timeouts (seconds) so a wedged ffmpeg/DeepFilterNet process can never
-# block a request thread forever. Tuned generously for slow media work while still bounded.
-SUBPROCESS_TIMEOUT_PROBE = 60      # tiny clips / 1s noise-profile samples
-SUBPROCESS_TIMEOUT_PROCESS = 180   # per-take transcodes, filter chains, denoise passes
-SUBPROCESS_TIMEOUT_RENDER = 300    # full mix renders, video export, project zip encoding
 
 # Safe bounds for client-supplied volume trim (dB). Prevents 10 ** (gain_db / 20) from overflowing.
 GAIN_DB_MIN = -60.0
@@ -68,18 +69,6 @@ def _sanitize_finite_audio(data, context: str = "") -> np.ndarray:
         print("[AudioProcessor] WARNING: " + str(n_bad) + " non-finite sample(s) (NaN/Inf) detected" + where + "; replacing with 0.0.")
         arr = np.where(bad_mask, np.float32(0.0), arr).astype(np.float32)
     return arr
-
-
-def _run_subprocess(cmd, timeout: float, context: str = "ffmpeg", **kwargs):
-    """Runs a subprocess (ffmpeg / DeepFilterNet / etc.) with an explicit timeout so a wedged
-    child process can never block the calling thread forever. Converts subprocess.TimeoutExpired
-    into a clear, loggable RuntimeError instead of leaving it as an opaque bare-except case."""
-    try:
-        return subprocess.run(cmd, check=True, timeout=timeout, **kwargs)
-    except subprocess.TimeoutExpired as ex:
-        msg = "[AudioProcessor] " + context + " timed out after " + str(timeout) + "s (cmd: " + str(cmd[0] if cmd else "?") + ")"
-        print(msg)
-        raise RuntimeError(msg) from ex
 
 
 def get_room_cache_dir(room_id: str) -> str:
@@ -154,25 +143,6 @@ def write_wav_mono(path: str, data: np.ndarray, sr: int = SR) -> str:
         w.setframerate(sr)
         w.writeframes(pcm)
     return path
-
-
-def compute_waveform_peaks(data: np.ndarray, columns: int = 120) -> List[Tuple[float, float]]:
-    """Calculates min/max peak pairs for rendering waveforms."""
-    n = len(data)
-    if n == 0 or columns <= 0:
-        return []
-    step = n / float(columns)
-    arr = np.asarray(data, dtype=np.float32)
-    peaks = []
-    for c in range(columns):
-        a = int(c * step)
-        b = max(a + 1, int((c + 1) * step))
-        chunk = arr[a:b]
-        if len(chunk) > 0:
-            peaks.append((round(float(chunk.min()), 3), round(float(chunk.max()), 3)))
-        else:
-            peaks.append((0.0, 0.0))
-    return peaks
 
 
 def get_user_noise_profile_path(room_id: str, user_id: str) -> str:
@@ -844,9 +814,7 @@ def export_dub_video(
             _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="export_dub_video primary encoder")
         except Exception as ex:
             print(f"[export_dub_video] Primary encoder failed ({ex}), falling back to CPU libx264...")
-            cpu_cores = os.cpu_count() or 4
-            threads = str(max(1, min(cpu_cores, 8)))
-            fallback_args = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-threads", threads]
+            fallback_args = cpu_h264_args(20, "veryfast")
             cmd = [
                 ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                 "-i", pack.web_video_path,
