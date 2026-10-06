@@ -198,6 +198,45 @@ class TestCleanupRefresh(RefreshCase):
         self.assertNotIn("nr_settings", take)
         self.assertEqual(self.room.cleanup_refreshing, {})
 
+    def _premiere(self, ws):
+        ws.send_json({"type": "launch_premiere", "payload": {}})
+
+    def test_refused_while_the_premiere_renders(self):
+        take = self._take("t1000", "ka", "u1")
+        self.room.host_id = "hostT"
+        rendering, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def render(*a, **k):
+            rendering.set()
+            release.wait(10)
+
+        with mock.patch.object(ap, "export_dub_video", side_effect=render):
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+                self._premiere(ws)
+                self.assertTrue(rendering.wait(10))
+                self.assertEqual(self.room.export_status.get("16:9"), "processing")
+                body = self._refresh(status=409)
+                self.assertEqual(body["detail"], "A video is rendering. Refresh older takes when it's done.")
+                release.set()
+                self._until(ws, "warp_to_screening")
+        self.assertEqual(self.room.export_status["16:9"], "ready")
+        self.assertNotIn("nr_settings", take)
+        self.assertEqual(self._refresh()["refreshing"], 1)
+        self._wait()
+        self.assertEqual(take["nr_settings"], self.settings)
+
+    def test_a_failed_premiere_render_lets_refresh_run(self):
+        self._take("t1000", "ka", "u1")
+        self.room.host_id = "hostT"
+        with mock.patch.object(ap, "export_dub_video", side_effect=RuntimeError("render broke")):
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+                self._premiere(ws)
+                self._until(ws, "warp_to_screening")
+        self.assertEqual(self.room.export_status["16:9"], "failed: render broke")
+        self.assertEqual(self._refresh()["refreshing"], 1)
+        self._wait()
+
 
 class TestRefreshWhileRunning(RefreshCase):
 
