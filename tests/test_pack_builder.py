@@ -901,6 +901,318 @@ NOTE This is a test subtitle file
                 shutil.rmtree(pack_folder, ignore_errors=True)
 
 
+    # ---- Speaker detection (no network, no real models) ----
+
+    def _speaker_env(self, addon=None):
+        """
+        Patches for one speaker detection test: a sys.path with no real add-on folder (plus
+        `addon` first when given), the cache in tmp_dir, and a fake sherpa_onnx module.
+        Returns (patches, fake module, script dict). The caller stops the patches.
+        """
+        import sys
+        import types
+        from unittest import mock
+
+        script = {"segments": [], "raise": None, "config": None, "samples": None, "callbacks": []}
+
+        class _Config:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+            def validate(self):
+                return True
+
+        class _Result:
+            def __init__(self, segs):
+                self.segs = segs
+
+            def sort_by_start_time(self):
+                return sorted(self.segs, key=lambda s: s.start)
+
+        class _Diarization:
+            sample_rate = 16000
+
+            def __init__(self, config):
+                script["config"] = config
+
+            def process(self, samples, callback=None):
+                script["samples"] = samples
+                if callback:
+                    script["callbacks"].append(callback(1, 2))
+                    script["callbacks"].append(callback(2, 2))
+                if script["raise"]:
+                    raise script["raise"]
+                return _Result([types.SimpleNamespace(start=a, end=b, speaker=c) for a, b, c in script["segments"]])
+
+        class _ModuleSlot:
+            """Puts one entry into sys.modules and restores just that entry (patch.dict would reset all of them)."""
+            def __init__(self, name, value):
+                self.name, self.value = name, value
+
+            def start(self):
+                self.had, self.old = self.name in sys.modules, sys.modules.get(self.name)
+                sys.modules[self.name] = self.value
+
+            def stop(self):
+                if self.had:
+                    sys.modules[self.name] = self.old
+                else:
+                    sys.modules.pop(self.name, None)
+
+        fake = types.ModuleType("sherpa_onnx")
+        for name in ("OfflineSpeakerDiarizationConfig", "OfflineSpeakerSegmentationModelConfig",
+                     "OfflineSpeakerSegmentationPyannoteModelConfig", "SpeakerEmbeddingExtractorConfig",
+                     "FastClusteringConfig"):
+            setattr(fake, name, _Config)
+        fake.OfflineSpeakerDiarization = _Diarization
+
+        clean_path = [p for p in sys.path if os.path.basename(os.path.normpath(p or ".")).lower() != "ai-packages"]
+        patches = [
+            mock.patch.object(sys, "path", ([addon] if addon else []) + clean_path),
+            mock.patch.object(pack_loader, "CACHE_DIR", self.tmp_dir),
+            _ModuleSlot("sherpa_onnx", fake),
+            mock.patch.object(pack_builder.audio_processor, "read_wav_mono",
+                              lambda path, sr=16000: __import__("numpy").zeros(1600, dtype="float64")),
+        ]
+        for p in patches:
+            p.start()
+        return patches, fake, script
+
+    def _touch_speaker_models(self):
+        folder = pack_builder._speaker_models_dir()
+        os.makedirs(folder, exist_ok=True)
+        for name, _url, _sha, _member in pack_builder.SPEAKER_MODELS:
+            with open(os.path.join(folder, name), "wb") as f:
+                f.write(b"model")
+        return folder
+
+    def test_20_speaker_models_download_and_checksum(self):
+        """Models download once, come out of the archive by member name and are checksummed; a bad one leaves nothing."""
+        import hashlib
+        import tarfile
+        from unittest import mock
+
+        def sha(data):
+            return hashlib.sha256(data).hexdigest()
+
+        seg_bytes, lic_bytes, emb_bytes = b"segmentation model", b"MIT License", b"embedding model"
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:bz2") as tar:
+            for member, data in (("sherpa-onnx-pyannote-segmentation-3-0/model.onnx", seg_bytes),
+                                 ("sherpa-onnx-pyannote-segmentation-3-0/LICENSE", lic_bytes),
+                                 ("sherpa-onnx-pyannote-segmentation-3-0/README.md", b"not wanted")):
+                info = tarfile.TarInfo(member)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        archive_bytes = archive.getvalue()
+        seg_url = pack_builder.SPEAKER_SEGMENTATION_URL
+        emb_url = pack_builder.SPEAKER_MODELS[2][1]
+        payloads = {seg_url: archive_bytes, emb_url: emb_bytes}
+        fetched = []
+
+        def fake_urlopen(url, timeout=None):
+            fetched.append((url, timeout))
+            return io.BytesIO(payloads[url])
+
+        def models(emb_sha):
+            return (
+                ("pyannote-segmentation-3-0.onnx", seg_url, sha(seg_bytes), "sherpa-onnx-pyannote-segmentation-3-0/model.onnx"),
+                ("pyannote-segmentation-3-0.LICENSE", seg_url, None, "sherpa-onnx-pyannote-segmentation-3-0/LICENSE"),
+                ("campplus-sv-zh-en-16k-common-advanced.onnx", emb_url, emb_sha, None),
+            )
+
+        patches, _fake, _script = self._speaker_env()
+        try:
+            patches.append(mock.patch("urllib.request.urlopen", fake_urlopen))
+            patches.append(mock.patch.object(pack_builder, "SPEAKER_SEGMENTATION_ARCHIVE_SHA256", sha(archive_bytes)))
+            patches.append(mock.patch.object(pack_builder, "SPEAKER_MODELS", models(sha(emb_bytes))))
+            for p in patches[-3:]:
+                p.start()
+
+            folder = pack_builder._speaker_models_dir()
+            self.assertEqual(folder, os.path.join(self.tmp_dir, "models", "speakers"))
+            seen = []
+            self.assertTrue(pack_builder._ensure_speaker_models(seen.append))
+            self.assertEqual(sorted(os.listdir(folder)), sorted(m[0] for m in pack_builder.SPEAKER_MODELS))
+            with open(os.path.join(folder, "pyannote-segmentation-3-0.onnx"), "rb") as f:
+                self.assertEqual(f.read(), seg_bytes)
+            with open(os.path.join(folder, "pyannote-segmentation-3-0.LICENSE"), "rb") as f:
+                self.assertEqual(f.read(), lic_bytes)
+            with open(os.path.join(folder, "campplus-sv-zh-en-16k-common-advanced.onnx"), "rb") as f:
+                self.assertEqual(f.read(), emb_bytes)
+            self.assertEqual(fetched, [(seg_url, 60), (emb_url, 60)])  # the archive is fetched once
+            self.assertEqual(seen[-1], 1.0)
+
+            # Everything present: no network at all.
+            fetched.clear()
+            self.assertTrue(pack_builder._ensure_speaker_models())
+            self.assertEqual(fetched, [])
+
+            # A bad checksum leaves neither the file nor its .part.
+            os.remove(os.path.join(folder, "campplus-sv-zh-en-16k-common-advanced.onnx"))
+            patches.append(mock.patch.object(pack_builder, "SPEAKER_MODELS", models("0" * 64)))
+            patches[-1].start()
+            self.assertFalse(pack_builder._ensure_speaker_models())
+            self.assertNotIn("campplus-sv-zh-en-16k-common-advanced.onnx", os.listdir(folder))
+            self.assertEqual([n for n in os.listdir(folder) if n.endswith(".part")], [])
+
+            # A bad archive leaves no model and no .part either.
+            for name in os.listdir(folder):
+                os.remove(os.path.join(folder, name))
+            patches.append(mock.patch.object(pack_builder, "SPEAKER_SEGMENTATION_ARCHIVE_SHA256", "0" * 64))
+            patches[-1].start()
+            self.assertFalse(pack_builder._ensure_speaker_models())
+            self.assertEqual(os.listdir(folder), [])
+
+            # Through detect_speaker_turns, a failed download is the download notice.
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
+            self.assertIsNone(turns)
+            self.assertEqual(notice, pack_builder.SPEAKER_NOTICE_NO_DOWNLOAD)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    def test_21_speaker_detection_not_installed_on_source(self):
+        """A source install without the package gets the notice and never runs pip."""
+        import sys
+        from unittest import mock
+        runs = []
+        patches, _fake, _script = self._speaker_env()
+        try:
+            sys.modules["sherpa_onnx"] = None  # import fails; restored by the slot patch
+            patches.append(mock.patch.object(pack_builder.subprocess, "run", lambda *a, **k: runs.append(a)))
+            patches[-1].start()
+            self.assertIsNone(pack_builder._addon_dir())
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
+            self.assertIsNone(turns)
+            self.assertEqual(notice, "Speaker detection isn't installed, so speakers were guessed from pauses. "
+                                     "Check who says each line.")
+            self.assertEqual(runs, [])
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    def test_22_speaker_package_top_up_in_addon(self):
+        """A desktop add-on without the package gets exactly one pinned, no-upgrade pip install, then imports it."""
+        import subprocess
+        import sys
+        from unittest import mock
+        addon = os.path.join(self.tmp_dir, "ai-packages")
+        os.makedirs(addon)
+        with open(os.path.join(addon, ".install-complete"), "w") as f:
+            f.write("ok")
+        os.makedirs(os.path.join(self.tmp_dir, "not-it", "ai-packages"))  # no marker: ignored
+
+        runs = []
+        patches, fake, script = self._speaker_env(addon=addon)
+        try:
+            pip = {"returncode": 0}
+
+            def fake_run(cmd, **kwargs):
+                runs.append((cmd, kwargs))
+                if pip["returncode"] == 0:
+                    sys.modules["sherpa_onnx"] = fake
+                return subprocess.CompletedProcess(cmd, pip["returncode"], b"", b"no pip")
+
+            sys.modules["sherpa_onnx"] = None  # import fails; restored by the slot patch
+            patches.append(mock.patch.object(pack_builder.subprocess, "run", fake_run))
+            patches[-1].start()
+            sys.path.insert(1, os.path.join(self.tmp_dir, "not-it", "ai-packages"))
+
+            self.assertEqual(pack_builder._addon_dir(), addon)
+            folder = self._touch_speaker_models()
+            self.assertEqual(folder, os.path.join(addon, "dubmate-models", "speakers"))
+            script["segments"] = [(3.0, 4.0, 1), (0.5, 2.0, 0)]
+            progress = []
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"), progress.append)
+
+            self.assertEqual(len(runs), 1)
+            cmd, kwargs = runs[0]
+            self.assertEqual(cmd, [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps", "--target", addon,
+                                   "sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8"])
+            self.assertNotIn("--upgrade", cmd)
+            self.assertEqual(kwargs.get("timeout"), 300)
+            self.assertEqual(notice, "")
+            self.assertEqual(turns, [(0.5, 2.0, 0), (3.0, 4.0, 1)])
+
+            config = script["config"]
+            self.assertEqual(config.segmentation.pyannote.window_shift_ratio, 0.1)
+            self.assertEqual(config.segmentation.pyannote.model, os.path.join(folder, "pyannote-segmentation-3-0.onnx"))
+            self.assertEqual(config.embedding.model, os.path.join(folder, "campplus-sv-zh-en-16k-common-advanced.onnx"))
+            self.assertEqual(config.clustering.num_clusters, -1)
+            self.assertEqual(config.clustering.threshold, 0.5)
+            self.assertEqual((config.min_duration_on, config.min_duration_off), (0.3, 0.5))
+            self.assertEqual(str(script["samples"].dtype), "float32")
+            self.assertEqual(script["callbacks"], [0, 0])
+            self.assertTrue(progress and all(0.88 <= f <= 0.98 for f in progress))
+            self.assertAlmostEqual(progress[-1], 0.98)
+
+            # A failed top-up is the "isn't installed" notice.
+            runs.clear()
+            pip["returncode"] = 1
+            sys.modules["sherpa_onnx"] = None
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
+            self.assertIsNone(turns)
+            self.assertEqual(notice, pack_builder.SPEAKER_NOTICE_NOT_INSTALLED)
+            self.assertEqual(len(runs), 1)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    def test_23_speaker_detection_empty_and_failure(self):
+        """No voices found and any error both fall back with their own notice."""
+        patches, _fake, script = self._speaker_env()
+        try:
+            self._touch_speaker_models()
+            wav = os.path.join(self.tmp_dir, "vocals.wav")
+            turns, notice = pack_builder.detect_speaker_turns(wav)
+            self.assertIsNone(turns)
+            self.assertEqual(notice, "Speaker detection couldn't tell the voices apart, so speakers were guessed "
+                                     "from pauses. Check who says each line.")
+
+            script["raise"] = RuntimeError("boom")
+            script["segments"] = [(0.0, 1.0, 0)]
+            turns, notice = pack_builder.detect_speaker_turns(wav)
+            self.assertIsNone(turns)
+            self.assertEqual(notice, "Speaker detection couldn't run, so speakers were guessed from pauses. "
+                                     "Check who says each line.")
+
+            script["raise"] = None
+            turns, notice = pack_builder.detect_speaker_turns(wav)
+            self.assertEqual((turns, notice), ([(0.0, 1.0, 0)], ""))
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    def test_24_assign_speakers_from_turns(self):
+        """Lines take the voice they overlap most, then a near turn, then the previous line; names follow first appearance."""
+        turns = [(0.0, 2.0, 7), (2.5, 4.0, 3), (10.0, 12.0, 7), (13.5, 15.0, 5)]
+        segs = [
+            {"start": 0.5, "end": 1.5, "text": "a", "character": "Actor"},    # overlaps 7
+            {"start": 1.8, "end": 3.9, "text": "b", "character": "Actor"},    # overlaps 7 by 0.2, 3 by 1.4
+            {"start": 7.5, "end": 7.8, "text": "", "character": "", "nonverbal": True},  # nothing within 1 s: previous (3)
+            {"start": 10.5, "end": 11.0, "text": "d", "character": "Actor"},  # overlaps 7
+            {"start": 13.0, "end": 13.2, "text": "e", "character": "Actor"},  # 0.3 s from 5, 1.0 s from 7
+        ]
+        out = pack_builder.assign_speakers_to_segments(segs, turns)
+        self.assertEqual([s["character"] for s in out],
+                         ["Speaker 1", "Speaker 2", "Speaker 2", "Speaker 1", "Speaker 3"])
+
+        # The first line with no overlap and nothing near takes the nearest turn.
+        first = [{"start": 0.0, "end": 0.5, "text": "x", "character": "Actor"},
+                 {"start": 8.2, "end": 8.8, "text": "y", "character": "Actor"}]
+        out = pack_builder.assign_speakers_to_segments(first, [(5.0, 6.0, 4), (8.0, 9.0, 2)])
+        self.assertEqual([s["character"] for s in out], ["Speaker 1", "Speaker 2"])
+
+        # Named characters are kept; no turns keeps the pause guess.
+        named = [{"start": 0.5, "end": 1.5, "text": "a", "character": "Levi"}]
+        self.assertEqual(pack_builder.assign_speakers_to_segments(named, turns)[0]["character"], "Levi")
+        guess = [{"start": 1.0, "end": 2.0, "text": "1", "character": "Actor"},
+                 {"start": 5.5, "end": 6.5, "text": "2", "character": "Actor"}]
+        self.assertEqual([s["character"] for s in pack_builder.assign_speakers_to_segments(guess, [])],
+                         ["Speaker 1", "Speaker 2"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -154,7 +154,7 @@ def test_api_responses_are_never_cached():
     print("[PASS] /api/ responses remain no-store")
 
 
-HEAVY_MODULES = ("scipy", "torch", "torchaudio", "demucs", "whisper", "faster_whisper", "df", "pykakasi", "yt_dlp")
+HEAVY_MODULES = ("scipy", "torch", "torchaudio", "demucs", "whisper", "faster_whisper", "df", "pykakasi", "yt_dlp", "sherpa_onnx")
 
 
 def test_engine_imports_stay_fast():
