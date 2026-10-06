@@ -328,9 +328,13 @@ def test_a_failed_tunnel_is_reported_instead_of_waiting_forever():
     pack_id = _first_pack_id()
     assert pack_id, 'fixture packs missing: run scripts/make_test_packs.py'
 
+    stub = StubRegistry().start()
+    original_base, original_key = room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY
     try:
         _reset_registry_state()
         room_registry.TUNNEL_ERROR = None
+        room_registry.WORKER_REGISTRY_BASE = stub.base_url
+        room_registry.WORKER_API_KEY = STUB_SECRET
 
         with TestClient(app) as client:
             code = _create_room(client, pack_id)["room_id"]
@@ -356,6 +360,8 @@ def test_a_failed_tunnel_is_reported_instead_of_waiting_forever():
             print("[PASS] a failed tunnel is reported, and clears when one arrives")
     finally:
         room_registry.TUNNEL_ERROR = None
+        room_registry.WORKER_REGISTRY_BASE, room_registry.WORKER_API_KEY = original_base, original_key
+        stub.stop()
         _reset_registry_state()
 
 
