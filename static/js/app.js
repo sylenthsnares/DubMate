@@ -11,6 +11,46 @@ import { ScreeningMethods } from './studio/screening.js';
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
 const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
 
+// Joining a room hosted elsewhere moves the whole page onto the host's tunnel,
+// so every relative URL (/api/packs, "/", "/builder.html") then reaches the
+// host's engine. The member's own engine (the desktop app's loopback origin)
+// travels along as ?home= and is kept here, per origin, so leaving the room
+// can navigate back to it.
+const HOME_ORIGIN_KEY = 'dubmate_home_origin';
+
+/** True only for a bare loopback http origin such as http://127.0.0.1:8123. */
+function isLoopbackOrigin(value) {
+  if (typeof value !== 'string' || !value) return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:'
+      && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')
+      && u.origin === value;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** The member's own engine origin, or null when there is none (browser-only guest). */
+function getHomeOrigin() {
+  if (isLoopbackOrigin(window.location.origin)) return window.location.origin;
+  let saved = null;
+  try { saved = sessionStorage.getItem(HOME_ORIGIN_KEY); } catch (e) { }
+  return isLoopbackOrigin(saved) ? saved : null;
+}
+
+/** Remembers ?home= (when valid) and drops it from the address bar. */
+function captureHomeOriginParam() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('home')) return;
+  const home = url.searchParams.get('home');
+  if (isLoopbackOrigin(home)) {
+    try { sessionStorage.setItem(HOME_ORIGIN_KEY, home); } catch (e) { }
+  }
+  url.searchParams.delete('home');
+  window.history.replaceState(window.history.state, '', url);
+}
+
 class DubMateApp {
   constructor() {
     this.audio = new AudioEngine();
@@ -1210,6 +1250,8 @@ class DubMateApp {
   }
 
   async initRouter() {
+    captureHomeOriginParam();
+    this.pointHomeLinksAtOwnEngine();
     await this.fetchPacks();
 
     // First-run audio setup / remembered device routing. Deliberately not
@@ -1238,6 +1280,9 @@ class DubMateApp {
   }
 
   showView(viewName) {
+    // The home screen lists the packs of the engine serving this page. On a
+    // host's tunnel page that is the host's engine, so go back to our own.
+    if (viewName === 'landing' && this.goHome()) return;
     document.body.classList.remove('resizing');
     this.currentView = viewName;
     this.cancelCurrentCountdown();
@@ -1340,6 +1385,33 @@ class DubMateApp {
 
     this.showView('landing');
     this.showToast('Left studio session room.');
+  }
+
+  navigateTo(url) {
+    window.location.href = url;
+  }
+
+  /**
+   * Sends a member who is on another host's page back to their own engine.
+   * Returns true when it navigated away. A top-level navigation, so it is not
+   * subject to CORS, mixed-content or private-network rules.
+   */
+  goHome() {
+    const home = getHomeOrigin();
+    if (!home || home === window.location.origin) return false;
+    this.navigateTo(`${home}/`);
+    return true;
+  }
+
+  /** On a host's page, the Studio and Pack Builder links must open the member's own engine. */
+  pointHomeLinksAtOwnEngine() {
+    const home = getHomeOrigin();
+    if (!home || home === window.location.origin) return;
+    const links = { 'mode-opt-studio': '/', 'mode-opt-builder': '/builder.html', 'btn-open-builder': '/builder.html' };
+    Object.entries(links).forEach(([id, path]) => {
+      const el = document.getElementById(id);
+      if (el) el.setAttribute('href', `${home}${path}`);
+    });
   }
 
   /**
@@ -2205,6 +2277,8 @@ class DubMateApp {
     this.pendingJoinRoomId = null;
     if (new URL(window.location.href).searchParams.has('room')) {
       this.clearRoomQueryParam();
+      // Declined a host's room: don't stay behind on the host's home screen.
+      this.goHome();
     }
   }
 
@@ -2231,9 +2305,14 @@ class DubMateApp {
           if (resolveResp.ok) {
             const data = await resolveResp.json();
             if (data && data.tunnel_url) {
+              // Navigate to host's tunnel room session, carrying the member's own
+              // engine along so leaving the room can come back to it.
+              const target = new URL(data.tunnel_url);
+              target.searchParams.set('room', cleanCode);
+              const home = getHomeOrigin();
+              if (home) target.searchParams.set('home', home);
               this.showToast(`Connecting to host for room ${cleanCode}... 🚀`);
-              // Navigate to host's tunnel room session
-              window.location.href = `${data.tunnel_url}?room=${encodeURIComponent(cleanCode)}`;
+              this.navigateTo(target.toString());
               return;
             }
           }
