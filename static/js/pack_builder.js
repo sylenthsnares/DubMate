@@ -297,7 +297,7 @@ export class PackBuilderApp {
       this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Vocals Only' : 'Full Audio';
       await this.fetchWaveformPeaks(this.activeAudioTrack);
       this.renderWaveformCanvas();
-      this.showToast(`Switched playback to ${this.labelActiveTrack.innerText}`);
+      this.showToast(`Waveform: ${this.labelActiveTrack.innerText}`);
     });
 
     // 7. Timeline In / Out / Add Cue Markers / Whisper Transcribe
@@ -389,12 +389,6 @@ export class PackBuilderApp {
       e.preventDefault();
       startResize(e.clientY);
     });
-
-    this.timelineSplitterHandle.addEventListener('touchstart', (e) => {
-      if (e.touches && e.touches.length > 0) {
-        startResize(e.touches[0].clientY);
-      }
-    }, { passive: true });
 
     // Double-click to reset to default height (240px)
     this.timelineSplitterHandle.addEventListener('dblclick', () => {
@@ -660,10 +654,13 @@ export class PackBuilderApp {
       if (this.coverFile) {
         const coverData = new FormData();
         coverData.append('file', this.coverFile);
-        await fetch(`/api/builder/${this.sessionId}/cover`, {
+        const coverRes = await fetch(`/api/builder/${this.sessionId}/cover`, {
           method: 'POST',
           body: coverData,
         });
+        if (!coverRes.ok) {
+          this.showToast(`Cover image upload failed (HTTP ${coverRes.status}).`);
+        }
       }
 
       if (this.subFile) {
@@ -682,11 +679,15 @@ export class PackBuilderApp {
       }
 
       const lang = this.selectTranscribeLang.value;
-      await fetch(`/api/builder/${this.sessionId}/process`, {
+      const processRes = await fetch(`/api/builder/${this.sessionId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ language: lang, whisper_model: 'base' }),
       });
+      if (!processRes.ok) {
+        const err = await processRes.json().catch(() => ({}));
+        throw new Error(err.detail || `Processing failed to start (HTTP ${processRes.status})`);
+      }
 
       this.listenToProgressSSE();
 
@@ -740,7 +741,7 @@ export class PackBuilderApp {
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/builder/${this.sessionId}/status`);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`Status check failed (HTTP ${res.status})`);
         const data = await res.json();
         const pct = Math.round((data.progress || 0.0) * 100);
         this.builderProgressFill.style.width = `${pct}%`;
@@ -758,6 +759,9 @@ export class PackBuilderApp {
         }
       } catch (e) {
         clearInterval(interval);
+        this.processHeadline.innerText = 'Processing Failed';
+        this.processSubtext.innerText = e.message;
+        this.showToast(`Error: ${e.message}`);
       }
     }, 1000);
   }
@@ -1425,8 +1429,8 @@ export class PackBuilderApp {
   handleGlobalMouseMove(e) {
     // 0. Handle Timeline Vertical Resizing
     if (this.isResizingTimeline) {
-      const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : null);
-      if (clientY !== null && this.editorBottomTimelinePanel) {
+      const clientY = e.clientY;
+      if (this.editorBottomTimelinePanel) {
         const deltaY = this.resizeStartY - clientY;
         const minH = 130;
         const maxH = Math.max(minH, (window.innerHeight || 800) - 260);
@@ -1713,7 +1717,7 @@ export class PackBuilderApp {
     if (!this.sessionId) return;
     try {
       await fetch(`/api/builder/${this.sessionId}/segments`, {
-        method: 'POST',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ segments: this.segments })
       });
@@ -1802,6 +1806,8 @@ export class PackBuilderApp {
           this.syncSegmentsToServer();
           this.showToast(`Romanized: "${seg.text}"`);
         }
+      } else {
+        this.showToast('Romanization failed.');
       }
     } catch (e) {
       console.warn('Romanization error:', e);
