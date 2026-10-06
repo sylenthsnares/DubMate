@@ -834,11 +834,13 @@ NOTE This is a test subtitle file
             self.assertEqual(len(progress.segments), 2)
             self.assertTrue(progress.segments[1]["nonverbal"])
             self.assertTrue(progress.segments[1]["character"].startswith("Speaker"))
+            self.assertEqual(progress.message, "Found 2 lines, 1 without words")
 
             state["used_fallback"] = True
             progress = run()
             self.assertEqual(calls, ["extract", "separate", "transcribe", ("assign", False)])
             self.assertEqual(progress.status, "transcribed")
+            self.assertEqual(progress.message, "Found 1 line")
 
             state["used_fallback"] = False
             progress = run(subtitle_segments=[{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Levi"}])

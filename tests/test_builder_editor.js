@@ -9,6 +9,10 @@
  *
  * The timeline takes mouse, touch and pen through one Pointer Events path:
  * line drags, handle trims, pan/seek and the splitter.
+ *
+ * Lines without words show a badge, a cue placeholder and a "(no words)"
+ * timeline label; the server's warning shows above the line list, and a
+ * result toast counts the lines.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -41,7 +45,7 @@ process.on("unhandledRejection", (err) => fail(`unhandled rejection: ${err && er
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
 /** Boots builder.html, runs a fake upload + processing, and waits for the editor. */
-async function bootEditor() {
+async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] }) {
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (err) => {
     if (!/not implemented/i.test(String(err && err.message))) console.error(err);
@@ -112,7 +116,7 @@ async function bootEditor() {
   w.document.getElementById("btn-start-process").click();
   await tick(50);
   if (!sources.length) fail("processing never opened the progress stream");
-  sources[0].onmessage({ data: JSON.stringify({ status: "transcribed", progress: 1, segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] }) });
+  sources[0].onmessage({ data: JSON.stringify({ status: "transcribed", progress: 1, ...transcribed }) });
   await tick(700);
 
   const doc = w.document;
@@ -290,7 +294,54 @@ async function bootEditor() {
     check(panel.style.height === "340px", "dragging the splitter up 100 px makes the timeline 100 px taller");
     pointer(splitter, "pointerup", 0, 400);
     check(!app.isResizingTimeline, "pointerup ends the resize");
+    await tick(100); // let the resize re-render run before the window closes
     w.close();
+  }
+
+  // (f) lines without words, the notice and the result toast.
+  {
+    const ed = await bootEditor({
+      warning: "X",
+      segments: [
+        { start: 1, end: 2, text: "Hi", character: "Speaker 1" },
+        { start: 3, end: 3.5, text: "", character: "Speaker 2", nonverbal: true },
+        { start: 4, end: 5, text: "Bye", character: "Speaker 1" },
+      ],
+    });
+    const { doc } = ed;
+    const notice = doc.getElementById("editor-notice");
+    check(!!notice && notice.hidden === false && notice.textContent === "X", "the server warning shows in #editor-notice");
+    check(ed.toasts().includes("Found 3 lines, 1 without words"), "the result toast counts lines and lines without words");
+
+    const cards = doc.querySelectorAll("#segments-list-container .builder-cue-card");
+    const badge = cards[1].querySelector(".cue-nonverbal-badge");
+    check(!!badge && badge.textContent === "No words", "a line without words shows the 'No words' badge");
+    check(badge.getAttribute("data-tip") === "A grunt, laugh or other sound without words. Record it like any other line.", "the badge explains itself in a tooltip");
+    check(!cards[0].querySelector(".cue-nonverbal-badge"), "a line with words has no badge");
+    check(cards[1].querySelector(".cue-text-input").getAttribute("placeholder") === "No words. Type a cue like (laughs) if you want.", "a line without words gets the cue placeholder");
+    check(cards[0].querySelector(".cue-text-input").getAttribute("placeholder") === "Line text", "a line with words keeps the plain placeholder");
+
+    const labels = Array.from(doc.querySelectorAll("#timeline-segments-overlay .segment-block-label"))
+      .map((el) => (typeof el.innerText === "string" ? el.innerText : el.textContent));
+    check(labels.includes("[Speaker 2] (no words)"), "the timeline labels a line without words '(no words)'");
+
+    let putBody = null;
+    ed.w.fetch = (url, opts) => {
+      if (opts && opts.method === "PUT") putBody = JSON.parse(opts.body);
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    };
+    const box = cards[1].querySelector(".cue-text-input");
+    box.value = "(laughs)";
+    box.dispatchEvent(new ed.w.Event("input"));
+    await ed.app.syncSegmentsToServer();
+    check(putBody && putBody.segments[1].nonverbal === true && putBody.segments[1].text === "(laughs)", "typing a cue keeps the flag, and the saved lines carry it");
+    ed.w.close();
+  }
+  {
+    const ed = await bootEditor({ warning: "", segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] });
+    check(ed.doc.getElementById("editor-notice").hidden === true, "an empty warning keeps the notice hidden");
+    check(ed.toasts().includes("Found 1 line"), "one line says 'Found 1 line'");
+    ed.w.close();
   }
 
   console.log("All Pack Builder editor playback and timeline checks passed.");

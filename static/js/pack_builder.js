@@ -193,6 +193,7 @@ export class PackBuilderApp {
     this.characterChipsList = document.getElementById('character-chips-list');
     this.btnAddCharacter = document.getElementById('btn-add-character');
     this.segmentsListContainer = document.getElementById('segments-list-container');
+    this.editorNotice = document.getElementById('editor-notice');
     this.btnProceedToCompile = document.getElementById('btn-proceed-to-compile');
 
     // Step 4: Compile inputs
@@ -762,10 +763,7 @@ export class PackBuilderApp {
 
         if (status === 'transcribed') {
           sse.close();
-          this.segments = data.segments || this.segments;
-          setTimeout(() => {
-            this.setStep('editor');
-          }, 600);
+          setTimeout(() => this.openEditor(data), 600);
         } else if (status === 'error') {
           sse.close();
           this.processHeadline.innerText = 'Processing stopped';
@@ -796,8 +794,7 @@ export class PackBuilderApp {
 
         if (data.status === 'transcribed') {
           clearInterval(interval);
-          this.segments = data.segments || this.segments;
-          this.setStep('editor');
+          this.openEditor(data);
         } else if (data.status === 'error') {
           clearInterval(interval);
           this.processHeadline.innerText = 'Processing stopped';
@@ -810,6 +807,20 @@ export class PackBuilderApp {
         this.showToast(e.message);
       }
     }, 1000);
+  }
+
+  /** Opens the editor on finished processing: lines, the server's notice and a result toast. */
+  openEditor(data) {
+    this.segments = data.segments || this.segments;
+    const notice = (data.warning || '').trim();
+    this.editorNotice.textContent = notice;
+    this.editorNotice.hidden = !notice;
+    this.setStep('editor');
+    const total = this.segments.length;
+    const noWords = this.segments.filter(s => s.nonverbal).length;
+    let summary = `Found ${total} line${total === 1 ? '' : 's'}`;
+    if (noWords) summary += `, ${noWords} without words`;
+    this.showToast(summary);
   }
 
   // --- STEP 3: Timeline & Cue Editor ---
@@ -1188,7 +1199,7 @@ export class PackBuilderApp {
 
       const label = document.createElement('div');
       label.className = 'segment-block-label';
-      label.innerText = `[${seg.character}] ${seg.text || '...'}`;
+      label.innerText = `[${seg.character}] ${seg.text || '(no words)'}`;
 
       // Inline Delete Action Button right on the block
       const deleteBtn = document.createElement('button');
@@ -1269,6 +1280,7 @@ export class PackBuilderApp {
           <div class="cue-index-wrap">
             <span class="cue-dot" style="background: ${color};"></span>
             <span class="cue-number">#${idx + 1}</span>
+            ${seg.nonverbal ? '<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line.">No words</span>' : ''}
           </div>
           <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
           <div style="display: flex; gap: 4px; align-items: center;">
@@ -1298,7 +1310,7 @@ export class PackBuilderApp {
               <span>Play</span>
             </button>
           </div>
-          <textarea class="form-input cue-text-input" rows="2" placeholder="Line text" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
+          <textarea class="form-input cue-text-input" rows="2" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
         </div>
       `;
 

@@ -1467,6 +1467,29 @@ body.resizing-timeline * {
   color: var(--foreground);
 }
 
+.cue-nonverbal-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--foreground-dim);
+  border: 1px solid currentColor;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  cursor: help;
+}
+
+.editor-notice {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--accent-brass);
+  background: rgba(204, 164, 88, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+.editor-notice[hidden] {
+  display: none;
+}
+
 .cue-timecode-badge {
   font-family: var(--font-mono);
   font-size: 11px;

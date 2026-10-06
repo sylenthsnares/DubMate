@@ -305,7 +305,12 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             }]
 
         progress.characters = sorted(list({s["character"] for s in segments}))
-        progress.update("transcribed", 1.0, f"Found {len(segments)} lines", stage="complete", segments=segments)
+        total = len(segments)
+        no_words = sum(1 for s in segments if s.get("nonverbal"))
+        summary = f"Found {total} line{'' if total == 1 else 's'}"
+        if no_words:
+            summary += f", {no_words} without words"
+        progress.update("transcribed", 1.0, summary, stage="complete", segments=segments)
 
     except pack_builder.MissingPipelineError as missing:
         print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {missing}")
