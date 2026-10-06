@@ -267,7 +267,6 @@ class DubMateApp {
     this.btnToggleAdvancedRack = document.getElementById('btn-toggle-advanced-rack');
     this.advancedVocalRack = document.getElementById('advanced-vocal-rack');
     this.checkLowcut = document.getElementById('check-lowcut');
-    this.checkCompressor = document.getElementById('check-compressor');
     this.sliderDecay = document.getElementById('slider-decay');
     this.valDecay = document.getElementById('val-decay');
     this.sliderPredelay = document.getElementById('slider-predelay');
@@ -799,7 +798,6 @@ class DubMateApp {
     });
 
     this.checkLowcut.addEventListener('change', () => this.syncTakeParams());
-    this.checkCompressor.addEventListener('change', () => this.syncTakeParams());
 
     this.sliderDecay.addEventListener('input', (e) => {
       const decay = parseFloat(e.target.value);
@@ -3144,7 +3142,6 @@ class DubMateApp {
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
     const lowcut = this.checkLowcut.checked;
-    const comp = this.checkCompressor.checked;
 
     const startAudioTime = performance.now();
     const previewDurationSec = Math.max(line.duration || 3.0, (this.currentTakeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
@@ -3172,7 +3169,6 @@ class DubMateApp {
       reverbWet: reverb,
       gainDb: gain,
       enableLowCut: lowcut,
-      enableCompressor: comp,
       onEnded: () => {
         if (token === this.activePlaybackToken) {
           this.isPlayingTake = false;
@@ -3453,6 +3449,16 @@ class DubMateApp {
 
         this.setWaveformForLine(line, take, origPeaks, takePeaks);
 
+        // The server re-matches gain for the swapped audio; show the take's new level.
+        if (take) {
+          const gainDb = parseFloat(take.gain_db) || 0;
+          this.sliderGain.value = gainDb;
+          this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
+          this.audio.setGain(gainDb);
+          this.updateKnobsVisuals();
+          if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
+        }
+
         if (take && take.url) {
           const newBuf = await this.audio.loadAudioBuffer(take.url, true);
           this.currentTakeBuffer = newBuf;
@@ -3702,6 +3708,11 @@ class DubMateApp {
     const pitch = parseFloat(this.sliderPitch.value);
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
+    // Ask the server to apply this take's scene-matched gain unless the slider was moved
+    // off 0 / off the previous take's auto gain (the slider still shows that take's level).
+    const prevTake = this.roomState?.takes?.[lineIndex];
+    const prevAuto = prevTake ? parseFloat(prevTake.auto_gain_db) : NaN;
+    const autoGain = gain === 0 || (!Number.isNaN(prevAuto) && Math.abs(gain - prevAuto) < 0.05);
 
     const formData = new FormData();
     formData.append('file', blob, `take_${lineIndex}.webm`);
@@ -3712,6 +3723,7 @@ class DubMateApp {
     formData.append('reverb_wet', reverb);
     formData.append('gain_db', gain);
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
+    formData.append('auto_gain', autoGain ? 'true' : 'false');
 
     try {
       const res = await fetch(`/api/rooms/${this.roomState.room_id}/takes/${lineIndex}`, {
@@ -3725,14 +3737,6 @@ class DubMateApp {
       if (data.take) {
         if (!this.roomState.takes) this.roomState.takes = {};
         this.roomState.takes[lineIndex] = data.take;
-        // If gain wasn't manually altered away from 0, auto-apply the calculated scene gain
-        if (gain === 0 && data.take.auto_gain_db !== undefined && data.take.auto_gain_db !== 0) {
-          data.take.gain_db = data.take.auto_gain_db;
-          this.sliderGain.value = data.take.auto_gain_db;
-          this.valGain.innerText = (data.take.auto_gain_db > 0 ? '+' : '') + data.take.auto_gain_db + ' dB';
-          this.audio.setGain(data.take.auto_gain_db);
-          this.syncTakeParams();
-        }
       }
       this.audio.evictTakeCache(lineIndex);
       if (recordedBuffer) {

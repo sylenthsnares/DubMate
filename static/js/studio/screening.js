@@ -518,7 +518,6 @@ export class ScreeningMethods {
             reverbWet: take.reverb_wet || 0,
             gainDb: take.gain_db || 0,
             enableLowCut: true,
-            enableCompressor: true,
           });
 
           source.connect(dsp.input);

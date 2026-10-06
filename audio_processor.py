@@ -32,6 +32,11 @@ SR = 44100  # Standard audio sample rate
 GAIN_DB_MIN = -60.0
 GAIN_DB_MAX = 24.0
 
+# Auto gain-match targets the measured loudness of the original line (dBFS gated RMS).
+# This constant is only the fallback when that line can't be measured or is silent.
+DEFAULT_DIALOGUE_LOUDNESS_DB = -21.0
+AUTO_GAIN_PEAK_CEILING_DB = -1.0  # auto gain never boosts a take's sample peak above this
+
 # Mix levels shared by render_dub_mix and build_project_zip.
 LIMITER_CEILING_DB = -0.3   # master soft limiter ceiling for the final mix and every stem
 BACKING_TRACK_LEVEL = 0.65  # backing music & SFX under the dialogue (calibrated DAW level)
@@ -265,18 +270,20 @@ def calculate_speech_gated_loudness(
 
 def calculate_take_auto_gain(
     take_audio_or_path: Union[np.ndarray, str],
-    target_loudness_db: float = -21.0,
+    target_loudness_db: float = DEFAULT_DIALOGUE_LOUDNESS_DB,
     sr: int = SR,
     max_boost_db: float = 12.0,
     max_cut_db: float = -12.0
 ) -> Dict[str, float]:
     """
     Computes the static gain offset needed to match target dialogue loudness.
+    A boost is capped so the take's sample peak stays at or below
+    AUTO_GAIN_PEAK_CEILING_DB; cuts are never affected by the cap.
     Returns {"take_loudness_db": float, "target_loudness_db": float, "auto_gain_db": float}.
     """
     if isinstance(take_audio_or_path, str):
         if not os.path.isfile(take_audio_or_path):
-            return {"take_loudness_db": -21.0, "target_loudness_db": round(target_loudness_db, 1), "auto_gain_db": 0.0}
+            return {"take_loudness_db": DEFAULT_DIALOGUE_LOUDNESS_DB, "target_loudness_db": round(target_loudness_db, 1), "auto_gain_db": 0.0}
         audio_data = read_wav_mono(take_audio_or_path, sr)
     else:
         audio_data = take_audio_or_path
@@ -284,7 +291,12 @@ def calculate_take_auto_gain(
     take_loudness_db = calculate_speech_gated_loudness(audio_data, sr=sr)
     raw_delta_db = target_loudness_db - take_loudness_db
     # Clamp to safe gain limits [-12dB, +12dB]
-    auto_gain_db = round(float(np.clip(raw_delta_db, max_cut_db, max_boost_db)), 1)
+    gain_db = float(np.clip(raw_delta_db, max_cut_db, max_boost_db))
+    peak = float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0
+    if gain_db > 0.0 and peak > 1e-6:
+        headroom_db = max(0.0, AUTO_GAIN_PEAK_CEILING_DB - 20.0 * np.log10(peak))
+        gain_db = min(gain_db, np.floor(headroom_db * 10.0) / 10.0)
+    auto_gain_db = round(float(gain_db), 1)
 
     return {
         "take_loudness_db": take_loudness_db,
@@ -430,7 +442,7 @@ def save_uploaded_take(
     peaks = compute_waveform_peaks(audio_data, 100)
 
     # Calculate speech-gated loudness and smart auto-gain calibration
-    effective_target_db = target_loudness_db if target_loudness_db is not None else -21.0
+    effective_target_db = target_loudness_db if target_loudness_db is not None else DEFAULT_DIALOGUE_LOUDNESS_DB
     gain_match = calculate_take_auto_gain(audio_data, target_loudness_db=effective_target_db, sr=SR)
 
     return {
@@ -452,11 +464,13 @@ def toggle_take_noise_reduction(
     room_id: str,
     line_index: int,
     enable_noise_reduction: bool,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    target_loudness_db: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Instantly toggles a take between pristine raw and denoised audio.
-    Generates denoised audio on-demand if missing.
+    Generates denoised audio on-demand if missing, and re-measures the
+    swapped audio's loudness and auto gain against target_loudness_db.
     """
     room_dir = get_room_cache_dir(room_id)
     target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
@@ -489,6 +503,8 @@ def toggle_take_noise_reduction(
     audio_data = read_wav_mono(target_wav)
     duration = len(audio_data) / float(SR)
     peaks = compute_waveform_peaks(audio_data, 100)
+    effective_target_db = target_loudness_db if target_loudness_db is not None else DEFAULT_DIALOGUE_LOUDNESS_DB
+    gain_match = calculate_take_auto_gain(audio_data, target_loudness_db=effective_target_db, sr=SR)
 
     return {
         "wav_path": target_wav,
@@ -496,6 +512,9 @@ def toggle_take_noise_reduction(
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
         "has_raw": True,
+        "speech_loudness_db": gain_match["take_loudness_db"],
+        "target_loudness_db": gain_match["target_loudness_db"],
+        "auto_gain_db": gain_match["auto_gain_db"],
         "url": f"/api/rooms/{room_id}/takes/{line_index}/audio",
     }
 

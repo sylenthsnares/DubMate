@@ -12,7 +12,7 @@ Semi-pro voice actors, streamers, anime content creators, and collaborative ADR 
 
 ## Product Purpose
 
-DubMate Studio Pro is a high-performance web Digital Audio Workstation (DAW) and multiplayer scene dubbing suite. It enables actors to cast character roles, record voice lines with visual waveform alignment against original dialogue, shape voice tracks with studio-grade DSP (time-invariant pitch shifting, acoustic reverb, dynamic compression, de-hum low-cut), and screen the synchronized dubbed scene together live before exporting a master MP4 video.
+DubMate Studio Pro is a high-performance web Digital Audio Workstation (DAW) and multiplayer scene dubbing suite. It enables actors to cast character roles, record voice lines with visual waveform alignment against original dialogue, shape voice tracks with studio-grade DSP (time-invariant pitch shifting, acoustic reverb, de-hum low-cut), and screen the synchronized dubbed scene together live before exporting a master MP4 video.
 
 ## Positioning
 
@@ -24,7 +24,7 @@ Desktop studio workstations and creator setups using headphones and dedicated US
 
 ## Capabilities and Constraints
 
-- **Audio Engine**: Real-time Web Audio API with non-destructive DSP graph (gain boost, pitch shift, convolution reverb, biquad low-cut filter, dynamics compressor).
+- **Audio Engine**: Real-time Web Audio API with non-destructive DSP graph (gain boost, pitch shift, convolution reverb, biquad low-cut filter).
 - **Dual-Waveform Sync**: Interactive canvas with millisecond visual envelope matching, mouse/touch drag scrubbing, and fine-tuning nudges (-800ms to +800ms).
 - **Pack Authoring (Pack Builder)**: 1-click browser scene creator using GPU-first Demucs stem separation, Whisper auto-transcription, interactive waveform cue editor, and subtitle file import.
 - **Collaboration**: Real-time WebSocket room synchronization for casting assignments, actor readiness HUD, and synchronized host premiere playback.

@@ -786,7 +786,7 @@ export class AudioEngine {
     this.currentPlayingNodes = [];
 
     // Fully tear down the previous per-preview DSP chain (high-pass filter,
-    // compressor, gain trim, reverb convolver + dry/wet sends, sub-mix)
+    // gain trim, reverb convolver + dry/wet sends, sub-mix)
     // rather than just dropping references. buildVocalDSPChain() now returns
     // every node it creates so all of them can be disconnected here, not just
     // the 3 (input/gainNode/output) that used to be tracked. This runs before
@@ -813,12 +813,13 @@ export class AudioEngine {
   }
 
   // --- 5. Studio Vocal DSP Chain ---
+  // No compressor: the exported mix never compresses takes, and auto gain is
+  // measured on the uncompressed take, so the preview must not compress either.
   buildVocalDSPChain(options = {}) {
     const {
       reverbWet = 0,
       gainDb = 0,
       enableLowCut = true,
-      enableCompressor = true,
     } = options;
 
     const nodes = {};
@@ -830,27 +831,13 @@ export class AudioEngine {
     highPass.Q.value = 0.707;
     nodes.input = highPass;
 
-    // 2. Studio Vocal Compressor
-    const compressor = this.ctx.createDynamicsCompressor();
-    if (enableCompressor) {
-      compressor.threshold.value = -24;
-      compressor.knee.value = 12;
-      compressor.ratio.value = 3.0;
-      compressor.attack.value = 0.015;
-      compressor.release.value = 0.150;
-    } else {
-      compressor.threshold.value = 0;
-    }
-    highPass.connect(compressor);
-    nodes.compressor = compressor;
-
-    // 3. Volume Trim Gain Node
+    // 2. Volume Trim Gain Node
     const gainNode = this.ctx.createGain();
     gainNode.gain.value = Math.pow(10, gainDb / 20);
-    compressor.connect(gainNode);
+    highPass.connect(gainNode);
     nodes.gainNode = gainNode;
 
-    // 4. Reverb Sub-Mix
+    // 3. Reverb Sub-Mix
     const submixGain = this.ctx.createGain();
     if (reverbWet > 0.03 && this.reverbBuffer) {
       const convolver = this.ctx.createConvolver();
@@ -902,7 +889,6 @@ export class AudioEngine {
     reverbWet = 0,
     gainDb = 0,
     enableLowCut = true,
-    enableCompressor = true,
     onEnded = null,
   }) {
     this.stopAllPlayback();
@@ -942,7 +928,6 @@ export class AudioEngine {
         reverbWet,
         gainDb,
         enableLowCut,
-        enableCompressor,
       });
       this.activeDSPNodes = dsp;
 

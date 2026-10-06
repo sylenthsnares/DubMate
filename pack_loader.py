@@ -558,19 +558,30 @@ def get_cached_line_peaks(pack_id: str, filename: str, file_path: str, columns: 
     return peaks
 
 
-def get_cached_line_loudness(pack_id: str, filename: str, file_path: str) -> float:
-    """Retrieves cached speech loudness or returns standard broadcast target (-21.0 dB)."""
-    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', f"{pack_id}_{filename}") + "_loudness.json"
-    cache_path = os.path.join(PEAKS_CACHE_DIR, safe_name)
-    try:
-        if os.path.isfile(cache_path):
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, (int, float)):
-                return float(data)
-    except Exception:
-        pass
-    return -21.0
+# (abs path, mtime, size) -> measured speech-gated loudness of a pack line.
+_LINE_LOUDNESS_CACHE: Dict[Tuple[str, float, int], float] = {}
+_LINE_LOUDNESS_LOCK = threading.Lock()
+
+
+def measure_line_loudness(file_path: str) -> float:
+    """Speech-gated loudness (dBFS gated RMS) of an original pack line.
+
+    Measured lazily (on take upload, not at pack load) and memoised in memory by
+    path, mtime and size, so an edited or re-imported line is measured again.
+    Raises OSError if the file is missing or unreadable.
+    """
+    abs_path = os.path.abspath(file_path)
+    st = os.stat(abs_path)
+    key = (abs_path, st.st_mtime, st.st_size)
+    with _LINE_LOUDNESS_LOCK:
+        cached = _LINE_LOUDNESS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    import audio_processor  # lazy: keeps pack_loader importable without the DSP stack
+    loudness = float(audio_processor.calculate_speech_gated_loudness(audio_processor.read_wav_mono(abs_path)))
+    with _LINE_LOUDNESS_LOCK:
+        _LINE_LOUDNESS_CACHE[key] = loudness
+    return loudness
 
 
 def timestamp_from_filename(filename: str) -> Optional[float]:
@@ -1273,7 +1284,6 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
         audio_full_path = os.path.join(pack_folder, filename)
         line_duration = probe_duration(audio_full_path)
         peaks = get_cached_line_peaks(pack_id, filename, audio_full_path, 100)
-        ref_loudness = get_cached_line_loudness(pack_id, filename, audio_full_path)
 
         quoted_pack_id = urllib.parse.quote(pack_id)
         quoted_filename = urllib.parse.quote(filename)
@@ -1289,16 +1299,12 @@ def load_pack(pack_folder: str) -> Optional[PackInfo]:
             "raw_caption": format_raw_caption(char_name, caption_text),
             "audio_url": f"/api/packs/{quoted_pack_id}/audio/{quoted_filename}",
             "peaks": peaks,
-            "reference_loudness_db": ref_loudness,
             "image": entry.get("image"),
         })
 
     pack.lines = lines
     if pack.duration <= 0.0 and lines:
         pack.duration = max(l["end"] for l in lines)
-    valid_loudness = [l["reference_loudness_db"] for l in lines if l.get("reference_loudness_db") is not None and l.get("reference_loudness_db") > -55.0]
-    import numpy as np
-    pack.mean_vocal_loudness_db = round(float(np.mean(valid_loudness)), 1) if valid_loudness else -21.0
 
     char_counts = {}
     for l in lines:

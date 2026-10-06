@@ -63,7 +63,7 @@
   - **Acoustic Room Convolution Reverb**: Wet/Dry mix dial, adjustable decay (0.2s–4.0s), and pre-delay (0ms–60ms).
   - **Vocal Boost Gain**: Calibrated `-12 dB` to `+12 dB` linear boost.
   - **80Hz Low-Cut Filter**: Eliminates low-frequency desk rumble, HVAC hum, and mic plosives.
-  - **Studio Dynamics Compressor & Soft-Knee Limiter**: Transparent mastering limiter preventing digital clipping.
+  - **Soft-Knee Limiter**: Transparent mastering limiter preventing digital clipping.
 - **Dual-Waveform Sample Alignment**:
   - Visual overlay comparing the original reference waveform against the actor's take.
   - Interactive canvas scrub and click-and-drag offset shifting.
@@ -115,7 +115,7 @@ DubMate Studio Pro
 │   ├── static/css/style.css   # Warm Wood & Analog Hardware Studio design system
 │   ├── static/js/app.js       # Core application controller & stage state machine
 │   ├── static/js/pack_builder.js # Pack Builder timeline controller & SSE client
-│   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Compressor, Reverb)
+│   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Reverb)
 │   ├── static/js/knob.js      # Tactile 270° rotary guitar amp dial components
 │   ├── static/js/waveform.js  # Dual-waveform visual alignment & canvas renderer
 │   └── static/js/room_socket.js # Real-time WebSocket synchronization client

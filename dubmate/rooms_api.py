@@ -19,6 +19,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse
 
 import audio_processor
+import pack_loader
 from dubmate import common, packs_cache, rooms, room_registry
 
 router = APIRouter()
@@ -105,6 +106,21 @@ async def upload_noise_profile(
         raise HTTPException(status_code=400, detail=str(ex))
 
 
+def _line_target_loudness(pack, line) -> float:
+    """Measured loudness of the original line, the target for a take's auto gain.
+
+    Falls back to DEFAULT_DIALOGUE_LOUDNESS_DB when the line can't be read or is silent.
+    """
+    try:
+        measured = pack_loader.measure_line_loudness(os.path.join(pack.folder, line["filename"]))
+    except Exception as ex:
+        print(f"[Loudness] Could not measure reference line {line.get('filename')!r}: {ex}")
+        return audio_processor.DEFAULT_DIALOGUE_LOUDNESS_DB
+    if measured <= -55.0:
+        return audio_processor.DEFAULT_DIALOGUE_LOUDNESS_DB
+    return measured
+
+
 @router.post("/api/rooms/{room_id}/takes/{line_index}")
 async def upload_take(
     room_id: str,
@@ -117,6 +133,7 @@ async def upload_take(
     reverb_wet: float = Form(0.0),
     gain_db: float = Form(0.0),
     noise_reduction: bool = Form(False),
+    auto_gain: bool = Form(False),
 ):
     common.require_safe_identifier(user_id, "user_id")
     room = rooms.room_or_404(room_id)
@@ -135,9 +152,7 @@ async def upload_take(
         )
 
     try:
-        target_loudness = line.get("reference_loudness_db")
-        if target_loudness is None or target_loudness <= -55.0:
-            target_loudness = getattr(room.pack, "mean_vocal_loudness_db", -21.0)
+        target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
 
         content = await file.read()
         async with room.processing_lock:
@@ -167,7 +182,9 @@ async def upload_take(
         "offset_ms": offset_ms,
         "pitch_semitones": pitch_semitones,
         "reverb_wet": reverb_wet,
-        "gain_db": gain_db,
+        # auto_gain: the client asked for the scene-matched level, applied here so the
+        # take_recorded broadcast already carries it.
+        "gain_db": saved.get("auto_gain_db", 0.0) if auto_gain else gain_db,
         "noise_reduction": saved.get("noise_reduction", noise_reduction),
         "has_raw": True,
         "speech_loudness_db": saved.get("speech_loudness_db"),
@@ -201,6 +218,7 @@ async def toggle_take_noise_reduction_endpoint(
     enable = bool(payload.get("noise_reduction", False))
     take = room.takes[line_index]
     user_id = take.get("user_id", "host")
+    target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, room.pack.lines[line_index])
 
     try:
         async with room.processing_lock:
@@ -209,7 +227,8 @@ async def toggle_take_noise_reduction_endpoint(
                 room.room_id,
                 line_index,
                 enable_noise_reduction=enable,
-                user_id=user_id
+                user_id=user_id,
+                target_loudness_db=target_loudness,
             )
         timestamp_ms = int(time.time() * 1000)
         versioned_url = f"/api/rooms/{room_id}/takes/{line_index}/audio?v={timestamp_ms}"
@@ -217,6 +236,14 @@ async def toggle_take_noise_reduction_endpoint(
         room.takes[line_index]["url"] = versioned_url
         room.takes[line_index]["peaks"] = toggled["peaks"]
         room.takes[line_index]["duration"] = toggled["duration"]
+        # The swapped audio has a different level: re-match, and keep a take that was
+        # sitting at its auto gain on the new auto gain.
+        old_auto = take.get("auto_gain_db")
+        if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
+            take["gain_db"] = toggled["auto_gain_db"]
+        take["speech_loudness_db"] = toggled["speech_loudness_db"]
+        take["target_loudness_db"] = toggled["target_loudness_db"]
+        take["auto_gain_db"] = toggled["auto_gain_db"]
         room.invalidate_exports()
         await room.broadcast("take_params_updated", {
             "line_index": line_index,

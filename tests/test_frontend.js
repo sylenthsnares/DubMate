@@ -252,6 +252,67 @@ try {
       console.log("PASS: B1 backing track is per scene and late loads are dropped!");
     }
 
+    // Test 3c (B3): a re-take gets its own auto gain, and the preview never compresses
+    // (the export doesn't, so a compressed preview misreports the level).
+    {
+      const realFetch = dom.window.fetch;
+      const realLoad = app.audio.loadAudioBuffer;
+      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
+      let sentForm = null;
+      dom.window.fetch = (url, opts) => {
+        if (String(url).includes("/takes/0") && opts && opts.method === "POST") {
+          sentForm = opts.body;
+          const autoGain = opts.body.get("auto_gain") === "true";
+          const take = {
+            user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=2",
+            offset_ms: 0, pitch_semitones: 0, reverb_wet: 0,
+            gain_db: autoGain ? -4 : parseFloat(opts.body.get("gain_db")),
+            auto_gain_db: -4, speech_loudness_db: -17, target_loudness_db: -21,
+          };
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", take }) });
+        }
+        return realFetch(url, opts);
+      };
+      const prevTake = { user_id: app.user.id, url: "/api/rooms/B3ROOM/takes/0/audio?v=1", gain_db: 6, auto_gain_db: 6 };
+      const roomB3 = () => ({ room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0], takes: { 0: { ...prevTake } }, users: {} });
+
+      // Slider still shows the previous take's auto gain: the new take must get its own.
+      app.roomState = roomB3();
+      app.sliderGain.value = "6";
+      await app.uploadTake(0, new dom.window.Blob(["x"]));
+      if (sentForm?.get("auto_gain") !== "true" || parseFloat(app.sliderGain.value) !== -4
+          || app.roomState.takes[0].gain_db !== -4) {
+        console.error("FAIL: B3 re-take kept the old take's gain:", sentForm?.get("auto_gain"), app.sliderGain.value);
+        process.exit(1);
+      }
+
+      // A level the user picked by hand is kept.
+      app.roomState = roomB3();
+      app.sliderGain.value = "3";
+      await app.uploadTake(0, new dom.window.Blob(["x"]));
+      if (sentForm?.get("auto_gain") !== "false" || parseFloat(app.sliderGain.value) !== 3) {
+        console.error("FAIL: B3 manual gain was overridden:", sentForm?.get("auto_gain"), app.sliderGain.value);
+        process.exit(1);
+      }
+
+      app.audio.initContext();
+      const ctx = app.audio.ctx;
+      let compressorBuilt = false;
+      const realComp = ctx.createDynamicsCompressor;
+      ctx.createDynamicsCompressor = function () { compressorBuilt = true; return realComp.call(this); };
+      const chain = app.audio.buildVocalDSPChain({ gainDb: -4, reverbWet: 0 });
+      ctx.createDynamicsCompressor = realComp;
+      if (compressorBuilt || chain.compressor || dom.window.document.getElementById("check-compressor")) {
+        console.error("FAIL: B3 preview vocal chain still compresses takes");
+        process.exit(1);
+      }
+
+      dom.window.fetch = realFetch;
+      app.audio.loadAudioBuffer = realLoad;
+      app.leaveRoom();
+      console.log("PASS: B3 re-takes get their own auto gain and the preview chain matches the export!");
+    }
+
     // Test 4: Dialogue completion & "I'm Finished" button state
     app.roomState = {
       room_id: "TEST12",

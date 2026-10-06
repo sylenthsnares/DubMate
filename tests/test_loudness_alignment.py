@@ -2,7 +2,9 @@ import os
 import shutil
 import tempfile
 import unittest
+import json
 import subprocess
+from unittest import mock
 import numpy as np
 from starlette.testclient import TestClient
 
@@ -14,6 +16,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 import audio_processor
 import pack_loader
 import app
+from dubmate import rooms
 
 
 class TestDialogueLoudnessAlignment(unittest.TestCase):
@@ -104,8 +107,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         pack_dir = os.path.join(self.test_dir, "pack_multi_char")
         os.makedirs(pack_dir, exist_ok=True)
         
-        ref_audio_1 = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-21.0)
-        ref_audio_2 = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-21.0)
+        ref_audio_1 = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-24.0)
+        ref_audio_2 = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-18.0)
         ref_path_1 = os.path.join(pack_dir, "01_Line1_0-00.wav")
         ref_path_2 = os.path.join(pack_dir, "02_Line2_3-00.wav")
         audio_processor.write_wav_mono(ref_path_1, ref_audio_1, self.sr)
@@ -125,7 +128,11 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
 
         pack = pack_loader.load_pack(pack_dir)
         self.assertIsNotNone(pack)
-        self.assertAlmostEqual(pack.mean_vocal_loudness_db, -21.0, delta=2.5)
+        # Each take is matched to its own original line, not to a pack-wide constant.
+        ref1 = pack_loader.measure_line_loudness(ref_path_1)
+        ref2 = pack_loader.measure_line_loudness(ref_path_2)
+        self.assertAlmostEqual(ref1, -24.0, delta=2.5)
+        self.assertAlmostEqual(ref2, -18.0, delta=2.5)
 
         actor1_take = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-27.0, pause_ratio=0.0)
         actor2_take = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-15.0, pause_ratio=0.0)
@@ -135,8 +142,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         audio_processor.write_wav_mono(t1_path, actor1_take, self.sr)
         audio_processor.write_wav_mono(t2_path, actor2_take, self.sr)
 
-        g1 = audio_processor.calculate_take_auto_gain(t1_path, target_loudness_db=pack.mean_vocal_loudness_db)["auto_gain_db"]
-        g2 = audio_processor.calculate_take_auto_gain(t2_path, target_loudness_db=pack.mean_vocal_loudness_db)["auto_gain_db"]
+        g1 = audio_processor.calculate_take_auto_gain(t1_path, target_loudness_db=ref1)["auto_gain_db"]
+        g2 = audio_processor.calculate_take_auto_gain(t2_path, target_loudness_db=ref2)["auto_gain_db"]
 
         takes_dict = {
             0: {"wav_path": t1_path, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": g1},
@@ -152,7 +159,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         loudness1 = audio_processor.calculate_speech_gated_loudness(seg1, self.sr)
         loudness2 = audio_processor.calculate_speech_gated_loudness(seg2, self.sr)
 
-        self.assertAlmostEqual(loudness1, loudness2, delta=2.5)
+        self.assertAlmostEqual(loudness1, ref1, delta=2.0)
+        self.assertAlmostEqual(loudness2, ref2, delta=2.0)
 
     def test_05_master_dialogue_presence_scaling(self):
         """Verifies that master_dialogue_presence_db cleanly scales vocal prominence against backing."""
@@ -189,6 +197,132 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         loud_4db = audio_processor.calculate_speech_gated_loudness(data_4db, self.sr)
 
         self.assertAlmostEqual(loud_4db - loud_0db, 4.0, delta=1.5)
+
+    # --- B3: auto gain-match must target the measured original line ---
+
+    def _make_pack(self, name, line_levels_db):
+        """Synthetic pack whose lines really sit at the given speech levels (dBFS gated RMS)."""
+        pack_dir = os.path.join(self.test_dir, name)
+        os.makedirs(pack_dir, exist_ok=True)
+        captions = {}
+        for i, level in enumerate(line_levels_db):
+            fname = f"{i + 1:02d}_Line{i}_{i * 3}-00.wav"
+            audio_processor.write_wav_mono(
+                os.path.join(pack_dir, fname),
+                self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=level, pause_ratio=0.0),
+                self.sr,
+            )
+            captions[fname] = f"[Actor{i}] Line {i}"
+        with open(os.path.join(pack_dir, "_captions.json"), "w") as f:
+            json.dump(captions, f)
+        subprocess.run([
+            pack_loader.get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", f"color=c=black:s=320x240:d={3 * len(line_levels_db)}",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            os.path.join(pack_dir, "dub_video.mp4"),
+        ], check=True)
+        pack = pack_loader.load_pack(pack_dir)
+        self.assertIsNotNone(pack)
+        return pack
+
+    def _make_room(self, room_id, pack):
+        room = rooms.Room(room_id, pack, "hostb3", "Host", "#7c5cff")
+        rooms.ROOMS[room_id] = room
+        self.addCleanup(rooms.ROOMS.pop, room_id, None)
+        return room
+
+    def _wav_bytes(self, level_db, duration_sec=2.0):
+        path = os.path.join(self.test_dir, f"upload_{level_db}.wav")
+        audio_processor.write_wav_mono(
+            path,
+            self._generate_synthetic_speech(duration_sec=duration_sec, target_rms_db=level_db, pause_ratio=0.0),
+            self.sr,
+        )
+        with open(path, "rb") as f:
+            return f.read()
+
+    def _upload(self, room_id, line_index, level_db, **form):
+        data = {"user_id": "hostb3", "user_name": "Host", "gain_db": "0.0", "noise_reduction": "false"}
+        data.update(form)
+        res = self.client.post(
+            f"/api/rooms/{room_id}/takes/{line_index}",
+            files={"file": ("take.wav", self._wav_bytes(level_db), "audio/wav")},
+            data=data,
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        return res.json()["take"]
+
+    def test_06_upload_targets_measured_line_loudness(self):
+        """The same -21 dB take is matched to a quiet line and a loud line differently."""
+        pack = self._make_pack("pack_b3_levels", [-32.0, -12.0])
+        self._make_room("LOUDB3", pack)
+
+        quiet = self._upload("LOUDB3", 0, -21.0)
+        loud = self._upload("LOUDB3", 1, -21.0)
+        self.assertAlmostEqual(quiet["target_loudness_db"], -32.0, delta=2.0)
+        self.assertAlmostEqual(loud["target_loudness_db"], -12.0, delta=2.0)
+        self.assertAlmostEqual(quiet["auto_gain_db"], -11.0, delta=2.5)
+        self.assertAlmostEqual(loud["auto_gain_db"], 9.0, delta=2.5)
+
+    def test_07_upload_auto_gain_flag_applied_server_side(self):
+        """auto_gain=true stores the matched gain before the broadcast; otherwise the slider value wins."""
+        pack = self._make_pack("pack_b3_flag", [-18.0])
+        room = self._make_room("LOUDB4", pack)
+
+        take = self._upload("LOUDB4", 0, -26.0, auto_gain="true", gain_db="6.0")
+        self.assertNotEqual(take["auto_gain_db"], 0.0)
+        self.assertEqual(take["gain_db"], take["auto_gain_db"])
+        self.assertEqual(room.to_state_dict()["takes"]["0"]["gain_db"], take["auto_gain_db"])
+
+        manual = self._upload("LOUDB4", 0, -26.0, auto_gain="false", gain_db="3.0")
+        self.assertEqual(manual["gain_db"], 3.0)
+
+    def test_08_auto_gain_boost_respects_peak_headroom(self):
+        """A quiet take with a hot transient is not boosted past the peak ceiling."""
+        take = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-33.0, pause_ratio=0.0)
+        spike_level = 10.0 ** (-6.0 / 20.0)
+        take[1000:1010] = spike_level
+        res = audio_processor.calculate_take_auto_gain(take, target_loudness_db=-21.0, sr=self.sr)
+        peak_db = 20.0 * np.log10(spike_level)
+        self.assertGreater(res["auto_gain_db"], 0.0)
+        self.assertLessEqual(res["auto_gain_db"], audio_processor.AUTO_GAIN_PEAK_CEILING_DB - peak_db)
+        boosted_peak = np.max(np.abs(take)) * 10.0 ** (res["auto_gain_db"] / 20.0)
+        self.assertLessEqual(boosted_peak, 10.0 ** (audio_processor.AUTO_GAIN_PEAK_CEILING_DB / 20.0) + 1e-6)
+
+        # Cuts are never limited by the cap.
+        hot = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-9.0, pause_ratio=0.0)
+        hot_gain = audio_processor.calculate_take_auto_gain(hot, target_loudness_db=-21.0, sr=self.sr)["auto_gain_db"]
+        self.assertAlmostEqual(hot_gain, -12.0, delta=1.0)
+
+    def test_09_noise_reduction_toggle_rematches_gain(self):
+        """Swapping to quieter denoised audio re-measures the take and moves a matched gain with it."""
+        pack = self._make_pack("pack_b3_nr", [-20.0])
+        self._make_room("LOUDB5", pack)
+        take = self._upload("LOUDB5", 0, -26.0, auto_gain="true")
+        before = take["auto_gain_db"]
+
+        def half_level(input_wav, output_wav, *args, **kwargs):
+            audio_processor.write_wav_mono(output_wav, audio_processor.read_wav_mono(input_wav) * 0.5)
+            return output_wav
+
+        with mock.patch.object(audio_processor, "apply_noise_reduction", side_effect=half_level):
+            res = self.client.post("/api/rooms/LOUDB5/takes/0/noise_reduction", json={"noise_reduction": True})
+        self.assertEqual(res.status_code, 200, res.text)
+        after = res.json()["take"]
+        self.assertAlmostEqual(after["auto_gain_db"] - before, 6.0, delta=0.6)
+        self.assertEqual(after["gain_db"], after["auto_gain_db"])
+
+    def test_10_line_loudness_remeasured_when_file_changes(self):
+        """The reference cache is keyed on the file, so an edited line is measured again."""
+        path = os.path.join(self.test_dir, "edited_line.wav")
+        audio_processor.write_wav_mono(path, self._generate_synthetic_speech(target_rms_db=-30.0, pause_ratio=0.0), self.sr)
+        first = pack_loader.measure_line_loudness(path)
+        audio_processor.write_wav_mono(path, self._generate_synthetic_speech(target_rms_db=-15.0, pause_ratio=0.0), self.sr)
+        st = os.stat(path)
+        os.utime(path, (st.st_atime, st.st_mtime + 5))
+        second = pack_loader.measure_line_loudness(path)
+        self.assertAlmostEqual(first, -30.0, delta=2.0)
+        self.assertAlmostEqual(second, -15.0, delta=2.0)
 
 
 if __name__ == "__main__":
