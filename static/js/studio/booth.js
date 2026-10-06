@@ -314,6 +314,8 @@ export class BoothMethods {
 
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const isMyLine = this.canRecordLine(line);
+    // Only the line's actor can delete its takes; hide the button for everyone else.
+    if (this.btnClearTake) this.btnClearTake.style.display = isMyLine ? '' : 'none';
 
     if (!isMyLine) {
       this.btnRecordMain.className = 'btn-big-record locked';
