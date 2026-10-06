@@ -125,6 +125,22 @@ class DubMateApp {
     window.dubMateApp = this;
   }
 
+  // Per-room state that must not leak from one room into the next. Called by
+  // leaveRoom() and at the start of joinRoom().
+  resetRoomSession() {
+    this.stopShareWatch();
+    this.roomShare = null;
+    this.roomState = null;
+    this.currentLineIndex = 0;
+    this.currentTakeBlob = null;
+    this.currentTakeBuffer = null;
+    this.backingBuffer = null;
+    this.origBuffer = null;
+    if (this.screeningBuffers) {
+      this.screeningBuffers.clear();
+    }
+  }
+
   loadUser() {
     const saved = localStorage.getItem('dubmate_user');
     if (saved) {
@@ -1080,36 +1096,12 @@ class DubMateApp {
     });
 
     // Socket events
+    // room_socket emits the typed event before '*', so every typed handler that
+    // reads this.roomState merges the incoming state first. The merge is
+    // idempotent, so running it again here is harmless.
     this.socket.on('*', (data) => {
       if (data.state) {
-        const incoming = data.state;
-        if (!this.roomState) {
-          this.roomState = incoming;
-        } else {
-          // Preserve local take peaks if incoming take state does not specify them
-          const oldTakes = this.roomState.takes || {};
-          const newTakes = incoming.takes || {};
-          const mergedTakes = {};
-
-          for (const [k, take] of Object.entries(newTakes)) {
-            const oldTake = oldTakes[k];
-            mergedTakes[k] = {
-              ...take,
-              peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (oldTake?.peaks || []),
-            };
-          }
-
-          this.roomState = {
-            ...this.roomState,
-            ...incoming,
-            pack: incoming.pack || this.roomState.pack,
-            users: incoming.users || this.roomState.users,
-            role_assignments: incoming.role_assignments || this.roomState.role_assignments,
-            takes: mergedTakes,
-            // Keep local current_line if in booth mode (solo self-paced dubbing)
-            current_line: (incoming.mode === 'studio') ? incoming.current_line : this.currentLineIndex,
-          };
-        }
+        this.applyIncomingState(data);
 
         if (this.currentView === 'lobby') {
           this.renderLobbyState();
@@ -1136,6 +1128,7 @@ class DubMateApp {
     });
 
     this.socket.on('user_status_updated', (data) => {
+      this.applyIncomingState(data);
       if (this.roomState && data.payload?.user) {
         this.roomState.users[data.payload.user_id] = data.payload.user;
         this.renderCastActivityHUD();
@@ -1143,6 +1136,7 @@ class DubMateApp {
     });
 
     this.socket.on('take_recorded', async (data) => {
+      this.applyIncomingState(data);
       const lineIdx = data.payload?.line_index;
       // Invalidate old take buffer from audio engine cache immediately
       this.audio.evictTakeCache(lineIdx);
@@ -1171,6 +1165,7 @@ class DubMateApp {
     });
 
     this.socket.on('take_cleared', (data) => {
+      this.applyIncomingState(data);
       const lineIdx = data.payload?.line_index;
       this.audio.evictTakeCache(lineIdx);
       if (lineIdx === this.currentLineIndex) {
@@ -1181,6 +1176,7 @@ class DubMateApp {
     });
 
     this.socket.on('status_changed', (data) => {
+      this.applyIncomingState(data);
       const newStatus = data.payload?.status || data.status;
       if (newStatus === 'recording' && this.currentView === 'lobby') {
         this.showView('booth');
@@ -1192,7 +1188,8 @@ class DubMateApp {
       }
     });
 
-    this.socket.on('warp_to_screening', () => {
+    this.socket.on('warp_to_screening', (data) => {
+      this.applyIncomingState(data);
       this.cancelCurrentCountdown();
       if (this.crumbPremiereLive) {
         this.crumbPremiereLive.style.display = 'inline-block';
@@ -1219,6 +1216,7 @@ class DubMateApp {
     });
 
     this.socket.on('export_ready', (data) => {
+      this.applyIncomingState(data);
       const payload = data.payload || data;
       if (payload && (payload.download_url || payload.export_video_url || payload.download_url_16_9)) {
         this.handleExportSuccess(payload);
@@ -1255,6 +1253,44 @@ class DubMateApp {
         this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
       }
     });
+  }
+
+  /**
+   * Merges a socket message's room state into this.roomState. Local take peaks
+   * are kept when the incoming take carries none, and the local line is kept
+   * unless the room is in studio (synced prompter) mode. Safe to call more than
+   * once for the same message.
+   */
+  applyIncomingState(data) {
+    if (!data || !data.state) return;
+    const incoming = data.state;
+    if (!this.roomState) {
+      this.roomState = incoming;
+    } else {
+      // Preserve local take peaks if incoming take state does not specify them
+      const oldTakes = this.roomState.takes || {};
+      const newTakes = incoming.takes || {};
+      const mergedTakes = {};
+
+      for (const [k, take] of Object.entries(newTakes)) {
+        const oldTake = oldTakes[k];
+        mergedTakes[k] = {
+          ...take,
+          peaks: (take.peaks && take.peaks.length > 0) ? take.peaks : (oldTake?.peaks || []),
+        };
+      }
+
+      this.roomState = {
+        ...this.roomState,
+        ...incoming,
+        pack: incoming.pack || this.roomState.pack,
+        users: incoming.users || this.roomState.users,
+        role_assignments: incoming.role_assignments || this.roomState.role_assignments,
+        takes: mergedTakes,
+        // Keep local current_line if in booth mode (solo self-paced dubbing)
+        current_line: (incoming.mode === 'studio') ? incoming.current_line : this.currentLineIndex,
+      };
+    }
   }
 
   initVideoPrompterSplitter() {
@@ -1473,15 +1509,16 @@ class DubMateApp {
     if (this.socket) {
       this.socket.disconnect();
     }
-    this.stopShareWatch();
-    this.roomShare = null;
-    this.roomState = null;
-    this.selectedPackId = null;
-    this.currentTakeBlob = null;
-    this.currentTakeBuffer = null;
-    if (this.screeningBuffers) {
-      this.screeningBuffers.clear();
+    // A deliberate leave is not a dropped connection: hide any reconnect banner
+    // (disconnect() emits no connection_state, so nothing else would clear it).
+    const connectionBanner = document.getElementById('connection-banner');
+    if (connectionBanner) {
+      clearTimeout(this._connectionBannerTimer);
+      connectionBanner.style.display = 'none';
+      connectionBanner.classList.remove('is-recovered');
     }
+    this.resetRoomSession();
+    this.selectedPackId = null;
 
     // Clean URL query parameters (?room=...)
     const url = new URL(window.location.href);
@@ -3187,6 +3224,7 @@ class DubMateApp {
   }
 
   async joinRoom(roomId) {
+    this.resetRoomSession();
     const cleanCode = (roomId || '').trim().toUpperCase();
     try {
       let res = await fetch(`/api/rooms/${cleanCode}`);
@@ -3541,6 +3579,11 @@ class DubMateApp {
     if (this.recordingTimeout) {
       clearTimeout(this.recordingTimeout);
       this.recordingTimeout = null;
+    }
+    // An abandoned take must still stop the recorder and release the mic;
+    // stopAllPlayback() no longer does that while a recording is running.
+    if (this.audio && this.audio.isRecording) {
+      this.audio.stopRecording().catch(() => { });
     }
     this.recordState = 'idle';
     if (this.videoOverlay) {

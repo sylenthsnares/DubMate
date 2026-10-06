@@ -800,7 +800,9 @@ export class AudioEngine {
   }
 
   stopAllPlayback() {
-    this.releaseMicrophone();
+    // Never cut the mic out from under a take in progress (e.g. an export_ready
+    // arriving mid-take); abandoned takes are stopped via stopRecording().
+    if (!this.isRecording) this.releaseMicrophone();
     for (const node of this.currentPlayingNodes) {
       try {
         node.stop();
