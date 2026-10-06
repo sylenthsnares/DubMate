@@ -103,10 +103,9 @@ set /p INSTALL_BUILDER="Install Pack Builder AI pipeline? [y/N]: "
 if /i "%INSTALL_BUILDER%"=="y" (
     echo.
     echo Installing Pack Builder AI dependencies into .venv...
-    "%~dp0.venv\Scripts\python.exe" -m pip install -r "%~dp0requirements_builder.txt"
-    if %errorlevel% equ 0 (
+    "%~dp0.venv\Scripts\python.exe" -m pip install -r "%~dp0requirements_builder.txt" && (
         echo       Pack Builder AI pipeline installed successfully.
-    ) else (
+    ) || (
         echo [WARNING] Pack Builder installation had issues. You can retry later with:
         echo   .venv\Scripts\pip install -r requirements_builder.txt
     )

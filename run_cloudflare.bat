@@ -34,12 +34,6 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000.*LISTENING"') do (
 if not exist "%~dp0tools" mkdir "%~dp0tools"
 set "CF_BIN="
 if exist "%~dp0tools\cloudflared.exe" set "CF_BIN=%~dp0tools\cloudflared.exe"
-if not defined CF_BIN (
-    if exist "%~dp0cloudflared.exe" (
-        copy /y "%~dp0cloudflared.exe" "%~dp0tools\cloudflared.exe" >nul 2>&1
-        set "CF_BIN=%~dp0tools\cloudflared.exe"
-    )
-)
 
 if not defined CF_BIN (
     echo [SETUP] cloudflared.exe not found in tools\

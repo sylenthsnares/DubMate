@@ -20,6 +20,11 @@ import sys
 import wave
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+
+from pack_loader import get_ffmpeg_path  # noqa: E402
+
+FFMPEG = get_ffmpeg_path()
 PACKS_DIR = os.path.join(PROJECT_ROOT, "Packs")
 PREFIX = "ZZ_Fixture_"
 SAMPLE_RATE = 44100
@@ -52,7 +57,7 @@ def write_wav(path: str, seconds: float, freq: float) -> None:
 def write_video(path: str, seconds: int) -> bool:
     """Renders a real, decodable H.264 mp4 (ffmpeg is required)."""
     cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
         "-f", "lavfi", "-i", f"testsrc=size=640x360:rate=30:duration={seconds}",
         "-f", "lavfi", "-i", f"sine=frequency=220:duration={seconds}",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
@@ -111,8 +116,8 @@ def main() -> None:
         if a.isdigit():
             count = int(a)
 
-    if shutil.which("ffmpeg") is None:
-        sys.exit("ffmpeg not found on PATH. Install it, then re-run.")
+    if not (os.path.isfile(FFMPEG) or shutil.which(FFMPEG)):
+        sys.exit("ffmpeg not found (tools/ or PATH). Install it, then re-run.")
 
     os.makedirs(PACKS_DIR, exist_ok=True)
     print(f"Generating {count} fixture scene pack(s) into {PACKS_DIR} ...")
