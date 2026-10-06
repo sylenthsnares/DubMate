@@ -15,6 +15,7 @@ import shutil
 import asyncio
 import functools
 import threading
+import traceback
 import urllib.parse
 from typing import Dict, List, Optional, Set, Any
 from contextlib import asynccontextmanager
@@ -68,6 +69,20 @@ except Exception:
 
 # In-memory pack cache & room manager
 PACKS_CACHE: Dict[str, pack_loader.PackInfo] = {}
+
+# Serializes pack-folder scans. A scan builds a fresh dict that is then rebound to
+# PACKS_CACHE in one assignment, never mutated in place, so readers that grabbed a
+# reference keep a consistent registry while a rescan runs in a worker thread.
+_PACKS_RESCAN_LOCK = threading.Lock()
+
+# Cache-Control for immutable or versioned media (pack assets, fingerprinted takes).
+LONG_CACHE = "public, max-age=86400, stale-while-revalidate=604800"
+
+# Extension -> MIME for served pack/builder assets. Unknown extensions keep their
+# historical fallbacks (image/webp for images, audio/ogg for audio), so images and
+# audio use separate tables.
+IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+AUDIO_MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav"}
 
 
 def read_version() -> str:
@@ -200,6 +215,9 @@ class Room:
         self.sockets: Set[WebSocket] = set()
         self._save_dirty: bool = False
         self._save_task: Optional[asyncio.Task] = None
+        # Take processing runs in a worker thread; this keeps one room's uploads and
+        # noise-reduction toggles serialized without blocking other rooms.
+        self.processing_lock = asyncio.Lock()
 
     def invalidate_exports(self):
         """Drops renders made from takes or mix settings that just changed.
@@ -343,6 +361,17 @@ class Room:
 
 ROOMS: Dict[str, Room] = {}
 
+# create_room prunes old sessions in a worker thread; serializing creation keeps a
+# concurrent create from inserting a room that an older prune then removes.
+_ROOM_CREATE_LOCK = asyncio.Lock()
+
+
+def _room_or_404(room_id: str) -> Room:
+    room = ROOMS.get(room_id.upper())
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return room
+
 
 def prune_sessions(keep_room_id: Optional[str] = None):
     """
@@ -416,6 +445,7 @@ def prune_sessions(keep_room_id: Optional[str] = None):
 
 def load_persisted_rooms():
     prune_sessions()
+    registry = PACKS_CACHE
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
         return
@@ -430,7 +460,7 @@ def load_persisted_rooms():
                 with open(state_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 pack_id = data.get("pack_id")
-                pack = PACKS_CACHE.get(pack_id)
+                pack = registry.get(pack_id)
                 if pack:
                     host_id = data.get("host_id", "host")
                     users = data.get("users", {})
@@ -468,7 +498,8 @@ async def lifespan(app: FastAPI):
 
     threading.Thread(target=_probe_encoder, name="encoder-probe", daemon=True).start()
 
-    PACKS_CACHE = pack_loader.get_all_packs()
+    with _PACKS_RESCAN_LOCK:
+        PACKS_CACHE = pack_loader.get_all_packs()
     print(f"[DubMate] Loaded {len(PACKS_CACHE)} packs into studio registry.")
     load_persisted_rooms()
 
@@ -536,7 +567,7 @@ async def add_performance_cache_headers(request: Request, call_next):
             # every single load.
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         elif path.endswith((".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico", ".mp4", ".wav", ".mp3", ".ogg")):
-            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+            response.headers["Cache-Control"] = LONG_CACHE
 
     # Answer 304 when the client already holds this exact version. FileResponse
     # emits an ETag but Starlette never checks the request against it, so without
@@ -577,17 +608,35 @@ async def get_system_encoder():
 def get_packs_registry(force_rescan: bool = False) -> Dict[str, pack_loader.PackInfo]:
     global PACKS_CACHE
     if force_rescan or not PACKS_CACHE:
-        PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=force_rescan)
+        with _PACKS_RESCAN_LOCK:
+            fresh = pack_loader.get_all_packs(force_disk_scan=force_rescan)
+            PACKS_CACHE = fresh
+        return fresh
     return PACKS_CACHE
 
 
-@app.get("/api/config")
-async def get_config():
-    """Returns the current persistent configuration and pack paths."""
-    config_info = pack_loader.get_current_packs_config()
+def _find_pack(pack_id: str) -> Optional[pack_loader.PackInfo]:
+    return PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+
+
+def _pack_or_404(pack_id: str, detail: str = "Pack not found") -> pack_loader.PackInfo:
+    pack = _find_pack(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail=detail)
+    return pack
+
+
+def _config_payload() -> Dict[str, Any]:
+    """Configuration and pack list shared by GET and POST /api/config.
+
+    Blocking (it scans pack folders), so callers run it in a worker thread.
+    """
+    # get_current_packs_config scans too; holding the lock keeps it from racing a
+    # rescan that is clearing pack_loader's object cache in another thread.
+    with _PACKS_RESCAN_LOCK:
+        config_info = pack_loader.get_current_packs_config()
     registry = get_packs_registry()
     return {
-        "status": "ok",
         **config_info,
         # Storage locations are user-configurable so an install on one drive does
         # not scatter working files across the system drive.
@@ -598,6 +647,12 @@ async def get_config():
     }
 
 
+@app.get("/api/config")
+async def get_config():
+    """Returns the current persistent configuration and pack paths."""
+    return {"status": "ok", **(await asyncio.to_thread(_config_payload))}
+
+
 @app.post("/api/config")
 async def update_config(payload: Dict[str, Any], request: Request):
     """
@@ -605,7 +660,7 @@ async def update_config(payload: Dict[str, Any], request: Request):
     one must be supplied. Previously packs_dir was mandatory, which made it
     impossible to change the export location on its own.
     """
-    global PACKS_CACHE, EXPORTS_DIR
+    global EXPORTS_DIR
     require_local_request(request)
 
     packs_dir = (payload.get("packs_dir") or "").strip()
@@ -631,31 +686,32 @@ async def update_config(payload: Dict[str, Any], request: Request):
         messages.append(f"Export folder set to {EXPORTS_DIR}")
 
     if packs_dir:
-        success, message, count = pack_loader.set_custom_packs_dir(packs_dir)
+        def _switch_packs_dir():
+            global PACKS_CACHE
+            with _PACKS_RESCAN_LOCK:
+                result = pack_loader.set_custom_packs_dir(packs_dir)
+                if result[0]:
+                    PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=True)
+            return result
+
+        success, message, count = await asyncio.to_thread(_switch_packs_dir)
         if not success:
             raise HTTPException(status_code=400, detail=message)
-        PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=True)
         messages.append(message)
 
-    config_info = pack_loader.get_current_packs_config()
-    registry = PACKS_CACHE or get_packs_registry()
-
+    config = await asyncio.to_thread(_config_payload)
     return {
         "status": "ok",
         "message": " | ".join(messages),
-        "pack_count": count if count is not None else len(registry),
-        **config_info,
-        "exports_dir": EXPORTS_DIR,
-        "cache_dir": pack_loader.CACHE_DIR,
-        "install_root": pack_loader.get_install_root(),
-        "packs": [p.to_dict() for p in registry.values()],
+        "pack_count": count if count is not None else len(config["packs"]),
+        **config,
     }
 
 
 @app.get("/api/packs")
 async def list_packs(rescan: bool = False):
     """Returns list of available dub packs, using fast memory registry or on-demand rescan."""
-    registry = get_packs_registry(force_rescan=rescan)
+    registry = await asyncio.to_thread(get_packs_registry, rescan)
     return [p.to_dict() for p in registry.values()]
 
 
@@ -663,7 +719,7 @@ async def list_packs(rescan: bool = False):
 @app.get("/api/packs/rescan")
 async def rescan_packs():
     """Forces an immediate on-demand rescan of the packs directory."""
-    registry = get_packs_registry(force_rescan=True)
+    registry = await asyncio.to_thread(get_packs_registry, True)
     scanned_folders = [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.exists(d)]
     return {
         "status": "ok",
@@ -676,10 +732,7 @@ async def rescan_packs():
 
 @app.get("/api/packs/{pack_id}")
 async def get_pack(pack_id: str):
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
-    if not pack:
-        raise HTTPException(status_code=404, detail="Pack not found")
-    return pack.to_dict()
+    return _pack_or_404(pack_id).to_dict()
 
 
 @app.post("/api/packs/import")
@@ -718,8 +771,8 @@ async def import_pack_files(
             content = await uf.read()
             file_tuples.append((content, r_path or uf.filename or "unknown"))
 
-        result = pack_loader.import_pack_folder_tree(file_tuples)
-        get_packs_registry(force_rescan=True)
+        result = await asyncio.to_thread(pack_loader.import_pack_folder_tree, file_tuples)
+        await asyncio.to_thread(get_packs_registry, True)
         return result
 
     # 2. Check if all uploaded files are .zip archives
@@ -730,8 +783,8 @@ async def import_pack_files(
         for uf in uploaded_files:
             content = await uf.read()
             file_tuples.append((content, uf.filename or "unknown"))
-        result = pack_loader.import_pack_folder_tree(file_tuples)
-        get_packs_registry(force_rescan=True)
+        result = await asyncio.to_thread(pack_loader.import_pack_folder_tree, file_tuples)
+        await asyncio.to_thread(get_packs_registry, True)
         return result
 
     # 3. Batch or single .zip import
@@ -742,11 +795,11 @@ async def import_pack_files(
             if len(content) > pack_loader.MAX_ARCHIVE_SIZE_BYTES:
                 raise HTTPException(status_code=413, detail="Archive exceeds maximum allowed size (500 MB).")
 
-            pack = pack_loader.import_pack_archive(content, single_file.filename)
+            pack = await asyncio.to_thread(pack_loader.import_pack_archive, content, single_file.filename)
             if not pack:
                 raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
 
-            get_packs_registry(force_rescan=True)
+            await asyncio.to_thread(get_packs_registry, True)
             return {
                 "status": "ok",
                 "message": f"Successfully verified and imported pack '{pack.name}'",
@@ -777,24 +830,24 @@ async def import_pack_files(
     if not archive_tuples:
         raise HTTPException(status_code=400, detail="No valid .zip archives found in upload.")
 
-    result = pack_loader.import_multiple_pack_archives(archive_tuples)
-    get_packs_registry(force_rescan=True)
+    result = await asyncio.to_thread(pack_loader.import_multiple_pack_archives, archive_tuples)
+    await asyncio.to_thread(get_packs_registry, True)
     return result
 
 
 @app.get("/api/packs/{pack_id}/icon")
 async def get_pack_icon(pack_id: str):
     """Serves pack cover art / icon."""
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+    pack = _find_pack(pack_id)
     if not pack or not pack.icon_path or not os.path.exists(pack.icon_path):
         raise HTTPException(status_code=404, detail="Icon not found")
     
     ext = os.path.splitext(pack.icon_path)[1].lower()
-    media_type = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "image/webp"
+    media_type = IMAGE_MEDIA_TYPES.get(ext, "image/webp")
     return FileResponse(
         pack.icon_path,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"}
+        headers={"Cache-Control": LONG_CACHE}
     )
 
 
@@ -802,7 +855,7 @@ def range_stream_file(
     file_path: str,
     request: Request,
     media_type: str,
-    cache_control: str = "public, max-age=86400, stale-while-revalidate=604800"
+    cache_control: str = LONG_CACHE
 ) -> Any:
     """
     Streams a media file supporting HTTP 206 Partial Content for byte-range seeking.
@@ -873,54 +926,52 @@ def range_stream_file(
 @app.get("/api/packs/{pack_id}/video")
 async def get_pack_video(pack_id: str, request: Request):
     """Streams pack video with full HTTP 206 Range support for frame seeking."""
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+    pack = _find_pack(pack_id)
     if not pack or not pack.web_video_path or not os.path.exists(pack.web_video_path):
         raise HTTPException(status_code=404, detail="Video not found")
     return range_stream_file(
         pack.web_video_path,
         request,
         media_type="video/mp4",
-        cache_control="public, max-age=86400, stale-while-revalidate=604800"
+        cache_control=LONG_CACHE
     )
 
 
 @app.get("/api/packs/{pack_id}/backing")
 async def get_pack_backing(pack_id: str, request: Request):
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+    pack = _find_pack(pack_id)
     if not pack or not pack.backing_track_path or not os.path.exists(pack.backing_track_path):
         raise HTTPException(status_code=404, detail="Backing track not found")
     ext = os.path.splitext(pack.backing_track_path)[1].lower()
-    media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
+    media_type = AUDIO_MEDIA_TYPES.get(ext, "audio/ogg")
     return range_stream_file(
         pack.backing_track_path,
         request,
         media_type=media_type,
-        cache_control="public, max-age=86400, stale-while-revalidate=604800"
+        cache_control=LONG_CACHE
     )
 
 
 @app.get("/api/packs/{pack_id}/audio/{filename}")
 async def get_pack_audio_line(pack_id: str, filename: str, request: Request):
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
-    if not pack:
-        raise HTTPException(status_code=404, detail="Pack not found")
+    pack = _pack_or_404(pack_id)
     file_path = safe_join(pack.folder, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
     ext = os.path.splitext(filename)[1].lower()
-    media_type = "audio/mpeg" if ext == ".mp3" else "audio/wav" if ext == ".wav" else "audio/ogg"
+    media_type = AUDIO_MEDIA_TYPES.get(ext, "audio/ogg")
     return range_stream_file(
         file_path,
         request,
         media_type=media_type,
-        cache_control="public, max-age=86400, stale-while-revalidate=604800"
+        cache_control=LONG_CACHE
     )
 
 
 @app.get("/api/packs/{pack_id}/export")
 async def export_pack_zip(pack_id: str):
     """Packages and streams a scene pack as a downloadable .zip archive."""
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
+    pack = _find_pack(pack_id)
     pack_folder = pack.folder if pack else None
 
     if not pack_folder or not os.path.isdir(pack_folder):
@@ -934,13 +985,13 @@ async def export_pack_zip(pack_id: str):
         raise HTTPException(status_code=404, detail="Pack not found")
 
     try:
-        clean_name = re.sub(r'[^A-Za-z0-9 _\-]+', '', pack.name if pack else pack_id).strip() or "scene_pack"
+        clean_name = pack_loader.safe_folder_name(pack.name if pack else pack_id, "scene_pack")
         zip_filename = f"{clean_name}.zip"
         zip_dir = os.path.join(EXPORTS_DIR, "packs")
         os.makedirs(zip_dir, exist_ok=True)
         zip_path = os.path.join(zip_dir, f"DubMate_Pack_{clean_name}_{pack_id}.zip")
 
-        pack_loader.export_pack_archive(pack_folder, output_zip_path=zip_path)
+        await asyncio.to_thread(pack_loader.export_pack_archive, pack_folder, output_zip_path=zip_path)
 
         return FileResponse(
             zip_path,
@@ -1282,17 +1333,16 @@ async def create_room(payload: Dict[str, Any]):
     host_color = sanitize_color(payload.get("host_color"), "#7c5cff")
     app_version = read_version()
 
-    pack = PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
-    if not pack:
-        raise HTTPException(status_code=404, detail="Selected pack not found")
+    pack = _pack_or_404(pack_id, "Selected pack not found")
 
-    room_id = generate_room_code()
-    # Prune any previous session recordings from disk and RAM so only the new session is kept
-    prune_sessions(keep_room_id=room_id)
+    async with _ROOM_CREATE_LOCK:
+        room_id = generate_room_code()
+        # Prune any previous session recordings from disk and RAM so only the new session is kept
+        await asyncio.to_thread(prune_sessions, keep_room_id=room_id)
 
-    host_id = str(uuid.uuid4())[:8]
-    room = Room(room_id, pack, host_id, host_name, host_color)
-    ROOMS[room_id] = room
+        host_id = str(uuid.uuid4())[:8]
+        room = Room(room_id, pack, host_id, host_name, host_color)
+        ROOMS[room_id] = room
 
     # Queue the code for the public registry instead of gating on the tunnel already
     # being up. publish_pending_rooms() sends it now if it can, and /api/tunnel or the
@@ -1326,9 +1376,7 @@ async def get_room_share(room_id: str):
 
 @app.get("/api/rooms/{room_id}")
 async def get_room(room_id: str):
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
     return room.to_state_dict()
 
 
@@ -1340,9 +1388,7 @@ async def upload_noise_profile(
 ):
     """Calibrates and saves a 1-second room background noise profile for an actor."""
     require_safe_identifier(user_id, "user_id")
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
     try:
         content = await file.read()
         res = audio_processor.save_user_noise_profile(
@@ -1371,9 +1417,7 @@ async def upload_take(
     noise_reduction: bool = Form(False),
 ):
     require_safe_identifier(user_id, "user_id")
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
 
     if line_index < 0 or line_index >= len(room.pack.lines):
         raise HTTPException(status_code=400, detail="Invalid line index")
@@ -1394,15 +1438,17 @@ async def upload_take(
             target_loudness = getattr(room.pack, "mean_vocal_loudness_db", -21.0)
 
         content = await file.read()
-        saved = audio_processor.save_uploaded_take(
-            room.room_id,
-            line_index,
-            content,
-            filename_hint=file.filename or "take.webm",
-            enable_noise_reduction=noise_reduction,
-            user_id=user_id,
-            target_loudness_db=target_loudness
-        )
+        async with room.processing_lock:
+            saved = await asyncio.to_thread(
+                audio_processor.save_uploaded_take,
+                room.room_id,
+                line_index,
+                content,
+                filename_hint=file.filename or "take.webm",
+                enable_noise_reduction=noise_reduction,
+                user_id=user_id,
+                target_loudness_db=target_loudness
+            )
     except Exception as ex:
         print(f"[UploadError] Error saving take for room {room_id} line {line_index}: {ex}")
         raise HTTPException(status_code=400, detail=str(ex))
@@ -1446,9 +1492,7 @@ async def toggle_take_noise_reduction_endpoint(
     payload: Dict[str, Any]
 ):
     """Switches an existing take between raw and denoised audio without re-recording."""
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
     if line_index not in room.takes:
         raise HTTPException(status_code=404, detail="Take not found")
 
@@ -1457,12 +1501,14 @@ async def toggle_take_noise_reduction_endpoint(
     user_id = take.get("user_id", "host")
 
     try:
-        toggled = audio_processor.toggle_take_noise_reduction(
-            room.room_id,
-            line_index,
-            enable_noise_reduction=enable,
-            user_id=user_id
-        )
+        async with room.processing_lock:
+            toggled = await asyncio.to_thread(
+                audio_processor.toggle_take_noise_reduction,
+                room.room_id,
+                line_index,
+                enable_noise_reduction=enable,
+                user_id=user_id
+            )
         timestamp_ms = int(time.time() * 1000)
         versioned_url = f"/api/rooms/{room_id}/takes/{line_index}/audio?v={timestamp_ms}"
         room.takes[line_index]["noise_reduction"] = enable
@@ -1484,9 +1530,7 @@ async def toggle_take_noise_reduction_endpoint(
 @app.get("/api/rooms/{room_id}/takes/{line_index}/peaks")
 async def get_take_peaks(room_id: str, line_index: int):
     """Returns compact peaks waveform data for a specific take on-demand."""
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
     take = room.takes.get(line_index)
     if not take:
         raise HTTPException(status_code=404, detail="Take not found")
@@ -1501,16 +1545,14 @@ async def get_take_peaks(room_id: str, line_index: int):
 
 @app.get("/api/rooms/{room_id}/takes/{line_index}/audio")
 async def get_take_audio(room_id: str, line_index: int, request: Request):
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
     take = room.takes.get(line_index)
     if not take or not os.path.exists(take.get("wav_path", "")):
         raise HTTPException(status_code=404, detail="Take not found")
     
     # If versioned query param (?v=...) is present, the audio file is uniquely fingerprinted
     # and safe to cache heavily by browsers and Cloudflare edge CDN.
-    cache_ctrl = "public, max-age=86400, stale-while-revalidate=604800" if "v" in request.query_params else "no-cache, must-revalidate"
+    cache_ctrl = LONG_CACHE if "v" in request.query_params else "no-cache, must-revalidate"
     return range_stream_file(
         take["wav_path"],
         request,
@@ -1522,9 +1564,7 @@ async def get_take_audio(room_id: str, line_index: int, request: Request):
 @app.post("/api/rooms/{room_id}/export")
 async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0):
     """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously."""
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
 
     presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
     room.master_dialogue_presence_db = presence_val
@@ -1592,9 +1632,7 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
 @app.get("/api/rooms/{room_id}/export/status")
 async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
     """Pollable endpoint for export status to prevent Cloudflare 524 timeouts."""
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
 
     if room.ready_export_path(aspect_ratio):
         return {"status": "ready", **room.export_ready_payload(aspect_ratio)}
@@ -1609,9 +1647,7 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
 @app.get("/api/rooms/{room_id}/export/video")
 async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: str = "16:9"):
     """Streams the rendered master MP4 video with Range support for theater playback."""
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
 
     target_path = room.ready_export_path(aspect_ratio) or room.ready_export_path("16:9")
     if not target_path:
@@ -1627,9 +1663,7 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
 
 @app.get("/api/rooms/{room_id}/export/download")
 async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
 
     # A render for this aspect is already writing the file; rendering it again here
     # would put a second ffmpeg on the same output path.
@@ -1672,9 +1706,7 @@ async def download_room_project_zip(room_id: str):
     """
     Assembles and streams a complete multi-track NLE project ZIP containing stems, video, markers.
     """
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    room = _room_or_404(room_id)
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
     zip_path = os.path.join(EXPORTS_DIR, zip_filename)
@@ -1733,9 +1765,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     try:
         while True:
             raw = await websocket.receive_text()
-            data = json.loads(raw)
-            msg_type = data.get("type")
-            payload = data.get("payload", {})
+            try:
+                data = json.loads(raw)
+                msg_type = data.get("type")
+                payload = data.get("payload", {})
+            except Exception as ex:
+                print(f"[WS] {room_id}/{user_id} ignored malformed message: {ex!r}")
+                continue
 
             if msg_type == "join":
                 name = payload.get("name", "Actor").strip() or "Actor"
@@ -1861,7 +1897,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     })
 
             elif msg_type == "set_dialogue_presence":
-                presence_db = float(payload.get("presence_db", 0.0))
+                try:
+                    presence_db = float(payload.get("presence_db", 0.0))
+                except (TypeError, ValueError) as ex:
+                    print(f"[WS] {room_id}/{user_id} ignored bad presence_db: {ex!r}")
+                    continue
                 room.master_dialogue_presence_db = max(-12.0, min(12.0, presence_db))
                 room.invalidate_exports()
                 await room.broadcast("dialogue_presence_sync", {
@@ -1878,6 +1918,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
             room.users[user_id]["is_online"] = False
         await room.broadcast("user_disconnected", {"user_id": user_id})
     except Exception as ex:
+        print(f"[WS] {room_id}/{user_id} handler error: {ex!r}")
+        traceback.print_exc()
         room.sockets.discard(websocket)
         if user_id in room.users:
             room.users[user_id]["is_online"] = False
@@ -1892,6 +1934,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
 # =====================================================================
 
 BUILDER_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def _builder_session_or_404(session_id: str) -> Dict[str, Any]:
+    session = BUILDER_SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Builder session not found.")
+    return session
 
 
 def prune_old_builder_sessions(max_age_seconds: float = 7200.0):
@@ -1939,10 +1988,12 @@ async def builder_upload_video(file: UploadFile = File(...)):
             shutil.rmtree(session_dir, ignore_errors=True)
             raise HTTPException(status_code=413, detail="Video exceeds maximum allowed upload size (500 MB).")
 
-        with open(video_path, "wb") as f:
-            f.write(content)
+        def _save_and_probe() -> float:
+            with open(video_path, "wb") as f:
+                f.write(content)
+            return pack_loader.probe_duration(video_path)
 
-        duration = pack_loader.probe_duration(video_path)
+        duration = await asyncio.to_thread(_save_and_probe)
         if duration <= 0.0:
             duration = 5.0  # Fallback duration for synthetic or untagged video streams
 
@@ -2166,9 +2217,7 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
 @app.post("/api/builder/{session_id}/process")
 async def builder_start_processing(session_id: str, payload: Optional[Dict[str, Any]] = None):
     """Kicks off background Demucs vocal isolation + Whisper transcription pipeline."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     payload = payload or {}
     language = payload.get("language")
@@ -2183,9 +2232,7 @@ async def builder_start_processing(session_id: str, payload: Optional[Dict[str, 
 @app.get("/api/builder/{session_id}/progress")
 async def builder_progress_stream(session_id: str):
     """Server-Sent Events (SSE) stream reporting real-time pipeline progress."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     progress: pack_builder.BuildProgress = session["progress"]
 
@@ -2223,18 +2270,14 @@ async def builder_progress_stream(session_id: str):
 @app.get("/api/builder/{session_id}/status")
 async def builder_get_status(session_id: str):
     """Polling alternative to SSE for retrieving builder session status."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
     return session["progress"].to_dict()
 
 
 @app.get("/api/builder/{session_id}/waveform")
 async def builder_get_waveform(session_id: str, columns: int = 800, track: str = "vocals"):
     """Returns precomputed or on-demand min/max waveform peak pairs for the session audio track."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     audio_path = None
     if track == "vocals":
@@ -2274,9 +2317,7 @@ async def builder_get_waveform(session_id: str, columns: int = 800, track: str =
 @app.get("/api/builder/{session_id}/segments")
 async def builder_get_segments(session_id: str):
     """Returns current dialogue line segments and character roster for session."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
     progress: pack_builder.BuildProgress = session["progress"]
     return {
         "segments": progress.segments,
@@ -2288,9 +2329,7 @@ async def builder_get_segments(session_id: str):
 @app.put("/api/builder/{session_id}/segments")
 async def builder_update_segments(session_id: str, payload: Dict[str, Any]):
     """Replaces or bulk-updates the dialogue line segments for the session."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     raw_segments = payload.get("segments", [])
     valid_segments = []
@@ -2328,9 +2367,7 @@ async def builder_update_segments(session_id: str, payload: Dict[str, Any]):
 @app.post("/api/builder/{session_id}/segments")
 async def builder_add_segment(session_id: str, payload: Dict[str, Any]):
     """Appends a new dialogue line segment."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     max_dur = session.get("duration", 99999.0)
     start = max(0.0, min(max_dur, float(payload.get("start", 0.0))))
@@ -2358,9 +2395,7 @@ async def builder_add_segment(session_id: str, payload: Dict[str, Any]):
 @app.delete("/api/builder/{session_id}/segments/{index}")
 async def builder_delete_segment(session_id: str, index: int):
     """Deletes a dialogue line segment by chronological index."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     progress: pack_builder.BuildProgress = session["progress"]
     with progress.lock:
@@ -2375,9 +2410,7 @@ async def builder_delete_segment(session_id: str, index: int):
 @app.post("/api/builder/{session_id}/transcribe_segment")
 async def builder_transcribe_segment(session_id: str, payload: Dict[str, Any]):
     """Transcribes a specific audio segment [start, end] using Whisper on demand."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     vocals_path = session.get("vocals_path") or session.get("full_audio_path")
     if not vocals_path or not os.path.isfile(vocals_path):
@@ -2415,9 +2448,7 @@ async def builder_romanize_text(session_id: str, payload: Dict[str, Any]):
 @app.post("/api/builder/{session_id}/import_subtitles")
 async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)):
     """Imports an SRT or WebVTT subtitle file to instantly populate dialogue cues."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     content = await file.read()
     text = content.decode("utf-8", errors="replace")
@@ -2455,9 +2486,7 @@ async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)
 @app.post("/api/builder/{session_id}/cover")
 async def builder_upload_cover(session_id: str, file: UploadFile = File(...)):
     """Uploads custom cover art for the pack card."""
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    session = _builder_session_or_404(session_id)
 
     _, ext = os.path.splitext((file.filename or "").lower())
     if ext not in (".png", ".jpg", ".jpeg", ".webp"):
@@ -2480,7 +2509,7 @@ async def builder_serve_cover(session_id: str):
     if not session or not session.get("cover_path") or not os.path.isfile(session["cover_path"]):
         raise HTTPException(status_code=404, detail="Cover not found.")
     ext = os.path.splitext(session["cover_path"])[1].lower()
-    media_type = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "image/webp"
+    media_type = IMAGE_MEDIA_TYPES.get(ext, "image/webp")
     return FileResponse(session["cover_path"], media_type=media_type)
 
 
@@ -2504,9 +2533,8 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     Slices audio cues, packages all assets, generates compliance metadata,
     and installs the finished scene pack directly into DubMate's Packs directory.
     """
-    session = BUILDER_SESSIONS.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Builder session not found.")
+    global PACKS_CACHE
+    session = _builder_session_or_404(session_id)
 
     progress: pack_builder.BuildProgress = session["progress"]
     segments = payload.get("segments") or progress.segments
@@ -2527,14 +2555,15 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     progress.update("slicing", 0.80, "Slicing audio dialogue lines with micro-fades...", stage="slicing")
     slices_dir = os.path.join(session_dir, "slices")
     try:
-        sliced_lines = pack_builder.slice_audio_lines(vocals_path, segments, slices_dir, pack_name)
+        sliced_lines = await asyncio.to_thread(pack_builder.slice_audio_lines, vocals_path, segments, slices_dir, pack_name)
     except RuntimeError as slice_err:
         progress.update("error", 0.0, str(slice_err), error=str(slice_err))
         raise HTTPException(status_code=500, detail=str(slice_err))
 
     # Step 2: Assemble complete pack folder
     progress.update("assembling", 0.90, "Compiling metadata and installing pack into Packs/...", stage="assembling")
-    pack_folder = pack_builder.assemble_pack(
+    pack_folder = await asyncio.to_thread(
+        pack_builder.assemble_pack,
         pack_name=pack_name,
         video_source_path=video_path,
         backing_source_path=backing_path,
@@ -2545,15 +2574,16 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     )
 
     # Step 3: Refresh server pack registry
-    new_registry = get_packs_registry(force_rescan=True)
+    new_registry = await asyncio.to_thread(get_packs_registry, True)
     pack_id = os.path.basename(os.path.normpath(pack_folder))
     loaded_pack = new_registry.get(pack_id)
 
     if not loaded_pack:
         # Try loading directly
-        loaded_pack = pack_loader.load_pack(pack_folder)
+        loaded_pack = await asyncio.to_thread(pack_loader.load_pack, pack_folder)
         if loaded_pack:
-            PACKS_CACHE[loaded_pack.pack_id] = loaded_pack
+            # Rebind rather than insert: a worker thread may be iterating the old dict.
+            PACKS_CACHE = {**PACKS_CACHE, loaded_pack.pack_id: loaded_pack}
 
     progress.pack_info = loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name}
     progress.update("done", 1.0, f"Successfully created and installed pack '{pack_name}'!", stage="done")
