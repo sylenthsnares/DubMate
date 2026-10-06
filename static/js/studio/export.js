@@ -36,6 +36,12 @@ export class ExportMethods {
     if (this.btnToolbarProjectZip) {
       this.btnToolbarProjectZip.addEventListener('click', () => this.downloadFullProjectZip(this.btnToolbarProjectZip));
     }
+    if (this.btnDownloadStems) {
+      this.btnDownloadStems.addEventListener('click', () => this.downloadStems(this.btnDownloadStems));
+    }
+    if (this.btnToolbarStems) {
+      this.btnToolbarStems.addEventListener('click', () => this.downloadStems(this.btnToolbarStems));
+    }
 
     // These four were bare `<a download href="/api/...">`. The webview followed the
     // href, so a backend error answered as JSON replaced the studio with
@@ -226,6 +232,7 @@ export class ExportMethods {
       this.btnAspect916,
       this.btnExportVideo,
       this.btnToolbarProjectZip,
+      this.btnToolbarStems,
       this.btnBackBooth,
       this.sliderScreeningBalance,
       this.btnLeaveRoom,
@@ -503,6 +510,24 @@ export class ExportMethods {
       doneMessage: "Project files downloaded",
       errorText: "Couldn't build the project files. Try again.",
       // rooms_api writes the ZIP straight into the export folder.
+      exportSubfolder: '',
+    });
+  }
+
+  async downloadStems(control = null) {
+    if (!this.roomState?.room_id) {
+      this.showToast("Join a room first.");
+      return false;
+    }
+    const roomId = this.roomState.room_id;
+    const packName = (this.roomState.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return this.saveRemoteFile(`/api/rooms/${roomId}/export/stems?v=${Date.now()}`, `DubMate_Stems_${packName}_${roomId}.zip`, {
+      control,
+      busyText: 'Preparing…',
+      startMessage: 'Preparing stems…',
+      doneMessage: 'Stems downloaded',
+      errorText: "Couldn't get the stems. Try again.",
+      // Like the project ZIP, the engine writes the stems ZIP into the export folder.
       exportSubfolder: '',
     });
   }

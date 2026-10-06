@@ -91,7 +91,7 @@ All of this goes into one PR.
    - Speaker detection **M** (done).
    - Non-verbal lines **M** (done). For now they are only found on transcribed clips, not on subtitle imports, pending owner confirmation (see `documentation/design/pack-builder-upgrades.md`, "Decided overnight").
 6. **Export and sessions.**
-   - Stems export **S**.
+   - Stems export **S** (done, `design/stems-export.md`). Owner to confirm: the design's "Decided overnight, revisit" list, mainly 32-bit float WAV (CapCut unchecked) and the master stage's gain applied without its limiter.
    - Keyboard shortcut sheet **S**.
    - Session autosave/resume **M**.
    - Pack sharing **M**.

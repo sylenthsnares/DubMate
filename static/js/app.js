@@ -340,6 +340,8 @@ class DubMateApp {
     this.btnDownloadLink916 = document.getElementById('btn-download-link-9-16');
     this.btnDownloadProjectZip = document.getElementById('btn-download-project-zip');
     this.btnToolbarProjectZip = document.getElementById('btn-toolbar-project-zip');
+    this.btnDownloadStems = document.getElementById('btn-download-stems');
+    this.btnToolbarStems = document.getElementById('btn-toolbar-stems');
     this.btnAspect169 = document.getElementById('btn-aspect-16-9');
     this.btnAspect916 = document.getElementById('btn-aspect-9-16');
     this.selectedAspectRatio = '16:9';
