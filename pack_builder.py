@@ -125,6 +125,9 @@ class BuildProgress:
         # Non-fatal notice, e.g. neural separation unavailable and a basic filter
         # was used instead. Shown alongside a successful result.
         self.warning: Optional[str] = None
+        # Whether real separation ran, so the editor knows if there is a voice track to play.
+        # None until separation has run.
+        self.voices_separated: Optional[bool] = None
         self.segments: List[Dict[str, Any]] = []
         self.characters: List[str] = []
         self.device_info: Dict[str, Any] = {}
@@ -156,6 +159,7 @@ class BuildProgress:
                 "error": self.error,
                 "error_code": self.error_code,
                 "warning": self.warning,
+                "voices_separated": self.voices_separated,
                 "segments": self.segments,
                 "characters": self.characters,
                 "device_info": self.device_info,

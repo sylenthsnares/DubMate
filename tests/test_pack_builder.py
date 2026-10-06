@@ -856,6 +856,8 @@ NOTE This is a test subtitle file
             self.assertEqual([s["character"] for s in progress.segments], ["Speaker 1", "Speaker 2"])
             self.assertEqual(progress.message, "Found 2 lines, 1 without words")
             self.assertFalse(progress.warning)
+            # The editor learns whether there is a voice track to play.
+            self.assertIs(progress.to_dict()["voices_separated"], True)
 
             # A speaker notice follows the separation notice, one space apart.
             state["used_fallback"] = True
@@ -865,6 +867,7 @@ NOTE This is a test subtitle file
             self.assertEqual(progress.status, "transcribed")
             self.assertEqual(progress.message, "Found 1 line")
             self.assertEqual(progress.warning, "basic filter Speaker detection couldn't run.")
+            self.assertIs(progress.to_dict()["voices_separated"], False)
 
             state["used_fallback"] = False
             progress = run()

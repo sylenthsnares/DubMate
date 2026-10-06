@@ -10,9 +10,12 @@
  * The timeline takes mouse, touch and pen through one Pointer Events path:
  * line drags, handle trims, pan/seek and the splitter.
  *
- * Lines without words show a badge, a cue placeholder and a "(no words)"
- * timeline label; the server's warning shows above the line list, and a
- * result toast counts the lines.
+ * Lines without words show a badge (until they get text), a cue placeholder
+ * and a "(no words)" timeline label; the server's warning shows above the line
+ * list, and a result toast counts the lines.
+ *
+ * Without separated voices there is no voice track to request or switch to,
+ * and a fallback to full audio never carries over to the next session.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -339,6 +342,21 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     box.dispatchEvent(new ed.w.Event("input"));
     await ed.app.syncSegmentsToServer();
     check(putBody && putBody.segments[1].nonverbal === true && putBody.segments[1].text === "(laughs)", "typing a cue keeps the flag, and the saved lines carry it");
+    const badgeNow = () => doc.querySelectorAll("#segments-list-container .builder-cue-card")[1].querySelector(".cue-nonverbal-badge");
+    check(badgeNow().hidden === true, "typing text clears the 'No words' badge");
+    box.value = "  ";
+    box.dispatchEvent(new ed.w.Event("input"));
+    check(badgeNow().hidden === false, "clearing the text brings the badge back");
+
+    // Transcribing the line fills it in and clears the badge too.
+    ed.w.fetch = (url) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
+      String(url).includes("/transcribe_segment") ? { text: "Argh" } : {}) });
+    await ed.app.transcribeSingleSegment(1, null, box);
+    check(ed.app.segments[1].text === "Argh" && badgeNow().hidden === true, "a transcribed line loses the 'No words' badge");
+
+    // A re-render keeps the badge hidden for a line with text.
+    ed.app.renderSegmentsList();
+    check(badgeNow().hidden === true, "a line with text renders without a visible badge");
     ed.w.close();
   }
   {
@@ -362,6 +380,60 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
         check((typeof el.innerText === "string" ? el.innerText : el.textContent) === "Detecting who speaks", "the stage message shows while detecting");
       });
     check(ed.doc.getElementById("editor-notice").textContent === "Basic separation. " + notice, "the speaker notice shows in #editor-notice");
+    ed.w.close();
+  }
+
+  // (h) no voice track (basic filter): nothing to request, nothing to switch.
+  {
+    const ed = await bootEditor({ voices_separated: false, segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] });
+    const btn = ed.doc.getElementById("btn-toggle-audio-track");
+    check(!ed.audio.hasAttribute("src"), "without separated voices the voice track is never requested");
+    check(ed.label() === "Full audio" && ed.video.muted === false, "without separated voices the editor plays the full audio");
+    check(btn.getAttribute("aria-disabled") === "true", "the Voices only / Full audio switch is marked unavailable");
+    check(btn.getAttribute("data-tip") === "Voices weren't separated for this video, so only the full audio can play.", "the switch's tooltip says why");
+    ed.toggle();
+    await tick();
+    check(ed.label() === "Full audio" && ed.toasts().every((t) => !/^Playing /.test(t)), "clicking the unavailable switch changes nothing");
+    ed.play();
+    await tick();
+    check(!ed.media.calls.includes("play:editor-stem-audio") && ed.video.paused === false, "play runs the video with its own sound only");
+    check(!ed.toasts().includes(FALLBACK_TOAST), "no fallback toast when there was never a voice track");
+    ed.w.close();
+  }
+
+  // (i) a fallback or a missing voice track doesn't stick to the next session in the tab.
+  {
+    const ed = await bootEditor();
+    const { app, doc } = ed;
+    const btn = doc.getElementById("btn-toggle-audio-track");
+    const nextSession = async (id, extra = {}) => {
+      app.pauseMedia();
+      app.sessionId = id;
+      app.openEditor({ status: "transcribed", segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }], ...extra });
+      await tick(50);
+    };
+    ed.audio.dispatchEvent(new ed.w.Event("error"));
+    await tick();
+    check(ed.label() === "Full audio", "session 1 fell back to full audio");
+
+    await nextSession("sess2", { voices_separated: true });
+    check(ed.label() === "Voices only" && ed.video.muted === true, "the next session starts on voices only again");
+    check(ed.audio.getAttribute("src") === "/api/builder/sess2/audio/vocals", "the next session loads its own voice track");
+    check(!btn.hasAttribute("aria-disabled") && btn.getAttribute("data-tip") === "Hear and see voices only, or the full audio", "the switch is available again");
+    ed.audio.dispatchEvent(new ed.w.Event("error"));
+    await tick();
+    check(ed.toasts().filter((t) => t === FALLBACK_TOAST).length === 2, "a fallback in the next session says so again");
+
+    await nextSession("sess3", { voices_separated: false });
+    check(ed.label() === "Full audio" && !ed.audio.hasAttribute("src"), "a session without voices plays full audio");
+    await nextSession("sess4", { voices_separated: true });
+    check(ed.label() === "Voices only" && !btn.hasAttribute("aria-disabled"), "a session without voices doesn't stick either");
+
+    // A choice the user made does carry over.
+    ed.toggle();
+    await tick();
+    await nextSession("sess5", { voices_separated: true });
+    check(ed.label() === "Full audio", "choosing Full audio yourself carries over to the next session");
     ed.w.close();
   }
 

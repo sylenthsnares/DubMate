@@ -713,6 +713,15 @@ body:has(#view-step-editor.active) .builder-main-container {
   color: var(--white);
 }
 
+/* No voice track to switch to: looks unavailable but still shows its tooltip. */
+.btn-audio-source-toggle[aria-disabled="true"],
+.btn-audio-source-toggle[aria-disabled="true"]:hover {
+  color: var(--foreground-dim);
+  background: transparent;
+  border-color: var(--border-panel);
+  cursor: not-allowed;
+}
+
 .deck-tier-bottom {
   display: flex;
   align-items: center;
@@ -1475,6 +1484,10 @@ body.resizing-timeline * {
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   cursor: help;
+}
+
+.cue-nonverbal-badge[hidden] {
+  display: none;
 }
 
 .editor-notice {

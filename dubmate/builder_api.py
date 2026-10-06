@@ -265,6 +265,7 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         # The basic filter writes a copy of the full mix as vocals.wav, so only a
         # real separation may be played back as "voices only".
         session["voices_separated"] = not stem_results.get("used_fallback")
+        progress.voices_separated = session["voices_separated"]
         # Say so when the neural model was unavailable. Silently substituting the
         # crude filter meant the user was promised AI isolation and never told they
         # did not get it.

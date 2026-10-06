@@ -40,6 +40,11 @@ export class PackBuilderApp {
     this.pixelsPerSecond = 80; // Zoom factor
     this.selectedSegmentIndex = null;
     this.activeAudioTrack = 'vocals'; // 'vocals' | 'full'
+    // False when separation fell back to the basic filter: there is no voice track to play.
+    this.voicesSeparated = true;
+    // True while 'full' was forced (fallback or no voice track) rather than chosen.
+    this.audioTrackForced = false;
+    this.editorSessionId = null;
 
     // Drag & Pan States
     this.isDragging = false;
@@ -310,6 +315,8 @@ export class PackBuilderApp {
 
     // 6. Audio track switch (vocals only vs full audio)
     this.btnToggleAudioTrack.addEventListener('click', () => {
+      if (!this.voicesSeparated) return; // nothing to switch to; the tooltip says why
+      this.audioTrackForced = false;
       const next = this.activeAudioTrack === 'vocals' ? 'full' : 'vocals';
       this.showToast(next === 'vocals' ? 'Playing voices only' : 'Playing full audio');
       this.setAudioTrack(next);
@@ -818,6 +825,8 @@ export class PackBuilderApp {
   /** Opens the editor on finished processing: lines, the server's notice and a result toast. */
   openEditor(data) {
     this.segments = data.segments || this.segments;
+    // Only an explicit false means no voice track; older engines don't send the flag.
+    this.voicesSeparated = data.voices_separated !== false;
     const notice = (data.warning || '').trim();
     this.editorNotice.textContent = notice;
     this.editorNotice.hidden = !notice;
@@ -834,8 +843,26 @@ export class PackBuilderApp {
   async setupEditorView() {
     this.editorVideo.src = `/api/builder/${this.sessionId}/video`;
     this.editorVideo.load();
-    this.editorStemAudio.src = `/api/builder/${this.sessionId}/audio/vocals`;
-    this.editorStemAudio.load();
+    if (this.editorSessionId !== this.sessionId) {
+      this.editorSessionId = this.sessionId;
+      // A fallback in an earlier session doesn't carry over to this one.
+      if (this.audioTrackForced) {
+        this.activeAudioTrack = 'vocals';
+        this.audioTrackForced = false;
+      }
+      if (this.voicesSeparated) {
+        this.editorStemAudio.src = `/api/builder/${this.sessionId}/audio/vocals`;
+        this.editorStemAudio.load();
+      } else {
+        // The basic filter's "voice" track is the full mix, so there is nothing to request.
+        this.editorStemAudio.removeAttribute('src');
+        if (this.activeAudioTrack === 'vocals') {
+          this.activeAudioTrack = 'full';
+          this.audioTrackForced = true;
+        }
+      }
+    }
+    this.updateAudioTrackToggle();
     this.editorVideo.muted = this.activeAudioTrack === 'vocals';
     this.editorVideo.addEventListener('loadeddata', () => {
       if (this.editorVideo.duration && !isNaN(this.editorVideo.duration) && this.editorVideo.duration > 0) {
@@ -1286,7 +1313,7 @@ export class PackBuilderApp {
           <div class="cue-index-wrap">
             <span class="cue-dot" style="background: ${color};"></span>
             <span class="cue-number">#${idx + 1}</span>
-            ${seg.nonverbal ? '<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line.">No words</span>' : ''}
+            ${seg.nonverbal ? `<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${(seg.text || '').trim() ? ' hidden' : ''}>No words</span>` : ''}
           </div>
           <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
           <div style="display: flex; gap: 4px; align-items: center;">
@@ -1355,6 +1382,7 @@ export class PackBuilderApp {
       const textInput = card.querySelector('.cue-text-input');
       textInput.addEventListener('input', (e) => {
         this.segments[idx].text = e.target.value;
+        this.updateNonverbalBadge(idx);
       });
       textInput.addEventListener('change', () => {
         this.renderTimelineSegments();
@@ -1644,6 +1672,14 @@ export class PackBuilderApp {
     }
   }
 
+  /** "No words" only while a line found without words still has no text. */
+  updateNonverbalBadge(idx) {
+    const card = document.getElementById(`cue-card-${idx}`);
+    const badge = card ? card.querySelector('.cue-nonverbal-badge') : null;
+    const seg = this.segments[idx];
+    if (badge && seg) badge.hidden = !!(seg.text || '').trim();
+  }
+
   updateCardTimecode(idx) {
     const card = document.getElementById(`cue-card-${idx}`);
     if (card && this.segments[idx]) {
@@ -1697,7 +1733,7 @@ export class PackBuilderApp {
 
   async setAudioTrack(track) {
     this.activeAudioTrack = track;
-    this.labelActiveTrack.innerText = track === 'vocals' ? 'Voices only' : 'Full audio';
+    this.updateAudioTrackToggle();
     if (track === 'vocals') {
       this.editorVideo.muted = true;
       if (!this.editorVideo.paused) {
@@ -1712,8 +1748,23 @@ export class PackBuilderApp {
     this.renderWaveformCanvas();
   }
 
+  /** The toggle's label, and whether it can switch at all (not without a voice track). */
+  updateAudioTrackToggle() {
+    this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Voices only' : 'Full audio';
+    const btn = this.btnToggleAudioTrack;
+    // aria-disabled rather than disabled, so the tooltip still opens on hover and focus.
+    if (this.voicesSeparated) {
+      btn.removeAttribute('aria-disabled');
+      btn.setAttribute('data-tip', 'Hear and see voices only, or the full audio');
+    } else {
+      btn.setAttribute('aria-disabled', 'true');
+      btn.setAttribute('data-tip', "Voices weren't separated for this video, so only the full audio can play.");
+    }
+  }
+
   fallbackToFullAudio() {
     if (this.activeAudioTrack !== 'vocals') return;
+    this.audioTrackForced = true;
     this.setAudioTrack('full');
     // Tell the user once per session; later failures switch back quietly.
     if (this.stemFallbackSessionId === this.sessionId) return;
@@ -1915,6 +1966,7 @@ export class PackBuilderApp {
         if (data.text && data.text.trim()) {
           seg.text = data.text.trim();
           if (textInputEl) textInputEl.value = seg.text;
+          this.updateNonverbalBadge(idx);
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
           this.showToast(`Line ${idx + 1}: "${seg.text}"`);
@@ -1961,6 +2013,7 @@ export class PackBuilderApp {
         if (data.romaji && data.romaji.trim()) {
           seg.text = data.romaji.trim();
           if (textInputEl) textInputEl.value = seg.text;
+          this.updateNonverbalBadge(idx);
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
           this.showToast(`Line ${idx + 1}: "${seg.text}"`);

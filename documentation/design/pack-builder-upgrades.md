@@ -13,11 +13,12 @@ zero speaker turns, pipeline order, completion message, tests, package pin and s
 | Change | Where | Disclosure level |
 |---|---|---|
 | **Voices only / Full audio** now changes what you hear, not only the waveform. "Voices only" (the default, as today) plays the separated voice track in sync with the muted video; "Full audio" plays the video's own sound. | Existing toggle in the editor's transport deck. Tooltip: "Hear and see voices only, or the full audio". Toast on switch: "Playing voices only" / "Playing full audio". | 1 (visible control, unchanged place) |
-| When voices-only playback can't run (voices weren't separated, the track can't load, or the browser blocks it), the editor switches to full audio and says so. | Toast: "Voices-only playback isn't available, so you're hearing the full audio." | 1, shown only when it applies |
+| When voices-only playback can't run (the track can't load, or the browser blocks it), the editor switches to full audio and says so. The switch to full audio lasts for that session only. | Toast: "Voices-only playback isn't available, so you're hearing the full audio." | 1, shown only when it applies |
+| When voices weren't separated (basic filter), there is no voice track: the editor plays the full audio, and the toggle shows "Full audio" and is marked unavailable instead of switching nothing. | Toggle (`aria-disabled`, still hoverable and focusable). Tooltip: "Voices weren't separated for this video, so only the full audio can play." | 1, shown only when it applies |
 | **Touch and pen** work on the timeline: drag a line, drag its edges, drag the empty timeline to scroll, tap to move the playhead, drag the splitter to resize. Mouse behaves exactly as before. | Timeline | 0 (no control) |
 | **Detecting who speaks**: lines are split between characters by voice ("Speaker 1", "Speaker 2", ...), instead of alternating on pauses. Rough is fine: the existing character menu on each line fixes mistakes. | New processing stage "Detect who speaks" (desc: "Gives each voice its own character"). Progress "Detecting who speaks"; first time only "Downloading speaker detection (about 35 MB, first time only)". | 0 (automatic) |
 | If speaker detection is not installed, can't be downloaded, finds no voices or fails, speakers are guessed from pauses as today, and the editor says so. | One-line notice above the line list (`#editor-notice`), e.g. "Speaker detection couldn't run, so speakers were guessed from pauses. Check who says each line." When it isn't installed, the notice says how to add it instead (see How it works). | 1, shown only when it applies |
-| **Non-verbal lines**: grunts, efforts, screams and laughs that the transcript skipped become lines to record. They have no text. | Line card shows a "No words" badge (tooltip: "A grunt, laugh or other sound without words. Record it like any other line."). Text box placeholder: "No words. Type a cue like (laughs) if you want." Timeline label: `[Speaker 1] (no words)`. | 1 badge, 2 tooltip |
+| **Non-verbal lines**: grunts, efforts, screams and laughs that the transcript skipped become lines to record. They have no text. | Line card shows a "No words" badge while the line has no text; typing or transcribing text hides it (tooltip: "A grunt, laugh or other sound without words. Record it like any other line."). Text box placeholder: "No words. Type a cue like (laughs) if you want." Timeline label: `[Speaker 1] (no words)`. | 1 badge, 2 tooltip |
 | **Result summary** when the editor opens. | Toast: "Found 14 lines, 2 without words" (or "Found 14 lines"). The progress message keeps the same text, but the editor replaces it within 600 ms, so the toast is what people actually see. | 1 |
 
 Copy follows PRODUCT.md: no model or library names on screen.
@@ -97,6 +98,9 @@ Python 3.12 / Windows (`pip --target`). The licences are also listed in README "
   - `warning` can now hold more than one sentence: the separation notice and the speaker
     notice, joined with a space.
   - `segments[]` can contain `nonverbal`.
+  - New `voices_separated`: `true`/`false` once separation has run, `null` before. The
+    editor treats only `false` as "no voice track", so an engine that doesn't send it
+    behaves as before.
 - **WebSocket:** no change.
 
 ## How it works (engine)
@@ -200,12 +204,20 @@ in the engine and never at module scope (guarded by `HEAVY_MODULES`).
 - `seeking`, `ratechange`, `pause` and `ended` on the video are mirrored to the audio. The rAF
   playhead loop re-syncs the audio when drift exceeds 0.1 s.
 - In full mode the video is unmuted and the audio paused.
-- **Fallback to full audio** (`fallbackToFullAudio()`, once per session) runs when either:
-  - the audio element fires `error` (including the 404 when voices weren't separated), or
+- **No voice track** (`voices_separated === false` in the `transcribed` message): the stem is
+  never requested (no `src`, so no 404 in the console). The editor starts on full audio and
+  `updateAudioTrackToggle()` marks the toggle `aria-disabled="true"` with the tooltip above;
+  clicks do nothing. `aria-disabled` rather than `disabled`, because a disabled button gets
+  no hover or focus, so its tooltip would never open.
+- **Fallback to full audio** (`fallbackToFullAudio()`, toast once per session) runs when either:
+  - the audio element fires `error`, or
   - the promise from `audio.play()` rejects (autoplay block, `NotAllowedError`, which fires
     no `error` event). The video keeps playing, unmuted.
   It sets the toggle to "Full audio", redraws the full waveform and shows the toast
   "Voices-only playback isn't available, so you're hearing the full audio."
+- **Per session.** A forced "Full audio" (fallback or no voice track) is reset when the editor
+  opens a different session in the same tab; the stem source is set once per session. A
+  "Full audio" the user picked with the toggle carries over, as before.
 
 **Pointer Events** (`pack_builder.js`, `builder.css`):
 
@@ -273,7 +285,9 @@ Tests guarding this:
   stubs `fetch`, `EventSource`, `HTMLMediaElement.prototype.play/pause` and
   `Element.prototype.setPointerCapture`, and dispatches pointer events as `MouseEvent`s with
   `pointerId`, `pointerType` and `isPrimary` defined (jsdom 25 has no `PointerEvent`). It
-  covers stem playback and fallback, pointer drags, the badge, the notice and the toast.
+  covers stem playback and fallback (and its reset per session), no stem request and an
+  unavailable toggle without separated voices, pointer drags, the badge (hidden once a line
+  has text), the notice and the toast.
 
 ## Not done
 
@@ -333,7 +347,9 @@ Tests guarding this:
    "no words" lines. This narrows the roadmap principle "detect lines from activity on the
    vocal stem" for URL imports with subtitles. Owner to confirm.
 2. Non-verbal detection is skipped, and voices-only playback is off, when separation fell back
-   to the basic filter (its "voice" track is the full mix).
+   to the basic filter (its "voice" track is the full mix). The editor then doesn't request
+   the stem, and the toggle is marked unavailable with a tooltip rather than hidden, so the
+   control stays where people expect it and says why it does nothing.
 3. Non-verbal lines compile with an empty caption. The `nonverbal` flag stays in the builder and is not written to packs.
 4. The embedding model is 3D-Speaker CAM++ zh/en (Apache-2.0, 28 MB). WeSpeaker and NeMo models were not picked because their weights are CC BY. ERes2Net was not picked because it is larger.
 5. Models live in `<add-on folder>/dubmate-models/speakers` (found from `sys.path`, not the
@@ -358,6 +374,10 @@ Tests guarding this:
     `sys.path`, 1800 s timeout), not only after the macOS check failed: an OpenMP abort
     can't be caught in-process, and the child costs about a second. A crash, timeout or
     unreadable output falls back to the pause guess with the "couldn't run" notice.
+18. A forced switch to full audio (fallback, or no voice track) lasts one session; a "Full
+    audio" chosen with the toggle carries over to the next session in the tab.
+19. The "No words" badge hides once the line has text and comes back if the text is cleared.
+    The `nonverbal` flag itself stays on the line.
 
 ## Implementation steps
 
@@ -381,3 +401,6 @@ Follow-up fixes, one commit each (`fix(pack-builder): ...`):
 1. **No engine-side installs.** The pip top-up is gone; a missing package gives the pause
    guess and a notice that says how to add it (Decided overnight 6).
 2. **Speaker detection in a child process** (How it works, step 3; Decided overnight 17).
+3. **Editor minors.** No stem request without separated voices, the full-audio fallback reset
+   per session, the "No words" badge following the text, and the unavailable toggle with its
+   tooltip (Stem preview; Decided overnight 2, 18, 19). The engine sends `voices_separated`.
