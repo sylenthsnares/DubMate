@@ -64,7 +64,7 @@ NR_VERSION = 2
 
 # Render cache (render_take_cached): bump RENDER_VERSION whenever a render's samples change
 # for the same take and chain, so old cached renders are never played again.
-RENDER_VERSION = 1
+RENDER_VERSION = 2
 RENDER_CACHE_MAX_BYTES = 500 * 1024 * 1024
 RENDER_KEEP_RECENT_S = 600       # eviction never deletes a render used in the last 10 minutes
 RENDER_TMP_MAX_AGE_S = 3600      # stray temp files older than this are removed on eviction
@@ -315,12 +315,52 @@ def _read_wav_mono_direct(path: str, sr: int) -> Optional[np.ndarray]:
     return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
 
 
+def _read_wav_float_direct(path: str, sr: int) -> Optional[np.ndarray]:
+    """
+    Reads a mono / target-rate / 32-bit float WAV (what write_wav_float writes), samples
+    above full scale kept. Returns None for any other file.
+    """
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    fmt_ok = False
+    pos = 12
+    while pos + 8 <= len(data):
+        cid = data[pos:pos + 4]
+        size = int.from_bytes(data[pos + 4:pos + 8], "little")
+        body = data[pos + 8:pos + 8 + size]
+        if cid == b"fmt ":
+            if len(body) < 16:
+                return None
+            tag = int.from_bytes(body[0:2], "little")
+            channels = int.from_bytes(body[2:4], "little")
+            rate = int.from_bytes(body[4:8], "little")
+            bits = int.from_bytes(body[14:16], "little")
+            fmt_ok = tag == _WAVE_FORMAT_IEEE_FLOAT and channels == 1 and rate == sr and bits == 32
+            if not fmt_ok:
+                return None
+        elif cid == b"data":
+            if not fmt_ok:
+                return None
+            usable = len(body) - len(body) % 4
+            return np.frombuffer(body[:usable], dtype="<f4").astype(np.float32)
+        pos += 8 + size + (size & 1)
+    return None
+
+
 def read_wav_mono(path: str, sr: int = SR) -> np.ndarray:
     """Reads audio as a mono float32 numpy array normalized between -1.0 and 1.0."""
     # Spawning ffmpeg costs ~100 ms regardless of clip length, and render_dub_mix
     # does it once per take. Reading a matching WAV directly is ~43x faster and
     # byte-identical.
     direct = _read_wav_mono_direct(path, sr)
+    if direct is not None:
+        return direct
+    direct = _read_wav_float_direct(path, sr)
     if direct is not None:
         return direct
 
@@ -346,6 +386,28 @@ def write_wav_mono(path: str, data: np.ndarray, sr: int = SR) -> str:
         w.setsampwidth(2)
         w.setframerate(sr)
         w.writeframes(pcm)
+    return path
+
+
+_WAVE_FORMAT_IEEE_FLOAT = 3
+
+
+def write_wav_float(path: str, data: np.ndarray, sr: int = SR) -> str:
+    """Writes a float32 numpy array to a mono 32-bit float WAV. Samples above full scale
+    are kept, so a level applied later can bring them back without distortion."""
+    data = np.ascontiguousarray(_sanitize_finite_audio(data, context="write_wav_float(" + repr(path) + ")"),
+                                dtype="<f4")
+    payload = data.tobytes()
+    fmt = (_WAVE_FORMAT_IEEE_FLOAT.to_bytes(2, "little") + (1).to_bytes(2, "little")
+           + int(sr).to_bytes(4, "little") + (int(sr) * 4).to_bytes(4, "little")
+           + (4).to_bytes(2, "little") + (32).to_bytes(2, "little") + (0).to_bytes(2, "little"))
+    fact = len(data).to_bytes(4, "little")
+    chunks = (b"fmt " + len(fmt).to_bytes(4, "little") + fmt
+              + b"fact" + len(fact).to_bytes(4, "little") + fact
+              + b"data" + len(payload).to_bytes(4, "little") + payload)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(b"RIFF" + (4 + len(chunks)).to_bytes(4, "little") + b"WAVE" + chunks)
     return path
 
 
@@ -1165,9 +1227,9 @@ def render_take_cached(
 ) -> Tuple[str, Dict[str, Any]]:
     """
     The take's sound through its chain, rendered once and cached: the one entry point for
-    preview and export. Writes <render_dir>/<key>.wav (mono 16-bit, 44.1 kHz) and <key>.json
-    ({"line_id", "take_id", "duration", "peak_db"} plus "lufs" for full renders; line_id and
-    take_id come from meta). until_s renders only the take's start (vocal_chain.render).
+    preview and export. Writes <render_dir>/<key>.wav (mono 32-bit float, 44.1 kHz, not
+    clipped: Level and the master come later) and <key>.json ({"line_id", "take_id",
+    "duration", "peak_db"} plus "lufs" for full renders; line_id and take_id come from meta). until_s renders only the take's start (vocal_chain.render).
     Returns (wav path, info). Raises EffectsUnavailable when the voice effects aren't installed.
     """
     if not vocal_chain.available():
@@ -1191,7 +1253,9 @@ def render_take_cached(
 
         audio = vocal_chain.render(read_wav_mono(wav_path, SR), chain, SR,
                                    until_s=None if until_ms is None else until_ms / 1000.0)
-        audio = np.clip(_sanitize_finite_audio(audio, context="render of " + repr(wav_path)), -1.0, 1.0)
+        # Not clipped: the take's Level and the master come after, and a hot render that
+        # they bring down must not have been distorted on the way.
+        audio = _sanitize_finite_audio(audio, context="render of " + repr(wav_path))
         peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
         meta = meta or {}
         info = {
@@ -1210,7 +1274,7 @@ def render_take_cached(
             with open(info_tmp, "w", encoding="utf-8") as fh:
                 json.dump(info, fh)
             _commit_render_file(info_tmp, info_out)
-            write_wav_mono(tmp, audio, SR)
+            write_wav_float(tmp, audio, SR)
             _commit_render_file(tmp, wav_out)
         finally:
             _remove_quietly(info_tmp)

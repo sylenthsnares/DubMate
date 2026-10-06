@@ -294,6 +294,30 @@ class TestExportThroughTheChain(RenderCase):
             self.take, vocal_chain.chain_from_legacy(-3.0, 0.0), self.render_dir)[0])
         np.testing.assert_array_equal(unity, rendered)
 
+    def test_hot_take_through_a_boosting_chain_is_not_clipped_before_its_level(self):
+        """A render louder than full scale keeps its peaks in the cached file, so a negative
+        Level (the mix here, the browser's GainNode in preview) brings it back undistorted."""
+        hot = os.path.join(self.tmp, "hot.wav")
+        audio_processor.write_wav_mono(hot, _tone(freq=1000.0, amp=0.8))
+        chain = vocal_chain._chain(None, eq={"on": True, "mid_db": 12.0, "mid_hz": 1000.0})
+        path, info = audio_processor.render_take_cached(hot, chain, self.render_dir)
+        expected = vocal_chain.render(audio_processor.read_wav_mono(hot), chain, SR)
+        self.assertGreater(float(np.max(np.abs(expected))), 2.0)   # the chain drives it well past full scale
+        self.assertGreater(info["peak_db"], 6.0)
+        np.testing.assert_allclose(audio_processor.read_wav_mono(path), expected, rtol=1e-6, atol=1e-7)
+
+        take = {"wav_path": hot, "render_dir": self.render_dir, "chain": chain}
+        out = audio_processor._render_take(take, SR, -12.0, "test")
+        np.testing.assert_allclose(out, expected * np.float32(10 ** (-12.0 / 20.0)), rtol=1e-5, atol=1e-6)
+        self.assertLess(float(np.max(np.abs(out))), 1.0)
+
+    def test_float_render_file_reads_back_exactly(self):
+        path = os.path.join(self.tmp, "float.wav")
+        data = np.array([0.0, 1.5, -2.25, 0.125, -0.5], dtype=np.float32)
+        audio_processor.write_wav_float(path, data)
+        np.testing.assert_array_equal(audio_processor.read_wav_mono(path), data)
+        self.assertIsNone(audio_processor._read_wav_float_direct(self.take, SR))   # 16-bit take: not this reader
+
     def test_take_chain_reads_the_resolved_chain_only(self):
         """The mix entry's chain is resolved by Room.mix_takes; the old pitch / reverb fields
         are not read here any more (a migrated take carries them in its chain)."""

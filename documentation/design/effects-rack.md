@@ -84,11 +84,11 @@ Shape (`"v"` is the chain schema version):
 `audio_processor.render_take_cached(wav_path, chain, render_dir, until_s=None) -> (path, info)` is the one entry point for preview and export:
 
 - Key: `sha1(RENDER_VERSION, pedalboard.__version__, sha1(take file bytes), canonical JSON of the normalized chain minus preset, until_ms)[:16]`. The file hash is memoized by (path, mtime, size).
-- Files: `<room>/renders/<key>.wav` (mono 16-bit PCM, 44.1 kHz, `write_wav_mono`) and `<key>.json` (`{"line_id", "take_id", "duration", "lufs", "peak_db"}`, `lufs` only for full renders). A hit touches the mtime (errors ignored).
+- Files: `<room>/renders/<key>.wav` (mono 32-bit float, 44.1 kHz, `write_wav_float`; not clipped, so a hot render that Level or the master brings down is never distorted on the way) and `<key>.json` (`{"line_id", "take_id", "duration", "lufs", "peak_db"}`, `lufs` only for full renders). A hit touches the mtime (errors ignored).
 - Concurrency (Windows-safe): one `threading.Lock` per key in a module dict; inside it the file is checked again, rendered to a unique `<key>.<pid>.<thread id>.tmp`, then `os.replace`d. Because the lock serializes one key and a hit never rewrites, `os.replace` only targets a missing file; if it still raises `PermissionError` (another program holds the name) and the target exists, the temp file is deleted and the existing file is used (renders are deterministic). Stray `.tmp` files older than an hour are removed on eviction.
 - Cap: when the folder passes 500 MB, the oldest files by mtime are deleted, skipping any touched in the last 10 minutes and ignoring `PermissionError`/`FileNotFoundError` (a file being streamed on Windows can't be deleted; it goes next time). On POSIX an open file can be unlinked safely. The folder goes with the room on `prune_sessions`.
 - If `vocal_chain.available()` is false it raises `EffectsUnavailable` (see Dependencies for who handles it).
-- The mix and the browser read the same 16-bit file: preview and export differ by at most one 16-bit step and by the browser's resampling when the output device isn't 44.1 kHz.
+- The mix and the browser read the same float file: preview and export differ only by the browser's resampling when the output device isn't 44.1 kHz. Nothing is clipped before the master (export) or the output (preview).
 
 ## Settings resolution (replacement, not stacking)
 
@@ -222,7 +222,7 @@ Sound of migrated takes (in `tests/test_vocal_chain.py`): (a) the reverb part is
 - **Mono measurement.** Platforms that play a mono file as dual mono and meter it as stereo read about +3 LU (−13). We follow the brief: measure in the layout we mix and ship.
 - **Disk.** Five renders per take; capped at 500 MB per room and removed with the room.
 - **Windows file locks.** Handled by per-key locks, replace fallback and tolerant eviction (above); tested by patching `os.replace` / `os.remove` to raise `PermissionError`.
-- **Browser resampling** on 48 kHz devices is the one remaining preview/export difference besides one 16-bit step. Not an effect; inaudible.
+- **Browser resampling** on 48 kHz devices is the one remaining preview/export difference. Not an effect; inaudible.
 - **Character/every-line apply clears hand edits** on the affected takes (and, for every line, character sounds). Mitigated by the confirm text.
 - **Downgrade** keeps takes (additive format) but loses `voice` defaults.
 - **Concurrent edits** to one take's chain by two people: last write wins, as with the sliders today.
