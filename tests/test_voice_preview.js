@@ -371,6 +371,10 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     await tick(20);
     const app = w.dubMateApp;
     if (!app) fail("studio did not boot");
+    // The Voice panel's rack: an effect's dial and its on/off switch.
+    const pitchDial = w.document.querySelector('#voice-rack [data-node="pitch"] [data-voice-param="semitones"]');
+    const pitchReadout = pitchDial.closest(".dsp-dial-channel").querySelector("[data-readout]");
+    const lowcutSwitch = w.document.querySelector('#voice-rack [data-node="lowcut"] [data-voice-on]');
     app.showToast = () => {};
     app.user = { id: "u1", name: "Ana" };
     app.socket.send = () => {};
@@ -411,7 +415,7 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     if (played.length !== 1 || played[0].takeBuffer?.url !== "/api/rooms/R1/renders/0123456789abcdef.wav"
         || played[0].offsetMs !== -40 || played[0].gainDb !== -3) fail(`Preview played ${JSON.stringify(played)}`);
     if (btn.classList.contains("is-waiting-sound") || app.voiceStatusDot.style.display !== "none") fail("pulse left on");
-    if (app.sliderPitch.disabled || app.voiceEffectsNote.style.display !== "none") fail("effect controls off with effects installed");
+    if (pitchDial.disabled || app.voiceEffectsNote.style.display !== "none") fail("effect controls off with effects installed");
     app.stopBoothPlayback();
 
     // A knob moved while the take plays: the 2 s after the playhead render first, then the
@@ -428,16 +432,16 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
       renderReply = (b) => Promise.resolve({ ok: true, status: 200,
         json: () => Promise.resolve({ url: `/api/rooms/R1/renders/${String(++n).padStart(16, "0")}.wav`, until: b.until_s }) });
       const before = calls.length;
-      app.sliderPitch.value = "-4";
-      app.sliderPitch.dispatchEvent(new w.Event("input"));
-      if (app.valPitch.innerText !== "-4 st" || take.chain.preset !== null || take.chain.nodes.pitch.semitones !== -4) fail("the dial and the take's chain didn't change at once");
+      pitchDial.value = "-4";
+      pitchDial.dispatchEvent(new w.Event("input"));
+      if (pitchReadout.textContent !== "-4 st" || take.chain.preset !== null || take.chain.nodes.pitch.semitones !== -4) fail("the dial and the take's chain didn't change at once");
       await tick(250);
       const renders = calls.slice(before).filter((c) => /\/render$/.test(c.url)).map((c) => JSON.parse(c.body));
       if (renders.length !== 2 || !(renders[0].until_s > 5 && renders[0].until_s < 5.5) || "until_s" in renders[1]
           || renders[1].chain.nodes.pitch.semitones !== -4 || renders[1].chain.nodes.lowcut.hz !== 300) fail(`renders while playing: ${JSON.stringify(renders)}`);
       if (!same(fades, [{ url: "/api/rooms/R1/renders/0000000000000001.wav", prefix: true }, { url: "/api/rooms/R1/renders/0000000000000002.wav", prefix: false }])) fail(`crossfades: ${JSON.stringify(fades)}`);
       if (calls.slice(before).some((c) => c.method === "PUT")) fail("saved before the dial was let go or went quiet");
-      app.sliderPitch.dispatchEvent(new w.Event("change"));
+      pitchDial.dispatchEvent(new w.Event("change"));
       await tick(10);
       const put = calls.slice(before).find((c) => c.method === "PUT");
       if (!put || put.url !== "/api/rooms/R1/lines/t1000/takes/k1/chain" || JSON.parse(put.body).chain.nodes.pitch.semitones !== -4) fail(`save: ${JSON.stringify(put)}`);
@@ -465,8 +469,8 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     btn.click();
     await tick(200);
     if (played.length !== 1 || played[0].takeBuffer?.url !== take.url) fail(`unavailable Preview played ${JSON.stringify(played)}`);
-    if (!app.sliderPitch.disabled || !app.checkLowcut.disabled
-        || !app.sliderPitch.closest(".dsp-dial-channel").classList.contains("ui-interaction-locked")) fail("effect controls still on");
+    if (!pitchDial.disabled || !lowcutSwitch.disabled
+        || !pitchDial.closest(".dsp-dial-channel").classList.contains("ui-interaction-locked")) fail("effect controls still on");
     if (app.sliderGain.disabled) fail("Level turned off with the effects");
     if (app.voiceEffectsNote.style.display === "none" || app.voiceEffectsNote.textContent !== message) fail(`note: ${app.voiceEffectsNote.textContent}`);
     app.stopBoothPlayback();
@@ -475,7 +479,7 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     renderReply = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ url: "/api/rooms/R1/renders/fedcba9876543210.wav", key: "fedcba9876543210", duration: 2 }) });
     await app.loadBoothLine(0);
     await tick(200);
-    if (app.sliderPitch.disabled || app.voiceEffectsNote.style.display !== "none") fail("controls not back once effects are installed");
+    if (pitchDial.disabled || app.voiceEffectsNote.style.display !== "none") fail("controls not back once effects are installed");
 
     // Noise reduction swaps the take's audio: the old render is dropped, a new one is
     // asked for, and Preview plays it (never the render of the audio before the swap).

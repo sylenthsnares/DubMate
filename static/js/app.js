@@ -8,6 +8,7 @@ import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
 import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
+import { VoiceRackMethods } from './studio/voice_rack.js';
 import { MicSyncMethods } from './studio/mic_sync.js';
 import { PackMethods } from './studio/packs.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
@@ -229,23 +230,9 @@ class DubMateApp {
     this.nudgeDisplay = document.getElementById('nudge-display');
     this.timingCaption = document.getElementById('timing-caption');
     this.btnOriginalSpeed = document.getElementById('btn-original-speed');
-    this.sliderPitch = document.getElementById('slider-pitch');
-    this.valPitch = document.getElementById('val-pitch');
-    this.sliderReverb = document.getElementById('slider-reverb');
-    this.valReverb = document.getElementById('val-reverb');
+    // Level (the Voice panel's other controls: voice_rack.js initVoiceRackEvents)
     this.sliderGain = document.getElementById('slider-gain');
     this.valGain = document.getElementById('val-gain');
-
-    // Advanced Vocal Rack Elements
-    this.btnToggleAdvancedRack = document.getElementById('btn-toggle-advanced-rack');
-    this.advancedVocalRack = document.getElementById('advanced-vocal-rack');
-    this.checkLowcut = document.getElementById('check-lowcut');
-    this.sliderDecay = document.getElementById('slider-decay');
-    this.valDecay = document.getElementById('val-decay');
-    this.sliderPredelay = document.getElementById('slider-predelay');
-    this.valPredelay = document.getElementById('val-predelay');
-    this.voiceStatusDot = document.getElementById('voice-status-dot');
-    this.voiceEffectsNote = document.getElementById('voice-effects-note');
 
     // Studio Noise Reduction & Mic Profile Calibration Elements
     this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
@@ -727,24 +714,6 @@ class DubMateApp {
       });
     });
 
-    // Effect controls edit the take's voice chain (the engine renders it); letting go saves it.
-    this.sliderPitch.addEventListener('input', (e) => {
-      const val = parseFloat(e.target.value);
-      this.valPitch.innerText = (val > 0 ? '+' : '') + val + ' st';
-      this.editTakeVoice('pitch', val !== 0 ? { on: true, semitones: val } : { on: false });
-    });
-
-    this.sliderReverb.addEventListener('input', (e) => {
-      const val = parseInt(e.target.value, 10);
-      this.valReverb.innerText = val + '%';
-      // As the old export did: 2% or less is no reverb.
-      this.editTakeVoice('reverb', val / 100 > 0.02 ? { on: true, mix: val / 100 } : { on: false });
-    });
-
-    for (const control of [this.sliderPitch, this.sliderReverb, this.sliderDecay, this.sliderPredelay]) {
-      control.addEventListener('change', () => this.flushVoiceSave());
-    }
-
     // Level is not an effect: a gain after the take's sound, sent with its timing.
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
@@ -770,40 +739,6 @@ class DubMateApp {
       });
     }
 
-    // Advanced Vocal Rack
-    this.btnToggleAdvancedRack.addEventListener('click', () => {
-      const controlsPanel = document.getElementById('booth-controls-panel') || document.querySelector('.booth-controls');
-      const isOpen = this.advancedVocalRack.classList.contains('open');
-      if (isOpen) {
-        this.advancedVocalRack.classList.remove('open');
-        controlsPanel?.classList.remove('fx-expanded');
-        this.btnToggleAdvancedRack.setAttribute('aria-expanded', 'false');
-        this.btnToggleAdvancedRack.innerText = 'Advanced ▾';
-      } else {
-        this.advancedVocalRack.classList.add('open');
-        controlsPanel?.classList.add('fx-expanded');
-        this.btnToggleAdvancedRack.setAttribute('aria-expanded', 'true');
-        this.btnToggleAdvancedRack.innerText = 'Advanced ▴';
-      }
-    });
-
-    this.checkLowcut.addEventListener('change', () => {
-      this.editTakeVoice('lowcut', { on: this.checkLowcut.checked });
-      this.flushVoiceSave();
-    });
-
-    this.sliderDecay.addEventListener('input', (e) => {
-      const decay = parseFloat(e.target.value);
-      this.valDecay.innerText = decay.toFixed(1) + 's';
-      this.editTakeVoice('reverb', { decay_s: decay });
-    });
-
-    this.sliderPredelay.addEventListener('input', (e) => {
-      const predelay = parseFloat(e.target.value);
-      this.valPredelay.innerText = Math.round(predelay) + 'ms';
-      this.editTakeVoice('reverb', { predelay_ms: predelay });
-    });
-
     this.btnPrevLine.addEventListener('click', () => this.stepLine(-1));
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
@@ -821,12 +756,7 @@ class DubMateApp {
     }
     if (this.checkNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
-      this.checkNoiseReduction.addEventListener('change', (e) => {
-        const tag = document.getElementById('tag-noise-cleaner');
-        if (tag) tag.innerText = e.target.checked ? 'ON' : 'OFF';
-        this.syncTakeParams();
-        onNoiseToggleChange(e);
-      });
+      this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
     }
     if (this.checkRackNoiseReduction) {
       this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
@@ -845,6 +775,7 @@ class DubMateApp {
 
     this.initAudioSettingsEvents();
     this.initMicSyncEvents();
+    this.initVoiceRackEvents();
 
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms)
@@ -1008,6 +939,14 @@ class DubMateApp {
       const take = this.currentView === 'booth' && this.takeForLine(this.currentLineIndex);
       if (!take || !(data.payload?.takes || []).some((t) => t.take_id === take.take_id)) return;
       this.showTakeLevel(take);
+    });
+
+    // Someone changed a character's or every line's sound, or a take's: play what now applies.
+    this.socket.on('voice_updated', (data) => {
+      if (this.applyIncomingState(data)) this.onRoomVoiceChanged();
+    });
+    this.socket.on('take_params_updated', (data) => {
+      if (this.applyIncomingState(data)) this.onRoomVoiceChanged();
     });
 
     this.socket.on('status_changed', (data) => {
@@ -1558,7 +1497,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, PackMethods, LobbyMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, VoiceRackMethods, MicSyncMethods, PackMethods, LobbyMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

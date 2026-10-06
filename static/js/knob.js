@@ -233,6 +233,8 @@ export class AnalogKnob {
     if (this.knobElement) {
       this.knobElement.style.transform = `rotate(${angle.toFixed(1)}deg)`;
     }
+    // The dial is what screen readers see: keep its value in step with the input's.
+    this.container.setAttribute('aria-valuenow', this.input.value);
 
     // Active state highlighting on tick marks
     const ticks = this.housing.querySelectorAll('.dial-tick');
@@ -249,19 +251,19 @@ export function initAllKnobs() {
   
   const dialConfigs = [
     { id: 'slider-backing-vol', size: 44, ticks: 11 },
-    { id: 'slider-pitch', size: 40, ticks: 9 },
-    { id: 'slider-reverb', size: 40, ticks: 7 },
     { id: 'slider-gain', size: 40, ticks: 11 },
-    { id: 'slider-decay', size: 36, ticks: 7 },
-    { id: 'slider-predelay', size: 36, ticks: 7 },
   ];
+  const inputs = dialConfigs.map((cfg) => [document.getElementById(cfg.id), cfg]);
+  // The Voice rack's dials say their size in data-knob-size.
+  document.querySelectorAll('input[type="range"][data-knob-size]').forEach((input) => {
+    inputs.push([input, { size: parseInt(input.dataset.knobSize, 10), ticks: 7 }]);
+  });
 
-  dialConfigs.forEach(cfg => {
-    const input = document.getElementById(cfg.id);
+  inputs.forEach(([input, cfg]) => {
     if (input && !input.dataset.knobInitialized) {
       input.dataset.knobInitialized = 'true';
       const knob = new AnalogKnob(input, cfg);
-      dials.push({ id: cfg.id, knob });
+      dials.push({ id: cfg.id || input.getAttribute('aria-label'), knob });
     }
   });
 

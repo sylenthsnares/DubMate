@@ -649,7 +649,8 @@ try {
 
       // Play: the engine renders the take's own sound, and that render plays at the take's
       // timing and level; the controls don't move.
-      const sliders = () => [app.sliderNudge.value, app.sliderPitch.value, app.sliderReverb.value, app.sliderGain.value].join(",");
+      const sliders = () => [app.sliderNudge.value, app.sliderGain.value,
+        ...[...dom.window.document.querySelectorAll("#voice-rack [data-voice-param], #voice-rack [data-voice-on]")].map((el) => el.value + el.checked)].join(",");
       const slidersBefore = sliders();
       let previewArgs = null;
       let renderBody = null;

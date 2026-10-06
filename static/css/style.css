@@ -2252,10 +2252,9 @@ body.resizing .resize-grip-pill {
   letter-spacing: 0.5px;
 }
 
-/* Iconic VOX Brown Diamond Grille Cloth (shared by the monitoring deck, DSP rack and advanced rocker rack) */
+/* Iconic VOX Brown Diamond Grille Cloth (shared by the monitoring deck and the Voice panel) */
 .monitoring-deck-grid,
-.dsp-rack-grid,
-.advanced-rocker-grid {
+.voice-main {
   background-color: var(--panel-deep);
   background-image:
     radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
@@ -2761,12 +2760,12 @@ body.resizing .resize-grip-pill {
 .amp-screw-tl { left: 8px; }
 .amp-screw-tr { right: 8px; }
 
-/* Iconic VOX Brown Diamond Grille Cloth */
-.dsp-rack-grid {
-  padding: 10px 8px 12px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+/* Voice panel: preset chips, then Level and the output meter */
+.voice-main {
+  padding: 10px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   border-bottom: 1.5px solid var(--panel-edge);
   position: relative;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
@@ -2802,17 +2801,6 @@ body.resizing .resize-grip-pill {
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-panel);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
-}
-
-/* Advanced Studio Rack rocker grid */
-.advanced-rocker-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-  padding: 8px 4px;
-  border-radius: var(--radius-md);
-  border: 1.5px solid var(--panel-edge);
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
 }
 
 /* WHEN DSP AMPLIFIER IS EXPANDED TO FILL COMPLETE VERTICAL ROOM DOWN TO BOTTOM BUTTONS */
@@ -3076,15 +3064,6 @@ svg {
 .switch-checkbox:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-}
-
-.advanced-dials-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(204, 164, 88, 0.25);
 }
 
 /* Booth Navigation */
@@ -4649,4 +4628,117 @@ svg {
 @media (prefers-reduced-motion: reduce) {
   .voice-status-dot,
   .is-waiting-sound { animation: none; }
+}
+
+/* Voice panel (voice_rack.js): preset chips, Level with its meter, and the full rack */
+.voice-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  position: relative;
+  z-index: 3;
+}
+
+.voice-chip {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(204, 164, 88, 0.35);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--foreground-ivory);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.voice-chip:hover {
+  border-color: var(--accent-brass);
+}
+.voice-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.voice-chip.is-active {
+  background: rgba(217, 119, 6, 0.25);
+  border-color: var(--primary);
+  color: var(--white);
+  box-shadow: 0 0 8px var(--accent-amber-glow);
+}
+span.voice-chip {
+  cursor: default;
+}
+
+.voice-level-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 3;
+}
+.voice-level-row .dsp-dial-channel {
+  flex: 0 0 auto;
+  min-width: 96px;
+}
+
+.voice-meter {
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: #0f0c09;
+  border: 1px solid var(--border-panel);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.voice-meter-fill {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-brass) 0%, var(--primary) 85%, #dc2626 100%);
+}
+
+.voice-fx {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed rgba(204, 164, 88, 0.25);
+}
+.voice-fx-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #e5ded4;
+  cursor: pointer;
+}
+.voice-fx-dials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.voice-fx.is-off .voice-fx-dials,
+.voice-fx.is-off .voice-tone-curve {
+  opacity: 0.55;
+}
+
+.voice-tone-curve {
+  width: 100%;
+  max-width: 240px;
+  height: 48px;
+  background: #0f0c09;
+  border: 1px solid var(--border-panel);
+  border-radius: var(--radius-sm);
+}
+
+.voice-apply-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Under reduced motion the dot stays still (the media query below also stops it). */
+.voice-status-dot.is-still {
+  animation: none;
 }

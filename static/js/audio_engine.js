@@ -707,6 +707,19 @@ export class AudioEngine {
     }
   }
 
+  /** The booth take's output peak in dBFS (after its level), or null when it isn't playing. */
+  takeOutputDb() {
+    const analyser = this.takeVoice?.analyser;
+    if (!analyser || typeof analyser.getFloatTimeDomainData !== 'function') return null;
+    if (!this.takeMeterData || this.takeMeterData.length !== analyser.fftSize) {
+      this.takeMeterData = new Float32Array(analyser.fftSize);
+    }
+    analyser.getFloatTimeDomainData(this.takeMeterData);
+    let peak = 0;
+    for (const v of this.takeMeterData) peak = Math.max(peak, Math.abs(v));
+    return AudioEngine.amplitudeToDbFS(peak);
+  }
+
   /** Where the booth take is now, in seconds of the take (negative before it starts), or null. */
   takePositionS() {
     if (!this.takeVoice || !this.ctx) return null;

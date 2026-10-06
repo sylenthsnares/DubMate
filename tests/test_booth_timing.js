@@ -174,7 +174,7 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     await showLine(env, [mk("p1", 1, { offset_ms: -135, auto_offset_ms: -135, aligned: true, stretch: 1.0, timing_score: 0.7 })], "p1");
     if (!shown(caption)) fail("caption not shown at -135");
     const sentBefore = env.sent.length;
-    const pitch = env.app.sliderPitch;
+    const pitch = env.w.document.querySelector('#voice-rack [data-node="pitch"] [data-voice-param="semitones"]');
     pitch.value = "2";
     pitch.dispatchEvent(new env.w.Event("input"));
     pitch.dispatchEvent(new env.w.Event("change"));   // let go: saved now
@@ -188,7 +188,7 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     if (env.sent.length !== sentBefore) fail(`pitch change sent timing: ${JSON.stringify(env.sent.slice(sentBefore))}`);
     if (env.app.sliderNudge.value !== "-135") fail(`offset after a pitch change: ${env.app.sliderNudge.value}`);
     await env.app.loadBoothLine(0);
-    if (env.app.sliderPitch.value !== "2") fail(`pitch after reload: ${env.app.sliderPitch.value}`);
+    if (pitch.value !== "2") fail(`pitch after reload: ${pitch.value}`);
     if (!shown(caption)) fail("pitch change on an aligned take counted as a nudge");
     console.log("PASS: a pitch change saves the take's sound (pitch 2) and keeps offset -135 and the caption");
   }

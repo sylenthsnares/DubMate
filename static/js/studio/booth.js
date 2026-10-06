@@ -3,11 +3,7 @@
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { WaveformRenderer } from '../waveform.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
-import { CLEAN_CHAIN, resolveChain, editChain, createRenderScheduler } from './voice.js';
-
-const EFFECTS_DOWNLOAD_MESSAGE = "Voice effects need a one-time download. Check your connection and restart DubMate.";
-// A take's own sound is saved this long after the last change to it (and when a dial is let go).
-const VOICE_SAVE_QUIET_MS = 400;
+import { resolveChain } from './voice.js';
 
 export class BoothMethods {
   toggleFilterLines() {
@@ -592,6 +588,7 @@ export class BoothMethods {
         }
       },
     });
+    this.startVoiceMeter();
   }
 
   toggleABState() {
@@ -703,118 +700,8 @@ export class BoothMethods {
     if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
   }
 
-  // --- The take's sound: rendered by the engine, the same render the export uses ---
-
-  /** This tab's id on render requests: the engine drops a tab's still-queued render of a
-   *  take when the tab asks for a newer one. */
-  renderClientId() {
-    if (!this.voiceClientId) {
-      const uuid = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
-        ? globalThis.crypto.randomUUID() : null;
-      this.voiceClientId = uuid || `tab-${Math.random().toString(36).slice(2, 12)}`;
-    }
-    return this.voiceClientId;
-  }
-
-  /** Asks the engine to render a take through `chain`. Resolves { status: 200, url, buffer, ... },
-   *  { status: 409 } (a newer request replaced it) or { status: 503, message } (no voice effects). */
-  async requestTakeRender(roomId, lineId, takeId, chain, { untilS = null, clientId = this.renderClientId() } = {}) {
-    const body = { chain, client_id: clientId };
-    if (untilS != null) body.until_s = untilS;
-    const res = await fetch(`/api/rooms/${roomId}/lines/${lineId}/takes/${takeId}/render`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (res.status === 409 || res.status === 503) {
-      let data = {};
-      try { data = (await res.json()) || {}; } catch (e) { }
-      if (res.status === 503) this.voiceEffectsMessage = data.message || EFFECTS_DOWNLOAD_MESSAGE;
-      return { ...data, status: res.status };
-    }
-    if (!res.ok) {
-      console.warn(`[App] Rendering the take's sound failed: HTTP ${res.status}`);
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    // Not kept in the buffer cache: a dragged dial makes many renders, and the engine keeps them.
-    const buffer = data && data.url ? await this.audio.loadAudioBuffer(data.url, true) : null;
-    if (!buffer) throw new Error("The take's sound didn't load");
-    return { ...data, status: 200, buffer };
-  }
-
-  /** On line load: the take's chain on the controls, and its render asked for. */
-  startTakeVoice(line, take) {
-    if (this.voiceScheduler) this.voiceScheduler.dispose();
-    this.voiceScheduler = null;
-    this.voiceRender = null;
-    this.releaseVoiceWaiters();
-    this.voiceChain = resolveChain(this.roomState?.voice, line.character, take);
-    this.showVoiceChain(this.voiceChain);
-    if (take && take.url) {
-      const roomId = this.roomState.room_id;
-      const scheduler = createRenderScheduler({
-        request: (chain, { untilS }) => this.requestTakeRender(roomId, line.line_id, take.take_id, chain, { untilS }),
-        onReady: (render) => this.onTakeRender(render),
-        onState: (state) => this.onTakeVoiceState(state),
-      });
-      this.voiceScheduler = scheduler;
-      scheduler.want(this.voiceChain, this.voicePlayState());
-    }
-    this.refreshVoiceControls();
-  }
-
-  /** Saves any pending edit and stops asking for renders (leaving the room). */
-  stopTakeVoice() {
-    this.flushVoiceSave();
-    if (this.voiceScheduler) this.voiceScheduler.dispose();
-    this.voiceScheduler = null;
-    this.voiceRender = null;
-    this.voiceUnavailable = false;   // the next room may be on an engine that has them
-    this.releaseVoiceWaiters();
-  }
-
   isPlayingCurrentTake() {
     return !!this.isPlayingTake && !this.playingHistoryTakeId;
-  }
-
-  voicePlayState() {
-    const take = this.roomState && this.takeForLine(this.currentLineIndex);
-    return {
-      playing: this.isPlayingCurrentTake(),
-      playheadS: this.audio.takePositionS() || 0,
-      takeDuration: this.currentTakeBuffer?.duration || Number(take?.duration) || 0,
-    };
-  }
-
-  onTakeRender(render) {
-    if (!render.partial) {
-      this.voiceRender = render;
-      this.voiceUnavailable = false;
-    }
-    if (this.isPlayingCurrentTake()) this.audio.crossfadeTo(render.buffer, { prefix: render.partial });
-  }
-
-  onTakeVoiceState(state) {
-    if (state === 'unavailable') this.voiceUnavailable = true;
-    this.refreshVoiceControls();
-    if (state === 'current' || state === 'unavailable') this.releaseVoiceWaiters();
-  }
-
-  /** Resolves once the take's render is ready, or can't be made. */
-  waitForTakeVoice() {
-    const scheduler = this.voiceScheduler;
-    if (!scheduler || scheduler.state === 'current' || scheduler.state === 'unavailable') return Promise.resolve();
-    return new Promise((resolve) => {
-      if (!this.voiceWaiters) this.voiceWaiters = [];
-      this.voiceWaiters.push(resolve);
-    });
-  }
-
-  releaseVoiceWaiters() {
-    const waiters = this.voiceWaiters || [];
-    this.voiceWaiters = [];
-    waiters.forEach((resolve) => resolve());
   }
 
   /** A play button pulses while its sound is on the way. */
@@ -828,91 +715,6 @@ export class BoothMethods {
   endSoundWait(wait) {
     if (wait.button) wait.button.classList.remove('is-waiting-sound');
     if (this.soundWait === wait) this.soundWait = null;
-  }
-
-  /** Pitch, Reverb, Decay, Pre-delay and Low cut show a chain. */
-  showVoiceChain(chain) {
-    const nodes = { ...CLEAN_CHAIN.nodes, ...(chain?.nodes || {}) };
-    const semitones = nodes.pitch.on ? (Number(nodes.pitch.semitones) || 0) : 0;
-    this.sliderPitch.value = semitones;
-    this.valPitch.innerText = (semitones > 0 ? '+' : '') + semitones + ' st';
-    const wet = nodes.reverb.on ? Math.round((Number(nodes.reverb.mix) || 0) * 100) : 0;
-    this.sliderReverb.value = wet;
-    this.valReverb.innerText = wet + '%';
-    const decay = Number(nodes.reverb.decay_s ?? CLEAN_CHAIN.nodes.reverb.decay_s);
-    if (this.sliderDecay) this.sliderDecay.value = decay;
-    if (this.valDecay) this.valDecay.innerText = decay.toFixed(1) + 's';
-    const predelay = Number(nodes.reverb.predelay_ms ?? CLEAN_CHAIN.nodes.reverb.predelay_ms);
-    if (this.sliderPredelay) this.sliderPredelay.value = predelay;
-    if (this.valPredelay) this.valPredelay.innerText = Math.round(predelay) + 'ms';
-    if (this.checkLowcut) this.checkLowcut.checked = !!nodes.lowcut.on;
-  }
-
-  /** Effect controls work on a take you can record, once voice effects are installed.
-   *  A dot pulses while the sound catches up; the note says why effects are off. */
-  refreshVoiceControls() {
-    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    const take = line && this.takeForLine(this.currentLineIndex);
-    const enabled = !!take && this.canRecordLine(line) && !this.isProcessingTake && !this.voiceUnavailable;
-    for (const el of [this.sliderPitch, this.sliderReverb, this.sliderDecay, this.sliderPredelay, this.checkLowcut]) {
-      if (!el) continue;
-      el.disabled = !enabled;
-      el.closest('.dsp-dial-channel, .analog-rocker-channel')?.classList.toggle('ui-interaction-locked', !enabled);
-    }
-    const state = this.voiceScheduler?.state;
-    if (this.voiceStatusDot) {
-      this.voiceStatusDot.style.display = (state === 'waiting' || state === 'rendering') ? '' : 'none';
-    }
-    if (this.voiceEffectsNote) {
-      this.voiceEffectsNote.textContent = this.voiceUnavailable ? (this.voiceEffectsMessage || EFFECTS_DOWNLOAD_MESSAGE) : '';
-      this.voiceEffectsNote.style.display = this.voiceUnavailable ? '' : 'none';
-    }
-  }
-
-  /** An effect control moved: the take's own chain changes now, the engine renders it
-   *  (the take keeps playing the last render until then) and it's saved once things are quiet. */
-  editTakeVoice(name, params) {
-    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    const take = line && this.takeForLine(this.currentLineIndex);
-    if (!take || !this.voiceScheduler || !this.canRecordLine(line) || this.voiceUnavailable) return;
-    this.voiceChain = editChain(this.voiceChain, name, params);
-    take.chain = this.voiceChain;
-    this.voiceScheduler.want(this.voiceChain, this.voicePlayState());
-    clearTimeout(this.voiceSaveTimer);
-    this.voiceSavePending = { roomId: this.roomState.room_id, lineId: line.line_id, takeId: take.take_id, chain: this.voiceChain };
-    this.voiceSaveTimer = setTimeout(() => this.flushVoiceSave(), VOICE_SAVE_QUIET_MS);
-  }
-
-  /** Saves the take's edited sound now (a dial was let go, or the line is changing). */
-  flushVoiceSave() {
-    clearTimeout(this.voiceSaveTimer);
-    this.voiceSaveTimer = null;
-    const pending = this.voiceSavePending;
-    this.voiceSavePending = null;
-    if (!pending) return Promise.resolve();
-    return fetch(`/api/rooms/${pending.roomId}/lines/${pending.lineId}/takes/${pending.takeId}/chain`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: this.user.id, chain: pending.chain }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => this.applySavedTakeLevel(pending, data && data.take))
-      .catch((err) => this.showToast(this.friendlyError(err, "Your take's sound wasn't saved. Try again.")));
-  }
-
-  /** The engine matched the take's level on its new sound; a take at its matched level moved with it. */
-  applySavedTakeLevel(pending, saved) {
-    if (!saved || this.roomState?.room_id !== pending.roomId) return;
-    const line = this.roomState.pack.lines.find((l) => l.line_id === pending.lineId);
-    const take = lineTakes(this.roomState.takes, line).find((t) => t.take_id === pending.takeId);
-    if (!take) return;
-    for (const key of ['gain_db', 'auto_gain_db', 'loudness_lufs', 'target_lufs']) {
-      if (key in saved) take[key] = saved[key];
-    }
-    if (line.index === this.currentLineIndex && take === this.takeForLine(this.currentLineIndex)) this.showTakeLevel(take);
   }
 
   // --- Studio Noise Reduction & Mic Profile Calibration ---

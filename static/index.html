@@ -32,7 +32,7 @@
         <feComposite operator="in" in="grey" in2="SourceGraphic" result="masked" />
         <feBlend in="SourceGraphic" in2="masked" mode="soft-light" />
       </filter>
-      <!-- Amp panel heavy grain (17% overlay on dsp-rack-grid) -->
+      <!-- Amp panel heavy grain -->
       <filter id="sf-amp-grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="linearRGB">
         <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch" result="noise" />
         <feColorMatrix type="saturate" values="0" in="noise" result="grey" />
@@ -831,14 +831,15 @@
             </div>
           </div>
 
-          <!-- Deck 3: Voice Effects Rack (Vintage Guitar Amp Dials) -->
-          <div class="fx-panel glass-card rack-wood-frame" id="card-voice-dsp">
+          <!-- Deck 3: Voice. Presets and Level first; the full rack one click away.
+               Shown on a line you can record that has a take (voice_rack.js). -->
+          <div class="fx-panel glass-card rack-wood-frame" id="card-voice-dsp" style="display: none;">
             <div class="panel-header-sm amp-faceplate" style="justify-content: space-between;">
               <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
               <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
               <div style="display: flex; align-items: center; gap: 6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                  stroke-linecap="round" stroke-linejoin="round">
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 2v4" />
                   <path d="M12 18v4" />
@@ -847,115 +848,255 @@
                   <path d="M2 12h4" />
                   <path d="M18 12h4" />
                 </svg>
-                <span>VOICE EFFECTS</span>
-                <span id="voice-status-dot" class="voice-status-dot" data-tip="Your sound is updating"
+                <span>VOICE</span>
+                <span id="voice-status-dot" class="voice-status-dot" data-tip="Your sound is updating" tabindex="0"
                   role="status" aria-label="Your sound is updating" style="display: none;"></span>
               </div>
-              <button id="btn-toggle-advanced-rack" class="amp-advanced-btn" aria-expanded="false"
-                aria-controls="advanced-vocal-rack">Advanced ▾</button>
+              <button id="btn-voice-all-effects" class="amp-advanced-btn" aria-expanded="false"
+                aria-controls="voice-rack">All effects ▾</button>
             </div>
 
-            <!-- 3-Channel Rotary Amp Dials -->
-            <div class="dsp-rack-grid">
-              <!-- Channel 1: Pitch Shift -->
-              <div class="dsp-dial-channel">
-                <span class="dsp-channel-title">PITCH</span>
-                <input type="range" id="slider-pitch" min="-12" max="12" step="1" value="0"
-                  aria-label="Pitch (semitones)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
-                  aria-valuetext="0 semitones">
-                <span id="val-pitch" class="dsp-channel-readout">0 st</span>
+            <div class="voice-main">
+              <div id="voice-presets" class="voice-presets" role="group" aria-label="Sound">
+                <!-- Preset chips rendered from the room's presets -->
+                <span id="voice-preset-custom" class="voice-chip is-active" style="display: none;">Custom</span>
               </div>
 
-              <!-- Channel 2: Acoustic Reverb -->
-              <div class="dsp-dial-channel">
-                <span class="dsp-channel-title">REVERB</span>
-                <input type="range" id="slider-reverb" min="0" max="100" step="5" value="0"
-                  aria-label="Reverb" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
-                  aria-valuetext="0 percent">
-                <span id="val-reverb" class="dsp-channel-readout">0%</span>
-              </div>
-
-              <!-- Channel 3: Vocal Boost -->
-              <div class="dsp-dial-channel">
-                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                  <span class="dsp-channel-title">BOOST</span>
-                  <button id="btn-auto-match-gain" class="btn btn-ghost btn-xs btn-auto-match"
-                    data-tip="Match your take's loudness to the original dialogue" style="display: none;">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                      stroke-linecap="round" stroke-linejoin="round">
-                      <path d="m2 15 5-5 5 5 10-10" />
-                      <path d="M17 5h5v5" />
-                    </svg>
-                    <span>Auto</span>
-                  </button>
+              <div class="voice-level-row">
+                <div class="dsp-dial-channel">
+                  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <span class="dsp-channel-title">LEVEL</span>
+                    <button id="btn-auto-match-gain" class="btn btn-ghost btn-xs btn-auto-match"
+                      data-tip="Match your take's loudness to the original dialogue" style="display: none;">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m2 15 5-5 5 5 10-10" />
+                        <path d="M17 5h5v5" />
+                      </svg>
+                      <span>Auto</span>
+                    </button>
+                  </div>
+                  <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0"
+                    aria-label="Level (dB)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
+                    aria-valuetext="0 decibels" data-tip="How loud this take sits in the dub">
+                  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <span id="val-gain" class="dsp-channel-readout">0 dB</span>
+                    <span id="badge-gain-match" class="badge-calibrated uncalibrated"
+                      style="font-size: 8.5px; padding: 1px 4px; display: none;">Match</span>
+                  </div>
                 </div>
-                <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0"
-                  aria-label="Boost (dB)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
-                  aria-valuetext="0 decibels">
-                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                  <span id="val-gain" class="dsp-channel-readout">0 dB</span>
-                  <span id="badge-gain-match" class="badge-calibrated uncalibrated"
-                    style="font-size: 8.5px; padding: 1px 4px; display: none;">Match</span>
+                <div class="voice-meter" aria-hidden="true">
+                  <div id="voice-meter-fill" class="voice-meter-fill"></div>
                 </div>
               </div>
             </div>
 
             <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
 
-            <!-- Expandable Advanced Studio Rack (Vintage I/O Rockers & Dials) -->
-            <div id="advanced-vocal-rack" class="advanced-rack-box">
+            <!-- All effects: fixed order, each with an on/off switch and a Mix dial -->
+            <div id="voice-rack" class="advanced-rack-box">
               <div class="advanced-rack-inner">
-                <!-- Row of 2 Analog Rocker Switches -->
-                <div class="advanced-rocker-grid">
-                  <div class="analog-rocker-channel">
-                    <span class="dsp-channel-title">CLEANER</span>
-                    <label class="analog-rocker-unit" data-tip="Removes background noise from your take">
-                      <input type="checkbox" id="check-noise-reduction" checked class="analog-rocker-input"
-                        aria-label="Noise reduction">
-                      <div class="analog-rocker-housing">
-                        <div class="rocker-paddle">
-                          <span class="rocker-symbol rocker-i">I</span>
-                          <div class="rocker-divider"></div>
-                          <span class="rocker-symbol rocker-o">O</span>
-                        </div>
-                      </div>
-                    </label>
-                    <span class="rocker-status-tag" id="tag-noise-cleaner">ON</span>
-                  </div>
-
-                  <div class="analog-rocker-channel">
-                    <span class="dsp-channel-title">LOW-CUT</span>
-                    <label class="analog-rocker-unit" data-tip="Cuts low rumble and hum">
-                      <input type="checkbox" id="check-lowcut" checked class="analog-rocker-input" aria-label="Low cut">
-                      <div class="analog-rocker-housing">
-                        <div class="rocker-paddle">
-                          <span class="rocker-symbol rocker-i">I</span>
-                          <div class="rocker-divider"></div>
-                          <span class="rocker-symbol rocker-o">O</span>
-                        </div>
-                      </div>
-                    </label>
-                    <span class="rocker-status-tag">80Hz</span>
+                <div class="voice-fx" data-node="lowcut">
+                  <label class="voice-fx-head" data-tip="Cuts low rumble and hum">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Low cut">
+                    <span>Low cut</span>
+                  </label>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Below</span>
+                      <input type="range" data-voice-param="hz" data-knob-size="32" min="40" max="400" step="5" value="80"
+                        aria-label="Low cut below (Hz)">
+                      <span class="dsp-channel-readout" data-readout>80 Hz</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="100"
+                        aria-label="Low cut mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>100%</span>
+                    </div>
                   </div>
                 </div>
 
-                <!-- Reverb Decay and Pre-Delay Dials -->
-                <div class="advanced-dials-row">
-                  <div class="dsp-dial-channel">
-                    <span class="dsp-channel-title">DECAY</span>
-                    <input type="range" id="slider-decay" min="0.2" max="4.0" step="0.2" value="1.5"
-                      aria-label="Reverb decay (seconds)" aria-valuemin="0.2" aria-valuemax="4.0"
-                      aria-valuenow="1.5" aria-valuetext="1.5 seconds">
-                    <span id="val-decay" class="dsp-channel-readout">1.5s</span>
+                <div class="voice-fx" data-node="gate">
+                  <label class="voice-fx-head" data-tip="Silences the gaps between words">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Gate">
+                    <span>Gate</span>
+                  </label>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Below</span>
+                      <input type="range" data-voice-param="threshold_db" data-knob-size="32" min="-80" max="-20" step="1" value="-50"
+                        aria-label="Gate below (dB)">
+                      <span class="dsp-channel-readout" data-readout>-50 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="100"
+                        aria-label="Gate mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>100%</span>
+                    </div>
                   </div>
+                </div>
 
-                  <div class="dsp-dial-channel">
-                    <span class="dsp-channel-title">PRE-DELAY</span>
-                    <input type="range" id="slider-predelay" min="0" max="60" step="5" value="20"
-                      aria-label="Reverb pre-delay (ms)" aria-valuemin="0" aria-valuemax="60"
-                      aria-valuenow="20" aria-valuetext="20 milliseconds">
-                    <span id="val-predelay" class="dsp-channel-readout">20ms</span>
+                <div class="voice-fx" data-node="eq">
+                  <label class="voice-fx-head" data-tip="Shape the low, middle and high end">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Tone">
+                    <span>Tone</span>
+                  </label>
+                  <canvas id="voice-tone-curve" class="voice-tone-curve" width="240" height="48" aria-hidden="true"></canvas>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Low</span>
+                      <input type="range" data-voice-param="low_db" data-knob-size="32" min="-12" max="12" step="0.5" value="0"
+                        aria-label="Tone low (dB)">
+                      <span class="dsp-channel-readout" data-readout>0 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mid</span>
+                      <input type="range" data-voice-param="mid_db" data-knob-size="32" min="-12" max="12" step="0.5" value="0"
+                        aria-label="Tone mid (dB)">
+                      <span class="dsp-channel-readout" data-readout>0 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mid at</span>
+                      <input type="range" data-voice-param="mid_hz" data-knob-size="32" min="300" max="5000" step="50" value="1500"
+                        aria-label="Tone mid frequency (Hz)">
+                      <span class="dsp-channel-readout" data-readout>1.5 kHz</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">High</span>
+                      <input type="range" data-voice-param="high_db" data-knob-size="32" min="-12" max="12" step="0.5" value="0"
+                        aria-label="Tone high (dB)">
+                      <span class="dsp-channel-readout" data-readout>0 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="100"
+                        aria-label="Tone mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>100%</span>
+                    </div>
                   </div>
+                </div>
+
+                <div class="voice-fx" data-node="deess">
+                  <label class="voice-fx-head" data-tip="Softens harsh S sounds">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="De-ess">
+                    <span>De-ess</span>
+                  </label>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Above</span>
+                      <input type="range" data-voice-param="threshold_db" data-knob-size="32" min="-50" max="-10" step="1" value="-30"
+                        aria-label="De-ess above (dB)">
+                      <span class="dsp-channel-readout" data-readout>-30 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">From</span>
+                      <input type="range" data-voice-param="hz" data-knob-size="32" min="3000" max="10000" step="250" value="6000"
+                        aria-label="De-ess from (Hz)">
+                      <span class="dsp-channel-readout" data-readout>6 kHz</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="100"
+                        aria-label="De-ess mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>100%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="voice-fx" data-node="comp">
+                  <label class="voice-fx-head" data-tip="Evens out loud and quiet words">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Compress">
+                    <span>Compress</span>
+                  </label>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Above</span>
+                      <input type="range" data-voice-param="threshold_db" data-knob-size="32" min="-40" max="0" step="1" value="-18"
+                        aria-label="Compress above (dB)">
+                      <span class="dsp-channel-readout" data-readout>-18 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Ratio</span>
+                      <input type="range" data-voice-param="ratio" data-knob-size="32" min="1" max="10" step="0.5" value="3"
+                        aria-label="Compress ratio">
+                      <span class="dsp-channel-readout" data-readout>3:1</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Make-up</span>
+                      <input type="range" data-voice-param="makeup_db" data-knob-size="32" min="0" max="12" step="0.5" value="0"
+                        aria-label="Compress make-up (dB)">
+                      <span class="dsp-channel-readout" data-readout>0 dB</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="100"
+                        aria-label="Compress mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>100%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="voice-fx" data-node="pitch">
+                  <label class="voice-fx-head">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Pitch">
+                    <span>Pitch</span>
+                  </label>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Shift</span>
+                      <input type="range" data-voice-param="semitones" data-knob-size="32" min="-12" max="12" step="1" value="0"
+                        aria-label="Pitch shift (semitones)">
+                      <span class="dsp-channel-readout" data-readout>0 st</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="100"
+                        aria-label="Pitch mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>100%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="voice-fx" data-node="reverb">
+                  <label class="voice-fx-head">
+                    <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Reverb">
+                    <span>Reverb</span>
+                  </label>
+                  <div class="voice-fx-dials">
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Mix</span>
+                      <input type="range" data-voice-param="mix" data-knob-size="32" min="0" max="100" step="5" value="30"
+                        aria-label="Reverb mix (%)" data-tip="How much of this effect you hear">
+                      <span class="dsp-channel-readout" data-readout>30%</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Decay</span>
+                      <input type="range" data-voice-param="decay_s" data-knob-size="32" min="0.2" max="4.0" step="0.2" value="1.5"
+                        aria-label="Reverb decay (seconds)">
+                      <span class="dsp-channel-readout" data-readout>1.5 s</span>
+                    </div>
+                    <div class="dsp-dial-channel">
+                      <span class="dsp-channel-title">Pre-delay</span>
+                      <input type="range" data-voice-param="predelay_ms" data-knob-size="32" min="0" max="60" step="5" value="20"
+                        aria-label="Reverb pre-delay (ms)">
+                      <span class="dsp-channel-readout" data-readout>20 ms</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="voice-fx">
+                  <label class="voice-fx-head" data-tip="Removes background noise from your take">
+                    <input type="checkbox" id="check-noise-reduction" checked class="switch-checkbox"
+                      aria-label="Clean up noise">
+                    <span>Clean up noise</span>
+                  </label>
+                </div>
+
+                <div class="voice-apply-row">
+                  <button id="btn-voice-use-character" type="button" class="btn btn-ghost btn-xs">Use on all of this character's lines</button>
+                  <button id="btn-voice-use-session" type="button" class="btn btn-ghost btn-xs">Use on every line</button>
                 </div>
               </div>
             </div>
