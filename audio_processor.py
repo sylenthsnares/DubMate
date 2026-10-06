@@ -7,6 +7,7 @@ Matching filter chain for time-invariant pitch shifting, room acoustics, dynamic
 
 import os
 import re
+import math
 import wave
 import json
 import time
@@ -419,6 +420,147 @@ def calculate_take_auto_gain(
         "target_loudness_db": round(target_loudness_db, 1),
         "auto_gain_db": auto_gain_db,
     }
+
+
+# --- Take timing alignment (pure numpy; see documentation/design/recording-timing.md) ---
+_ENV_WIN_MS = 20
+_ENV_HOP_MS = 5
+_ENV_FLOOR_DB = 50.0
+_VOICED_DB = 35.0
+_SPAN_PAD_MS = 100
+
+
+def _snap5(ms: float) -> int:
+    return int(5 * round(float(ms) / 5.0))
+
+
+def _timing_envelope(audio: np.ndarray, sr: int) -> np.ndarray:
+    """RMS in 20 ms windows every 5 ms, in dB, floored 50 dB below its own peak.
+    Returns an empty array when the signal is too short or silent."""
+    x = np.asarray(audio, dtype=np.float64).ravel()
+    win = int(sr * _ENV_WIN_MS / 1000)
+    hop = int(sr * _ENV_HOP_MS / 1000)
+    if win <= 0 or hop <= 0 or len(x) < win:
+        return np.zeros(0)
+    x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+    csum = np.concatenate(([0.0], np.cumsum(x * x)))
+    starts = np.arange(0, len(x) - win + 1, hop)
+    power = np.maximum((csum[starts + win] - csum[starts]) / win, 0.0)
+    peak = float(power.max()) if len(power) else 0.0
+    if peak <= 0.0:
+        return np.zeros(0)
+    db = 10.0 * np.log10(np.maximum(power, peak * 1e-12))
+    return np.maximum(db, db.max() - _ENV_FLOOR_DB)
+
+
+def _voiced_span(env: np.ndarray) -> Optional[Tuple[int, int]]:
+    """First..last frame within 35 dB of the peak, padded 100 ms, clipped. End exclusive."""
+    if len(env) == 0:
+        return None
+    voiced = np.nonzero(env >= env.max() - _VOICED_DB)[0]
+    if len(voiced) == 0:
+        return None
+    pad = _SPAN_PAD_MS // _ENV_HOP_MS
+    return max(0, int(voiced[0]) - pad), min(len(env), int(voiced[-1]) + 1 + pad)
+
+
+def _offset_scores(take_seg: np.ndarray, take_start: int, ref_seg: np.ndarray, ref_start: int,
+                   offsets_ms: np.ndarray) -> np.ndarray:
+    """Pearson correlation of take vs reference envelope for each offset (ms, multiples of 5).
+    Take frame i lands on reference frame i + offset/5. Offsets whose overlap is under half
+    the shorter span score 0 (no evidence)."""
+    min_overlap = max(2, min(len(take_seg), len(ref_seg)) // 2)
+    scores = np.zeros(len(offsets_ms))
+    for n, off in enumerate(offsets_ms):
+        k = int(off) // _ENV_HOP_MS
+        # take segment index a -> reference segment index a + shift
+        shift = take_start + k - ref_start
+        a0 = max(0, -shift)
+        a1 = min(len(take_seg), len(ref_seg) - shift)
+        if a1 - a0 < min_overlap:
+            continue
+        t = take_seg[a0:a1] - take_seg[a0:a1].mean()
+        r = ref_seg[a0 + shift:a1 + shift] - ref_seg[a0 + shift:a1 + shift].mean()
+        denom = np.sqrt(np.dot(t, t) * np.dot(r, r))
+        scores[n] = np.dot(t, r) / denom if denom > 0 else np.nan
+    return scores
+
+
+def align_take_timing(take: np.ndarray, reference: np.ndarray, start_offset_ms: int,
+                      sr: int = SR, allow_stretch: bool = True) -> Dict[str, Any]:
+    """Match a take's timing to the original line's voice by envelope correlation.
+
+    offset_ms is where the take's sample 0 sits relative to line.start, so a take whose
+    voice is D ms late gets -D. Returns {auto_offset_ms, timing_score, stretch, aligned};
+    stretch is an atempo factor (above 1 speeds the take up). Never returns NaN.
+    """
+    start = _snap5(start_offset_ms)
+    not_measured = {"auto_offset_ms": start, "timing_score": None, "stretch": 1.0, "aligned": False}
+
+    take_env = _timing_envelope(take, sr)
+    ref_env = _timing_envelope(reference, sr)
+    take_span = _voiced_span(take_env)
+    ref_span = _voiced_span(ref_env)
+    if take_span is None or ref_span is None:
+        return not_measured
+    take_seg = take_env[take_span[0]:take_span[1]]
+    ref_seg = ref_env[ref_span[0]:ref_span[1]]
+    ratio = len(take_seg) / len(ref_seg)
+    if not (0.75 <= ratio <= 1.33):
+        return not_measured
+    if float(np.std(take_seg)) < 1e-9 or float(np.std(ref_seg)) < 1e-9:
+        return not_measured
+
+    lo = max(-800, start - 500)
+    hi = min(800, start + 500)
+    if hi < lo:
+        return not_measured
+    offsets = np.arange(lo, hi + 1, _ENV_HOP_MS)
+
+    def best_of(seg, seg_start):
+        scores = _offset_scores(seg, seg_start, ref_seg, ref_span[0], offsets)
+        if not np.all(np.isfinite(scores)):
+            return None
+        return scores, int(np.argmax(scores))
+
+    plain = best_of(take_seg, take_span[0])
+    if plain is None:
+        return not_measured
+    scores, b = plain
+    stretch = 1.0
+
+    if allow_stretch and not (0.97 <= ratio <= 1.03):
+        factor = float(np.clip(ratio, 0.92, 1.08))
+        n_out = max(2, int(round(len(take_seg) / factor)))
+        stretched = np.interp(np.arange(n_out) * factor, np.arange(len(take_seg)), take_seg)
+        cand = best_of(stretched, int(round(take_span[0] / factor)))
+        if cand is not None and cand[0][cand[1]] >= scores[b] + 0.05:
+            scores, b = cand
+            stretch = round(factor, 3)
+
+    start_idx = int(np.argmin(np.abs(offsets - start)))
+    best_ms = int(offsets[b])
+    if scores[b] < 0.5 or best_ms - lo <= 10 or hi - best_ms <= 10:
+        plain_scores = plain[0]
+        score = float(plain_scores[start_idx])
+        return {"auto_offset_ms": start,
+                "timing_score": round(score, 2) + 0.0 if math.isfinite(score) else None,
+                "stretch": 1.0, "aligned": False}
+
+    # Parabolic refinement around the grid peak, then snap back to the 5 ms grid.
+    refined = float(best_ms)
+    if 0 < b < len(scores) - 1:
+        y0, y1, y2 = scores[b - 1], scores[b], scores[b + 1]
+        denom = y0 - 2.0 * y1 + y2
+        if denom < 0:
+            refined += 0.5 * (y0 - y2) / denom * _ENV_HOP_MS
+    auto_ms = _snap5(refined)
+    idx = int(np.clip((auto_ms - lo) // _ENV_HOP_MS, 0, len(scores) - 1))
+    score = float(scores[idx])
+    if not math.isfinite(score):
+        return not_measured
+    return {"auto_offset_ms": int(offsets[idx]), "timing_score": round(score, 2) + 0.0,
+            "stretch": stretch, "aligned": True}
 
 
 def apply_noise_reduction(
