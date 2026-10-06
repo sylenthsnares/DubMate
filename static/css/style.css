@@ -11,8 +11,6 @@
 
   /* Card & Panel Surfaces (Warm Walnut Darkroom Glass) */
   --card: #1a1714;
-  --card-hover: #221e19;
-  --card-foreground: #f4ede4;
   --card-header: #201c18;
   --popover: #1f1b17;
   --popover-foreground: #f4ede4;
@@ -20,7 +18,6 @@
   /* Form & Input Surfaces */
   --input: #15120f;
   --input-border: #352c24;
-  --input-focus: #cca458;
 
   /* Minimalist Studio Borders with Subtle Gold Edge */
   --border: #2d251e;
@@ -28,7 +25,6 @@
   --border-wood: #443428;
   --border-gold: #cca458;
   --border-gold-glow: rgba(204, 164, 88, 0.22);
-  --border-highlight: rgba(204, 164, 88, 0.2);
   --ring: rgba(204, 164, 88, 0.4);
 
   /* Primary Brand & Analog Accents (Vintage Tube Amber & Studio Brass) */
@@ -36,14 +32,11 @@
   --primary-hover: #f59e0b;
   --primary-foreground: #12100e;
   --accent-brass: #cca458;
-  --accent-brass-subtle: rgba(204, 164, 88, 0.15);
 
   /* Secondary & Muted Controls */
   --secondary: #25201a;
   --secondary-hover: #302922;
-  --secondary-foreground: #ece3d7;
   --muted: #221c17;
-  --muted-foreground: #9a8e82;
 
   /* Hardware State Accents */
   --accent-red: #dc2626; /* Vintage Pilot Lamp Red (On-Air / Recording) */
@@ -52,11 +45,6 @@
   --accent-amber-glow: rgba(217, 119, 6, 0.35);
   --accent-teal: #16a34a; /* Studio Confirmed Take Green */
   --accent-teal-glow: rgba(22, 163, 74, 0.35);
-  --accent-cyan: #d97706;
-
-  /* Wood & Chassis Hardware Styling (Dark Walnut / Teak) */
-  --wood-grain-gradient: linear-gradient(180deg, #3d2b1f 0%, #261b13 50%, #3a281c 100%);
-  --wood-grain-horizontal: linear-gradient(90deg, #3a281c 0%, #291d15 50%, #3a281c 100%);
 
   /* Radii (ShadCN style) */
   --radius-sm: 6px;
@@ -73,14 +61,11 @@
   /* Shadows & Depth with Subtle Gold Glow */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
   --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.65), 0 0 12px rgba(204, 164, 88, 0.08), inset 0 1px 0 rgba(204, 164, 88, 0.12);
-  --shadow-panel: 0 8px 24px -4px rgba(0, 0, 0, 0.75), 0 0 14px rgba(204, 164, 88, 0.1);
   --shadow-glow-amber: 0 0 18px var(--accent-amber-glow);
-  --shadow-glow-gold: 0 0 16px rgba(204, 164, 88, 0.3);
   --shadow-glow-red: 0 0 20px var(--accent-red-glow);
 
   /* Emil Kowalski Motion Tokens */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --duration-fast: 140ms;
   --duration-normal: 200ms;
 }
@@ -1002,16 +987,6 @@ body::after {
   box-shadow: 0 0 16px var(--accent-teal-glow);
 }
 
-.btn-destructive {
-  background: var(--accent-red);
-  color: #ffffff;
-  box-shadow: var(--shadow-sm);
-}
-.btn-destructive:hover {
-  background: #b91c1c;
-  box-shadow: var(--shadow-glow-red);
-}
-
 .btn-project-zip {
   background: linear-gradient(180deg, #2c2219 0%, #1e1711 100%);
   color: var(--accent-brass);
@@ -1327,8 +1302,7 @@ body::after {
   margin-bottom: 4px;
 }
 
-.pack-card-title,
-.pack-title {
+.pack-card-title {
   font-size: 14px;
   font-weight: 700;
   color: var(--foreground);
@@ -1403,8 +1377,7 @@ body::after {
   color: var(--foreground-dim);
 }
 
-.pack-card-characters,
-.pack-characters {
+.pack-card-characters {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2586,6 +2559,10 @@ body.resizing .resize-grip-pill {
   background: radial-gradient(circle at 38% 32%, #ff6b6b 0%, #ef4444 55%, #991b1b 100%);
   animation: pulse-recording 1.2s infinite;
 }
+@keyframes pulse-recording {
+  0%, 100% { box-shadow: 0 0 14px rgba(220, 38, 38, 0.5); }
+  50% { box-shadow: 0 0 24px rgba(220, 38, 38, 0.9); }
+}
 
 .record-status-label {
   font-family: var(--font-mono);
@@ -2869,7 +2846,6 @@ svg {
 .amp-faceplate svg,
 .listen-btn-group svg,
 .booth-nav-group svg,
-.theater-action-bar svg,
 .btn-auto-match svg {
   filter: drop-shadow(0 0 3px rgba(204, 164, 88, 0.45));
 }
@@ -3025,12 +3001,6 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
 }
 
 .advanced-rack-box .form-label {
@@ -4041,20 +4011,6 @@ svg {
   margin-top: 4px;
 }
 
-.badge-live-recording {
-  background: rgba(239, 68, 68, 0.2) !important;
-  color: #f87171 !important;
-  border: 1px solid rgba(239, 68, 68, 0.4) !important;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.3) !important;
-}
-
-.badge-live-success {
-  background: rgba(22, 163, 74, 0.2) !important;
-  color: #4ade80 !important;
-  border: 1px solid rgba(22, 163, 74, 0.4) !important;
-  box-shadow: 0 0 10px rgba(22, 163, 74, 0.3) !important;
-}
-
 /* ------------------------------------------------------------- */
 /* 10. SMART DIALOGUE LOUDNESS & PROMINENCE STYLES              */
 /* ------------------------------------------------------------- */
@@ -4724,33 +4680,6 @@ body:has(#view-step-editor.active) .builder-main-container {
   width: 100%;
   height: 100%;
   object-fit: contain;
-}
-
-.video-overlay-hud {
-  position: absolute;
-  bottom: 10px;
-  left: 10px;
-  right: 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  pointer-events: none;
-}
-
-.video-overlay-hud button {
-  pointer-events: auto;
-}
-
-.video-timecode {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 800;
-  color: #ffffff;
-  background: rgba(0, 0, 0, 0.75);
-  padding: 3px 7px;
-  border-radius: var(--radius-sm);
-  backdrop-filter: blur(4px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 /* Studio Video & Transport Deck (Matched to Recording Booth Hardware Aesthetic) */
@@ -5651,7 +5580,6 @@ body.resizing-timeline * {
   padding: 8px 10px !important;
   resize: vertical;
   min-height: 48px;
-  font-family: var(--font-prompter);
   line-height: 1.35;
   background: rgba(15, 12, 9, 0.85);
   border: 1px solid var(--border-wood);
