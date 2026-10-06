@@ -10,6 +10,10 @@
 - **macOS Room Codes Launcher**: `run_cloudflare.sh` starts DubMate with a public room code on macOS source installs.
 - **Tooltips**: secondary explanations moved into tooltips that also open on keyboard focus.
 - **Take History**: recording a line again keeps every take. Open Takes to listen to them and choose the one used in the dub. Picks and deletes show up for everyone in the room.
+- **Sync Your Mic**: sync your mic once in Audio settings and new takes start in time.
+- **Takes Line Up Automatically**: takes now line up with the original line automatically. Use [ and ] to adjust; Auto goes back.
+- **Fitted Takes**: takes that run a little fast or slow are fitted to the line. Original speed undoes it.
+- **Timing Score**: each take shows how closely it follows the original timing, and deleting the take in the dub falls back to the best-timed one.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
