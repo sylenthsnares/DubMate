@@ -578,6 +578,34 @@ NOTE This is a test subtitle file
             pack_builder.slice_audio_lines(missing_wav, segments, os.path.join(self.tmp_dir, "slices_fail"), "Fail Pack")
         self.assertIn("Could not cut dialogue line 1", str(ctx.exception))
 
+    def test_15_editor_video_does_not_size_the_pane(self):
+        """B5: a 9:16 clip must not push the editor control deck off-screen.
+
+        In normal flow the <video> takes its natural aspect-ratio height
+        (~850px for 1080x1920 at 478px wide), which grows the editor's top row
+        and hides Play / Mark IN/OUT / + Add Cue / Zoom below the clipped area.
+        The player must be taken out of flow inside its relative container.
+        """
+        import re
+        css_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                 "static", "css", "builder.css")
+        with open(css_path, encoding="utf-8") as f:
+            css = re.sub(r"/\*.*?\*/", "", f.read(), flags=re.S)
+
+        def decls(selector):
+            m = re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", css)
+            self.assertIsNotNone(m, f"{selector} rule missing from builder.css")
+            return {k.strip(): v.strip() for k, v in
+                    (d.split(":", 1) for d in m.group(1).split(";") if ":" in d)}
+
+        player = decls(".editor-video-player")
+        self.assertEqual(player.get("position"), "absolute")
+        self.assertEqual(player.get("inset"), "0")
+        self.assertEqual(player.get("object-fit"), "contain")
+        container = decls(".editor-video-container")
+        self.assertEqual(container.get("position"), "relative")
+        self.assertEqual(container.get("overflow"), "hidden")
+
 
 if __name__ == "__main__":
     unittest.main()

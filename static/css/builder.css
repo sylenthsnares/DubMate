@@ -608,7 +608,12 @@ body:has(#view-step-editor.active) .builder-main-container {
   margin: 0 auto;
 }
 
+/* Absolutely positioned so the clip's own shape never sizes the pane: a 9:16
+   video in normal flow is ~850px tall at 478px wide, which grows the top row
+   and pushes the control deck (Play, Mark IN/OUT, + Add Cue, Zoom) off-screen. */
 .editor-video-player {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
