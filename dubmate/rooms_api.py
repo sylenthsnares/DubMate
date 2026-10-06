@@ -150,6 +150,10 @@ async def upload_take(
             detail=f"Line {line_index + 1} belongs to {char_name}. Only their actor can record it."
         )
 
+    # Recording again adds a take next to the line's earlier ones; nothing is overwritten.
+    line_id = line["line_id"]
+    take_id = uuid.uuid4().hex[:8]
+    take_dir = audio_processor.take_dir(room.room_id, line_id)
     try:
         target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
 
@@ -158,8 +162,8 @@ async def upload_take(
             saved = await asyncio.to_thread(
                 audio_processor.save_uploaded_take,
                 room.room_id,
-                audio_processor.get_room_cache_dir(room.room_id),
-                f"take_line_{line_index}",
+                take_dir,
+                take_id,
                 content,
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
@@ -168,17 +172,16 @@ async def upload_take(
             )
     except Exception as ex:
         print(f"[UploadError] Error saving take for room {room_id} line {line_index}: {ex}")
+        audio_processor.delete_take_files(take_dir, take_id)
         raise HTTPException(status_code=400, detail=str(ex))
 
-    timestamp_ms = int(time.time() * 1000)
-    versioned_url = f"/api/rooms/{room_id}/takes/{line_index}/audio?v={timestamp_ms}"
-    room.takes[line_index] = {
+    take = room.add_take(line_id, {
+        "take_id": take_id,
         "user_id": user_id,
         "user_name": user_name,
-        "wav_path": saved["wav_path"],
         "duration": saved["duration"],
         "peaks": saved["peaks"],
-        "url": versioned_url,
+        "audio_version": int(time.time() * 1000),
         "offset_ms": offset_ms,
         "pitch_semitones": pitch_semitones,
         "reverb_wet": reverb_wet,
@@ -191,17 +194,29 @@ async def upload_take(
         "target_loudness_db": saved.get("target_loudness_db"),
         "auto_gain_db": saved.get("auto_gain_db", 0.0),
         "recorded_at": time.time(),
-    }
+    })
+    wire = room.wire_take(line_index, take)
 
     room.invalidate_exports()
     await room.broadcast("take_recorded", {
         "line_index": line_index,
-        "url": versioned_url,
-        "noise_reduction": room.takes[line_index]["noise_reduction"],
+        "url": wire["url"],
+        "noise_reduction": take["noise_reduction"],
         "user_name": user_name,
         "user_id": user_id,
     })
-    return {"status": "ok", "take": room.takes[line_index]}
+    return {"status": "ok", "take": wire}
+
+
+def _picked_take_at(room, line_index: int):
+    """(line_id, picked take) of the line at line_index, or 404 if it has no take."""
+    if not 0 <= line_index < len(room.pack.lines):
+        raise HTTPException(status_code=404, detail="Take not found")
+    line_id = room.pack.lines[line_index]["line_id"]
+    take = room.picked_take(line_id)
+    if not take:
+        raise HTTPException(status_code=404, detail="Take not found")
+    return line_id, take
 
 
 @router.post("/api/rooms/{room_id}/takes/{line_index}/noise_reduction")
@@ -212,11 +227,9 @@ async def toggle_take_noise_reduction_endpoint(
 ):
     """Switches an existing take between raw and denoised audio without re-recording."""
     room = rooms.room_or_404(room_id)
-    if line_index not in room.takes:
-        raise HTTPException(status_code=404, detail="Take not found")
+    line_id, take = _picked_take_at(room, line_index)
 
     enable = bool(payload.get("noise_reduction", False))
-    take = room.takes[line_index]
     user_id = take.get("user_id", "host")
     target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, room.pack.lines[line_index])
 
@@ -225,18 +238,16 @@ async def toggle_take_noise_reduction_endpoint(
             toggled = await asyncio.to_thread(
                 audio_processor.toggle_take_noise_reduction,
                 room.room_id,
-                audio_processor.get_room_cache_dir(room.room_id),
-                f"take_line_{line_index}",
+                audio_processor.take_dir(room.room_id, line_id),
+                take["take_id"],
                 enable_noise_reduction=enable,
                 user_id=user_id,
                 target_loudness_db=target_loudness,
             )
-        timestamp_ms = int(time.time() * 1000)
-        versioned_url = f"/api/rooms/{room_id}/takes/{line_index}/audio?v={timestamp_ms}"
-        room.takes[line_index]["noise_reduction"] = enable
-        room.takes[line_index]["url"] = versioned_url
-        room.takes[line_index]["peaks"] = toggled["peaks"]
-        room.takes[line_index]["duration"] = toggled["duration"]
+        take["noise_reduction"] = enable
+        take["audio_version"] = int(time.time() * 1000)
+        take["peaks"] = toggled["peaks"]
+        take["duration"] = toggled["duration"]
         # The swapped audio has a different level: re-match, and keep a take that was
         # sitting at its auto gain on the new auto gain.
         old_auto = take.get("auto_gain_db")
@@ -245,13 +256,14 @@ async def toggle_take_noise_reduction_endpoint(
         take["speech_loudness_db"] = toggled["speech_loudness_db"]
         take["target_loudness_db"] = toggled["target_loudness_db"]
         take["auto_gain_db"] = toggled["auto_gain_db"]
+        wire = room.wire_take(line_index, take)
         room.invalidate_exports()
         await room.broadcast("take_params_updated", {
             "line_index": line_index,
-            "url": versioned_url,
+            "url": wire["url"],
             "noise_reduction": enable
         })
-        return {"status": "ok", "take": room.takes[line_index]}
+        return {"status": "ok", "take": wire}
     except Exception as ex:
         print(f"[ToggleNoiseReductionError] {ex}")
         raise HTTPException(status_code=400, detail=str(ex))
@@ -261,30 +273,29 @@ async def toggle_take_noise_reduction_endpoint(
 async def get_take_peaks(room_id: str, line_index: int):
     """Returns compact peaks waveform data for a specific take on-demand."""
     room = rooms.room_or_404(room_id)
-    take = room.takes.get(line_index)
-    if not take:
-        raise HTTPException(status_code=404, detail="Take not found")
+    _, take = _picked_take_at(room, line_index)
     return {
         "status": "ok",
         "line_index": line_index,
         "peaks": take.get("peaks", []),
         "duration": take.get("duration", 0.0),
-        "url": take.get("url"),
+        "url": room.wire_take(line_index, take)["url"],
     }
 
 
 @router.get("/api/rooms/{room_id}/takes/{line_index}/audio")
 async def get_take_audio(room_id: str, line_index: int, request: Request):
     room = rooms.room_or_404(room_id)
-    take = room.takes.get(line_index)
-    if not take or not os.path.exists(take.get("wav_path", "")):
+    line_id, take = _picked_take_at(room, line_index)
+    wav_path = audio_processor.take_wav_path(room.room_id, line_id, take["take_id"])
+    if not os.path.exists(wav_path):
         raise HTTPException(status_code=404, detail="Take not found")
-    
+
     # If versioned query param (?v=...) is present, the audio file is uniquely fingerprinted
     # and safe to cache heavily by browsers and Cloudflare edge CDN.
     cache_ctrl = common.LONG_CACHE if "v" in request.query_params else "no-cache, must-revalidate"
     return common.range_stream_file(
-        take["wav_path"],
+        wav_path,
         request,
         media_type="audio/wav",
         cache_control=cache_ctrl
@@ -328,11 +339,13 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
         except Exception as ex:
             print(f"[ExportWorkerWarning] Could not broadcast {message_type} for {room.room_id} ({aspect_ratio}): {ex}")
 
+    takes = room.mix_takes()
+
     def render_worker():
         try:
             audio_processor.export_dub_video(
                 room.pack,
-                dict(room.takes),
+                takes,
                 out_path,
                 aspect_ratio="9:16" if is_9_16 else "16:9",
                 master_dialogue_presence_db=presence_val
@@ -408,7 +421,7 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
         # event loop (and therefore every other room's websocket) for its whole duration.
         await asyncio.to_thread(
             audio_processor.export_dub_video,
-            room.pack, dict(room.takes), out_path,
+            room.pack, room.mix_takes(), out_path,
             aspect_ratio="9:16" if is_9_16 else "16:9",
             master_dialogue_presence_db=room.master_dialogue_presence_db,
         )
@@ -446,7 +459,7 @@ async def download_room_project_zip(room_id: str):
             functools.partial(
                 audio_processor.build_project_zip,
                 pack=room.pack,
-                takes_dict=dict(room.takes),
+                takes_dict=room.mix_takes(),
                 role_assignments=room.role_assignments,
                 users=room.users,
                 output_zip_path=zip_path,

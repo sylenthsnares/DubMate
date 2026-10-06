@@ -19,6 +19,19 @@ from dubmate import common, rooms
 router = APIRouter()
 
 
+def _picked_take_at(room, raw_index):
+    """(line index, line_id, picked take) for a client-sent line index; take is None if
+    the index is not a line of this pack or the line has no take."""
+    try:
+        line_idx = int(raw_index)
+    except (TypeError, ValueError):
+        return None, None, None
+    if not 0 <= line_idx < len(room.pack.lines):
+        return line_idx, None, None
+    line_id = room.pack.lines[line_idx]["line_id"]
+    return line_idx, line_id, room.picked_take(line_id)
+
+
 @router.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     await websocket.accept()
@@ -87,26 +100,20 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     await room.broadcast("status_changed", {"status": new_status})
 
             elif msg_type == "update_take_params":
-                raw_idx = payload.get("line_index")
-                try:
-                    line_idx = int(raw_idx)
-                except (TypeError, ValueError):
-                    line_idx = None
-                if line_idx is not None and line_idx in room.takes:
+                line_idx, line_id, take = _picked_take_at(room, payload.get("line_index"))
+                if take:
                     for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
                         if key in payload:
-                            room.takes[line_idx][key] = payload[key]
+                            take[key] = payload[key]
                     room.invalidate_exports()
                     await room.broadcast("take_params_updated", {"line_index": line_idx})
 
             elif msg_type == "clear_take":
-                raw_idx = payload.get("line_index")
-                try:
-                    line_idx = int(raw_idx)
-                except (TypeError, ValueError):
-                    line_idx = None
-                if line_idx is not None and line_idx in room.takes:
-                    del room.takes[line_idx]
+                # Deletes the take in the dub; the line falls back to its newest other take.
+                line_idx, line_id, take = _picked_take_at(room, payload.get("line_index"))
+                if take:
+                    async with room.processing_lock:
+                        room.remove_take(line_id, take["take_id"])
                     room.invalidate_exports()
                     await room.broadcast("take_cleared", {"line_index": line_idx})
 
@@ -134,7 +141,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                         out_path = room.export_out_path("16:9")
                         await asyncio.to_thread(
                             audio_processor.export_dub_video,
-                            room.pack, dict(room.takes), out_path,
+                            room.pack, room.mix_takes(), out_path,
                         )
                         room.exported_video_path = out_path
                         await room.broadcast("export_ready", room.export_ready_payload("16:9"))

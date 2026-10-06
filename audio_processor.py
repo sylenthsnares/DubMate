@@ -1128,6 +1128,8 @@ def build_project_zip(
 
             line_entry = {
                 "index": idx,
+                "line_id": line.get("line_id"),
+                "take_id": None,
                 "line_number": idx + 1,
                 "character": char,
                 "start": start_sec,
@@ -1179,6 +1181,7 @@ def build_project_zip(
 
                 line_entry["is_recorded"] = True
                 line_entry["take_file"] = f"Raw_Takes/{take_filename}"
+                line_entry["take_id"] = take_info.get("take_id")
                 line_entry["actor_name"] = actor_name
                 line_entry["offset_ms"] = offset_ms
                 line_entry["pitch_semitones"] = pitch
