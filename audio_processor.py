@@ -317,6 +317,231 @@ def write_wav_mono(path: str, data: np.ndarray, sr: int = SR) -> str:
     return path
 
 
+# ---------------------------------------------------------------------------
+# Room check: room tone analysis and the engine-wide noise profile store
+# ---------------------------------------------------------------------------
+
+NOISE_PROFILE_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+NOISE_PROFILE_KEEP = 50
+_LEVEL_FLOOR_DB = -120.0
+_TONE_NFFT = 32768
+_TONE_EXCESS_DB = 10.0
+
+
+def _level_db(power: float) -> float:
+    """dBFS of a mean power (RMS re 1.0), floored so stats stay JSON-safe."""
+    if not power > 0:
+        return _LEVEL_FLOOR_DB
+    return max(_LEVEL_FLOOR_DB, 10.0 * math.log10(power))
+
+
+def _welch_psd(audio: np.ndarray, sr: int, nfft: int = _TONE_NFFT) -> Tuple[np.ndarray, np.ndarray]:
+    """Welch power spectrum (Hann, 50 % overlap); zero-pads clips shorter than nfft."""
+    if len(audio) < nfft:
+        audio = np.pad(audio, (0, nfft - len(audio)))
+    win = np.hanning(nfft)
+    hop = nfft // 2
+    starts = range(0, len(audio) - nfft + 1, hop)
+    psd = np.mean([np.abs(np.fft.rfft(audio[s:s + nfft] * win)) ** 2 for s in starts], axis=0)
+    return np.fft.rfftfreq(nfft, 1.0 / sr), psd
+
+
+def _peak_excess_db(freqs: np.ndarray, psd_db: np.ndarray, k: int, half_width_hz: float) -> float:
+    """dB of bin k above the median of the bins within +/-half_width_hz, excluding +/-3 Hz."""
+    dist = np.abs(freqs - freqs[k])
+    ring = psd_db[(dist <= half_width_hz) & (dist > 3.0)]
+    if ring.size == 0:
+        return 0.0
+    return float(psd_db[k] - np.median(ring))
+
+
+def analyse_room_tone(audio: np.ndarray, sr: int) -> Dict[str, Any]:
+    """Measures a room tone clip for the room check (numpy only); see documentation/design/calibrate-mic.md."""
+    x = np.asarray(_sanitize_finite_audio(audio, context="analyse_room_tone"), dtype=np.float64)
+    n = len(x)
+    nyquist = sr / 2.0
+
+    spec = np.fft.rfft(x) if n else np.zeros(1, dtype=complex)
+    freqs = np.fft.rfftfreq(max(n, 1), 1.0 / sr)
+    power = np.abs(spec) ** 2
+    total_power = float(np.sum(power))
+    band = (freqs >= 100.0) & (freqs <= 8000.0)
+    # Parseval: band bins are interior (not DC or Nyquist), so each counts twice.
+    band_power = 2.0 * float(np.sum(power[band])) / (n * n) if n else 0.0
+    speech_floor_db = _level_db(band_power)
+    full_band_db = _level_db(float(np.mean(x * x)) if n else 0.0)
+    rumble_share = float(np.sum(power[freqs < 80.0]) / total_power) if total_power > 0 else 0.0
+    if speech_floor_db < -60.0:
+        verdict = "good"
+    elif speech_floor_db <= -45.0:
+        verdict = "ok"
+    else:
+        verdict = "noisy"
+
+    # Tones: mains hum harmonics first, then other narrow peaks in the speech band.
+    tfreqs, psd = _welch_psd(x, sr)
+    psd_db = 10.0 * np.log10(psd + 1e-20)
+    hum: Dict[int, List[Tuple[float, float]]] = {}
+    for base in (50, 60):
+        found = []
+        for h in range(1, 9):
+            f = float(base * h)
+            near = np.where(np.abs(tfreqs - f) <= 2.0)[0]
+            if near.size == 0:
+                continue
+            k = int(near[np.argmax(psd_db[near])])
+            excess = _peak_excess_db(tfreqs, psd_db, k, 25.0)
+            if excess > _TONE_EXCESS_DB:
+                found.append((f, excess))
+        hum[base] = found
+    hum_hz = None
+    if hum[50] or hum[60]:
+        hum_hz = max((50, 60), key=lambda b: (len(hum[b]), sum(e for _, e in hum[b])))
+    tones = list(hum[hum_hz]) if hum_hz else []
+    hum_freqs = [f for f, _ in tones]
+    lo = max(1, int(np.searchsorted(tfreqs, 100.0)))
+    hi = min(len(psd_db) - 1, int(np.searchsorted(tfreqs, min(8000.0, nyquist), side="right")))
+    for k in range(lo, hi):
+        if not (psd_db[k] > psd_db[k - 1] and psd_db[k] >= psd_db[k + 1]):
+            continue
+        f = float(tfreqs[k])
+        if any(abs(f - h) <= 3.0 for h in hum_freqs):
+            continue
+        excess = _peak_excess_db(tfreqs, psd_db, k, 50.0)
+        if excess > _TONE_EXCESS_DB:
+            tones.append((round(f, 1), excess))
+    tones.sort(key=lambda t: -t[1])
+    tones_hz = [float(f) for f, _ in tones]
+
+    # Hiss: mean power per bin in 4-16 kHz over 300 Hz-2 kHz.
+    highs = (tfreqs >= 4000.0) & (tfreqs <= min(16000.0, nyquist))
+    mids = (tfreqs >= 300.0) & (tfreqs <= 2000.0)
+    high_mean = float(np.mean(psd[highs])) if np.any(highs) else 0.0
+    mid_mean = float(np.mean(psd[mids])) if np.any(mids) else 0.0
+    hiss_db = 10.0 * math.log10((high_mean + 1e-20) / (mid_mean + 1e-20))
+    hiss = hiss_db >= -3.0 and verdict != "good"
+
+    # Stability: spread of the 100 ms frame levels of the band-limited signal.
+    banded = np.fft.irfft(np.where(band, spec, 0), n=n) if n else x
+    frame = max(1, int(sr * 0.1))
+    count = n // frame
+    if count >= 2:
+        frames = banded[:count * frame].reshape(count, frame)
+        levels = [_level_db(float(p)) for p in np.mean(frames * frames, axis=1)]
+        stability_db = float(np.percentile(levels, 90) - np.percentile(levels, 10))
+    else:
+        stability_db = 0.0
+
+    suppressed = bool(n == 0 or np.count_nonzero(x == 0.0) * 2 >= n or full_band_db < -90.0)
+    clipped = bool(np.count_nonzero(np.abs(x) >= 0.999) >= 3)
+    speech_floor_db = round(speech_floor_db, 1)
+    attenuation_db = int(min(40, max(12, round(speech_floor_db + 80.0))))
+    return {
+        "duration_sec": round(n / float(sr), 3),
+        "verdict": verdict,
+        "speech_floor_db": round(speech_floor_db, 1),
+        "full_band_db": round(full_band_db, 1),
+        "rumble_share": round(rumble_share, 3),
+        "hum_hz": hum_hz,
+        "tones_hz": tones_hz,
+        "hiss_db": round(hiss_db, 1),
+        "hiss": bool(hiss),
+        "stability_db": round(stability_db, 1),
+        "unstable": stability_db > 6.0,
+        "suppressed": suppressed,
+        "clipped": clipped,
+        "dc_offset": round(float(np.mean(x)) if n else 0.0, 5),
+        "cleanup": {"attenuation_db": attenuation_db, "notches_hz": tones_hz[:4]},
+    }
+
+
+def noise_profiles_dir() -> str:
+    return os.path.join(CACHE_DIR, "noise_profiles")
+
+
+def _noise_profile_file(profile_id, ext: str) -> Optional[str]:
+    """Path of a profile's file, or None for a malformed id (never touches the filesystem)."""
+    if not isinstance(profile_id, str) or not NOISE_PROFILE_ID_RE.match(profile_id):
+        return None
+    return os.path.join(noise_profiles_dir(), profile_id + ext)
+
+
+def save_noise_profile(
+    audio: np.ndarray, sr: int, device_id: str = "", device_label: str = ""
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Analyses a room tone and stores <id>.wav + <id>.json; a suppressed or clipped check saves nothing."""
+    stats = analyse_room_tone(audio, sr)
+    if stats["suppressed"] or stats["clipped"]:
+        return None, stats
+    data = np.asarray(_sanitize_finite_audio(audio, context="save_noise_profile"), dtype=np.float32)
+    if sr != SR:
+        positions = np.arange(int(len(data) * SR / sr)) * (sr / SR)
+        data = np.interp(positions, np.arange(len(data)), data).astype(np.float32)
+    pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+    profile_id = hashlib.sha1(pcm + (device_label or "").encode("utf-8")).hexdigest()[:12]
+    stats = dict(stats, profile_id=profile_id, version=1, created_at=time.time(),
+                 device_id=device_id or "", device_label=device_label or "")
+    write_wav_mono(_noise_profile_file(profile_id, ".wav"), data, SR)
+    json_path = _noise_profile_file(profile_id, ".json")
+    with open(json_path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(stats, f)
+    os.replace(json_path + ".tmp", json_path)
+    _prune_noise_profiles()
+    return profile_id, stats
+
+
+def _prune_noise_profiles(keep: int = NOISE_PROFILE_KEEP) -> None:
+    """Keeps the newest `keep` profiles by created_at."""
+    entries = []
+    for name in os.listdir(noise_profiles_dir()):
+        pid, ext = os.path.splitext(name)
+        if ext == ".json" and NOISE_PROFILE_ID_RE.match(pid):
+            entries.append(((load_noise_profile_stats(pid) or {}).get("created_at") or 0.0, pid))
+    entries.sort(reverse=True)
+    for _, pid in entries[keep:]:
+        delete_noise_profile(pid)
+
+
+def load_noise_profile_stats(profile_id) -> Optional[Dict[str, Any]]:
+    path = _noise_profile_file(profile_id, ".json")
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            stats = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return stats if isinstance(stats, dict) else None
+
+
+def noise_profile_wav_path(profile_id) -> Optional[str]:
+    path = _noise_profile_file(profile_id, ".wav")
+    return path if path and os.path.isfile(path) else None
+
+
+def delete_noise_profile(profile_id) -> bool:
+    """Removes a profile's WAV and JSON; False when the id is malformed or nothing was there."""
+    deleted = False
+    for ext in (".wav", ".json"):
+        path = _noise_profile_file(profile_id, ext)
+        if path and os.path.isfile(path):
+            os.remove(path)
+            deleted = True
+    return deleted
+
+
+def noise_cleanup_settings(profile_id) -> Optional[Dict[str, Any]]:
+    """The cleanup a profile asks for, or None (standard cleanup) when the id is None, malformed or gone."""
+    cleanup = (load_noise_profile_stats(profile_id) or {}).get("cleanup")
+    if not isinstance(cleanup, dict):
+        return None
+    return {
+        "profile_id": profile_id,
+        "attenuation_db": cleanup.get("attenuation_db", NR_ATTENUATION_DB),
+        "notches_hz": [float(f) for f in (cleanup.get("notches_hz") or [])][:4],
+    }
+
+
 def get_user_noise_profile_path(room_id: str, user_id: str) -> str:
     """Returns the persistent noise profile path for an actor in a room (path-traversal safe)."""
     room_dir = get_room_cache_dir(room_id)
