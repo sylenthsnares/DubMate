@@ -490,20 +490,12 @@ class DubMateApp {
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
-      btnLeaveRoom.addEventListener('click', () => {
-        if (confirm('Leave current dubbing session and return to scenes?')) {
-          this.leaveRoom();
-        }
-      });
+      btnLeaveRoom.addEventListener('click', () => this.confirmLeaveRoom());
     }
 
     const btnLeaveRoomLobby = document.getElementById('btn-leave-room-lobby');
     if (btnLeaveRoomLobby) {
-      btnLeaveRoomLobby.addEventListener('click', () => {
-        if (confirm('Leave current dubbing session and return to scenes?')) {
-          this.leaveRoom();
-        }
-      });
+      btnLeaveRoomLobby.addEventListener('click', () => this.confirmLeaveRoom());
     }
 
     this.inputUserName.addEventListener('input', (e) => {
@@ -793,14 +785,8 @@ class DubMateApp {
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
-      if (this.badgeGainMatch) {
-        const take = this.roomState?.takes?.[this.currentLineIndex];
-        if (take && take.auto_gain_db !== undefined) {
-          const isMatched = Math.abs(val - parseFloat(take.auto_gain_db)) < 0.1;
-          this.badgeGainMatch.innerText = isMatched ? `✓ ${take.auto_gain_db >= 0 ? '+' : ''}${take.auto_gain_db} dB (Matched)` : `${take.auto_gain_db >= 0 ? '+' : ''}${take.auto_gain_db} dB (Scene Target)`;
-          this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
-        }
-      }
+      const take = this.roomState?.takes?.[this.currentLineIndex];
+      if (take && take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, val);
       this.syncTakeParams();
     });
 
@@ -813,10 +799,7 @@ class DubMateApp {
           this.valGain.innerText = (targetGain > 0 ? '+' : '') + targetGain + ' dB';
           this.audio.setGain(targetGain);
           this.syncTakeParams();
-          if (this.badgeGainMatch) {
-            this.badgeGainMatch.innerText = `✓ ${targetGain >= 0 ? '+' : ''}${targetGain} dB (Matched)`;
-            this.badgeGainMatch.className = 'badge-calibrated calibrated';
-          }
+          this.renderGainMatchBadge(take, targetGain);
           this.showToast(`Vocal gain calibrated to scene dialogue target (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
         }
       });
@@ -1016,16 +999,16 @@ class DubMateApp {
     this.btnExportVideo.addEventListener('click', () => this.exportFinalVideo());
 
     if (this.btnDownloadProjectZip) {
-      this.btnDownloadProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
+      this.btnDownloadProjectZip.addEventListener('click', () => this.downloadFullProjectZip(this.btnDownloadProjectZip));
     }
     if (this.btnToolbarProjectZip) {
-      this.btnToolbarProjectZip.addEventListener('click', () => this.downloadFullProjectZip());
+      this.btnToolbarProjectZip.addEventListener('click', () => this.downloadFullProjectZip(this.btnToolbarProjectZip));
     }
 
     // These four were bare `<a download href="/api/...">`. The webview followed the
     // href, so a backend error answered as JSON replaced the studio with
     // `{"detail":"..."}`, and a working download gave no sign it had started or
-    // finished. Same fetch/blob route as downloadFullProjectZip().
+    // finished. Same fetch/blob route (saveRemoteFile) as downloadFullProjectZip().
     for (const [anchor, aspectRatio] of [
       [this.btnDownloadLink, '16:9'],
       [this.btnDownloadLink916, '9:16'],
@@ -1235,14 +1218,7 @@ class DubMateApp {
     this.socket.on('dialogue_presence_sync', (data) => {
       const pres = parseFloat(data.payload?.presence_db ?? 0.0);
       this.masterDialoguePresence = pres;
-      if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = pres;
-      if (this.valDialoguePresence) {
-        this.valDialoguePresence.innerText = (pres === 0) ? '0.0 dB (Scene Default)' : ((pres > 0 ? '+' : '') + pres.toFixed(1) + ' dB');
-      }
-      document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-        const btnVal = parseFloat(btn.dataset.presence || '0');
-        btn.classList.toggle('active', Math.abs(btnVal - pres) < 0.1);
-      });
+      this.renderPresenceUI(pres);
       if (this.screeningVocalGainNode && this.audio?.ctx) {
         const { vocalGain } = this.getScreeningStemGains();
         this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
@@ -1496,6 +1472,20 @@ class DubMateApp {
     }
   }
 
+  /** Asks first; returns true only if the user actually left. */
+  confirmLeaveRoom() {
+    if (!confirm('Leave current dubbing session and return to scenes?')) return false;
+    this.leaveRoom();
+    return true;
+  }
+
+  /** Drops ?room= (pushState to the bare path, so the whole query string goes). */
+  clearRoomQueryParam() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.pushState({}, '', url.pathname);
+  }
+
   leaveRoom() {
     document.body.classList.remove('resizing');
     this.cancelCurrentCountdown();
@@ -1516,9 +1506,7 @@ class DubMateApp {
     this.selectedPackId = null;
 
     // Clean URL query parameters (?room=...)
-    const url = new URL(window.location.href);
-    url.searchParams.delete('room');
-    window.history.pushState({}, '', url.pathname);
+    this.clearRoomQueryParam();
 
     // Reset Header & HUD
     if (this.headerRoomBadge) this.headerRoomBadge.style.display = 'none';
@@ -1688,7 +1676,7 @@ class DubMateApp {
         this.stopShareWatch();
         // Only the host hands the code out, so only the host needs telling that
         // it does not work. Guests are already connected by this point.
-        const isHost = this.roomState?.host_id && this.roomState.host_id === this.user.id;
+        const isHost = this.roomState?.host_id && this.isHost();
         if (isHost && share && !share.code_is_live) {
           if (share.state === 'tunnel_unavailable') {
             // The shell told the engine the tunnel failed, so say what went wrong
@@ -1827,15 +1815,20 @@ class DubMateApp {
     }
   }
 
+  /** Plain GET /api/config: parsed body, or null on a non-2xx answer. Throws on network errors. */
+  async fetchConfig() {
+    const res = await fetch('/api/config');
+    return res.ok ? res.json() : null;
+  }
+
   async openPackConfigModal() {
     if (!this.modalPackConfig) return;
     this.modalPackConfig.style.display = 'flex';
     if (this.webConfigFeedback) this.webConfigFeedback.style.display = 'none';
 
     try {
-      const res = await fetch('/api/config');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await this.fetchConfig();
+      if (data) {
         if (this.webInputPackPath) {
           this.webInputPackPath.value = data.packs_dir || '';
         }
@@ -1896,9 +1889,10 @@ class DubMateApp {
         this.closePackConfigModal();
       }, 1200);
     } catch (err) {
+      // Server details (bad path, unreadable folder) are shown as-is.
       let errMsg = err.message || "Unknown error";
       if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
-        errMsg = "DubMate isn't responding. Try restarting the app.";
+        errMsg = this.friendlyError(err);
       }
       this.showWebConfigFeedback(`❌ ${errMsg}`, false);
     } finally {
@@ -2526,9 +2520,7 @@ class DubMateApp {
   async fetchExportsDir() {
     if (typeof this.exportsDirCache === 'string') return this.exportsDirCache;
     try {
-      const res = await fetch('/api/config');
-      if (!res.ok) return null;
-      const data = await res.json();
+      const data = await this.fetchConfig();
       if (!data || typeof data.exports_dir !== 'string' || !data.exports_dir) return null;
       this.exportsDirCache = data.exports_dir;
       return this.exportsDirCache;
@@ -2561,9 +2553,7 @@ class DubMateApp {
     // server-side half of this feature may ship after this UI does.
     this.audioExportsRow.style.display = 'none';
     try {
-      const res = await fetch('/api/config');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await this.fetchConfig();
       if (!data || typeof data !== 'object') return;
       if (!Object.prototype.hasOwnProperty.call(data, 'exports_dir')) return;
 
@@ -2609,9 +2599,10 @@ class DubMateApp {
       this.setExportsFeedback('✅ Export folder saved.', true);
       this.showToast('📁 Export folder updated.');
     } catch (err) {
+      // Server details (unwritable folder) are shown as-is.
       let msg = (err && err.message) || 'Unknown error';
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        msg = 'Could not reach the local DubMate engine. Make sure the server is running.';
+        msg = this.friendlyError(err);
       }
       this.setExportsFeedback(`❌ ${msg}`, false);
     } finally {
@@ -3046,8 +3037,7 @@ class DubMateApp {
       optStudio.addEventListener('click', (e) => {
         if (this.roomState) {
           e.preventDefault();
-          if (confirm('Leave current dubbing session and return to scenes?')) {
-            this.leaveRoom();
+          if (this.confirmLeaveRoom()) {
             toggleMenu(false);
           }
         } else {
@@ -3189,10 +3179,8 @@ class DubMateApp {
       this.modalJoinRoom.style.display = 'none';
     }
     this.pendingJoinRoomId = null;
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('room')) {
-      url.searchParams.delete('room');
-      window.history.pushState({}, '', url.pathname);
+    if (new URL(window.location.href).searchParams.has('room')) {
+      this.clearRoomQueryParam();
     }
   }
 
@@ -3230,9 +3218,7 @@ class DubMateApp {
         }
 
         // Strip stale room parameter so user is returned cleanly to scene explorer
-        const url = new URL(window.location.href);
-        url.searchParams.delete('room');
-        window.history.pushState({}, '', url.pathname);
+        this.clearRoomQueryParam();
 
         this.showToast(`Room '${cleanCode}' not found or expired.`);
         this.showView('landing');
@@ -3271,9 +3257,7 @@ class DubMateApp {
         this.broadcastMyStatus('lobby');
       }
     } catch (err) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('room');
-      window.history.pushState({}, '', url.pathname);
+      this.clearRoomQueryParam();
       this.showToast(this.friendlyError(err, "Couldn't join that room. Please try again."));
       this.showView('landing');
     }
@@ -3309,7 +3293,7 @@ class DubMateApp {
 
   launchGroupPremiere() {
     if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id);
+    const isHost = this.isHost();
     if (!isHost) {
       this.showToast("Only the Room Host can launch the Group Premiere");
       return;
@@ -3330,7 +3314,7 @@ class DubMateApp {
   renderCastActivityHUD() {
     if (!this.roomState || !this.castActivityList) return;
     const users = Object.values(this.roomState.users || {}).filter(u => u.is_online);
-    const isHost = (this.user.id === this.roomState.host_id);
+    const isHost = this.isHost();
 
     let readyCount = 0;
     this.castActivityList.innerHTML = '';
@@ -3536,6 +3520,42 @@ class DubMateApp {
     });
   }
 
+  /**
+   * Strict by default: only the real host. allowDummy also accepts the legacy
+   * 'host' placeholder id that rooms restored from disk can carry.
+   */
+  isHost({ allowDummy = false } = {}) {
+    const hostId = this.roomState?.host_id;
+    return this.user.id === hostId || (allowDummy && hostId === 'host');
+  }
+
+  /** Your assigned character, or any line when nobody is cast and you host. */
+  canRecordLine(line) {
+    const myAssignedChars = this.getMyAssignedCharacters();
+    return !line || myAssignedChars.includes(line.character)
+      || (myAssignedChars.length === 0 && this.isHost({ allowDummy: true }));
+  }
+
+  /** Reference + take waveforms for a line, padded past the line's end. */
+  setWaveformForLine(line, take, origPeaks, takePeaks) {
+    this.waveform.setData({
+      origPeaks,
+      takePeaks,
+      offsetMs: take ? (take.offset_ms || 0) : 0,
+      totalDuration: (line.duration || 3.0) + 0.8,
+    });
+  }
+
+  /** "Matched" vs "Scene Target" badge for the take's auto-gain against gainDb. */
+  renderGainMatchBadge(take, gainDb) {
+    if (!this.badgeGainMatch) return;
+    const matchVal = parseFloat(take.auto_gain_db);
+    const label = `${matchVal >= 0 ? '+' : ''}${matchVal} dB`;
+    const isMatched = Math.abs(gainDb - matchVal) < 0.1;
+    this.badgeGainMatch.innerText = isMatched ? `✓ ${label} (Matched)` : `${label} (Scene Target)`;
+    this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+  }
+
   getMyAssignedCharacters() {
     if (!this.roomState) return [];
     return Object.keys(this.roomState.role_assignments || {}).filter((char) => {
@@ -3611,8 +3631,7 @@ class DubMateApp {
 
     // Calculate your line numbering (e.g. Line 3 of 6)
     const myAssignedChars = this.getMyAssignedCharacters();
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    const isMyLine = myAssignedChars.includes(line.character) || (myAssignedChars.length === 0 && isHost);
+    const isMyLine = this.canRecordLine(line);
     const myAssignedLines = this.roomState.pack.lines.filter(l => myAssignedChars.includes(l.character));
     const myLinePos = myAssignedLines.findIndex(l => l.index === index) + 1;
 
@@ -3641,11 +3660,7 @@ class DubMateApp {
         if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'inline-flex';
         if (this.badgeGainMatch) {
           this.badgeGainMatch.style.display = 'inline-block';
-          const matchVal = parseFloat(take.auto_gain_db);
-          const currentGain = parseFloat(this.sliderGain.value) || 0;
-          const isMatched = Math.abs(currentGain - matchVal) < 0.1;
-          this.badgeGainMatch.innerText = isMatched ? `✓ ${matchVal >= 0 ? '+' : ''}${matchVal} dB (Matched)` : `${matchVal >= 0 ? '+' : ''}${matchVal} dB (Scene Target)`;
-          this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+          this.renderGainMatchBadge(take, parseFloat(this.sliderGain.value) || 0);
           this.badgeGainMatch.title = `Take Speech Loudness: ${take.speech_loudness_db || '-'} dBFS (Scene Target: ${take.target_loudness_db || '-'} dBFS)`;
         }
       } else {
@@ -3702,12 +3717,7 @@ class DubMateApp {
       }
     }
 
-    this.waveform.setData({
-      origPeaks,
-      takePeaks,
-      offsetMs: take ? (take.offset_ms || 0) : 0,
-      totalDuration: (line.duration || 3.0) + 0.8,
-    });
+    this.setWaveformForLine(line, take, origPeaks, takePeaks);
 
     this.renderTimelineChips();
 
@@ -3722,12 +3732,7 @@ class DubMateApp {
         this.origBuffer = origBuf;
         if ((!origPeaks || origPeaks.length === 0) && origBuf) {
           origPeaks = WaveformRenderer.extractPeaksFromBuffer(origBuf, 100);
-          this.waveform.setData({
-            origPeaks,
-            takePeaks,
-            offsetMs: take ? (take.offset_ms || 0) : 0,
-            totalDuration: (line.duration || 3.0) + 0.8,
-          });
+          this.setWaveformForLine(line, take, origPeaks, takePeaks);
         }
       } catch (e) {
         console.warn("[App] Error loading reference audio:", e);
@@ -3745,12 +3750,7 @@ class DubMateApp {
             if (this.roomState?.takes?.[index]) {
               this.roomState.takes[index].peaks = takePeaks;
             }
-            this.waveform.setData({
-              origPeaks,
-              takePeaks,
-              offsetMs: take.offset_ms || 0,
-              totalDuration: (line.duration || 3.0) + 0.8,
-            });
+            this.setWaveformForLine(line, take, origPeaks, takePeaks);
           }
         } catch (e) {
           console.warn("[App] Error loading take audio:", e);
@@ -3816,10 +3816,8 @@ class DubMateApp {
       take = this.roomState?.takes?.[this.currentLineIndex];
     }
 
-    const myAssignedChars = this.getMyAssignedCharacters();
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    const isHost = (this.user.id === this.roomState?.host_id) || (this.roomState?.host_id === 'host');
-    const isMyLine = !line || myAssignedChars.includes(line.character) || (myAssignedChars.length === 0 && isHost);
+    const isMyLine = this.canRecordLine(line);
 
     if (!isMyLine) {
       this.btnRecordMain.className = 'btn-big-record locked';
@@ -4342,24 +4340,14 @@ class DubMateApp {
         let origPeaks = line.peaks || [];
         let takePeaks = take ? (take.peaks || []) : [];
 
-        this.waveform.setData({
-          origPeaks,
-          takePeaks,
-          offsetMs: take ? (take.offset_ms || 0) : 0,
-          totalDuration: (line.duration || 3.0) + 0.8,
-        });
+        this.setWaveformForLine(line, take, origPeaks, takePeaks);
 
         if (take && take.url) {
           const newBuf = await this.audio.loadAudioBuffer(take.url, true);
           this.currentTakeBuffer = newBuf;
           if (newBuf && (!takePeaks || takePeaks.length === 0)) {
             takePeaks = WaveformRenderer.extractPeaksFromBuffer(newBuf, 100);
-            this.waveform.setData({
-              origPeaks,
-              takePeaks,
-              offsetMs: take.offset_ms || 0,
-              totalDuration: (line.duration || 3.0) + 0.8,
-            });
+            this.setWaveformForLine(line, take, origPeaks, takePeaks);
           }
         }
       }
@@ -4373,10 +4361,8 @@ class DubMateApp {
 
   async toggleRecording() {
     if (!this.roomState) return;
-    const myAssignedChars = this.getMyAssignedCharacters();
     const line = this.roomState.pack.lines[this.currentLineIndex];
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
-    const isMyLine = !line || myAssignedChars.includes(line.character) || (myAssignedChars.length === 0 && isHost);
+    const isMyLine = this.canRecordLine(line);
     if (!isMyLine) {
       this.showToast(`🔒 Line ${this.currentLineIndex + 1} is assigned to ${line.character}. You cannot record over it.`);
       return;
@@ -4694,7 +4680,7 @@ class DubMateApp {
       this.showToast("🎉 You're marked Ready for the Premiere! 🍿");
     }
 
-    const isHost = (this.user.id === this.roomState?.host_id) || (this.roomState?.host_id === 'host');
+    const isHost = this.isHost({ allowDummy: true });
     if (isHost) {
       const users = Object.values(this.roomState?.users || {}).filter(u => u.is_online);
       const readyCount = users.filter(u => u.is_ready).length;
@@ -4726,14 +4712,7 @@ class DubMateApp {
 
     const presenceVal = parseFloat(this.roomState.master_dialogue_presence_db ?? 0.0);
     this.masterDialoguePresence = presenceVal;
-    if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = presenceVal;
-    if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (presenceVal === 0) ? '0.0 dB (Scene Default)' : ((presenceVal > 0 ? '+' : '') + presenceVal.toFixed(1) + ' dB');
-    }
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      const btnVal = parseFloat(btn.dataset.presence || '0');
-      btn.classList.toggle('active', Math.abs(btnVal - presenceVal) < 0.1);
-    });
+    this.renderPresenceUI(presenceVal);
 
     if (this.roomState.has_export && (this.roomState.export_video_url || this.roomState.download_url)) {
       this.applyExportedVideoToTheater();
@@ -4750,43 +4729,27 @@ class DubMateApp {
   applyExportedVideoToTheater(directUrl = null) {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = true;
-    this.audio.stopAllPlayback();
-    this.stopScreeningSyncMonitor();
-
     const videoUrl = directUrl || this.roomState.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-    if (!this.screeningVideo.src.endsWith(videoUrl) && this.screeningVideo.getAttribute('src') !== videoUrl) {
-      this.screeningVideo.src = videoUrl;
-    }
-    try {
-      if (this.screeningVideo.readyState >= 1) {
-        this.screeningVideo.currentTime = 0;
-      } else {
-        this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) { }
-        }, { once: true });
-      }
-    } catch (e) { }
-
-    this.screeningVideo.muted = false;
-    this.screeningVideo.volume = 1.0;
-
-    if (this.screeningMasterBadge) {
-      this.screeningMasterBadge.style.display = 'inline-flex';
-    }
-    if (this.screeningPlayIcon) {
-      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play Dub' : '⏸ Pause Dub';
-    }
+    this.setTheaterSource(videoUrl, { muted: false });
   }
 
   applyLiveMixToTheater() {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = false;
+    // The live mix plays the stems through Web Audio, so the pack video stays silent.
+    this.setTheaterSource(this.roomState.pack.video_url, { muted: true });
+  }
+
+  /**
+   * Points the theater at a video, rewinds it, and sets audio + master badge.
+   * Unmuted means the source carries the finished mix (the exported video).
+   */
+  setTheaterSource(url, { muted }) {
     this.audio.stopAllPlayback();
     this.stopScreeningSyncMonitor();
 
-    const packVideoUrl = this.roomState.pack.video_url;
-    if (!this.screeningVideo.src.endsWith(packVideoUrl) && this.screeningVideo.getAttribute('src') !== packVideoUrl) {
-      this.screeningVideo.src = packVideoUrl;
+    if (!this.screeningVideo.src.endsWith(url) && this.screeningVideo.getAttribute('src') !== url) {
+      this.screeningVideo.src = url;
     }
     try {
       if (this.screeningVideo.readyState >= 1) {
@@ -4798,11 +4761,11 @@ class DubMateApp {
       }
     } catch (e) { }
 
-    this.screeningVideo.muted = true;
-    this.screeningVideo.volume = 0;
+    this.screeningVideo.muted = muted;
+    this.screeningVideo.volume = muted ? 0 : 1.0;
 
     if (this.screeningMasterBadge) {
-      this.screeningMasterBadge.style.display = 'none';
+      this.screeningMasterBadge.style.display = muted ? 'none' : 'inline-flex';
     }
     if (this.screeningPlayIcon) {
       this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play Dub' : '⏸ Pause Dub';
@@ -4907,17 +4870,21 @@ class DubMateApp {
     }
   }
 
-  setMasterDialoguePresence(val) {
-    this.masterDialoguePresence = Math.max(-12.0, Math.min(12.0, val));
+  /** Presence label and preset highlight (and the slider, unless it is the source). */
+  renderPresenceUI(db, { syncSlider = true } = {}) {
+    if (syncSlider && this.sliderDialoguePresence) this.sliderDialoguePresence.value = db;
     if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (this.masterDialoguePresence === 0)
-        ? '0.0 dB (Scene Default)'
-        : ((this.masterDialoguePresence > 0 ? '+' : '') + this.masterDialoguePresence.toFixed(1) + ' dB');
+      this.valDialoguePresence.innerText = (db === 0) ? '0.0 dB (Scene Default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
     }
     document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
       const btnVal = parseFloat(btn.dataset.presence || '0');
-      btn.classList.toggle('active', Math.abs(btnVal - this.masterDialoguePresence) < 0.1);
+      btn.classList.toggle('active', Math.abs(btnVal - db) < 0.1);
     });
+  }
+
+  setMasterDialoguePresence(val) {
+    this.masterDialoguePresence = Math.max(-12.0, Math.min(12.0, val));
+    this.renderPresenceUI(this.masterDialoguePresence, { syncSlider: false });
 
     if (this.screeningVocalGainNode && this.audio?.ctx) {
       const { vocalGain } = this.getScreeningStemGains();
@@ -4963,7 +4930,7 @@ class DubMateApp {
 
   updateScreeningControls() {
     if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
+    const isHost = this.isHost({ allowDummy: true });
     this.screeningHostBadge.style.display = isHost ? 'inline-block' : 'none';
     this.screeningStatusDesc.innerText = isHost
       ? "You are the Host. Control playback to sync everyone in the room."
@@ -4972,7 +4939,7 @@ class DubMateApp {
 
   async handleScreeningPlayPause() {
     if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
+    const isHost = this.isHost({ allowDummy: true });
     if (!isHost) {
       // Local preview playback fallback if not host
       if (this.screeningVideo.paused) {
@@ -4992,7 +4959,7 @@ class DubMateApp {
 
   async handleScreeningReplay() {
     if (!this.roomState) return;
-    const isHost = (this.user.id === this.roomState.host_id) || (this.roomState.host_id === 'host');
+    const isHost = this.isHost({ allowDummy: true });
     if (!isHost) {
       this.screeningVideo.currentTime = 0.0;
       this.startScreeningPlayback(0.0);
@@ -5493,8 +5460,8 @@ class DubMateApp {
    * Everything that used to be an `<a download href>` goes through here: an anchor
    * navigates on click, so an endpoint that answers errors as JSON tore down the
    * studio (and its websocket) to render `{"detail":"..."}` as a page, and a
-   * successful save was completely silent. Mirrors downloadFullProjectZip():
-   * check res.ok, blob, click a throwaway anchor, revoke late.
+   * successful save was completely silent. Checks res.ok, takes the blob,
+   * clicks a throwaway anchor and revokes late.
    *
    * Returns true only if the file actually reached the browser.
    */
@@ -5595,59 +5562,26 @@ class DubMateApp {
     });
   }
 
-  async downloadFullProjectZip() {
+  async downloadFullProjectZip(control = null) {
     if (!this.roomState?.room_id) {
       this.showToast("No active session to export.");
-      return;
+      return false;
     }
     const roomId = this.roomState.room_id;
     const packName = (this.roomState.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
     const zipUrl = `/api/rooms/${roomId}/export/project_zip?v=${Date.now()}`;
 
-    this.showToast("📦 Packaging Full Project ZIP (MP3 Stems, Takes & Video)... Download starting!");
-
-    const labelToolbar = document.getElementById('label-toolbar-project-zip');
-    const labelContainer = document.getElementById('label-download-project-zip');
-    if (labelToolbar) labelToolbar.innerText = "⏳ Generating ZIP...";
-    if (labelContainer) labelContainer.innerText = "⏳ Generating ZIP...";
-
     // Fetched rather than navigated to. The endpoint answers errors as JSON, so
     // window.location.assign() rendered "{"detail":"Room not found"}" as a page --
     // unloading the studio, dropping the websocket and throwing the host out of
     // their own session over a failed download.
-    let objectUrl = null;
-    try {
-      const res = await fetch(zipUrl);
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          detail = (await res.json())?.detail || detail;
-        } catch { /* not JSON; the status is all we have */ }
-        throw new Error(detail);
-      }
-
-      const blob = await res.blob();
-      objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = objectUrl;
-      a.setAttribute('download', `DubMate_Project_${packName}_${roomId}.zip`);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      this.showToast("📦 Project ZIP downloaded.");
-    } catch (err) {
-      this.showToast(`❌ ${this.friendlyError(err, "Couldn't build the project ZIP. Please try again.")}`);
-    } finally {
-      if (objectUrl) {
-        // Revoked late so the browser has definitely started the save.
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-      }
-      setTimeout(() => {
-        if (labelToolbar) labelToolbar.innerText = "📦 Download Full Project (.zip)";
-        if (labelContainer) labelContainer.innerText = "📦 Download Full Project (.zip)";
-      }, 3000);
-    }
+    return this.saveRemoteFile(zipUrl, `DubMate_Project_${packName}_${roomId}.zip`, {
+      control,
+      busyText: '⏳ Generating ZIP…',
+      startMessage: "📦 Packaging Full Project ZIP (MP3 Stems, Takes & Video)... Download starting!",
+      doneMessage: "📦 Project ZIP downloaded.",
+      errorText: "Couldn't build the project ZIP. Please try again.",
+    });
   }
 }
 

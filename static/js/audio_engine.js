@@ -10,7 +10,9 @@ export class AudioEngine {
 
     // Buffer Caches & In-Flight Request Deduplication
     this.bufferCache = new Map();
-    this.pitchShiftCache = new Map();
+    // Source AudioBuffer -> Map<semitones.toFixed(2), shifted AudioBuffer>. Keyed by
+    // buffer identity, so shifted copies die with their source buffer.
+    this.pitchShiftCache = new WeakMap();
     this.inFlightRequests = new Map();
 
     // Active Audio Nodes
@@ -147,9 +149,14 @@ export class AudioEngine {
       return inputBuffer;
     }
 
-    const cacheKey = `${inputBuffer.duration}_${inputBuffer.length}_${pitchSemitones.toFixed(2)}`;
-    if (this.pitchShiftCache.has(cacheKey)) {
-      return this.pitchShiftCache.get(cacheKey);
+    let shiftedBySemitones = this.pitchShiftCache.get(inputBuffer);
+    if (!shiftedBySemitones) {
+      shiftedBySemitones = new Map();
+      this.pitchShiftCache.set(inputBuffer, shiftedBySemitones);
+    }
+    const semitonesKey = pitchSemitones.toFixed(2);
+    if (shiftedBySemitones.has(semitonesKey)) {
+      return shiftedBySemitones.get(semitonesKey);
     }
 
     this.initContext();
@@ -198,7 +205,7 @@ export class AudioEngine {
       }
     }
 
-    this.pitchShiftCache.set(cacheKey, outBuffer);
+    shiftedBySemitones.set(semitonesKey, outBuffer);
     return outBuffer;
   }
 
@@ -530,22 +537,20 @@ export class AudioEngine {
     this.monitorByteData = null;
   }
 
+  /** First MediaRecorder type the webview supports; '' lets the browser choose. */
+  _pickRecorderMimeType() {
+    for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
+  }
+
   async startRecording() {
     this.initContext();
     await this.requestMicrophone();
     this.audioChunks = [];
 
-    let mimeType = 'audio/webm;codecs=opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'audio/webm';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/mp4';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = '';
-        }
-      }
-    }
-
+    const mimeType = this._pickRecorderMimeType();
     const options = mimeType ? { mimeType } : {};
     this.mediaRecorder = new MediaRecorder(this.stream, options);
 
@@ -612,10 +617,7 @@ export class AudioEngine {
     await this.requestMicrophone();
 
     return new Promise((resolve, reject) => {
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-      }
+      const mimeType = this._pickRecorderMimeType();
       const options = mimeType ? { mimeType } : {};
       const recorder = new MediaRecorder(this.stream, options);
       const chunks = [];
@@ -717,7 +719,8 @@ export class AudioEngine {
         }
       }
     }
-    this.pitchShiftCache.clear();
+    // pitchShiftCache needs no clearing: it is keyed by buffer identity, so
+    // shifted copies go when the evicted source buffer does.
   }
 
   async loadAudioBuffer(url, bypassCache = false) {
@@ -746,21 +749,7 @@ export class AudioEngine {
         const copy = arrayBuffer.slice(0);
         let audioBuffer = null;
         try {
-          audioBuffer = await new Promise((resolve, reject) => {
-            let handled = false;
-            try {
-              const res = this.ctx.decodeAudioData(
-                copy,
-                (buf) => { if (!handled) { handled = true; resolve(buf); } },
-                (err) => { if (!handled) { handled = true; reject(err); } }
-              );
-              if (res && typeof res.then === 'function') {
-                res.then((buf) => { if (!handled) { handled = true; resolve(buf); } }).catch((err) => { if (!handled) { handled = true; reject(err); } });
-              }
-            } catch (e) {
-              if (!handled) { handled = true; reject(e); }
-            }
-          });
+          audioBuffer = await this.ctx.decodeAudioData(copy);
         } catch (decodeErr) {
           console.warn(`[AudioEngine] decodeAudioData failed (${url}):`, decodeErr);
           return null;
