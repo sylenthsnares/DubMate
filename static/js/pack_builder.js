@@ -40,6 +40,11 @@ export class PackBuilderApp {
     this.pixelsPerSecond = 80; // Zoom factor
     this.selectedSegmentIndex = null;
     this.activeAudioTrack = 'vocals'; // 'vocals' | 'full'
+    // False when separation fell back to the basic filter: there is no voice track to play.
+    this.voicesSeparated = true;
+    // True while 'full' was forced (fallback or no voice track) rather than chosen.
+    this.audioTrackForced = false;
+    this.editorSessionId = null;
 
     // Drag & Pan States
     this.isDragging = false;
@@ -152,9 +157,11 @@ export class PackBuilderApp {
     this.stageExtract = document.getElementById('stage-extract');
     this.stageStems = document.getElementById('stage-stems');
     this.stageWhisper = document.getElementById('stage-whisper');
+    this.stageSpeakers = document.getElementById('stage-speakers');
 
     // Step 3: Editor elements
     this.editorVideo = document.getElementById('editor-video');
+    this.editorStemAudio = document.getElementById('editor-stem-audio');
     this.videoTimeDisplay = document.getElementById('video-time-display');
     this.btnToggleAudioTrack = document.getElementById('btn-toggle-audio-track');
     this.labelActiveTrack = document.getElementById('label-active-track');
@@ -192,6 +199,7 @@ export class PackBuilderApp {
     this.characterChipsList = document.getElementById('character-chips-list');
     this.btnAddCharacter = document.getElementById('btn-add-character');
     this.segmentsListContainer = document.getElementById('segments-list-container');
+    this.editorNotice = document.getElementById('editor-notice');
     this.btnProceedToCompile = document.getElementById('btn-proceed-to-compile');
 
     // Step 4: Compile inputs
@@ -292,16 +300,26 @@ export class PackBuilderApp {
     this.editorVideo.addEventListener('play', () => this.onVideoPlayState(true));
     this.editorVideo.addEventListener('pause', () => this.onVideoPlayState(false));
     this.editorVideo.addEventListener('ended', () => this.onVideoPlayState(false));
+    // The video is the clock; the voice track follows it.
+    this.editorVideo.addEventListener('seeking', () => {
+      this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+    });
+    this.editorVideo.addEventListener('ratechange', () => {
+      this.editorStemAudio.playbackRate = this.editorVideo.playbackRate;
+    });
+    this.editorVideo.addEventListener('pause', () => this.editorStemAudio.pause());
+    this.editorVideo.addEventListener('ended', () => this.editorStemAudio.pause());
+    this.editorStemAudio.addEventListener('error', () => this.fallbackToFullAudio());
     this.btnStepBackward.addEventListener('click', () => this.seekRelative(-1.0));
     this.btnStepForward.addEventListener('click', () => this.seekRelative(1.0));
 
     // 6. Audio track switch (vocals only vs full audio)
-    this.btnToggleAudioTrack.addEventListener('click', async () => {
-      this.activeAudioTrack = this.activeAudioTrack === 'vocals' ? 'full' : 'vocals';
-      this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Voices only' : 'Full audio';
-      await this.fetchWaveformPeaks(this.activeAudioTrack);
-      this.renderWaveformCanvas();
-      this.showToast(`Showing ${this.labelActiveTrack.innerText.toLowerCase()}`);
+    this.btnToggleAudioTrack.addEventListener('click', () => {
+      if (!this.voicesSeparated) return; // nothing to switch to; the tooltip says why
+      this.audioTrackForced = false;
+      const next = this.activeAudioTrack === 'vocals' ? 'full' : 'vocals';
+      this.showToast(next === 'vocals' ? 'Playing voices only' : 'Playing full audio');
+      this.setAudioTrack(next);
     });
 
     // 7. Timeline In / Out / Add Cue Markers / Whisper Transcribe
@@ -330,8 +348,10 @@ export class PackBuilderApp {
       }
     }, { passive: false });
 
-    // 10. Timeline Canvas Pan (Grab to Pan & Click to Seek)
-    this.timelineScrollWrap.addEventListener('mousedown', (e) => {
+    // 10. Timeline Canvas Pan (Grab to Pan & Click to Seek). Pointer Events
+    // cover mouse, touch and pen with one path.
+    this.timelineScrollWrap.addEventListener('pointerdown', (e) => {
+      if (e.isPrimary === false) return;
       // Don't initiate pan if clicked on a segment handle, block, delete button, or interactive element
       if (e.target.closest('.builder-segment-handle') || e.target.closest('.builder-segment-block') || e.target.closest('.segment-inline-delete-btn') || e.target.closest('button') || e.target.closest('input')) {
         return;
@@ -342,11 +362,13 @@ export class PackBuilderApp {
       this.hasMovedPastThreshold = false;
       this.timelineScrollWrap.classList.add('panning');
       document.body.style.userSelect = 'none';
+      this.capturePointer(this.timelineScrollWrap, e);
     });
 
-    // 11. Drag handlers for segment blocks, handles, and panning
-    window.addEventListener('mousemove', (e) => this.handleGlobalMouseMove(e));
-    window.addEventListener('mouseup', (e) => this.handleGlobalMouseUp(e));
+    // 11. Drag handlers for segment blocks, handles, panning and the splitter
+    window.addEventListener('pointermove', (e) => this.handleGlobalPointerMove(e));
+    window.addEventListener('pointerup', (e) => this.handleGlobalPointerUp(e));
+    window.addEventListener('pointercancel', (e) => this.handleGlobalPointerUp(e, true));
 
     // 12. Character management
     this.btnAddCharacter.addEventListener('click', () => this.promptAddCharacter());
@@ -389,9 +411,11 @@ export class PackBuilderApp {
       document.body.classList.add('resizing-timeline');
     };
 
-    this.timelineSplitterHandle.addEventListener('mousedown', (e) => {
+    this.timelineSplitterHandle.addEventListener('pointerdown', (e) => {
+      if (e.isPrimary === false) return;
       e.preventDefault();
       startResize(e.clientY);
+      this.capturePointer(this.timelineSplitterHandle, e);
     });
 
     // Double-click to reset to default height (240px)
@@ -744,13 +768,11 @@ export class PackBuilderApp {
         this.stageExtract.classList.toggle('active', status === 'extracting_audio');
         this.stageStems.classList.toggle('active', status === 'separating_stems');
         this.stageWhisper.classList.toggle('active', status === 'transcribing');
+        this.stageSpeakers.classList.toggle('active', status === 'detecting_speakers');
 
         if (status === 'transcribed') {
           sse.close();
-          this.segments = data.segments || this.segments;
-          setTimeout(() => {
-            this.setStep('editor');
-          }, 600);
+          setTimeout(() => this.openEditor(data), 600);
         } else if (status === 'error') {
           sse.close();
           this.processHeadline.innerText = 'Processing stopped';
@@ -778,11 +800,14 @@ export class PackBuilderApp {
         this.builderProgressFill.style.width = `${pct}%`;
         this.processPercentText.innerText = `${pct}%`;
         this.processStageText.innerText = data.message || 'Processing';
+        this.stageExtract.classList.toggle('active', data.status === 'extracting_audio');
+        this.stageStems.classList.toggle('active', data.status === 'separating_stems');
+        this.stageWhisper.classList.toggle('active', data.status === 'transcribing');
+        this.stageSpeakers.classList.toggle('active', data.status === 'detecting_speakers');
 
         if (data.status === 'transcribed') {
           clearInterval(interval);
-          this.segments = data.segments || this.segments;
-          this.setStep('editor');
+          this.openEditor(data);
         } else if (data.status === 'error') {
           clearInterval(interval);
           this.processHeadline.innerText = 'Processing stopped';
@@ -797,11 +822,48 @@ export class PackBuilderApp {
     }, 1000);
   }
 
+  /** Opens the editor on finished processing: lines, the server's notice and a result toast. */
+  openEditor(data) {
+    this.segments = data.segments || this.segments;
+    // Only an explicit false means no voice track; older engines don't send the flag.
+    this.voicesSeparated = data.voices_separated !== false;
+    const notice = (data.warning || '').trim();
+    this.editorNotice.textContent = notice;
+    this.editorNotice.hidden = !notice;
+    this.setStep('editor');
+    const total = this.segments.length;
+    const noWords = this.segments.filter(s => s.nonverbal).length;
+    let summary = `Found ${total} line${total === 1 ? '' : 's'}`;
+    if (noWords) summary += `, ${noWords} without words`;
+    this.showToast(summary);
+  }
+
   // --- STEP 3: Timeline & Cue Editor ---
 
   async setupEditorView() {
     this.editorVideo.src = `/api/builder/${this.sessionId}/video`;
     this.editorVideo.load();
+    if (this.editorSessionId !== this.sessionId) {
+      this.editorSessionId = this.sessionId;
+      // A fallback in an earlier session doesn't carry over to this one.
+      if (this.audioTrackForced) {
+        this.activeAudioTrack = 'vocals';
+        this.audioTrackForced = false;
+      }
+      if (this.voicesSeparated) {
+        this.editorStemAudio.src = `/api/builder/${this.sessionId}/audio/vocals`;
+        this.editorStemAudio.load();
+      } else {
+        // The basic filter's "voice" track is the full mix, so there is nothing to request.
+        this.editorStemAudio.removeAttribute('src');
+        if (this.activeAudioTrack === 'vocals') {
+          this.activeAudioTrack = 'full';
+          this.audioTrackForced = true;
+        }
+      }
+    }
+    this.updateAudioTrackToggle();
+    this.editorVideo.muted = this.activeAudioTrack === 'vocals';
     this.editorVideo.addEventListener('loadeddata', () => {
       if (this.editorVideo.duration && !isNaN(this.editorVideo.duration) && this.editorVideo.duration > 0) {
         this.duration = this.editorVideo.duration;
@@ -841,6 +903,8 @@ export class PackBuilderApp {
       const res = await fetch(`/api/builder/${this.sessionId}/waveform?columns=1200&track=${track}`);
       if (res.ok) {
         const data = await res.json();
+        // A later switch of track wins over a slower earlier request.
+        if (track !== (this.activeAudioTrack || 'vocals')) return;
         this.waveformPeaks = data.peaks || [];
         if (data.duration > 0) {
           this.duration = data.duration;
@@ -1168,7 +1232,7 @@ export class PackBuilderApp {
 
       const label = document.createElement('div');
       label.className = 'segment-block-label';
-      label.innerText = `[${seg.character}] ${seg.text || '...'}`;
+      label.innerText = `[${seg.character}] ${seg.text || '(no words)'}`;
 
       // Inline Delete Action Button right on the block
       const deleteBtn = document.createElement('button');
@@ -1178,11 +1242,11 @@ export class PackBuilderApp {
       deleteBtn.setAttribute('aria-label', 'Delete line');
       deleteBtn.dataset.tip = 'Delete line';
 
-      // Prevent mousedown / mouseup from triggering segment block drag or deselect
-      deleteBtn.addEventListener('mousedown', (e) => {
+      // Prevent pointerdown / pointerup from triggering segment block drag or deselect
+      deleteBtn.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
       });
-      deleteBtn.addEventListener('mouseup', (e) => {
+      deleteBtn.addEventListener('pointerup', (e) => {
         e.stopPropagation();
       });
       deleteBtn.addEventListener('click', (e) => {
@@ -1198,8 +1262,10 @@ export class PackBuilderApp {
       block.appendChild(contentWrap);
       block.appendChild(handleR);
 
-      // Mouse drag handlers on segment block
-      block.addEventListener('mousedown', (e) => {
+      // Drag handlers on segment block (mouse, touch and pen). Capture goes on
+      // the scroll wrap: this block is replaced by every re-render mid-drag.
+      block.addEventListener('pointerdown', (e) => {
+        if (e.isPrimary === false) return;
         if (e.target.closest('.segment-inline-delete-btn')) {
           e.stopPropagation();
           return;
@@ -1210,6 +1276,7 @@ export class PackBuilderApp {
           this.selectSegment(idx);
           this.startDrag(idx, 'move', e.clientX, e.clientY);
         }
+        this.capturePointer(this.timelineScrollWrap, e);
         e.stopPropagation();
       });
 
@@ -1246,6 +1313,7 @@ export class PackBuilderApp {
           <div class="cue-index-wrap">
             <span class="cue-dot" style="background: ${color};"></span>
             <span class="cue-number">#${idx + 1}</span>
+            ${seg.nonverbal ? `<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${(seg.text || '').trim() ? ' hidden' : ''}>No words</span>` : ''}
           </div>
           <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
           <div style="display: flex; gap: 4px; align-items: center;">
@@ -1275,7 +1343,7 @@ export class PackBuilderApp {
               <span>Play</span>
             </button>
           </div>
-          <textarea class="form-input cue-text-input" rows="2" placeholder="Line text" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
+          <textarea class="form-input cue-text-input" rows="2" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
         </div>
       `;
 
@@ -1314,6 +1382,7 @@ export class PackBuilderApp {
       const textInput = card.querySelector('.cue-text-input');
       textInput.addEventListener('input', (e) => {
         this.segments[idx].text = e.target.value;
+        this.updateNonverbalBadge(idx);
       });
       textInput.addEventListener('change', () => {
         this.renderTimelineSegments();
@@ -1458,7 +1527,25 @@ export class PackBuilderApp {
     document.body.style.userSelect = 'none';
   }
 
-  handleGlobalMouseMove(e) {
+  /** Keeps a drag's pointer events coming to `el` even when the pointer leaves it. */
+  capturePointer(el, e) {
+    this._pointerId = e.pointerId;
+    this._pointerCaptureEl = el;
+    try { el.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
+  }
+
+  releaseCapturedPointer() {
+    const el = this._pointerCaptureEl;
+    const id = this._pointerId;
+    this._pointerCaptureEl = null;
+    this._pointerId = null;
+    try {
+      if (el && el.hasPointerCapture(id)) el.releasePointerCapture(id);
+    } catch (err) { /* pointer already gone */ }
+  }
+
+  handleGlobalPointerMove(e) {
+    if (this._pointerId != null && e.pointerId !== this._pointerId) return;
     // 0. Handle Timeline Vertical Resizing
     if (this.isResizingTimeline) {
       const clientY = e.clientY;
@@ -1526,7 +1613,10 @@ export class PackBuilderApp {
     this.updateCardTimecode(this.dragSegmentIndex);
   }
 
-  handleGlobalMouseUp(e) {
+  /** Ends a drag, pan or resize. A cancelled pointer (`cancelled`) never seeks or selects. */
+  handleGlobalPointerUp(e, cancelled = false) {
+    if (this._pointerId != null && e.pointerId !== this._pointerId) return;
+    this.releaseCapturedPointer();
     // 0. End Timeline Vertical Resizing
     if (this.isResizingTimeline) {
       this.isResizingTimeline = false;
@@ -1552,7 +1642,7 @@ export class PackBuilderApp {
       document.body.style.userSelect = '';
 
       // If user clicked without dragging, seek to click position
-      if (!this.hasMovedPastThreshold && e && e.target) {
+      if (!cancelled && !this.hasMovedPastThreshold && e && e.target) {
         const rect = this.timelineViewport.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const targetTime = Math.max(0, Math.min(this.duration, clickX / this.pixelsPerSecond));
@@ -1575,11 +1665,19 @@ export class PackBuilderApp {
         this.renderTimelineSegments();
         this.renderSegmentsList();
         this.syncSegmentsToServer();
-      } else if (modifiedIdx !== null && this.segments[modifiedIdx]) {
+      } else if (!cancelled && modifiedIdx !== null && this.segments[modifiedIdx]) {
         this.selectSegment(modifiedIdx);
         this.seekTo(this.segments[modifiedIdx].start);
       }
     }
+  }
+
+  /** "No words" only while a line found without words still has no text. */
+  updateNonverbalBadge(idx) {
+    const card = document.getElementById(`cue-card-${idx}`);
+    const badge = card ? card.querySelector('.cue-nonverbal-badge') : null;
+    const seg = this.segments[idx];
+    if (badge && seg) badge.hidden = !!(seg.text || '').trim();
   }
 
   updateCardTimecode(idx) {
@@ -1596,9 +1694,89 @@ export class PackBuilderApp {
 
   togglePlayPause() {
     if (this.editorVideo.paused) {
-      this.editorVideo.play();
+      this.playMedia();
     } else {
-      this.editorVideo.pause();
+      this.pauseMedia();
+    }
+  }
+
+  // Both elements start in the same call stack so the user's click still counts
+  // as the gesture that allows playback.
+  playMedia() {
+    if (this.activeAudioTrack === 'vocals') {
+      this.editorVideo.muted = true;
+      this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+      this.playStemAudio();
+    } else {
+      this.editorVideo.muted = false;
+      this.editorStemAudio.pause();
+    }
+    const played = this.editorVideo.play();
+    if (played && played.catch) played.catch(() => {});
+  }
+
+  pauseMedia() {
+    this.editorVideo.pause();
+    this.editorStemAudio.pause();
+  }
+
+  playStemAudio() {
+    const played = this.editorStemAudio.play();
+    if (played && played.catch) {
+      played.catch((err) => {
+        // AbortError only means a pause came before play started.
+        if (err && err.name === 'AbortError') return;
+        this.fallbackToFullAudio();
+      });
+    }
+  }
+
+  async setAudioTrack(track) {
+    this.activeAudioTrack = track;
+    this.updateAudioTrackToggle();
+    if (track === 'vocals') {
+      this.editorVideo.muted = true;
+      if (!this.editorVideo.paused) {
+        this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+        this.playStemAudio();
+      }
+    } else {
+      this.editorVideo.muted = false;
+      this.editorStemAudio.pause();
+    }
+    await this.fetchWaveformPeaks(track);
+    this.renderWaveformCanvas();
+  }
+
+  /** The toggle's label, and whether it can switch at all (not without a voice track). */
+  updateAudioTrackToggle() {
+    this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Voices only' : 'Full audio';
+    const btn = this.btnToggleAudioTrack;
+    // aria-disabled rather than disabled, so the tooltip still opens on hover and focus.
+    if (this.voicesSeparated) {
+      btn.removeAttribute('aria-disabled');
+      btn.setAttribute('data-tip', 'Hear and see voices only, or the full audio');
+    } else {
+      btn.setAttribute('aria-disabled', 'true');
+      btn.setAttribute('data-tip', "Voices weren't separated for this video, so only the full audio can play.");
+    }
+  }
+
+  fallbackToFullAudio() {
+    if (this.activeAudioTrack !== 'vocals') return;
+    this.audioTrackForced = true;
+    this.setAudioTrack('full');
+    // Tell the user once per session; later failures switch back quietly.
+    if (this.stemFallbackSessionId === this.sessionId) return;
+    this.stemFallbackSessionId = this.sessionId;
+    this.showToast("Voices-only playback isn't available, so you're hearing the full audio.");
+  }
+
+  syncStemAudio() {
+    if (this.activeAudioTrack !== 'vocals' || this.editorVideo.paused) return;
+    const audio = this.editorStemAudio;
+    if (Math.abs(audio.currentTime - this.editorVideo.currentTime) > 0.1) {
+      audio.currentTime = this.editorVideo.currentTime;
     }
   }
 
@@ -1623,6 +1801,7 @@ export class PackBuilderApp {
   startPlaybackLoop() {
     const loop = () => {
       this.updatePlayheadPosition();
+      this.syncStemAudio();
       this.animationFrameId = requestAnimationFrame(loop);
     };
     this.animationFrameId = requestAnimationFrame(loop);
@@ -1736,11 +1915,11 @@ export class PackBuilderApp {
     const seg = this.segments[idx];
     if (!seg) return;
     this.seekTo(seg.start);
-    this.editorVideo.play();
+    this.playMedia();
     const playDuration = (seg.end - seg.start) * 1000;
     setTimeout(() => {
       if (!this.editorVideo.paused && this.editorVideo.currentTime >= seg.end - 0.1) {
-        this.editorVideo.pause();
+        this.pauseMedia();
       }
     }, playDuration);
   }
@@ -1787,6 +1966,7 @@ export class PackBuilderApp {
         if (data.text && data.text.trim()) {
           seg.text = data.text.trim();
           if (textInputEl) textInputEl.value = seg.text;
+          this.updateNonverbalBadge(idx);
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
           this.showToast(`Line ${idx + 1}: "${seg.text}"`);
@@ -1833,6 +2013,7 @@ export class PackBuilderApp {
         if (data.romaji && data.romaji.trim()) {
           seg.text = data.romaji.trim();
           if (textInputEl) textInputEl.value = seg.text;
+          this.updateNonverbalBadge(idx);
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
           this.showToast(`Line ${idx + 1}: "${seg.text}"`);
@@ -1871,7 +2052,7 @@ export class PackBuilderApp {
     }
 
     this.setStep('compile');
-    this.editorVideo.pause();
+    this.pauseMedia();
 
     const savedUser = localStorage.getItem('dubmate_user_name') || '';
     this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.innerText.replace(/\.[^/.]+$/, '');

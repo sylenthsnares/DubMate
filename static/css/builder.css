@@ -713,6 +713,15 @@ body:has(#view-step-editor.active) .builder-main-container {
   color: var(--white);
 }
 
+/* No voice track to switch to: looks unavailable but still shows its tooltip. */
+.btn-audio-source-toggle[aria-disabled="true"],
+.btn-audio-source-toggle[aria-disabled="true"]:hover {
+  color: var(--foreground-dim);
+  background: transparent;
+  border-color: var(--border-panel);
+  cursor: not-allowed;
+}
+
 .deck-tier-bottom {
   display: flex;
   align-items: center;
@@ -1048,6 +1057,7 @@ body.resizing-timeline * {
   background: rgba(10, 8, 6, 0.9);
   height: 100%;
   min-height: 0;
+  touch-action: none;
 }
 
 .timeline-canvas-scroll-container.panning {
@@ -1125,6 +1135,7 @@ body.resizing-timeline * {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  touch-action: none;
 }
 
 .builder-segment-block:hover {
@@ -1146,11 +1157,20 @@ body.resizing-timeline * {
   opacity: 0.8;
   transition: opacity 120ms ease, width 120ms ease;
   z-index: 5;
+  touch-action: none;
 }
 
 .builder-segment-handle:hover {
   opacity: 1;
   width: 10px;
+}
+
+/* Fingers need bigger handles than a mouse pointer. */
+@media (pointer: coarse) {
+  .builder-segment-handle,
+  .builder-segment-handle:hover {
+    width: 16px;
+  }
 }
 
 .handle-left {
@@ -1454,6 +1474,33 @@ body.resizing-timeline * {
   font-size: 12px;
   font-weight: 800;
   color: var(--foreground);
+}
+
+.cue-nonverbal-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--foreground-dim);
+  border: 1px solid currentColor;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  cursor: help;
+}
+
+.cue-nonverbal-badge[hidden] {
+  display: none;
+}
+
+.editor-notice {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--accent-brass);
+  background: rgba(204, 164, 88, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+.editor-notice[hidden] {
+  display: none;
 }
 
 .cue-timecode-badge {

@@ -9,6 +9,9 @@
 - **Update Progress**: desktop updates show real download progress instead of jumping to 100%.
 - **macOS Room Codes Launcher**: `run_cloudflare.sh` starts DubMate with a public room code on macOS source installs.
 - **Tooltips**: secondary explanations moved into tooltips that also open on keyboard focus.
+- **Pack Builder Touch and Pen**: the timeline works with touch and pen.
+- **Pack Builder Lines Without Words**: grunts, efforts, screams and laughs the transcript skipped become lines to record, marked "No words".
+- **Pack Builder Notices**: the editor now shows processing notices, such as when voices couldn't be fully separated.
 - **Take History**: recording a line again keeps every take. Open Takes to listen to them and choose the one used in the dub. Picks and deletes show up for everyone in the room.
 - **Sync Your Mic**: sync your mic once in Audio settings and new takes start in time.
 - **Takes Line Up Automatically**: takes now line up with the original line automatically. Use [ and ] to adjust; Auto goes back.
@@ -23,6 +26,8 @@
 - **Smaller Install**: scipy is no longer needed.
 - **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
+- **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
+- **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
 - **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 
 ### Removed

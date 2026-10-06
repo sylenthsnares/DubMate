@@ -355,6 +355,12 @@ Common pitfalls when working on the desktop app and room registry:
 
 DubMate is open-source software licensed under the **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
 
+Speaker detection models (downloaded on first use, not bundled):
+
+- pyannote segmentation-3.0, ONNX export: MIT (CNRS). Its LICENSE file is saved next to the model.
+- 3D-Speaker CAM++ speaker embedding (`campplus_sv_zh_en_16k-common_advanced`): Apache-2.0.
+- sherpa-onnx (the runtime that uses them, installed with the Pack Builder): Apache-2.0.
+
 ---
 
 ## ⚖️ Fair Use & Media Disclaimer
