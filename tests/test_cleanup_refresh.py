@@ -2,8 +2,9 @@
 """
 test_cleanup_refresh.py
 Refresh older takes: POST /api/rooms/{room}/cleanup/refresh moves one person's takes to
-their latest room check and re-cleans them in the background; renders are refused (or
-wait, for the premiere) while it runs.
+their latest room check and re-cleans them in the background, switching a take's settings
+only once its new audio is written; renders are refused (or wait, for the premiere) while
+it runs.
 """
 
 import os
@@ -94,45 +95,84 @@ class TestCleanupRefresh(RefreshCase):
         on = self._take("t1000", "kon", "u1", gain_db=0.0, auto_gain_db=0.0)
         off = self._take("t3000", "koff", "u1", noise_reduction=False)
         ready = self._take("t5000", "kready", "u1")
+        current = self._take("t3000", "kcurrent", "u1", nr_settings=self.settings)
         other = self._take("t1000", "kother", "u2")
-        ap.write_wav_mono(ap.denoised_take_path(ap.take_dir(self.ROOM, "t5000"), "kready", self.settings),
-                          ap.read_wav_mono(self._paths("t5000", "kready")[1]), SR)
-        raw_before = {t["take_id"]: self._read(self._paths(line, t["take_id"])[1])
-                      for line, t in (("t1000", on), ("t3000", off), ("t5000", ready), ("t1000", other))}
-        active_before = self._read(self._paths("t1000", "kon")[0])
+        # kready has a cleaned file for the new settings but plays standard cleanup: its
+        # active audio is rewritten from that file without cleaning again. kcurrent already
+        # plays the new cleaning and is left alone.
+        for line, take_id in (("t5000", "kready"), ("t3000", "kcurrent")):
+            ap.write_wav_mono(ap.denoised_take_path(ap.take_dir(self.ROOM, line), take_id, self.settings),
+                              ap.read_wav_mono(self._paths(line, take_id)[1]) * 0.25, SR)
+        everyone = (("t1000", on), ("t3000", off), ("t5000", ready), ("t3000", current), ("t1000", other))
+        raw_before = {t["take_id"]: self._read(self._paths(line, t["take_id"])[1]) for line, t in everyone}
+        active_before = {t["take_id"]: self._read(self._paths(line, t["take_id"])[0]) for line, t in everyone}
 
-        self.assertEqual(self._refresh(), {"status": "ok", "refreshing": 1})
+        self.assertEqual(self._refresh(), {"status": "ok", "refreshing": 2})
         self._wait()
 
-        for take in (on, off, ready):
+        for take in (on, off, ready, current):
             self.assertEqual(take["nr_settings"], self.settings)
         self.assertNotIn("nr_settings", other)
         self.assertEqual(self.nr.call_count, 1)
         self.assertEqual(self.nr.call_args.args[0], self._paths("t1000", "kon")[1])
         self.assertEqual(self.nr.call_args.kwargs["settings"], self.settings)
         self.assertNotEqual(on["audio_version"], 1)
-        self.assertEqual(off["audio_version"], 1)
-        self.assertEqual(other["audio_version"], 1)
-        self.assertNotEqual(self._read(self._paths("t1000", "kon")[0]), active_before)
-        self.assertTrue(os.path.isfile(ap.denoised_take_path(ap.take_dir(self.ROOM, "t1000"), "kon", self.settings)))
-        for line, t in (("t1000", on), ("t3000", off), ("t5000", ready), ("t1000", other)):
+        self.assertNotEqual(ready["audio_version"], 1)
+        for take in (off, current, other):
+            self.assertEqual(take["audio_version"], 1)
+        for line, take_id in (("t1000", "kon"), ("t5000", "kready")):
+            self.assertNotEqual(self._read(self._paths(line, take_id)[0]), active_before[take_id])
+            self.assertTrue(os.path.isfile(ap.denoised_take_path(ap.take_dir(self.ROOM, line), take_id, self.settings)))
+        for line, t in (("t3000", off), ("t3000", current), ("t1000", other)):
+            self.assertEqual(self._read(self._paths(line, t["take_id"])[0]), active_before[t["take_id"]])
+        for line, t in everyone:
             self.assertEqual(self._read(self._paths(line, t["take_id"])[1]), raw_before[t["take_id"]])
 
         updated = self._types("take_params_updated")
-        self.assertEqual(len(updated), 1)
-        self.assertEqual(updated[0]["take_id"], "kon")
-        self.assertEqual(updated[0]["line_id"], "t1000")
-        self.assertTrue(updated[0]["noise_reduction"])
+        self.assertEqual([(p["line_id"], p["take_id"]) for p in updated], [("t1000", "kon"), ("t5000", "kready")])
+        self.assertTrue(all(p["noise_reduction"] for p in updated))
         self.assertEqual(updated[0]["url"], self.room.wire_take("t1000", on)["url"])
-        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 1}])
+        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 2, "failed": 0}])
         self.assertEqual(self.room.cleanup_refreshing, {})
+
+    def test_a_take_that_fails_keeps_its_settings_and_sound(self):
+        settings_before = {"profile_id": "aaaaaaaaaaaa", "attenuation_db": 12, "notches_hz": []}
+        bad = self._take("t1000", "kbad", "u1", nr_settings=settings_before, gain_db=0.0, auto_gain_db=0.0)
+        good = self._take("t5000", "kgood", "u1")
+        bad_before = dict(bad)
+        active_before = self._read(self._paths("t1000", "kbad")[0])
+        clean = self._fake_clean
+
+        def clean_or_fail(src, dst, *a, **k):
+            if os.path.basename(src).startswith("kbad"):
+                raise RuntimeError("cleanup crashed")
+            return clean(src, dst, *a, **k)
+
+        self.nr.side_effect = clean_or_fail
+        self.assertEqual(self._refresh()["refreshing"], 2)
+        self._wait()
+
+        self.assertEqual(bad, bad_before)
+        self.assertEqual(self._read(self._paths("t1000", "kbad")[0]), active_before)
+        self.assertEqual(good["nr_settings"], self.settings)
+        self.assertEqual([p["take_id"] for p in self._types("take_params_updated")], ["kgood"])
+        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 1, "failed": 1}])
+        self.assertEqual(self.room.cleanup_refreshing, {})
+
+    def test_line_outside_the_pack_keeps_a_cleaned_takes_settings(self):
+        away_on = self._take("t9000", "kaway", "u1")
+        away_off = self._take("t9000", "kraw", "u1", noise_reduction=False)
+        self.assertEqual(self._refresh()["refreshing"], 0)
+        self.assertNotIn("nr_settings", away_on)
+        self.assertEqual(away_off["nr_settings"], self.settings)
+        self.nr.assert_not_called()
 
     def test_nothing_to_reclean_reports_at_once(self):
         take = self._take("t3000", "koff", "u1", noise_reduction=False)
         self.assertEqual(self._refresh(), {"status": "ok", "refreshing": 0})
         self.assertIsNone(self.room.cleanup_refresh_task)
         self.assertEqual(take["nr_settings"], self.settings)
-        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 0}])
+        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 0, "failed": 0}])
         self.assertEqual(self.room.cleanup_refreshing, {})
         self.nr.assert_not_called()
 
@@ -175,7 +215,7 @@ class TestRefreshWhileRunning(RefreshCase):
         self.gate.set()
         self._wait()
         self.assertEqual(self.nr.call_count, 2)
-        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 2}])
+        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 2, "failed": 0}])
 
     def test_renders_and_project_zip_are_refused_until_it_ends(self):
         self._refresh()
@@ -202,8 +242,39 @@ class TestRefreshWhileRunning(RefreshCase):
         self._wait()
         self.assertEqual(self.nr.call_count, 1)
         self.assertEqual([p["take_id"] for p in self._types("take_params_updated")], ["ka"])
-        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 1}])
+        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 1, "failed": 0}])
         self.assertIsNone(self.room.find_take("t5000", "kb"))
+
+    def test_settings_switch_only_once_the_take_is_recleaned(self):
+        self._refresh()
+        # The first take is inside its clean: neither take has the new settings yet.
+        self.assertNotIn("nr_settings", self.first)
+        self.assertNotIn("nr_settings", self.second)
+        self.gate.set()
+        self._wait()
+        self.assertEqual(self.first["nr_settings"], self.settings)
+        self.assertEqual(self.second["nr_settings"], self.settings)
+
+    def test_take_switched_to_raw_meanwhile_just_gets_the_settings(self):
+        self._refresh()
+
+        # As the toggle route does it, under the processing lock: it lands after the
+        # first clean and before the second.
+        waiting = threading.Event()
+
+        async def to_raw():
+            waiting.set()
+            async with self.room.processing_lock:
+                self.second["noise_reduction"] = False
+
+        self.client.portal.start_task_soon(to_raw)
+        self.assertTrue(waiting.wait(10))
+        self.gate.set()
+        self._wait()
+        self.assertEqual(self.nr.call_count, 1)
+        self.assertEqual(self.second["nr_settings"], self.settings)
+        self.assertEqual(self.second["audio_version"], 1)
+        self.assertEqual(self._types("cleanup_refreshed"), [{"user_id": "u1", "count": 1, "failed": 0}])
 
     def test_premiere_waits_for_the_refresh(self):
         self.room.host_id = "hostT"

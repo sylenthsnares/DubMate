@@ -561,12 +561,15 @@ export class RoomCheckMethods {
     this.renderRoomCheckRow();
   }
 
-  /** The cleanup_refreshed message: my older takes are done. */
+  /** The cleanup_refreshed message: my older takes are done. Takes that failed keep their sound. */
   onCleanupRefreshed(data) {
     if (!this.applyIncomingState(data)) return;
     if (!this.user || !data.payload || data.payload.user_id !== this.user.id) return;
     this.roomCheckRefreshingRoom = null;
-    this.showToast('Older takes refreshed.');
+    const failed = Number(data.payload.failed) || 0;
+    this.showToast(failed > 0
+      ? `DubMate couldn't refresh ${failed} of your older takes. Try again.`
+      : 'Older takes refreshed.');
     this.renderRoomCheckRow();
   }
 }

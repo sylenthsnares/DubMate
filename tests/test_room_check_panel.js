@@ -514,9 +514,13 @@ async function upload(env) {
     const state = { ...env.app.roomState, takes: takesWith(null) };
     env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u2", count: 1 }, state });
     if (env.toasts.length) fail(`someone else's refresh toasted: ${JSON.stringify(env.toasts)}`);
-    env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u1", count: 2 }, state });
+    env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u1", count: 2, failed: 0 }, state });
     if (JSON.stringify(env.toasts) !== JSON.stringify(["Older takes refreshed."])) fail(`toasts: ${JSON.stringify(env.toasts)}`);
     if (shown(refresh)) fail("Refresh still offered after the refresh");
+    // Takes that failed keep their sound and are reported.
+    env.toasts.length = 0;
+    env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u1", count: 1, failed: 1 }, state });
+    if (JSON.stringify(env.toasts) !== JSON.stringify(["DubMate couldn't refresh 1 of your older takes. Try again."])) fail(`failed toasts: ${JSON.stringify(env.toasts)}`);
 
     // A new check: the takes are older than it. A render in progress refuses with its reason.
     env.w.localStorage.setItem(KEY, storedCheck({ profile_id: NEW_ID }));

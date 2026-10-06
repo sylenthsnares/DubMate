@@ -405,9 +405,10 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
 @router.post("/api/rooms/{room_id}/cleanup/refresh")
 async def refresh_cleanup(room_id: str, payload: Dict[str, Any]):
     """Refresh older takes: moves one person's takes to their latest room check (an unknown
-    or missing id means standard cleanup) and re-cleans, in the background, the ones with
-    noise reduction on whose cleaned file for the new settings doesn't exist yet. Returns
-    how many will be re-cleaned. Raw takes are never touched."""
+    or missing id means standard cleanup). A take with noise reduction off just gets the new
+    settings. One with it on whose active audio isn't the new cleaning is re-cleaned in the
+    background and gets the new settings only once that worked; the rest already sound
+    right. Returns how many will be re-cleaned. Raw takes are never touched."""
     room = rooms.room_or_404(room_id)
     user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
     if any(status == "processing" for status in room.export_status.values()):
@@ -419,46 +420,65 @@ async def refresh_cleanup(room_id: str, payload: Dict[str, Any]):
     # Claimed before the first await, so a second request or a render can't slip in.
     room.cleanup_refreshing[user_id] = 0
     try:
-        cleaned = []
-        for line_id, entry in room.takes.items():
-            for take in entry["takes"]:
-                if take.get("user_id") != user_id:
-                    continue
-                _store_nr_settings(take, {"nr_settings": settings})
-                # Lines outside the current pack have no original to match loudness to;
-                # their takes are cleaned on their next toggle.
-                if take.get("noise_reduction") and room.find_line(line_id):
-                    cleaned.append((line_id, take["take_id"]))
-
-        def missing_cleaned_files():
-            return [
-                (line_id, take_id) for line_id, take_id in cleaned
-                if not os.path.exists(audio_processor.denoised_take_path(
-                    audio_processor.take_dir(room.room_id, line_id, create=False), take_id, settings))
+        # Under the lock, so a toggle or Original speed in flight can't write its old
+        # settings back over the new ones.
+        async with room.processing_lock:
+            mine = [
+                (line_id, take)
+                for line_id, entry in room.takes.items()
+                for take in entry["takes"]
+                if take.get("user_id") == user_id
             ]
+            # Lines outside the current pack have no original to match loudness to: a take
+            # there with noise reduction on keeps its cleanup until it's re-cleaned.
+            cleaned = [(line_id, take) for line_id, take in mine
+                       if take.get("noise_reduction") and room.find_line(line_id)]
 
-        queued = await asyncio.to_thread(missing_cleaned_files)
+            def stale_takes():
+                return [(line_id, take["take_id"]) for line_id, take in cleaned
+                        if _needs_reclean(room.room_id, line_id, take, settings)]
+
+            queued = await asyncio.to_thread(stale_takes)
+            stale = set(queued)
+            in_pack = {id(take) for _, take in cleaned}
+            for line_id, take in mine:
+                if (line_id, take["take_id"]) in stale:
+                    continue
+                if not take.get("noise_reduction") or id(take) in in_pack:
+                    _store_nr_settings(take, {"nr_settings": settings})
     except Exception:
         room.cleanup_refreshing.pop(user_id, None)
         raise
 
     if not queued:
         room.cleanup_refreshing.pop(user_id, None)
-        await room.broadcast("cleanup_refreshed", {"user_id": user_id, "count": 0})
+        await room.broadcast("cleanup_refreshed", {"user_id": user_id, "count": 0, "failed": 0})
         return {"status": "ok", "refreshing": 0}
 
     room.cleanup_refreshing[user_id] = len(queued)
     room.cleanup_refresh_task = asyncio.create_task(
-        _refresh_takes(room, user_id, queued, room.cleanup_refresh_task)
+        _refresh_takes(room, user_id, queued, settings, room.cleanup_refresh_task)
     )
     return {"status": "ok", "refreshing": len(queued)}
 
 
-async def _refresh_takes(room, user_id: str, queued, previous) -> None:
-    """Re-cleans the queued takes one at a time, each under the room's processing lock, at
-    the take's stretch. Timing fields stay, as with the toggle. A take deleted or switched
-    to raw meanwhile is skipped."""
+def _needs_reclean(room_id: str, line_id: str, take: Dict[str, Any], settings) -> bool:
+    """True when the take's active audio isn't the cleaning `settings` give: the take is
+    on other settings, or the cleaned file for these is missing."""
+    take_dir = audio_processor.take_dir(room_id, line_id, create=False)
+    wanted = audio_processor.denoised_take_path(take_dir, take["take_id"], settings)
+    current = audio_processor.denoised_take_path(take_dir, take["take_id"], take.get("nr_settings"))
+    return wanted != current or not os.path.exists(wanted)
+
+
+async def _refresh_takes(room, user_id: str, queued, settings, previous) -> None:
+    """Re-cleans the queued takes one at a time with `settings`, each under the room's
+    processing lock, at the take's stretch. A take gets the new settings only once its new
+    audio is written; one that fails keeps its settings and sound and is counted in
+    `failed`. Timing fields stay, as with the toggle. A take deleted meanwhile is skipped;
+    one switched to raw meanwhile just gets the new settings."""
     count = 0
+    failed = 0
     try:
         # One refresh at a time, so the latest task finishes last and launch_premiere can wait on it.
         if previous is not None and not previous.done():
@@ -477,12 +497,14 @@ async def _refresh_takes(room, user_id: str, queued, previous) -> None:
                                 audio_processor.take_dir(room.room_id, line_id),
                                 take_id,
                                 enable_noise_reduction=True,
-                                nr_settings=take.get("nr_settings"),
+                                nr_settings=settings,
                                 target_loudness_db=target_loudness,
                                 stretch=float(take.get("stretch", 1.0)),
                             )
                             _apply_toggled_take(take, toggled, True)
                         else:
+                            if take:
+                                _store_nr_settings(take, {"nr_settings": settings})
                             take = None
                     if take:
                         count += 1
@@ -493,12 +515,13 @@ async def _refresh_takes(room, user_id: str, queued, previous) -> None:
                             "noise_reduction": True,
                         })
             except Exception as ex:
+                failed += 1
                 print(f"[CleanupRefreshError] {room.room_id} {line_id}/{take_id}: {ex}")
             room.cleanup_refreshing[user_id] = max(0, room.cleanup_refreshing.get(user_id, 1) - 1)
         room.invalidate_exports()
         # Renders are allowed again before clients hear that the refresh is done.
         room.cleanup_refreshing.pop(user_id, None)
-        await room.broadcast("cleanup_refreshed", {"user_id": user_id, "count": count})
+        await room.broadcast("cleanup_refreshed", {"user_id": user_id, "count": count, "failed": failed})
     finally:
         room.cleanup_refreshing.pop(user_id, None)
 
