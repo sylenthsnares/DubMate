@@ -547,48 +547,6 @@ def noise_cleanup_settings(profile_id) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_user_noise_profile_path(room_id: str, user_id: str) -> str:
-    """Returns the persistent noise profile path for an actor in a room (path-traversal safe)."""
-    room_dir = get_room_cache_dir(room_id)
-    safe_user_id = _sanitize_id_token(user_id)
-    target = os.path.join(room_dir, "noise_profile_" + safe_user_id + ".wav")
-    _ensure_within_directory(target, room_dir)
-    return target
-
-
-def save_user_noise_profile(
-    room_id: str,
-    user_id: str,
-    audio_bytes: bytes,
-    filename_hint: str = "profile.webm"
-) -> Dict[str, Any]:
-    """
-    Saves a 1-second sample of idle room background noise to calibrate the actor's noise profile.
-    Returns path, duration, and estimated noise floor in dB.
-    """
-    if not audio_bytes or len(audio_bytes) < 32:
-        raise ValueError("Uploaded noise profile audio stream is empty.")
-
-    target_profile = get_user_noise_profile_path(room_id, user_id)
-    try:
-        _transcode_upload(audio_bytes, filename_hint, target_profile, SUBPROCESS_TIMEOUT_PROBE, "noise profile transcoding")
-    except subprocess.CalledProcessError as err:
-        print(f"[AudioProcessor] Noise profile calibration conversion failed: {err}")
-        raise RuntimeError(f"Noise profile calibration failed: {err}")
-
-    profile_data = read_wav_mono(target_profile)
-    rms = np.sqrt(np.mean(profile_data ** 2)) if len(profile_data) > 0 else 1e-6
-    noise_floor_db = round(float(20.0 * np.log10(max(rms, 1e-6))), 1)
-
-    return {
-        "status": "ok",
-        "user_id": user_id,
-        "profile_path": target_profile,
-        "duration": round(len(profile_data) / float(SR), 2),
-        "noise_floor_db": noise_floor_db,
-    }
-
-
 def calculate_speech_gated_loudness(
     audio_data: np.ndarray,
     sr: int = SR,

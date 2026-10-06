@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 dubmate/rooms_api.py
-Room REST routes (/api/rooms/*): create, share, state, noise profile, takes,
+Room REST routes (/api/rooms/*): create, share, state, takes,
 export render, video streaming and downloads.
 
 Works on the room model in dubmate.rooms and never imports app.
@@ -82,29 +82,6 @@ async def get_room(room_id: str):
     return room.to_state_dict()
 
 
-@router.post("/api/rooms/{room_id}/noise_profile")
-async def upload_noise_profile(
-    room_id: str,
-    file: UploadFile = File(...),
-    user_id: str = Form(...),
-):
-    """Calibrates and saves a 1-second room background noise profile for an actor."""
-    common.require_safe_identifier(user_id, "user_id")
-    room = rooms.room_or_404(room_id)
-    try:
-        content = await file.read()
-        res = audio_processor.save_user_noise_profile(
-            room.room_id,
-            user_id,
-            content,
-            filename_hint=file.filename or "profile.webm"
-        )
-        return res
-    except Exception as ex:
-        print(f"[NoiseProfileError] Failed calibrating noise profile for {user_id} in {room_id}: {ex}")
-        raise HTTPException(status_code=400, detail=str(ex))
-
-
 def _line_target_loudness(pack, line) -> float:
     """Measured loudness of the original line, the target for a take's auto gain.
 
@@ -165,6 +142,7 @@ async def upload_take(
     noise_reduction: bool = Form(False),
     auto_gain: bool = Form(False),
     guide_voice: bool = Form(False),
+    noise_profile_id: str = Form(""),
 ):
     common.require_safe_identifier(user_id, "user_id")
     room = rooms.room_or_404(room_id)
@@ -182,6 +160,8 @@ async def upload_take(
     start_offset_ms = int(5 * round(offset_ms / 5.0))
     try:
         target_loudness = await asyncio.to_thread(_line_target_loudness, room.pack, line)
+        # The actor's room check tunes the cleanup; an unknown or malformed id means standard cleanup.
+        nr_settings = audio_processor.noise_cleanup_settings(noise_profile_id) if noise_profile_id else None
 
         content = await file.read()
         async with room.processing_lock:
@@ -193,7 +173,7 @@ async def upload_take(
                 content,
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
-                nr_settings=None,
+                nr_settings=nr_settings,
                 target_loudness_db=target_loudness,
                 # The original line's voice; a take recorded with the guide voice on can
                 # hear the guide itself, so it isn't lined up.

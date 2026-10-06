@@ -2,7 +2,8 @@
 """
 test_room_check.py
 Room tone analysis (audio_processor.analyse_room_tone), the engine-wide noise profile store,
-and takes' cleanup settings (nr_settings) with the cleaned-file key.
+and takes' cleanup settings (nr_settings) with the cleaned-file key, the /api/noise_profiles
+routes and rooms saved before room checks.
 """
 
 import os
@@ -408,6 +409,152 @@ class TestTakeSettingsApi(UploadCase):
         room._sync_save_to_disk()
         with open(self._state_file(), encoding="utf-8") as f:
             self.assertNotIn("nr_settings", f.read())
+
+
+
+class TestNoiseProfileApi(UploadCase):
+    """POST/GET/DELETE /api/noise_profiles and the take upload's noise_profile_id."""
+
+    def _post(self, audio=None, body=None, **form):
+        if body is None:
+            path = os.path.join(self.cache, "check.wav")
+            ap.write_wav_mono(path, audio, SR)
+            with open(path, "rb") as f:
+                body = f.read()
+        return self.client.post("/api/noise_profiles", files={"file": ("check.wav", body, "audio/wav")},
+                                data=form)
+
+    def _stored(self):
+        folder = ap.noise_profiles_dir()
+        return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+
+    def test_check_returns_id_and_report(self):
+        res = self._post(white(-50.0, seconds=3.3), device_id="dev1", device_label="USB mic")
+        self.assertEqual(res.status_code, 200, res.text)
+        body = res.json()
+        pid = body["profile_id"]
+        self.assertRegex(pid, r"^[0-9a-f]{12}$")
+        self.assertEqual(body["report"]["profile_id"], pid)
+        self.assertEqual(body["report"]["device_id"], "dev1")
+        self.assertEqual(body["report"]["device_label"], "USB mic")
+        # The first 0.3 s is dropped.
+        self.assertAlmostEqual(body["report"]["duration_sec"], 3.0, delta=0.02)
+        self.assertEqual(self._stored(), [pid + ".json", pid + ".wav"])
+        got = self.client.get(f"/api/noise_profiles/{pid}")
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(got.json()["profile_id"], pid)
+
+    def test_silent_check_stores_nothing(self):
+        res = self._post(np.zeros(int(SR * 3.3), dtype=np.float32))
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertIsNone(res.json()["profile_id"])
+        self.assertTrue(res.json()["report"]["suppressed"])
+        self.assertEqual(self._stored(), [])
+
+    def test_length_limits(self):
+        res = self._post(white(-50.0, seconds=2.7))
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["detail"], "That was too short. Try again.")
+        res = self._post(white(-50.0, seconds=10.5))
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._stored(), [])
+
+    def test_size_and_device_limits(self):
+        res = self._post(body=bytes(2 * 1024 * 1024 + 1))
+        self.assertEqual(res.status_code, 413)
+        res = self._post(white(-50.0, seconds=3.3), device_label="x" * 201)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self._stored(), [])
+
+    def test_get_missing_is_404_and_delete_is_idempotent(self):
+        pid = self._post(white(-50.0, seconds=3.3)).json()["profile_id"]
+        self.assertEqual(self.client.delete(f"/api/noise_profiles/{pid}").json(), {"status": "ok", "deleted": True})
+        self.assertEqual(self.client.delete(f"/api/noise_profiles/{pid}").json(), {"status": "ok", "deleted": False})
+        self.assertEqual(self.client.get(f"/api/noise_profiles/{pid}").status_code, 404)
+        self.assertEqual(self._stored(), [])
+
+    def test_upload_with_unknown_or_bad_id_uses_standard_cleanup(self):
+        room = self._room()
+        with mock.patch.object(ap, "apply_noise_reduction", side_effect=_fake_denoise):
+            for n, pid in enumerate(("0123456789ab", "../../evil")):
+                wire = self._upload("t1000", delayed(self.ref, 40 + 20 * n), noise_reduction="true",
+                                    noise_profile_id=pid)
+                self.assertNotIn("nr_settings", wire)
+                self.assertNotIn("nr_settings", room.find_take("t1000", wire["take_id"]))
+
+    def test_upload_with_check_stores_its_settings(self):
+        room = self._room()
+        pid = self._post(white(-50.0, seconds=3.3)).json()["profile_id"]
+        with mock.patch.object(ap, "apply_noise_reduction", side_effect=_fake_denoise):
+            wire = self._upload("t1000", delayed(self.ref, 40), noise_reduction="true", noise_profile_id=pid)
+        self.assertEqual(room.find_take("t1000", wire["take_id"])["nr_settings"], ap.noise_cleanup_settings(pid))
+
+
+class TestExistingRoomData(UploadCase):
+    """Rooms saved before room checks load and clean exactly as before."""
+
+    def _pr14_room(self):
+        take_dir = ap.take_dir(self.ROOM, "t1000")
+        raw = delayed(self.ref, 40)
+        ap.write_wav_mono(os.path.join(take_dir, "a1b2c3d4_raw.wav"), raw, SR)
+        cleaned = ap.denoised_take_path(take_dir, "a1b2c3d4")
+        ap.write_wav_mono(cleaned, raw * 0.5, SR)
+        shutil.copy2(cleaned, os.path.join(take_dir, "a1b2c3d4.wav"))
+        state = {
+            "state_version": 2, "room_id": self.ROOM, "pack_id": self.PACK_ID, "host_id": "hostT",
+            "users": {"hostT": {"name": "Host", "color": "#7c5cff"}},
+            "role_assignments": {},
+            "takes": {"t1000": {"picked": "a1b2c3d4", "next_number": 2, "takes": [{
+                "take_id": "a1b2c3d4", "user_id": "hostT", "user_name": "Host", "duration": 2.54,
+                "peaks": [0.1, 0.2], "audio_version": 1759000000000, "offset_ms": -40,
+                "start_offset_ms": 0, "auto_offset_ms": -40, "aligned": True, "stretch": 1.0,
+                "timing_score": 0.91, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": 1.5,
+                "noise_reduction": True, "has_raw": True, "speech_loudness_db": -22.0,
+                "target_loudness_db": -20.5, "auto_gain_db": 1.5, "recorded_at": 1759000000.0,
+                "number": 1}]}},
+            "status": "lobby", "exported_video_path": None,
+        }
+        with open(self._state_file(), "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        return cleaned
+
+    def test_pr14_room_loads_and_reuses_cleaned_file(self):
+        with mock.patch.object(ap, "get_deep_filter_path", return_value=None):
+            cleaned = self._pr14_room()
+            with open(cleaned, "rb") as f:
+                cleaned_bytes = f.read()
+            rooms.ROOMS.clear()
+            rooms.load_persisted_rooms()
+            room = rooms.ROOMS[self.ROOM]
+            take = room.find_take("t1000", "a1b2c3d4")
+            self.assertNotIn("nr_settings", take)
+            room._sync_save_to_disk()
+            self.assertNotIn("nr_settings", json.dumps(self._load_state()))
+            with mock.patch.object(ap, "apply_noise_reduction") as nr:
+                for on in (False, True):
+                    res = self.client.post(
+                        f"/api/rooms/{self.ROOM}/lines/t1000/takes/a1b2c3d4/noise_reduction",
+                        json={"noise_reduction": on})
+                    self.assertEqual(res.status_code, 200, res.text)
+            nr.assert_not_called()
+        self.assertTrue(take["noise_reduction"])
+        self.assertNotIn("nr_settings", take)
+        with open(cleaned, "rb") as f:
+            self.assertEqual(f.read(), cleaned_bytes)
+        active = ap.read_wav_mono(os.path.join(ap.take_dir(self.ROOM, "t1000"), "a1b2c3d4.wav"))
+        self.assertEqual(active.tolist(), ap.read_wav_mono(cleaned).tolist())
+
+    def test_old_room_scoped_profile_is_left_alone(self):
+        room = self._room()
+        self._add(room, "t1000")
+        room._sync_save_to_disk()
+        old_profile = os.path.join(self.room_dir, "noise_profile_u1.wav")
+        data = self._wav(old_profile, 120, seconds=1.0)
+        rooms.ROOMS.clear()
+        rooms.load_persisted_rooms()
+        self.assertIn(self.ROOM, rooms.ROOMS)
+        rooms.ROOMS[self.ROOM]._sync_save_to_disk()
+        self.assertEqual(self._read(old_profile), data)
 
 
 if __name__ == "__main__":
