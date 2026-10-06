@@ -9,6 +9,7 @@
 - **Update Progress**: desktop updates show real download progress instead of jumping to 100%.
 - **macOS Room Codes Launcher**: `run_cloudflare.sh` starts DubMate with a public room code on macOS source installs.
 - **Tooltips**: secondary explanations moved into tooltips that also open on keyboard focus.
+- **Take History**: recording a line again keeps every take. Open Takes to listen to them and choose the one used in the dub. Picks and deletes show up for everyone in the room.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -18,6 +19,7 @@
 - **Smaller Install**: scipy is no longer needed.
 - **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
+- **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.

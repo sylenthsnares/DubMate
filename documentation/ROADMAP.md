@@ -71,7 +71,7 @@ All of this goes into one PR.
 
 ## Features, in build order
 
-1. **Take model.** Stable line IDs, take history and picking a take. Most of what follows needs this. **M/L**
+1. **Take model.** Stable line IDs, take history and picking a take. Most of what follows needs this. **M/L** (done).
 2. **Recording timing.** Latency auto-calibration, then auto-align takes. Auto-align also pre-selects the best-timed take. **M + M**
 3. **Effects rack.**
    - Built on pedalboard and fed by the take model.
