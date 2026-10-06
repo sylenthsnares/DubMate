@@ -1237,14 +1237,31 @@ class DubMateApp {
     } else {
       this.showView('landing');
       if (selectPackParam) {
-        this.selectPack(selectPackParam);
-        setTimeout(() => {
-          const card = document.querySelector(`.pack-card[data-pack-id="${selectPackParam}"]`);
-          if (card) {
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 200);
+        await this.selectPack(selectPackParam);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('select_pack');
+        window.history.replaceState(window.history.state, '', url);
       }
+    }
+  }
+
+  /**
+   * Select a pack on the landing grid and scroll to it, the same as clicking its
+   * card. Pack Builder sends the user here with ?select_pack= after a build; if
+   * that pack is not in the list yet, rescan once before giving up.
+   */
+  async selectPack(packId) {
+    const isListed = () => (this.packs || []).some((p) => p.id === packId);
+    if (!isListed()) {
+      await this.rescanPacksDirectory(true);
+    }
+    if (!isListed() || !this.packGrid) return;
+    this.selectedPackId = packId;
+    this.renderPacks();
+    const card = Array.from(this.packGrid.querySelectorAll('.pack-card'))
+      .find((c) => c.dataset.packId === packId);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }
 
