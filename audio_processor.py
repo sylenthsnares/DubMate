@@ -71,6 +71,44 @@ def _sanitize_finite_audio(data, context: str = "") -> np.ndarray:
     return arr
 
 
+# Container extensions accepted for browser uploads; anything else is treated as WebM.
+_UPLOAD_EXTS = (".webm", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".flac")
+
+
+def _remove_quietly(path: str) -> None:
+    """Deletes a temp file if it exists, ignoring any error."""
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
+def _ffmpeg_to_mono_wav(src: str, dst: str, sr: int, timeout: float, context: str, af: Optional[str] = None) -> None:
+    """Transcodes src to a mono 16-bit PCM WAV at sr, optionally through an -af filter chain."""
+    cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-i", src]
+    if af:
+        cmd += ["-af", af]
+    cmd += ["-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", dst]
+    _run_subprocess(cmd, timeout=timeout, context=context)
+
+
+def _transcode_upload(audio_bytes: bytes, filename_hint: str, dst_wav: str, timeout: float, context: str) -> None:
+    """Writes uploaded browser audio to a temp file and transcodes it to a mono WAV at SR.
+    The temp file is always removed; subprocess errors propagate to the caller."""
+    ext = os.path.splitext(filename_hint)[1].lower() if filename_hint else ".webm"
+    if ext not in _UPLOAD_EXTS:
+        ext = ".webm"
+    fd, raw_tmp = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
+    try:
+        with open(raw_tmp, "wb") as f:
+            f.write(audio_bytes)
+        _ffmpeg_to_mono_wav(raw_tmp, dst_wav, SR, timeout, context)
+    finally:
+        _remove_quietly(raw_tmp)
+
+
 def get_room_cache_dir(room_id: str) -> str:
     """Returns (and creates) the per-room cache directory, guarding against path traversal via room_id."""
     rooms_root = os.path.join(CACHE_DIR, "rooms")
@@ -110,25 +148,15 @@ def read_wav_mono(path: str, sr: int = SR) -> np.ndarray:
     if direct is not None:
         return direct
 
-    ffmpeg = get_ffmpeg_path()
     fd, tmp = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", path, "-ac", "1", "-ar", str(sr),
-            "-c:a", "pcm_s16le", tmp
-        ]
-        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="read_wav_mono transcode of " + repr(path))
+        _ffmpeg_to_mono_wav(path, tmp, sr, SUBPROCESS_TIMEOUT_RENDER, "read_wav_mono transcode of " + repr(path))
         with wave.open(tmp, "rb") as w:
             raw = w.readframes(w.getnframes())
         return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
     finally:
-        if os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except Exception:
-                pass
+        _remove_quietly(tmp)
 
 
 def write_wav_mono(path: str, data: np.ndarray, sr: int = SR) -> str:
@@ -168,34 +196,11 @@ def save_user_noise_profile(
         raise ValueError("Uploaded noise profile audio stream is empty.")
 
     target_profile = get_user_noise_profile_path(room_id, user_id)
-    ext = os.path.splitext(filename_hint)[1].lower() if filename_hint else ".webm"
-    if ext not in (".webm", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".flac"):
-        ext = ".webm"
-
-    fd, raw_tmp = tempfile.mkstemp(suffix=ext)
-    os.close(fd)
-    with open(raw_tmp, "wb") as f:
-        f.write(audio_bytes)
-
-    ffmpeg = get_ffmpeg_path()
     try:
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", raw_tmp,
-            "-ac", "1", "-ar", str(SR),
-            "-c:a", "pcm_s16le",
-            target_profile
-        ]
-        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROBE, context="noise profile transcoding")
+        _transcode_upload(audio_bytes, filename_hint, target_profile, SUBPROCESS_TIMEOUT_PROBE, "noise profile transcoding")
     except subprocess.CalledProcessError as err:
         print(f"[AudioProcessor] Noise profile calibration conversion failed: {err}")
         raise RuntimeError(f"Noise profile calibration failed: {err}")
-    finally:
-        if os.path.exists(raw_tmp):
-            try:
-                os.remove(raw_tmp)
-            except Exception:
-                pass
 
     profile_data = read_wav_mono(target_profile)
     rms = np.sqrt(np.mean(profile_data ** 2)) if len(profile_data) > 0 else 1e-6
@@ -298,7 +303,6 @@ def apply_noise_reduction(
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_wav)), exist_ok=True)
     df_bin = get_deep_filter_path()
-    ffmpeg = get_ffmpeg_path()
 
     # 1. Primary Path: DeepFilterNet 3 Neural Speech Enhancement
     if df_bin and os.path.isfile(df_bin):
@@ -313,14 +317,7 @@ def apply_noise_reduction(
             os.makedirs(df_out_dir, exist_ok=True)
 
             # Resample cleanly to 48kHz for DeepFilterNet native processing
-            cmd_resample = [
-                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", input_wav,
-                "-ar", "48000", "-ac", "1",
-                "-c:a", "pcm_s16le",
-                tmp_48k_in
-            ]
-            _run_subprocess(cmd_resample, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="DeepFilterNet resample to 48k")
+            _ffmpeg_to_mono_wav(input_wav, tmp_48k_in, 48000, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample to 48k")
 
             # Run DeepFilterNet with delay compensation (-D)
             atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else 100.0
@@ -336,14 +333,7 @@ def apply_noise_reduction(
             if os.path.isfile(enh_48k) and os.path.getsize(enh_48k) > 100:
                 # Transcode back to target sample rate (sr)
                 tmp_resampled = os.path.join(tmp_dir, "enhanced_sr.wav")
-                cmd_back = [
-                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                    "-i", enh_48k,
-                    "-ar", str(sr), "-ac", "1",
-                    "-c:a", "pcm_s16le",
-                    tmp_resampled
-                ]
-                _run_subprocess(cmd_back, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="DeepFilterNet resample back to target rate")
+                _ffmpeg_to_mono_wav(enh_48k, tmp_resampled, sr, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample back to target rate")
 
                 # Ensure exact length matching with zero-padding if needed
                 enhanced_audio = read_wav_mono(tmp_resampled, sr)
@@ -356,6 +346,7 @@ def apply_noise_reduction(
 
                 write_wav_mono(output_wav, enhanced_audio, sr)
                 return output_wav
+            print(f"[AudioProcessor] WARNING: DeepFilterNet3 produced no usable output for {input_wav!r} - falling back to spectral-gate denoiser.")
         except Exception as ex:
             print(f"[AudioProcessor] WARNING: DeepFilterNet3 neural denoise FAILED for {input_wav!r} - falling back to spectral-gate denoiser. Reason: {ex}")
         finally:
@@ -363,6 +354,7 @@ def apply_noise_reduction(
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # 2. Fallback Path: High-pass + Adaptive Spectral Denoising
+    tmp_out = None
     try:
         af_filters = [
             "highpass=f=80",
@@ -371,18 +363,12 @@ def apply_noise_reduction(
         ]
         fd, tmp_out = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", input_wav,
-            "-af", ",".join(af_filters),
-            "-ac", "1", "-ar", str(sr),
-            "-c:a", "pcm_s16le",
-            tmp_out
-        ]
-        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="fallback spectral-gate denoise")
+        _ffmpeg_to_mono_wav(input_wav, tmp_out, sr, SUBPROCESS_TIMEOUT_PROCESS, "fallback spectral-gate denoise", af=",".join(af_filters))
         shutil.move(tmp_out, output_wav)
         return output_wav
     except Exception as ex:
+        if tmp_out:
+            _remove_quietly(tmp_out)
         print(f"[AudioProcessor] WARNING: noise reduction NOT applied for {input_wav!r} (DeepFilterNet3 and fallback denoiser both failed); returning unprocessed copy. Reason: {ex}")
         shutil.copy2(input_wav, output_wav)
         return output_wav
@@ -408,38 +394,15 @@ def save_uploaded_take(
         raise ValueError("Uploaded audio stream is empty or incomplete.")
 
     room_dir = get_room_cache_dir(room_id)
-    ext = os.path.splitext(filename_hint)[1].lower() if filename_hint else ".webm"
-    if ext not in (".webm", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".flac"):
-        ext = ".webm"
-
-    fd, raw_tmp = tempfile.mkstemp(suffix=ext)
-    os.close(fd)
-    with open(raw_tmp, "wb") as f:
-        f.write(audio_bytes)
-
     target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
     raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
     denoised_wav = os.path.join(room_dir, f"take_line_{line_index}_denoised.wav")
 
-    ffmpeg = get_ffmpeg_path()
     try:
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", raw_tmp,
-            "-ac", "1", "-ar", str(SR),
-            "-c:a", "pcm_s16le",
-            raw_wav
-        ]
-        _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="take upload transcoding")
+        _transcode_upload(audio_bytes, filename_hint, raw_wav, SUBPROCESS_TIMEOUT_PROCESS, "take upload transcoding")
     except subprocess.CalledProcessError as err:
-        print(f"[AudioProcessor] ffmpeg conversion failed on {raw_tmp} ({len(audio_bytes)} bytes): {err}")
+        print(f"[AudioProcessor] ffmpeg conversion failed on upload {filename_hint!r} ({len(audio_bytes)} bytes): {err}")
         raise RuntimeError(f"Audio transcoding failed: {err}")
-    finally:
-        if os.path.exists(raw_tmp):
-            try:
-                os.remove(raw_tmp)
-            except Exception:
-                pass
 
     profile_path = None
     if user_id:
@@ -583,17 +546,14 @@ def apply_audio_effects(
     pitch_semitones: float = 0.0,
     reverb_wet: float = 0.0,
     gain_db: float = 0.0,
-    enable_lowcut: bool = True,
-    enable_compressor: bool = False,
     sr: int = SR
 ) -> np.ndarray:
     """
     Applies high-fidelity vocal DSP chain:
     1. 80Hz low-cut filter (removes rumble / mic plosives)
     2. Time-invariant pitch shift (preserves exact line duration)
-    3. Vocal compressor
-    4. Direct linear volume gain (dB trim)
-    5. Acoustic room convolution reverb (maintains 100% dry vocal punch + lush room space)
+    3. Direct linear volume gain (dB trim)
+    4. Acoustic room convolution reverb (maintains 100% dry vocal punch + lush room space)
     """
     # Clamp client-supplied gain to a sane audio range so 10 ** (gain_db / 20) can never overflow.
     clamped_gain_db = float(np.clip(gain_db, GAIN_DB_MIN, GAIN_DB_MAX))
@@ -601,11 +561,8 @@ def apply_audio_effects(
         print(f"[AudioProcessor] WARNING: gain_db={gain_db} out of safe range; clamped to {clamped_gain_db} dB.")
     gain_db = clamped_gain_db
 
-    filters = []
-
-    # 1. 80Hz Low-cut filter
-    if enable_lowcut:
-        filters.append("highpass=f=80")
+    # 1. 80Hz Low-cut filter (always applied)
+    filters = ["highpass=f=80"]
 
     # 2. Time-Invariant Pitch Shift via asetrate + atempo
     if abs(pitch_semitones) > 0.01:
@@ -625,44 +582,24 @@ def apply_audio_effects(
         tempo_str = ",".join(tempo_filters)
         filters.append(f"asetrate={target_rate},{tempo_str},aresample={sr}")
 
-    # 3. Vocal Compressor (Matching Web Audio 3:1 ratio, -24dB threshold, 12dB soft knee)
-    if enable_compressor:
-        filters.append("compand=attacks=0.015:decays=0.15:points=-80/-80|-30/-30|-18/-22|0/-16")
-
-    ffmpeg = get_ffmpeg_path()
-    if filters:
-        filter_chain = ",".join(filters)
-        fd, tmp_out = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-        try:
-            cmd = [
-                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", audio_path,
-                "-af", filter_chain,
-                "-ac", "1", "-ar", str(sr),
-                "-c:a", "pcm_s16le",
-                tmp_out
-            ]
-            _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_PROCESS, context="apply_audio_effects filter chain for " + repr(audio_path))
-            audio = read_wav_mono(tmp_out, sr)
-        except Exception as ex:
-            print(f"[AudioProcessor] WARNING: DSP filter chain FAILED for {audio_path!r} (pitch/low-cut/compressor NOT applied); returning unprocessed audio. Reason: {ex}")
-            audio = read_wav_mono(audio_path, sr)
-        finally:
-            if os.path.exists(tmp_out):
-                try:
-                    os.remove(tmp_out)
-                except Exception:
-                    pass
-    else:
+    fd, tmp_out = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        _ffmpeg_to_mono_wav(audio_path, tmp_out, sr, SUBPROCESS_TIMEOUT_PROCESS,
+                            "apply_audio_effects filter chain for " + repr(audio_path), af=",".join(filters))
+        audio = read_wav_mono(tmp_out, sr)
+    except Exception as ex:
+        print(f"[AudioProcessor] WARNING: DSP filter chain FAILED for {audio_path!r} (pitch/low-cut NOT applied); returning unprocessed audio. Reason: {ex}")
         audio = read_wav_mono(audio_path, sr)
+    finally:
+        _remove_quietly(tmp_out)
 
-    # 4. Volume Gain Trim (Exact dB scaling directly applied to waveform)
+    # 3. Volume Gain Trim (Exact dB scaling directly applied to waveform)
     if abs(gain_db) > 0.01:
         gain_mult = 10.0 ** (gain_db / 20.0)
         audio = audio * np.float32(gain_mult)
 
-    # 5. Studio Acoustic Room Convolution Reverb
+    # 4. Studio Acoustic Room Convolution Reverb
     # Direct vocal stays at 100% punch; lush room reflections and natural reverb decay ring out seamlessly
     if reverb_wet > 0.02 and len(audio) > 0:
         # Imported here, not at module scope. scipy.signal is used by this one line
@@ -785,56 +722,45 @@ def export_dub_video(
     pack.ensure_web_ready()
     fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
-    render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db)
-
-    ffmpeg = get_ffmpeg_path()
-    os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)
-    encoder_args = get_h264_encoder_args(crf=20, usage="export")
-    
-    vf_filters = []
-    if aspect_ratio == "9:16":
-        # Letterbox 9:16 with black bars top and bottom without cropping
-        vf_filters.extend(["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"])
-
     try:
-        try:
+        render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db)
+
+        ffmpeg = get_ffmpeg_path()
+        os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)
+        encoder_args = get_h264_encoder_args(crf=20, usage="export")
+
+        vf_filters = []
+        if aspect_ratio == "9:16":
+            # Letterbox 9:16 with black bars top and bottom without cropping
+            vf_filters.extend(["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"])
+
+        # Primary (possibly hardware) encoder first, then CPU libx264 as the fallback.
+        for attempt, (video_args, context) in enumerate([
+            (encoder_args, "export_dub_video primary encoder"),
+            (cpu_h264_args(20, "veryfast"), "export_dub_video fallback CPU encoder"),
+        ]):
             cmd = [
                 ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                 "-i", pack.web_video_path,
                 "-i", tmp_wav,
                 "-map", "0:v:0", "-map", "1:a:0",
                 *vf_filters,
-                *encoder_args,
+                *video_args,
                 "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k",
                 "-shortest",
                 "-movflags", "+faststart",
                 output_mp4
             ]
-            _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="export_dub_video primary encoder")
-        except Exception as ex:
-            print(f"[export_dub_video] Primary encoder failed ({ex}), falling back to CPU libx264...")
-            fallback_args = cpu_h264_args(20, "veryfast")
-            cmd = [
-                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", pack.web_video_path,
-                "-i", tmp_wav,
-                "-map", "0:v:0", "-map", "1:a:0",
-                *vf_filters,
-                *fallback_args,
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest",
-                "-movflags", "+faststart",
-                output_mp4
-            ]
-            _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context="export_dub_video fallback CPU encoder")
-    finally:
-        if os.path.exists(tmp_wav):
             try:
-                os.remove(tmp_wav)
-            except Exception:
-                pass
+                _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT_RENDER, context=context)
+                break
+            except Exception as ex:
+                if attempt > 0:
+                    raise
+                print(f"[export_dub_video] Primary encoder failed ({ex}), falling back to CPU libx264...")
+    finally:
+        _remove_quietly(tmp_wav)
 
     return output_mp4
 
