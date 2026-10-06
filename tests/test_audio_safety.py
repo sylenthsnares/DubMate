@@ -5,7 +5,7 @@ Regression suite for DSP-layer correctness and robustness hardening:
   - path-traversal-safe room_id / user_id sanitization
   - NaN/Inf guard on the WAV/MP3 write path
   - clamped client-supplied gain_db (no overflow)
-  - master limiter respects its ceiling
+  - master stage respects its true-peak ceiling
   - reverb impulse generation does not mutate the global numpy RNG
   - the numpy reverb convolution matches what scipy.signal.fftconvolve produced
 Uses Python's standard unittest framework, mirroring tests/test_noise_reduction.py conventions.
@@ -129,10 +129,11 @@ class TestNonFiniteAudioGuard(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(cleaned)))
         np.testing.assert_allclose(cleaned, np.array([0.5, 0.0, -0.5, 0.0], dtype=np.float32))
 
-    def test_master_soft_limiter_sanitizes_nan_input(self):
+    def test_master_stage_sanitizes_nan_input(self):
         data = np.array([0.1, np.nan, np.inf, -np.inf, 0.9, -0.9], dtype=np.float32)
-        result = audio_processor.master_soft_limiter(data, ceiling_db=-0.3)
-        self.assertTrue(np.all(np.isfinite(result)), "Limiter must never emit non-finite samples")
+        result, _ = audio_processor.master_stage(data, 44100)
+        self.assertTrue(np.all(np.isfinite(result)), "Master stage must never emit non-finite samples")
+        self.assertEqual(len(result), len(data))
 
 
 class TestGainClamping(unittest.TestCase):
@@ -168,24 +169,27 @@ class TestGainClamping(unittest.TestCase):
 
 
 class TestMasterLimiterCeiling(unittest.TestCase):
-    """Verifies the master soft limiter actually respects its intended ceiling."""
+    """Verifies the master stage respects its true-peak ceiling and is transparent below it."""
 
-    def test_limiter_output_respects_ceiling(self):
+    def test_master_stage_output_respects_true_peak_ceiling(self):
         sr = 44100
         t = np.linspace(0, 1.0, sr, endpoint=False, dtype=np.float32)
-        # Deliberately hot signal that clips well past 0 dBFS before limiting.
+        # Deliberately hot signal that clips well past 0 dBFS, with short spikes the
+        # loudness gain alone can't bring under the ceiling.
         loud = (1.8 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
-        ceiling_db = -0.3
-        limited = audio_processor.master_soft_limiter(loud, ceiling_db=ceiling_db)
-        ceiling = 10.0 ** (ceiling_db / 20.0)
-        peak = float(np.max(np.abs(limited)))
-        self.assertLessEqual(peak, ceiling + 1e-3, "Limiter output exceeded its configured ceiling")
+        loud[::4410] = 8.0
+        limited, info = audio_processor.master_stage(loud, sr)
+        self.assertLessEqual(audio_processor.true_peak_db(limited), audio_processor.TRUE_PEAK_CEILING_DB)
+        self.assertLessEqual(info["true_peak_db"], audio_processor.TRUE_PEAK_CEILING_DB)
 
-    def test_limiter_is_transparent_below_ceiling(self):
+    def test_master_stage_is_transparent_below_ceiling(self):
         sr = 44100
-        quiet = np.array([0.1, -0.2, 0.05, -0.05], dtype=np.float32)
-        result = audio_processor.master_soft_limiter(quiet, ceiling_db=-0.3)
-        np.testing.assert_allclose(result, quiet)
+        t = np.arange(2 * sr) / sr
+        quiet = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+        result, info = audio_processor.master_stage(quiet, sr)
+        self.assertGreater(info["gain_db"], 0.0)
+        expected = quiet * np.float32(10.0 ** (audio_processor._master_gain_db(audio_processor.integrated_lufs(quiet, sr)) / 20.0))
+        np.testing.assert_allclose(result, expected, atol=1e-6)
 
 
 class TestReverbImpulseRngIsolation(unittest.TestCase):

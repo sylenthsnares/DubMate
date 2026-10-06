@@ -108,15 +108,16 @@ async def upload_noise_profile(
 def _line_target_loudness(pack, line) -> float:
     """Measured loudness of the original line, the target for a take's auto gain.
 
-    Falls back to DEFAULT_DIALOGUE_LOUDNESS_DB when the line can't be read or is silent.
+    Falls back to DEFAULT_DIALOGUE_LUFS when the line can't be read or reads at or
+    below DIALOGUE_LUFS_FLOOR.
     """
     try:
         measured = pack_loader.measure_line_loudness(os.path.join(pack.folder, line["filename"]))
     except Exception as ex:
         print(f"[Loudness] Could not measure reference line {line.get('filename')!r}: {ex}")
-        return audio_processor.DEFAULT_DIALOGUE_LOUDNESS_DB
-    if measured <= -55.0:
-        return audio_processor.DEFAULT_DIALOGUE_LOUDNESS_DB
+        return audio_processor.DEFAULT_DIALOGUE_LUFS
+    if measured <= audio_processor.DIALOGUE_LUFS_FLOOR:
+        return audio_processor.DEFAULT_DIALOGUE_LUFS
     return measured
 
 
@@ -186,7 +187,7 @@ async def upload_take(
                 filename_hint=file.filename or "take.webm",
                 enable_noise_reduction=noise_reduction,
                 user_id=user_id,
-                target_loudness_db=target_loudness,
+                target_lufs=target_loudness,
                 # The original line's voice; a take recorded with the guide voice on can
                 # hear the guide itself, so it isn't lined up.
                 reference_wav=os.path.join(room.pack.folder, line["filename"]),
@@ -218,8 +219,8 @@ async def upload_take(
         "gain_db": saved.get("auto_gain_db", 0.0) if auto_gain else gain_db,
         "noise_reduction": saved.get("noise_reduction", noise_reduction),
         "has_raw": True,
-        "speech_loudness_db": saved.get("speech_loudness_db"),
-        "target_loudness_db": saved.get("target_loudness_db"),
+        "loudness_lufs": saved.get("loudness_lufs"),
+        "target_lufs": saved.get("target_lufs"),
         "auto_gain_db": saved.get("auto_gain_db", 0.0),
         "recorded_at": time.time(),
     })
@@ -303,7 +304,7 @@ async def toggle_take_noise_reduction_endpoint(
                 take_id,
                 enable_noise_reduction=enable,
                 user_id=user_id,
-                target_loudness_db=target_loudness,
+                target_lufs=target_loudness,
                 # A fitted take stays fitted; its timing fields don't change.
                 stretch=float(take.get("stretch", 1.0)),
             )
@@ -316,8 +317,8 @@ async def toggle_take_noise_reduction_endpoint(
         old_auto = take.get("auto_gain_db")
         if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
             take["gain_db"] = toggled["auto_gain_db"]
-        take["speech_loudness_db"] = toggled["speech_loudness_db"]
-        take["target_loudness_db"] = toggled["target_loudness_db"]
+        take["loudness_lufs"] = toggled["loudness_lufs"]
+        take["target_lufs"] = toggled["target_lufs"]
         take["auto_gain_db"] = toggled["auto_gain_db"]
         wire = room.wire_take(line_id, take)
         room.invalidate_exports()
@@ -356,7 +357,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             take_id,
             enable_noise_reduction=bool(take.get("noise_reduction", False)),
             user_id=take.get("user_id", "host"),
-            target_loudness_db=target_loudness,
+            target_lufs=target_loudness,
             stretch=1.0,
         )
         timing = audio_processor.match_take_timing(
@@ -383,8 +384,8 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             old_auto_gain = take.get("auto_gain_db")
             if old_auto_gain is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto_gain)) < 0.05:
                 take["gain_db"] = written["auto_gain_db"]
-            take["speech_loudness_db"] = written["speech_loudness_db"]
-            take["target_loudness_db"] = written["target_loudness_db"]
+            take["loudness_lufs"] = written["loudness_lufs"]
+            take["target_lufs"] = written["target_lufs"]
             take["auto_gain_db"] = written["auto_gain_db"]
     except Exception as ex:
         print(f"[OriginalSpeedError] {ex}")

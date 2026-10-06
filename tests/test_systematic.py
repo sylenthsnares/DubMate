@@ -120,11 +120,13 @@ class TestSystematicDualEngine(unittest.TestCase):
             self.assertAlmostEqual(len(processed_down) / sr, len(sine) / sr, delta=0.02)
             self.assertTrue(np.all(np.isfinite(processed_down)))
             
-            # Test soft limiter
+            # Test the master stage: a hugely hot input comes out at -16 LUFS under -1 dBTP
             hot_audio = sine * 5.0  # Huge peak
-            limited = audio_processor.master_soft_limiter(hot_audio, ceiling_db=-0.3)
-            max_val = np.max(np.abs(limited))
-            self.assertLessEqual(max_val, 0.98)
+            limited, info = audio_processor.master_stage(hot_audio, sr)
+            self.assertEqual(len(limited), len(hot_audio))
+            self.assertAlmostEqual(audio_processor.integrated_lufs(limited, sr), -16.0, delta=0.2)
+            self.assertLessEqual(audio_processor.true_peak_db(limited), -1.0)
+            self.assertLess(info["gain_db"], 0.0)
             
             # Test waveform peaks
             peaks = audio_processor.compute_waveform_peaks(processed, columns=50)

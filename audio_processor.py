@@ -12,6 +12,7 @@ import wave
 import json
 import time
 import hashlib
+import functools
 import shutil
 import zipfile
 import tempfile
@@ -22,6 +23,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, cpu_h264_args, CACHE_DIR, PackInfo
 from pack_loader import compute_waveform_peaks  # re-exported: app.py and tests use audio_processor.compute_waveform_peaks
 from dubmate.vocal_chain import get_reverb_impulse, _fft_convolve  # the reverb lives with the voice chain; apply_audio_effects still uses it
+from dubmate.vocal_chain import _pedalboard_module  # the master limiter
 from pack_loader import (
     run_subprocess as _run_subprocess,
     SUBPROCESS_TIMEOUT_PROBE,
@@ -35,13 +37,21 @@ SR = 44100  # Standard audio sample rate
 GAIN_DB_MIN = -60.0
 GAIN_DB_MAX = 24.0
 
-# Auto gain-match targets the measured loudness of the original line (dBFS gated RMS).
-# This constant is only the fallback when that line can't be measured or is silent.
-DEFAULT_DIALOGUE_LOUDNESS_DB = -21.0
+# Auto gain-match targets the measured loudness of the original line (integrated LUFS).
+# DEFAULT_DIALOGUE_LUFS is only the fallback when that line can't be measured or reads
+# at or below DIALOGUE_LUFS_FLOOR.
+DEFAULT_DIALOGUE_LUFS = -21.0
+DIALOGUE_LUFS_FLOOR = -55.0
 AUTO_GAIN_PEAK_CEILING_DB = -1.0  # auto gain never boosts a take's sample peak above this
 
+# Master stage on the final mix (render, export, project ZIP stems).
+MASTER_TARGET_LUFS = -16.0
+MASTER_GAIN_LIMIT_DB = 24.0          # the loudness gain is clamped to +/- this
+MASTER_LIMITER_CEILING_DB = -1.5     # brickwall limiter ceiling (true peak)
+TRUE_PEAK_CEILING_DB = -1.0          # static trim if the limited mix still reads above this
+LUFS_FLOOR = -70.0                   # silence; also BS.1770's absolute gate
+
 # Mix levels shared by render_dub_mix and build_project_zip.
-LIMITER_CEILING_DB = -0.3   # master soft limiter ceiling for the final mix and every stem
 BACKING_TRACK_LEVEL = 0.65  # backing music & SFX under the dialogue (calibrated DAW level)
 ORIGINAL_LINE_LEVEL = 0.90  # unrecorded lines fall back to the original reference audio at this level
 
@@ -360,71 +370,232 @@ def save_user_noise_profile(
     }
 
 
-def calculate_speech_gated_loudness(
-    audio_data: np.ndarray,
-    sr: int = SR,
-    frame_len_ms: float = 50.0,
-    hop_ms: float = 25.0,
-    gate_thresh_db: float = -15.0
-) -> float:
+# --- Loudness: ITU-R BS.1770-4 integrated loudness and true peak (pure numpy) ---
+#
+# integrated_lufs follows pyloudnorm's Meter.integrated_loudness (K-weighting filters,
+# block gating), ported to numpy without scipy:
+#
+#   MIT License
+#
+#   Copyright (c) 2018 Christian Steinmetz
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in all
+#   copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#   SOFTWARE.
+
+_LUFS_BLOCK_S = 0.400
+_LUFS_OVERLAP = 0.75
+_LUFS_RELATIVE_GATE_LU = -10.0
+_KW_FIR_BLOCK = 1 << 16      # K-weighting is applied as an FIR in blocks of this many samples
+_TP_OVERSAMPLE = 4
+_TP_TAPS = 48                # taps per phase of the true-peak interpolator
+_TP_BLOCK = 8192
+
+
+def _k_weighting_biquads(sr: int) -> List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+    """pyloudnorm's two K-weighting stages for the rate: high shelf (+4 dB, Q 1/sqrt 2,
+    1500 Hz), then high pass (Q 0.5, 38 Hz). Returns [(b, a), ...] normalised by a0."""
+    stages = []
+    for gain_db, q, fc, kind in ((4.0, 1.0 / math.sqrt(2.0), 1500.0, "high_shelf"), (0.0, 0.5, 38.0, "high_pass")):
+        a_lin = 10.0 ** (gain_db / 40.0)
+        w0 = 2.0 * math.pi * (fc / sr)
+        alpha = math.sin(w0) / (2.0 * q)
+        cw = math.cos(w0)
+        if kind == "high_shelf":
+            sa = 2.0 * math.sqrt(a_lin) * alpha
+            b = (a_lin * ((a_lin + 1) + (a_lin - 1) * cw + sa),
+                 -2.0 * a_lin * ((a_lin - 1) + (a_lin + 1) * cw),
+                 a_lin * ((a_lin + 1) + (a_lin - 1) * cw - sa))
+            a = ((a_lin + 1) - (a_lin - 1) * cw + sa,
+                 2.0 * ((a_lin - 1) - (a_lin + 1) * cw),
+                 (a_lin + 1) - (a_lin - 1) * cw - sa)
+        else:
+            b = ((1 + cw) / 2.0, -(1 + cw), (1 + cw) / 2.0)
+            a = (1 + alpha, -2.0 * cw, 1 - alpha)
+        stages.append((tuple(v / a[0] for v in b), tuple(v / a[0] for v in a)))
+    return stages
+
+
+@functools.lru_cache(maxsize=4)
+def _k_weighting_ir(sr: int) -> np.ndarray:
+    """1 s impulse response of the K-weighting cascade (it decays below 1e-7 well before),
+    computed once per rate by running the biquads on an impulse."""
+    n = int(sr)
+    signal = [0.0] * n
+    signal[0] = 1.0
+    for (b0, b1, b2), (_, a1, a2) in _k_weighting_biquads(sr):
+        x1 = x2 = y1 = y2 = 0.0
+        out = [0.0] * n
+        for i in range(n):
+            x0 = signal[i]
+            y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            out[i] = y0
+            x2, x1, y2, y1 = x1, x0, y1, y0
+        signal = out
+    return np.asarray(signal, dtype=np.float64)
+
+
+def _k_weight(x: np.ndarray, sr: int) -> np.ndarray:
+    """K-weighted copy of a mono signal (same length, float32): the impulse response applied
+    by overlap-add over 2^16-sample blocks, so memory stays small for any length."""
+    h = _k_weighting_ir(int(sr))
+    n = len(x)
+    out = np.zeros(n, dtype=np.float32)
+    for start in range(0, n, _KW_FIR_BLOCK):
+        seg = _fft_convolve(x[start:start + _KW_FIR_BLOCK], h)
+        end = min(n, start + len(seg))
+        out[start:end] += seg[:end - start]
+    return out
+
+
+def integrated_lufs(x: np.ndarray, sr: int = SR) -> float:
     """
-    Measures the speech-gated integrated RMS loudness of an audio signal (ITU-R BS.1770 / EBU R128 inspired).
-    Splits audio into overlapping frames (50ms frames, 25ms hop), computes frame RMS,
-    filters out silent/pause frames below relative gate_thresh_db (relative to speech RMS),
-    and returns the mean active speech loudness in dBFS.
+    Integrated loudness (LUFS) of a mono signal, ITU-R BS.1770-4: K-weighting, 400 ms
+    blocks with 75 % overlap, -70 LUFS absolute gate, -10 LU relative gate. A signal
+    shorter than one block is measured as its ungated mean square. Silence reads -70.
     """
-    if audio_data is None or len(audio_data) == 0:
-        return -60.0
+    audio = np.asarray(x, dtype=np.float32).reshape(-1)
+    if not len(audio):
+        return LUFS_FLOOR
+    weighted = _k_weight(audio, sr)
+    block_len = _LUFS_BLOCK_S * sr
+    if len(weighted) < block_len:
+        seg = weighted.astype(np.float64)
+        gated = np.array([float(np.dot(seg, seg)) / len(seg)])
+    else:
+        step = 1.0 - _LUFS_OVERLAP
+        total_s = len(weighted) / float(sr)
+        n_blocks = int(np.round((total_s - _LUFS_BLOCK_S) / (_LUFS_BLOCK_S * step))) + 1
+        z = np.empty(n_blocks, dtype=np.float64)
+        for j in range(n_blocks):
+            lo = int(_LUFS_BLOCK_S * (j * step) * sr)
+            hi = int(_LUFS_BLOCK_S * (j * step + 1) * sr)
+            seg = weighted[lo:hi].astype(np.float64)
+            z[j] = float(np.dot(seg, seg)) / block_len
+        with np.errstate(divide="ignore"):
+            block_lufs = -0.691 + 10.0 * np.log10(z)
+        gated = z[block_lufs >= LUFS_FLOOR]
+        if len(gated):
+            relative_gate = -0.691 + 10.0 * np.log10(np.mean(gated)) + _LUFS_RELATIVE_GATE_LU
+            gated = z[(block_lufs > relative_gate) & (block_lufs > LUFS_FLOOR)]
+    mean_square = float(np.mean(gated)) if len(gated) else 0.0
+    if mean_square <= 0.0:
+        return LUFS_FLOOR
+    return max(LUFS_FLOOR, -0.691 + 10.0 * math.log10(mean_square))
 
-    frame_len = int(sr * (frame_len_ms / 1000.0))
-    hop_len = int(sr * (hop_ms / 1000.0))
-    if frame_len <= 0 or hop_len <= 0 or len(audio_data) < frame_len:
-        rms = np.sqrt(np.mean(audio_data ** 2)) if len(audio_data) > 0 else 1e-6
-        return float(np.clip(20.0 * np.log10(max(rms, 1e-6)), -70.0, 0.0))
 
-    frames = np.lib.stride_tricks.sliding_window_view(audio_data, frame_len)[::hop_len]
-    frame_rms = np.sqrt(np.mean(frames ** 2, axis=-1) + 1e-12)
+@functools.lru_cache(maxsize=1)
+def _true_peak_phases() -> np.ndarray:
+    """(48, 4) matrix of the 4x interpolator: column k is the windowed-sinc phase that
+    reads the signal k/4 of a sample after the centre of a 48-sample window (Kaiser,
+    beta 8). Phase 0 is the centre sample itself, so the true peak is never below the
+    sample peak."""
+    m = np.arange(_TP_TAPS, dtype=np.float64)
+    half = _TP_TAPS / 2.0 + 1.0
+    cols = []
+    for k in range(_TP_OVERSAMPLE):
+        t = (_TP_TAPS // 2) - m + k / float(_TP_OVERSAMPLE)
+        window = np.i0(8.0 * np.sqrt(1.0 - (t / half) ** 2)) / np.i0(8.0)
+        cols.append(np.sinc(t) * window)
+    return np.stack(cols, axis=1)
 
-    # Step 1: Absolute threshold (-55 dBFS) to discard pure digital silence
-    abs_thresh = 10.0 ** (-55.0 / 20.0)
-    speech_cand = frame_rms[frame_rms >= abs_thresh]
-    if len(speech_cand) == 0:
-        return -60.0
 
-    # Step 2: Relative speech gate (-15 dB relative to initial active speech RMS)
-    ungated_mean_rms = np.sqrt(np.mean(speech_cand ** 2))
-    rel_thresh = ungated_mean_rms * (10.0 ** (gate_thresh_db / 20.0))
-    active_frames = speech_cand[speech_cand >= rel_thresh]
-    if len(active_frames) == 0:
-        active_frames = speech_cand
+def true_peak_db(x: np.ndarray) -> float:
+    """True peak (dBTP) of a mono signal: 4x oversampled by a polyphase windowed-sinc
+    interpolator (48 taps per phase), in blocks. Silence reads -120."""
+    audio = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = len(audio)
+    phases = _true_peak_phases()
+    peak = 0.0
+    seg_len = _TP_BLOCK + _TP_TAPS - 1
+    for start in range(-_TP_TAPS, n, _TP_BLOCK):
+        lo, hi = max(start, 0), min(start + seg_len, n)
+        if hi <= lo:
+            continue
+        seg = np.zeros(seg_len, dtype=np.float64)
+        seg[lo - start:hi - start] = audio[lo:hi]
+        frames = np.lib.stride_tricks.sliding_window_view(seg, _TP_TAPS)
+        peak = max(peak, float(np.max(np.abs(frames @ phases))))
+    return 20.0 * math.log10(peak) if peak > 1e-6 else -120.0
 
-    mean_speech_rms = np.sqrt(np.mean(active_frames ** 2))
-    speech_loudness_db = float(20.0 * np.log10(max(mean_speech_rms, 1e-6)))
-    return round(float(np.clip(speech_loudness_db, -70.0, 0.0)), 1)
+
+def _limit_true_peak(x: np.ndarray, sr: int) -> Tuple[np.ndarray, float]:
+    """Brickwall limiter at MASTER_LIMITER_CEILING_DB (true peak), then a static trim if the
+    result still reads above TRUE_PEAK_CEILING_DB. Returns (audio, true peak in dBTP)."""
+    pb = _pedalboard_module()
+    audio = np.ascontiguousarray(_sanitize_finite_audio(x, context="master limiter input")).reshape(-1)
+    if not len(audio):
+        return audio, -120.0
+    limiter = pb.BrickwallLimiter(ceiling_db=MASTER_LIMITER_CEILING_DB, true_peak=True)
+    out = np.asarray(limiter(audio, sr), dtype=np.float32).reshape(-1)
+    peak_db = true_peak_db(out)
+    if peak_db > TRUE_PEAK_CEILING_DB:
+        # 0.001 dB under the ceiling so float32 rounding can't leave it a hair above.
+        out = (out * np.float32(10.0 ** ((TRUE_PEAK_CEILING_DB - 0.001 - peak_db) / 20.0))).astype(np.float32)
+        peak_db = true_peak_db(out)
+    return out, peak_db
+
+
+def _master_gain_db(lufs: float) -> float:
+    """Gain that takes a mix at lufs to MASTER_TARGET_LUFS, clamped; 0 for silence."""
+    if lufs <= LUFS_FLOOR:
+        return 0.0
+    return float(np.clip(MASTER_TARGET_LUFS - lufs, -MASTER_GAIN_LIMIT_DB, MASTER_GAIN_LIMIT_DB))
+
+
+def master_stage(mix: np.ndarray, sr: int = SR) -> Tuple[np.ndarray, Dict[str, float]]:
+    """
+    Masters the final mono mix: non-finite samples become silence, the mix is brought to
+    MASTER_TARGET_LUFS integrated (gain clamped to +/-24 dB, skipped at or below -70 LUFS),
+    then limited to TRUE_PEAK_CEILING_DB true peak. Length is unchanged.
+    Returns (audio, {"lufs_in", "gain_db", "true_peak_db"}).
+    Raises RuntimeError when the limiter (pedalboard) isn't available.
+    """
+    audio = _sanitize_finite_audio(mix, context="master_stage input")
+    lufs_in = integrated_lufs(audio, sr)
+    gain_db = _master_gain_db(lufs_in)
+    if gain_db:
+        audio = (audio * np.float32(10.0 ** (gain_db / 20.0))).astype(np.float32)
+    out, peak_db = _limit_true_peak(audio, sr)
+    return out, {"lufs_in": round(lufs_in, 2), "gain_db": round(gain_db, 2), "true_peak_db": round(peak_db, 2)}
 
 
 def calculate_take_auto_gain(
     take_audio_or_path: Union[np.ndarray, str],
-    target_loudness_db: float = DEFAULT_DIALOGUE_LOUDNESS_DB,
+    target_lufs: float = DEFAULT_DIALOGUE_LUFS,
     sr: int = SR,
     max_boost_db: float = 12.0,
     max_cut_db: float = -12.0
 ) -> Dict[str, float]:
     """
-    Computes the static gain offset needed to match target dialogue loudness.
+    Computes the static gain that brings the take's integrated loudness to target_lufs.
     A boost is capped so the take's sample peak stays at or below
     AUTO_GAIN_PEAK_CEILING_DB; cuts are never affected by the cap.
-    Returns {"take_loudness_db": float, "target_loudness_db": float, "auto_gain_db": float}.
+    Returns {"loudness_lufs": float, "target_lufs": float, "auto_gain_db": float}.
     """
     if isinstance(take_audio_or_path, str):
         if not os.path.isfile(take_audio_or_path):
-            return {"take_loudness_db": DEFAULT_DIALOGUE_LOUDNESS_DB, "target_loudness_db": round(target_loudness_db, 1), "auto_gain_db": 0.0}
+            return {"loudness_lufs": DEFAULT_DIALOGUE_LUFS, "target_lufs": round(target_lufs, 1), "auto_gain_db": 0.0}
         audio_data = read_wav_mono(take_audio_or_path, sr)
     else:
         audio_data = take_audio_or_path
 
-    take_loudness_db = calculate_speech_gated_loudness(audio_data, sr=sr)
-    raw_delta_db = target_loudness_db - take_loudness_db
+    loudness_lufs = round(integrated_lufs(audio_data, sr), 1)
+    raw_delta_db = target_lufs - loudness_lufs
     # Clamp to safe gain limits [-12dB, +12dB]
     gain_db = float(np.clip(raw_delta_db, max_cut_db, max_boost_db))
     peak = float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0
@@ -434,8 +605,8 @@ def calculate_take_auto_gain(
     auto_gain_db = round(float(gain_db), 1)
 
     return {
-        "take_loudness_db": take_loudness_db,
-        "target_loudness_db": round(target_loudness_db, 1),
+        "loudness_lufs": loudness_lufs,
+        "target_lufs": round(target_lufs, 1),
         "auto_gain_db": auto_gain_db,
     }
 
@@ -687,7 +858,7 @@ def save_uploaded_take(
     filename_hint: str = "take.webm",
     enable_noise_reduction: bool = False,
     user_id: Optional[str] = None,
-    target_loudness_db: Optional[float] = None,
+    target_lufs: Optional[float] = None,
     reference_wav: Optional[str] = None,
     start_offset_ms: int = 0,
     align: bool = True,
@@ -696,7 +867,7 @@ def save_uploaded_take(
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
     Writes <take_dir>/<stem>.wav (active), preserves pristine raw audio (<stem>_raw.wav) and
     generates denoised audio (<stem>_denoised_{key}.wav, see denoised_take_path) when requested.
-    Calculates speech-gated loudness and smart auto-gain calibration against scene target.
+    Measures the take's integrated loudness and the auto gain that matches it to target_lufs.
     When align and reference_wav (the original line's audio) are given, matches the take's
     timing to it from start_offset_ms (match_take_timing); a clearly faster or slower take is
     also fitted, so the active file is the raw or cleaned audio at that stretch. Otherwise the
@@ -757,9 +928,9 @@ def save_uploaded_take(
     duration = len(audio_data) / float(SR)
     peaks = compute_waveform_peaks(audio_data, 100)
 
-    # Calculate speech-gated loudness and smart auto-gain calibration
-    effective_target_db = target_loudness_db if target_loudness_db is not None else DEFAULT_DIALOGUE_LOUDNESS_DB
-    gain_match = calculate_take_auto_gain(audio_data, target_loudness_db=effective_target_db, sr=SR)
+    # Integrated loudness and the auto gain that matches the original line
+    effective_target = target_lufs if target_lufs is not None else DEFAULT_DIALOGUE_LUFS
+    gain_match = calculate_take_auto_gain(audio_data, target_lufs=effective_target, sr=SR)
 
     return {
         "wav_path": target_wav,
@@ -769,8 +940,8 @@ def save_uploaded_take(
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
         "has_raw": True,
-        "speech_loudness_db": gain_match["take_loudness_db"],
-        "target_loudness_db": gain_match["target_loudness_db"],
+        "loudness_lufs": gain_match["loudness_lufs"],
+        "target_lufs": gain_match["target_lufs"],
         "auto_gain_db": gain_match["auto_gain_db"],
         "start_offset_ms": start_offset_ms,
         **timing,
@@ -783,14 +954,14 @@ def toggle_take_noise_reduction(
     stem: str,
     enable_noise_reduction: bool,
     user_id: Optional[str] = None,
-    target_loudness_db: Optional[float] = None,
+    target_lufs: Optional[float] = None,
     stretch: float = 1.0,
 ) -> Dict[str, Any]:
     """
     Instantly toggles a take between pristine raw and denoised audio.
     Generates denoised audio on-demand if missing, writes the active file at the take's
     stretch (so a fitted take stays fitted), and re-measures the swapped audio's loudness
-    and auto gain against target_loudness_db.
+    and auto gain against target_lufs.
     """
     target_wav = os.path.join(take_dir, f"{stem}.wav")
     raw_wav = os.path.join(take_dir, f"{stem}_raw.wav")
@@ -823,8 +994,8 @@ def toggle_take_noise_reduction(
     audio_data = read_wav_mono(target_wav)
     duration = len(audio_data) / float(SR)
     peaks = compute_waveform_peaks(audio_data, 100)
-    effective_target_db = target_loudness_db if target_loudness_db is not None else DEFAULT_DIALOGUE_LOUDNESS_DB
-    gain_match = calculate_take_auto_gain(audio_data, target_loudness_db=effective_target_db, sr=SR)
+    effective_target = target_lufs if target_lufs is not None else DEFAULT_DIALOGUE_LUFS
+    gain_match = calculate_take_auto_gain(audio_data, target_lufs=effective_target, sr=SR)
 
     return {
         "wav_path": target_wav,
@@ -832,31 +1003,10 @@ def toggle_take_noise_reduction(
         "peaks": peaks,
         "noise_reduction": bool(enable_noise_reduction),
         "has_raw": True,
-        "speech_loudness_db": gain_match["take_loudness_db"],
-        "target_loudness_db": gain_match["target_loudness_db"],
+        "loudness_lufs": gain_match["loudness_lufs"],
+        "target_lufs": gain_match["target_lufs"],
         "auto_gain_db": gain_match["auto_gain_db"],
     }
-
-
-def master_soft_limiter(audio: np.ndarray, ceiling_db: float = LIMITER_CEILING_DB) -> np.ndarray:
-    """
-    Transparent studio soft-knee limiter that prevents digital clipping
-    without crushing relative track dynamics or individual volume knob levels.
-    """
-    audio = _sanitize_finite_audio(audio, context="master_soft_limiter input")
-    ceiling = 10.0 ** (ceiling_db / 20.0)  # ~0.966
-    peak = np.max(np.abs(audio)) if len(audio) else 0.0
-    if peak <= ceiling:
-        return audio
-
-    threshold = ceiling * 0.70  # ~0.676
-    out = np.copy(audio)
-    mask = np.abs(audio) > threshold
-    if np.any(mask):
-        excess = np.abs(audio[mask]) - threshold
-        compressed = threshold + (ceiling - threshold) * np.tanh(excess / (ceiling - threshold + 1e-6))
-        out[mask] = np.sign(audio[mask]) * compressed
-    return out
 
 
 def apply_audio_effects(
@@ -977,15 +1127,16 @@ def _mix_into(buffers: List[np.ndarray], audio: np.ndarray, pos_sec: float, sr: 
             buf[start_sample:end_sample] += audio[:end_sample - start_sample]
 
 
-def render_dub_mix(
+def _mix_scene(
     pack: PackInfo,
     takes_dict: Dict[int, Dict[str, Any]],
-    output_wav: str,
     sr: int = SR,
-    master_dialogue_presence_db: float = 0.0,
-) -> str:
+    presence_db: float = 0.0,
+) -> np.ndarray:
     """
-    Renders complete mix with millisecond offsets, voice effects, and master dialogue presence.
+    The scene's unmastered mono mix: backing x BACKING_TRACK_LEVEL, each take at its
+    offset with its effects, gain and presence_db, and the original voice
+    (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take.
     takes_dict format: {line_index: {"wav_path": str, "offset_ms": int, "pitch_semitones": float, "reverb_wet": float, "gain_db": float}}
     """
     total_samples = _timeline_samples(pack, sr)
@@ -1009,7 +1160,7 @@ def render_dub_mix(
         if take_info and os.path.isfile(take_info.get("wav_path", "")):
             offset_sec = float(take_info.get("offset_ms", 0)) / 1000.0
             # Take gain plus master dialogue presence trim
-            gain = float(take_info.get("gain_db", 0.0)) + float(master_dialogue_presence_db)
+            gain = float(take_info.get("gain_db", 0.0)) + float(presence_db)
             processed_audio = _render_take(take_info, sr, gain, f"render_dub_mix line {idx}")
             if processed_audio is None:
                 # Failure policy: an unreadable take is skipped so the render can continue.
@@ -1022,14 +1173,27 @@ def render_dub_mix(
             if os.path.isfile(orig_path):
                 try:
                     orig_audio = read_wav_mono(orig_path, sr)
-                    orig_mult = ORIGINAL_LINE_LEVEL * (10.0 ** (float(master_dialogue_presence_db) / 20.0))
+                    orig_mult = ORIGINAL_LINE_LEVEL * (10.0 ** (float(presence_db) / 20.0))
                     _mix_into([mix_buffer], orig_audio * np.float32(orig_mult), start_sec, sr)
                 except Exception as ex:
                     print(f"Error loading original audio for line {idx}: {ex}")
 
-    # 3. Apply master transparent soft limiter (preserves dynamics, volume knob levels, and reverb tails)
-    master_mix = master_soft_limiter(mix_buffer, ceiling_db=LIMITER_CEILING_DB)
+    return mix_buffer
 
+
+def render_dub_mix(
+    pack: PackInfo,
+    takes_dict: Dict[int, Dict[str, Any]],
+    output_wav: str,
+    sr: int = SR,
+    master_dialogue_presence_db: float = 0.0,
+) -> str:
+    """
+    Renders the scene mix (_mix_scene, with master dialogue presence) through the master
+    stage (-16 LUFS, -1 dBTP) into output_wav.
+    """
+    master_mix, info = master_stage(_mix_scene(pack, takes_dict, sr, master_dialogue_presence_db), sr)
+    print(f"[render_dub_mix] Master: {info['lufs_in']} LUFS in, {info['gain_db']:+} dB, {info['true_peak_db']} dBTP out.")
     write_wav_mono(output_wav, master_mix, sr)
     return output_wav
 
@@ -1192,6 +1356,7 @@ def _project_manifest(
     video_written: bool,
     backing_written: bool,
     master_vocal_written: bool,
+    master_gain_db: float = 0.0,
 ) -> Dict[str, Any]:
     """project_manifest.json for build_project_zip. Single files are listed only if they were written."""
     return {
@@ -1208,6 +1373,8 @@ def _project_manifest(
         "role_assignments": role_assignments,
         "users": users,
         "lines": manifest_lines,
+        # Gain applied to the vocal mix and character stems to bring the scene to target_lufs.
+        "master": {"target_lufs": MASTER_TARGET_LUFS, "gain_db": round(master_gain_db, 2)},
         "files": {
             "clean_video": f"Video/{sanitize_filename(pack.name)}_Clean_Video.mp4" if video_written else None,
             "backing_track": "Audio_Stems/Backing_Music_SFX.mp3" if backing_written else None,
@@ -1290,7 +1457,10 @@ def build_project_zip(
             except Exception as ex:
                 print(f"[ProjectZip] Error converting backing track: {ex}")
 
-        # 3. Master Vocal Mix Stem & Character Stems
+        # 3. Master Vocal Mix Stem & Character Stems. Their master gain is the one that
+        # brings the whole scene (backing included) to MASTER_TARGET_LUFS.
+        master_gain_db = _master_gain_db(integrated_lufs(_mix_scene(pack, takes_dict, sr, presence_db=0.0), sr))
+        master_mult = np.float32(10.0 ** (master_gain_db / 20.0))
         master_vocal_buffer = np.zeros(total_samples, dtype=np.float32)
 
         # Determine all characters present
@@ -1391,7 +1561,7 @@ def build_project_zip(
             manifest_lines.append(line_entry)
 
         # Write Master_Vocal_Mix.mp3
-        master_vocal_limited = master_soft_limiter(master_vocal_buffer, ceiling_db=LIMITER_CEILING_DB)
+        master_vocal_limited, _ = _limit_true_peak(master_vocal_buffer * master_mult, sr)
         master_vocal_path = os.path.join(stems_dir, "Master_Vocal_Mix.mp3")
         master_vocal_written = False
         try:
@@ -1407,7 +1577,7 @@ def build_project_zip(
             actor_suffix = f"_{sanitize_filename(actor_names[0])}" if actor_names else ""
             char_filename = f"{sanitize_filename(char)}{actor_suffix}.mp3"
             char_stem_path = os.path.join(char_stems_dir, char_filename)
-            char_limited = master_soft_limiter(buf, ceiling_db=LIMITER_CEILING_DB)
+            char_limited, _ = _limit_true_peak(buf * master_mult, sr)
             try:
                 write_mp3_mono(char_stem_path, char_limited, sr=sr, bitrate=bitrate)
             except Exception as ex:
@@ -1424,6 +1594,7 @@ def build_project_zip(
             video_written=video_written,
             backing_written=backing_written,
             master_vocal_written=master_vocal_written,
+            master_gain_db=master_gain_db,
         )
         manifest_json_path = os.path.join(proj_root, "project_manifest.json")
         with open(manifest_json_path, "w", encoding="utf-8") as f:

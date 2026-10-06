@@ -21,7 +21,7 @@ from dubmate import rooms
 
 class TestDialogueLoudnessAlignment(unittest.TestCase):
     """
-    Comprehensive test suite for Speech-Gated Dialogue Loudness Alignment,
+    Comprehensive test suite for BS.1770 Dialogue Loudness Alignment,
     Static Gain-Matching, Dynamics Preservation, and Master Dialogue Prominence.
     """
 
@@ -56,25 +56,25 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
             speech[active_idx] = speech[active_idx] * (target_linear / max(current_rms, 1e-6))
         return np.clip(speech, -1.0, 1.0).astype(np.float32)
 
-    def test_01_speech_gated_loudness_ignores_silence(self):
-        """Verifies that speech-gated loudness accurately measures active speech and ignores pauses."""
+    def test_01_integrated_lufs_ignores_silence(self):
+        """Verifies that gated integrated loudness measures active speech and ignores pauses."""
         speech = self._generate_synthetic_speech(duration_sec=3.0, target_rms_db=-18.0, pause_ratio=0.5)
-        measured_db = audio_processor.calculate_speech_gated_loudness(speech, sr=self.sr)
+        measured_db = audio_processor.integrated_lufs(speech, sr=self.sr)
         self.assertAlmostEqual(measured_db, -18.0, delta=2.5)
 
     def test_02_calculate_take_auto_gain_calculation(self):
         """Verifies that auto-gain correctly calculates static linear offsets to match scene target."""
         whisper_audio = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-28.0, pause_ratio=0.2)
-        res_whisper = audio_processor.calculate_take_auto_gain(whisper_audio, target_loudness_db=-20.0, sr=self.sr)
+        res_whisper = audio_processor.calculate_take_auto_gain(whisper_audio, target_lufs=-20.0, sr=self.sr)
         self.assertAlmostEqual(res_whisper["auto_gain_db"], 8.0, delta=2.5)
-        self.assertEqual(res_whisper["target_loudness_db"], -20.0)
+        self.assertEqual(res_whisper["target_lufs"], -20.0)
 
         shout_audio = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-12.0, pause_ratio=0.2)
-        res_shout = audio_processor.calculate_take_auto_gain(shout_audio, target_loudness_db=-20.0, sr=self.sr)
+        res_shout = audio_processor.calculate_take_auto_gain(shout_audio, target_lufs=-20.0, sr=self.sr)
         self.assertAlmostEqual(res_shout["auto_gain_db"], -8.0, delta=2.5)
 
     def test_03_save_uploaded_take_includes_loudness_metadata(self):
-        """Verifies that save_uploaded_take returns speech_loudness_db, target_loudness_db, and auto_gain_db."""
+        """Verifies that save_uploaded_take returns loudness_lufs, target_lufs, and auto_gain_db."""
         room_id = "LOUDN1"
         line_index = 0
         audio_data = self._generate_synthetic_speech(duration_sec=1.5, target_rms_db=-26.0)
@@ -90,20 +90,27 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
             stem=f"take_line_{line_index}",
             audio_bytes=audio_bytes,
             filename_hint="take.wav",
-            target_loudness_db=-20.0
+            target_lufs=-20.0
         )
 
-        self.assertIn("speech_loudness_db", saved)
-        self.assertIn("target_loudness_db", saved)
+        self.assertIn("loudness_lufs", saved)
+        self.assertIn("target_lufs", saved)
         self.assertIn("auto_gain_db", saved)
-        self.assertEqual(saved["target_loudness_db"], -20.0)
-        self.assertAlmostEqual(saved["auto_gain_db"], 6.0, delta=2.5)
+        self.assertNotIn("speech_loudness_db", saved)
+        self.assertEqual(saved["target_lufs"], -20.0)
+        # BS.1770 blocks that straddle the pause count too, so this short take reads a
+        # little under its -26 dB active level.
+        expected_lufs = audio_processor.integrated_lufs(audio_processor.read_wav_mono(wav_path), self.sr)
+        self.assertAlmostEqual(saved["loudness_lufs"], expected_lufs, delta=0.1)
+        self.assertAlmostEqual(saved["auto_gain_db"], -20.0 - expected_lufs, delta=0.15)
+        self.assertAlmostEqual(saved["auto_gain_db"], 6.0, delta=3.0)
 
     def test_04_multi_character_gain_matching_preserves_dynamics(self):
         """
         Verifies that when two distinct actors (one quiet whisperer, one loud speaker)
         are gain-matched, their levels balance cohesively in render_dub_mix while preserving
-        100% of the natural intra-take dynamic range.
+        100% of the natural intra-take dynamic range. The master stage moves the whole mix
+        to -16 LUFS, so the lines keep their balance, not their absolute level.
         """
         pack_dir = os.path.join(self.test_dir, "pack_multi_char")
         os.makedirs(pack_dir, exist_ok=True)
@@ -143,8 +150,8 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         audio_processor.write_wav_mono(t1_path, actor1_take, self.sr)
         audio_processor.write_wav_mono(t2_path, actor2_take, self.sr)
 
-        g1 = audio_processor.calculate_take_auto_gain(t1_path, target_loudness_db=ref1)["auto_gain_db"]
-        g2 = audio_processor.calculate_take_auto_gain(t2_path, target_loudness_db=ref2)["auto_gain_db"]
+        g1 = audio_processor.calculate_take_auto_gain(t1_path, target_lufs=ref1)["auto_gain_db"]
+        g2 = audio_processor.calculate_take_auto_gain(t2_path, target_lufs=ref2)["auto_gain_db"]
 
         takes_dict = {
             0: {"wav_path": t1_path, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": g1},
@@ -157,14 +164,19 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         seg1 = mixed_data[0 : int(2.0 * self.sr)]
         seg2 = mixed_data[int(3.0 * self.sr) : int(5.0 * self.sr)]
 
-        loudness1 = audio_processor.calculate_speech_gated_loudness(seg1, self.sr)
-        loudness2 = audio_processor.calculate_speech_gated_loudness(seg2, self.sr)
+        loudness1 = audio_processor.integrated_lufs(seg1, self.sr)
+        loudness2 = audio_processor.integrated_lufs(seg2, self.sr)
 
-        self.assertAlmostEqual(loudness1, ref1, delta=2.0)
-        self.assertAlmostEqual(loudness2, ref2, delta=2.0)
+        self.assertAlmostEqual(loudness2 - loudness1, ref2 - ref1, delta=1.0)
+        self.assertAlmostEqual(audio_processor.integrated_lufs(mixed_data, self.sr), audio_processor.MASTER_TARGET_LUFS, delta=0.3)
+
+        # Before the master stage each line sits at its original line's level.
+        scene = audio_processor._mix_scene(pack, takes_dict, self.sr)
+        self.assertAlmostEqual(audio_processor.integrated_lufs(scene[0 : int(2.0 * self.sr)], self.sr), ref1, delta=2.0)
+        self.assertAlmostEqual(audio_processor.integrated_lufs(scene[int(3.0 * self.sr) : int(5.0 * self.sr)], self.sr), ref2, delta=2.0)
 
     def test_05_master_dialogue_presence_scaling(self):
-        """Verifies that master_dialogue_presence_db cleanly scales vocal prominence against backing."""
+        """Verifies that dialogue presence cleanly scales vocal prominence in the scene mix (before the master stage)."""
         pack_dir = os.path.join(self.test_dir, "pack_presence")
         os.makedirs(pack_dir, exist_ok=True)
         ref_audio = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-20.0, pause_ratio=0.0)
@@ -187,22 +199,15 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
             0: {"wav_path": ref_path, "offset_ms": 0, "pitch_semitones": 0.0, "reverb_wet": 0.0, "gain_db": 0.0}
         }
 
-        out_0db = os.path.join(self.test_dir, "mix_0db.wav")
-        audio_processor.render_dub_mix(pack, takes_dict, out_0db, sr=self.sr, master_dialogue_presence_db=0.0)
-        data_0db = audio_processor.read_wav_mono(out_0db, self.sr)
-        loud_0db = audio_processor.calculate_speech_gated_loudness(data_0db, self.sr)
-
-        out_4db = os.path.join(self.test_dir, "mix_4db.wav")
-        audio_processor.render_dub_mix(pack, takes_dict, out_4db, sr=self.sr, master_dialogue_presence_db=4.0)
-        data_4db = audio_processor.read_wav_mono(out_4db, self.sr)
-        loud_4db = audio_processor.calculate_speech_gated_loudness(data_4db, self.sr)
+        loud_0db = audio_processor.integrated_lufs(audio_processor._mix_scene(pack, takes_dict, self.sr, presence_db=0.0), self.sr)
+        loud_4db = audio_processor.integrated_lufs(audio_processor._mix_scene(pack, takes_dict, self.sr, presence_db=4.0), self.sr)
 
         self.assertAlmostEqual(loud_4db - loud_0db, 4.0, delta=1.5)
 
     # --- B3: auto gain-match must target the measured original line ---
 
     def _make_pack(self, name, line_levels_db):
-        """Synthetic pack whose lines really sit at the given speech levels (dBFS gated RMS)."""
+        """Synthetic pack whose lines really sit at the given speech levels (active RMS, about the LUFS)."""
         pack_dir = os.path.join(self.test_dir, name)
         os.makedirs(pack_dir, exist_ok=True)
         captions = {}
@@ -261,8 +266,10 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
 
         quiet = self._upload("LOUDB3", 0, -21.0)
         loud = self._upload("LOUDB3", 1, -21.0)
-        self.assertAlmostEqual(quiet["target_loudness_db"], -32.0, delta=2.0)
-        self.assertAlmostEqual(loud["target_loudness_db"], -12.0, delta=2.0)
+        self.assertAlmostEqual(quiet["target_lufs"], -32.0, delta=2.0)
+        self.assertAlmostEqual(loud["target_lufs"], -12.0, delta=2.0)
+        self.assertIn("loudness_lufs", quiet)
+        self.assertNotIn("speech_loudness_db", quiet)
         self.assertAlmostEqual(quiet["auto_gain_db"], -11.0, delta=2.5)
         self.assertAlmostEqual(loud["auto_gain_db"], 9.0, delta=2.5)
 
@@ -285,7 +292,7 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
         take = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-33.0, pause_ratio=0.0)
         spike_level = 10.0 ** (-6.0 / 20.0)
         take[1000:1010] = spike_level
-        res = audio_processor.calculate_take_auto_gain(take, target_loudness_db=-21.0, sr=self.sr)
+        res = audio_processor.calculate_take_auto_gain(take, target_lufs=-21.0, sr=self.sr)
         peak_db = 20.0 * np.log10(spike_level)
         self.assertGreater(res["auto_gain_db"], 0.0)
         self.assertLessEqual(res["auto_gain_db"], audio_processor.AUTO_GAIN_PEAK_CEILING_DB - peak_db)
@@ -294,7 +301,7 @@ class TestDialogueLoudnessAlignment(unittest.TestCase):
 
         # Cuts are never limited by the cap.
         hot = self._generate_synthetic_speech(duration_sec=2.0, target_rms_db=-9.0, pause_ratio=0.0)
-        hot_gain = audio_processor.calculate_take_auto_gain(hot, target_loudness_db=-21.0, sr=self.sr)["auto_gain_db"]
+        hot_gain = audio_processor.calculate_take_auto_gain(hot, target_lufs=-21.0, sr=self.sr)["auto_gain_db"]
         self.assertAlmostEqual(hot_gain, -12.0, delta=1.0)
 
     def test_09_noise_reduction_toggle_rematches_gain(self):
