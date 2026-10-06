@@ -54,15 +54,16 @@ pub fn find_app_py(app: &tauri::AppHandle) -> Option<PathBuf> {
     None
 }
 
+/// Python executable names probed under each packaged runtime root, in probe order.
+#[cfg(target_os = "windows")]
+const PYTHON_EXE_NAMES: [&str; 2] = ["python.exe", "python-x86_64-pc-windows-msvc.exe"];
+#[cfg(not(target_os = "windows"))]
+const PYTHON_EXE_NAMES: [&str; 4] = ["bin/python3", "bin/python", "python3", "python"];
+
 pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
     // 1. Check in resource_dir (packaged app)
     if let Ok(res_dir) = app.path().resource_dir() {
-        #[cfg(target_os = "windows")]
-        let names = ["python.exe", "python-x86_64-pc-windows-msvc.exe"];
-        #[cfg(not(target_os = "windows"))]
-        let names = ["bin/python3", "bin/python", "python3", "python"];
-
-        for name in names {
+        for name in PYTHON_EXE_NAMES {
             let candidates = [
                 res_dir.join("python-runtime").join(name),
                 res_dir.join("resources").join("python-runtime").join(name),
@@ -80,12 +81,7 @@ pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
     // 2. Check exe directory (installed root)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            #[cfg(target_os = "windows")]
-            let names = ["python.exe", "python-x86_64-pc-windows-msvc.exe"];
-            #[cfg(not(target_os = "windows"))]
-            let names = ["bin/python3", "bin/python", "python3", "python"];
-
-            for name in names {
+            for name in PYTHON_EXE_NAMES {
                 let candidates = [
                     exe_dir.join("resources").join("python-runtime").join(name),
                     exe_dir.join("python-runtime").join(name),
@@ -177,6 +173,23 @@ pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
     None
 }
 
+/// True when `dir` is a cargo build output (a `target` component followed by `debug`
+/// or `release`), i.e. a dev run rather than an install. A bare substring test also
+/// matched install paths such as `D:\Targets\DubMate`.
+fn is_cargo_target_dir(dir: &Path) -> bool {
+    let mut after_target = false;
+    for part in dir.components().map(|c| c.as_os_str()) {
+        if after_target && (part == "debug" || part == "release") {
+            return true;
+        }
+        if part == "target" {
+            after_target = true;
+        }
+    }
+    false
+}
+
+/// Directory holding app.py (usually `<install root>/resources`), not the install root.
 pub fn get_app_install_dir(app: &tauri::AppHandle) -> PathBuf {
     if let Some(app_py) = find_app_py(app) {
         if let Some(parent) = app_py.parent() {
@@ -186,8 +199,7 @@ pub fn get_app_install_dir(app: &tauri::AppHandle) -> PathBuf {
 
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
-            let p_str = parent.to_string_lossy();
-            if !p_str.contains("target") {
+            if !is_cargo_target_dir(parent) {
                 return parent.to_path_buf();
             }
         }
@@ -266,7 +278,7 @@ pub(crate) fn find_bundled_tools_dir(app: &tauri::AppHandle) -> Option<PathBuf> 
 pub(crate) fn install_root_dir(app: &tauri::AppHandle) -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            if !dir.to_string_lossy().contains("target") {
+            if !is_cargo_target_dir(dir) {
                 return dir.to_path_buf();
             }
         }
@@ -300,4 +312,21 @@ pub(crate) fn read_installed_version(app: &tauri::AppHandle) -> String {
         }
     }
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_target_dir_is_detected_by_component_not_substring() {
+        assert!(is_cargo_target_dir(Path::new("/repo/tauri/src-tauri/target/debug")));
+        assert!(is_cargo_target_dir(Path::new("/repo/tauri/src-tauri/target/release")));
+        assert!(is_cargo_target_dir(Path::new(
+            "/repo/tauri/src-tauri/target/x86_64-pc-windows-msvc/release"
+        )));
+        assert!(!is_cargo_target_dir(Path::new("/Targets/DubMate")));
+        assert!(!is_cargo_target_dir(Path::new("/apps/target-practice/DubMate")));
+        assert!(!is_cargo_target_dir(Path::new("/apps/target/DubMate")));
+    }
 }

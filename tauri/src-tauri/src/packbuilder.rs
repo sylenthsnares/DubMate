@@ -8,7 +8,7 @@ use crate::paths::{
     find_python_exe, get_app_install_dir, install_root_dir, AI_COMPLETE_MARKER, AI_PACKAGES_DIR,
     PACKBUILDER_OPTIN_MARKER,
 };
-use crate::sidecars::{kill_sidecars, start_sidecars};
+use crate::sidecars::{hide_console, kill_sidecars, start_sidecars};
 
 /// A human-readable snapshot of the Pack Builder install, sent to the launcher in
 /// place of raw pip output. Nobody installing a dubbing app should have to read
@@ -358,12 +358,7 @@ fn run_pip_install(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    hide_console(&mut cmd);
 
     let mut child = cmd
         .spawn()
