@@ -19,7 +19,7 @@ These are settled; don't reopen them without a reason.
 - **Loudness.** Each take is matched to its original line, measured with BS.1770 (`pyloudnorm`). The master is limited to −16 LUFS integrated and −1 dBTP true peak.
 - **Calibrate Mic is diagnose + tune.**
   - It records 3 s of room tone and reports the speech-band noise floor, hum, hiss, OS noise suppression and gain advice.
-  - Those measurements set DeepFilterNet's attenuation instead of always using the maximum. They also add notches for detected hum and drive a profile-based `noisereduce` fallback.
+  - Those measurements set DeepFilterNet's attenuation instead of always using the maximum. They also add notches for detected hum and drive a profile-based fallback: a small numpy-only stationary gate using the same approach as `noisereduce`, so scipy stays out.
   - A cleaned take records the profile and settings it was made with, so it is rebuilt when they change.
 - **DeepFilterNet** ships with the desktop app.
 
@@ -57,16 +57,17 @@ All of this goes into one PR.
   - A macOS tunnel launcher.
   - Pin FFmpeg to a checksum.
   - Raw error details behind "Show details".
+  - Use the name DubMate in the launcher and window titles, and correct the launcher messages the copy pass couldn't verify. The Tauri `productName` ("DubMate Studio") and the identifier stay unchanged, because they set the install folder and the updater identity.
 - **Audio fixes.**
   - Stop maximum-strength noise reduction and the gate that eats whispers.
-  - Rebuild cleaned takes when the settings change.
+  - Rebuild cleaned takes when the settings change. This happens lazily: a take cleaned under the old maximum setting is rebuilt when its noise reduction is toggled or the line is recorded again. A visible "refresh older takes" action is part of feature 4.
   - A yt-dlp staleness error.
 - **Tests and styling.** Stub the production-registry test, and add the missing `.btn-xs` styles.
 - **Cleanup.**
   - Finish splitting `app.js` (booth, packs, lobby).
   - Turn hex colours into tokens.
   - Drop scipy.
-  - S38: remove the Python sidecar fallback. This is done together with the owner, because it needs an installer build and a macOS CI run.
+  - **Not in PR 2:** S38, removing the Python sidecar fallback. It's done separately with the owner, because it needs an installer build and a macOS CI run.
 
 ## Features, in build order
 

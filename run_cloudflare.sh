@@ -6,7 +6,7 @@ cd "$(dirname "$0")" || exit 1
 PORT=8000
 
 echo "======================================================"
-echo "    🎙️ DubMate Multiplayer Studio Launcher 🎬"
+echo "    DubMate (with room codes)"
 echo "======================================================"
 echo ""
 
@@ -77,7 +77,7 @@ if [ ! -x "$CF_BIN" ]; then
 fi
 
 # 4. Start the engine in the background through run_mac.sh
-echo "[1/2] Starting DubMate Backend Server on port $PORT..."
+echo "[1/2] Starting DubMate on port $PORT..."
 chmod +x run_mac.sh
 ./run_mac.sh > /dev/null 2>&1 &
 

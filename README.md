@@ -1,4 +1,4 @@
-# 🎙️ DubMate Studio Pro — Collaborative Multiplayer Voice Dubbing DAW
+# DubMate
 
 [![Release](https://img.shields.io/github/v/release/sylenthsnares/DubMate?color=gold)](https://github.com/sylenthsnares/DubMate/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -8,7 +8,7 @@
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-Hardware%20Accelerated-555555.svg)](https://ffmpeg.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
-**DubMate Studio Pro** is a high-performance, browser-native Digital Audio Workstation (DAW) and real-time multiplayer scene dubbing suite. It allows voice actors, streamers, content creators, and friends to jump into shared online rooms, claim character roles on an interactive casting board, record lines with instant dual-waveform visual alignment, sculpt takes using vintage analog DSP hardware controls, screen the mastered scene live in the Premiere Theater, and export multi-format master videos or full NLE-ready DAW project bundles.
+Dub anime and film scenes with friends. Pick a scene, cast the characters, record your lines against the video, and watch the finished dub together. DubMate removes the original voices, lines up and levels your takes, cleans up room noise and renders the video. The Pack Builder turns any video into a scene you can dub.
 
 ---
 
@@ -94,7 +94,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the changes in each release.
 ## 🏗️ System Architecture
 
 ```
-DubMate Studio Pro
+DubMate
 ├── Backend (FastAPI + WebSockets + Uvicorn)
 │   ├── app.py                 # FastAPI app: lifespan, middleware, /api/config, static routes; includes the routers below
 │   ├── dubmate/               # Backend package
@@ -108,7 +108,7 @@ DubMate Studio Pro
 │   │   └── builder_api.py     # /api/builder Pack Builder routes
 │   ├── pack_builder.py        # Video ingestion, Demucs AI stems, Whisper speech-to-text, pack assembly
 │   ├── pack_loader.py         # Dual-engine scene pack parser (DubMate & Choicer Voicer)
-│   ├── audio_processor.py     # NumPy/SciPy DSP, FFT convolution reverb, FFmpeg mastering
+│   ├── audio_processor.py     # NumPy DSP, FFT convolution reverb, FFmpeg mastering
 │   ├── requirements.txt       # Core studio dependencies (ultra-lightweight)
 │   └── requirements_builder.txt # Optional AI pipeline dependencies (PyTorch + Demucs + Whisper)
 ├── Frontend (Modern Vanilla JS + CSS3 + Web Audio API)
@@ -151,7 +151,7 @@ DubMate Studio Pro
 
 ## 🚀 Quick Start (Zero Global Pollution)
 
-DubMate Studio Pro installs all Python packages and portable media tools **strictly inside the project folder** (`.venv/` and `tools/`). **No packages or binaries are installed globally on your system, and your system PATH is never modified.**
+DubMate installs all Python packages and portable media tools **strictly inside the project folder** (`.venv/` and `tools/`). **No packages or binaries are installed globally on your system, and your system PATH is never modified.**
 
 ### 1-Click Installation & Setup
 
