@@ -79,7 +79,11 @@ All of this goes into one PR.
    - Compressor and Low Cut come back with export parity.
    - The loudness master.
    - **L**
-4. **Calibrate Mic, diagnose + tune**, plus bundling DeepFilterNet. Write the fallback as a small numpy-only stationary gate (the approach noisereduce uses), so scipy stays out after PR 2 drops it. **M**
+4. **Calibrate Mic, diagnose + tune**, plus bundling DeepFilterNet. Write the fallback as a small numpy-only stationary gate (the approach noisereduce uses), so scipy stays out after PR 2 drops it. **M** (done, `design/calibrate-mic.md`). It came out larger than **M**. Owner to confirm:
+   - A guest's room check resets each host session, because the guest's browser address changes when the host restarts DubMate (the same trade as mic sync).
+   - The bundled DeepFilterNet binary contains its model. It is the one bundled model; everything else downloads its weights at runtime.
+   - **Refresh older takes** trusts the `user_id` in the request, as the noise-reduction toggle does, so a guest could move another person's takes to a different check. Raw takes are untouched and Refresh can be run again.
+   - It was built ahead of feature 3 (Effects rack), out of the order listed here.
 5. **Pack Builder.**
    - Stem preview **S/M** (done).
    - Pointer Events for touch and pen **M** (done).

@@ -197,3 +197,7 @@ Each step is one commit and keeps `python run_all_tests.py` green.
 ## Revision notes
 
 Changed after the claim audit: steps 2 and 3 now name the existing tests they change, and step 2 is additive; takes store a copy of their settings so deleting or pruning a profile can't re-clean a take through a toggle or Original speed; the guest limitation is stated and needs sign-off; the browser keeps one check instead of a per-mic map, and the mic-switch toast is dropped; the computed `cleanup_current` field is dropped (it ran engine detection per take on the event loop); renders are blocked during Refresh; the "model weights" rule is attributed to this run's rules, not ROADMAP; `download_tools.ps1` already pins the version and only lacks a checksum; the unmeasured timing and AGC claims moved to hands-on checks.
+
+## What landed
+
+All nine steps landed on `feat/calibrate-mic` as described above, with two additions from review: **Sync your mic** and **Check your room** record from the same microphone stream, so each is disabled while the other is listening (its Start refuses with a toast); and a render refused during **Refresh older takes** shows the engine's reason. The owner confirmations above are listed under feature 4 in ROADMAP.md.

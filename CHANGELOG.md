@@ -17,10 +17,17 @@
 - **Takes Line Up Automatically**: takes now line up with the original line automatically. Use [ and ] to adjust; Auto goes back.
 - **Fitted Takes**: takes that run a little fast or slow are fitted to the line. Original speed undoes it.
 - **Timing Score**: each take shows how closely it follows the original timing, and deleting the take in the dub falls back to the best-timed one.
+- **Check Your Room**: Audio settings can listen to your room for 3 seconds and show a traffic light (Quiet, Some noise, Noisy) with advice when it applies: mains hum, a steady whine, a hissing mic, your computer already removing noise, or noise that kept changing. A check that can't be used saves nothing and says why.
+- **Cleanup Tuned to Your Room**: after a check, new takes are cleaned to suit your room: gentler in a quiet room, stronger in a noisy one, with hum and whine removed. Using a different microphone asks you to check again, and takes get standard cleanup until you do.
+- **Check Your Loudest Line**: an optional step on the room card. Say your loudest line and DubMate tells you whether to turn your mic up or down, and how much louder your voice is than the room. Nothing is saved.
+- **Refresh Older Takes**: takes cleaned before your latest check can be cleaned again with it. Your original recordings are kept.
+- **Use Standard Cleanup**: forgets your room check. New takes get standard cleanup; takes already cleaned keep their sound until you refresh them.
+- **Guests' Room Checks**: a guest's room check lasts until the host restarts DubMate. After that the guest's row says "Not checked yet" and their earlier takes keep the cleanup they were made with.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
 - **Gentler Noise Reduction**: noise reduction no longer runs at maximum strength, and the fallback no longer gates out whispers and breaths. Cleaned takes are rebuilt when the settings change.
+- **Stronger Noise Cleanup in the Desktop App**: the desktop app now includes the stronger noise cleanup that source installs on Windows already had, instead of the weaker fallback.
 - **ZIPs Saved Once**: on the host's own computer, project and pack ZIPs are saved once to the export folder instead of also landing in Downloads.
 - **Error Details**: raw error text now sits behind "Show details".
 - **Smaller Install**: scipy is no longer needed.
