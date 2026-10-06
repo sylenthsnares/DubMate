@@ -733,15 +733,19 @@ body::after {
 /* SHADCN GLASS CARDS & PANELS                                   */
 /* ------------------------------------------------------------- */
 
-.glass-card {
-  background: var(--card);
-  border: 1.5px solid rgba(204, 164, 88, 0.42);
-  border-radius: var(--radius-lg);
+.glass-card,
+.waveform-panel {
   box-shadow:
     0 8px 28px -4px rgba(0, 0, 0, 0.85),
     0 0 16px rgba(204, 164, 88, 0.22),
     0 0 32px rgba(204, 164, 88, 0.1),
     inset 0 1px 0 rgba(204, 164, 88, 0.35);
+}
+
+.glass-card {
+  background: var(--card);
+  border: 1.5px solid rgba(204, 164, 88, 0.42);
+  border-radius: var(--radius-lg);
   position: relative;
   overflow: hidden;
 }
@@ -1071,10 +1075,6 @@ body::after {
   padding: 20px;
 }
 
-.panel-pack-selector {
-  padding: 20px;
-}
-
 .badge-accent {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1185,6 +1185,7 @@ body::after {
 
 /* Drag and Drop Pack Overlay */
 .panel-pack-selector {
+  padding: 20px;
   position: relative;
 }
 
@@ -1435,22 +1436,24 @@ body::after {
   gap: 10px;
 }
 
+.skeleton-thumb,
+.skeleton-line,
+.skeleton-badge {
+  background: linear-gradient(90deg, #1a1714 25%, #28221b 50%, #1a1714 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s infinite linear;
+}
+
 .skeleton-thumb {
   width: 48px;
   height: 48px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, #1a1714 25%, #28221b 50%, #1a1714 75%);
-  background-size: 200% 100%;
-  animation: skeletonShimmer 1.4s infinite linear;
   flex-shrink: 0;
 }
 
 .skeleton-line {
   height: 12px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, #1a1714 25%, #28221b 50%, #1a1714 75%);
-  background-size: 200% 100%;
-  animation: skeletonShimmer 1.4s infinite linear;
   margin-bottom: 8px;
 }
 
@@ -1474,9 +1477,6 @@ body::after {
   width: 48px;
   height: 16px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, #1a1714 25%, #28221b 50%, #1a1714 75%);
-  background-size: 200% 100%;
-  animation: skeletonShimmer 1.4s infinite linear;
 }
 
 @keyframes skeletonShimmer {
@@ -2014,11 +2014,6 @@ body.resizing .resize-grip-pill {
   border: 1.5px solid rgba(204, 164, 88, 0.45);
   border-radius: var(--radius-md);
   flex-shrink: 0;
-  box-shadow:
-    0 8px 28px -4px rgba(0, 0, 0, 0.85),
-    0 0 16px rgba(204, 164, 88, 0.22),
-    0 0 32px rgba(204, 164, 88, 0.1),
-    inset 0 1px 0 rgba(204, 164, 88, 0.35);
 }
 
 .waveform-legend {
@@ -2268,6 +2263,17 @@ body.resizing .resize-grip-pill {
   letter-spacing: 0.5px;
 }
 
+/* Iconic VOX Brown Diamond Grille Cloth (shared by the monitoring deck, DSP rack and advanced rocker rack) */
+.monitoring-deck-grid,
+.dsp-rack-grid,
+.advanced-rocker-grid {
+  background-color: #120e0b;
+  background-image:
+    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
+  background-size: auto, 24px 36px;
+}
+
 /* 3-Column Balanced Amp Section: Backing Dial | Click Rocker | Guide Rocker */
 .monitoring-deck-grid {
   display: grid;
@@ -2276,11 +2282,6 @@ body.resizing .resize-grip-pill {
   justify-items: center;
   padding: 10px 8px 12px;
   flex: 1 1 auto;
-  background-color: #120e0b;
-  background-image:
-    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
-  background-size: auto, 24px 36px;
   gap: 4px;
 }
 
@@ -2710,11 +2711,6 @@ body.resizing .resize-grip-pill {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
-  background-color: #120e0b;
-  background-image:
-    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
-  background-size: auto, 24px 36px;
   border-bottom: 1.5px solid #2a2016;
   position: relative;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
@@ -2752,51 +2748,15 @@ body.resizing .resize-grip-pill {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
-/* Expandable Advanced Studio Rack Box */
-.advanced-rack-box {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  background-color: #0e0b08;
-  background-image: radial-gradient(ellipse at 50% 10%, rgba(217, 119, 6, 0.08) 0%, transparent 80%);
-}
-
-.advanced-rack-box.open {
-  max-height: 280px;
-  opacity: 1;
-  overflow-y: auto;
-}
-
-.advanced-rack-inner {
-  padding: 10px 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
+/* Advanced Studio Rack rocker grid */
 .advanced-rocker-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
   padding: 8px 4px;
-  background-color: #120e0b;
-  background-image:
-    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
-  background-size: auto, 24px 36px;
   border-radius: var(--radius-md);
   border: 1.5px solid #2a2016;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
-}
-
-.advanced-dials-row {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(204, 164, 88, 0.25);
 }
 
 /* WHEN DSP AMPLIFIER IS EXPANDED TO FILL COMPLETE VERTICAL ROOM DOWN TO BOTTOM BUTTONS */
@@ -2985,6 +2945,7 @@ svg {
 /* Advanced Vocal Rack (Matching VOX Amp Cabinet & Gold Piping) */
 .advanced-rack-box {
   display: none;
+  overflow: hidden;
   padding: 10px 14px 12px;
   background-color: #14100d;
   background-image:
@@ -2995,9 +2956,12 @@ svg {
 }
 .advanced-rack-box.open {
   display: block;
+  max-height: 280px;
+  overflow-y: auto;
 }
 
 .advanced-rack-inner {
+  padding: 10px 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3063,6 +3027,8 @@ svg {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(204, 164, 88, 0.25);
 }
 
 /* Booth Navigation */
@@ -3401,8 +3367,7 @@ svg {
 
 @media (max-width: 900px) {
   .landing-grid,
-  .lobby-layout,
-  .booth-layout {
+  .lobby-layout {
     grid-template-columns: 1fr;
   }
 
@@ -4420,11 +4385,6 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .fetch-step-row.completed .stage-name {
   color: #86efac;
-}
-
-.stage-desc {
-  font-size: 10.5px;
-  color: var(--foreground-muted);
 }
 
 .video-selected-card {
@@ -5690,9 +5650,6 @@ body.resizing-timeline * {
 
 @media (max-width: 1100px) {
   .builder-upload-grid {
-    grid-template-columns: 1fr;
-  }
-  .editor-workspace-layout {
     grid-template-columns: 1fr;
   }
   .editor-right-sidebar {
