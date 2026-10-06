@@ -704,6 +704,8 @@ async def render_take(room_id: str, line_id: str, take_id: str, payload: Dict[st
             except audio_processor.EffectsUnavailable as ex:
                 return JSONResponse(status_code=503, content={"effects_unavailable": True, "message": str(ex)})
             except FileNotFoundError:
+                if os.path.isfile(wav_path):
+                    raise   # something else is missing (ffmpeg, say): not the recording
                 raise HTTPException(status_code=404, detail=_TAKE_AUDIO_MISSING)   # deleted meanwhile
             finally:
                 engine.active -= 1

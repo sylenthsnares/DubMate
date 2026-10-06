@@ -48,7 +48,7 @@ AUTO_GAIN_PEAK_CEILING_DB = -1.0  # auto gain never boosts a take's sample peak 
 # Master stage on the final mix (render, export, project ZIP stems).
 MASTER_TARGET_LUFS = -16.0
 MASTER_GAIN_LIMIT_DB = 24.0          # the loudness gain is clamped to +/- this
-MASTER_LIMITER_CEILING_DB = -1.5     # peak limiter ceiling (sample peak, dBFS)
+MASTER_LIMITER_CEILING_DB = -1.5     # true-peak limiter ceiling (dBTP)
 TRUE_PEAK_CEILING_DB = -1.0          # static trim if the limited mix still reads above this
 LUFS_FLOOR = -70.0                   # silence; also BS.1770's absolute gate
 
@@ -597,57 +597,128 @@ def _true_peak_phases() -> np.ndarray:
     return np.stack(cols, axis=1)
 
 
+def _true_peak_envelope(audio: np.ndarray, first: int) -> np.ndarray:
+    """Per-sample true peak of a mono signal: element i is the largest |value| of the 4x
+    interpolated waveform at positions first+i, +1/4, +1/2 and +3/4, for every position
+    from first to len(audio)-1 (samples outside the signal read as 0). Runs in blocks."""
+    n = len(audio)
+    phases = _true_peak_phases()
+    half = _TP_TAPS // 2
+    env = np.zeros(max(n - first, 0), dtype=np.float64)
+    for centre in range(first, n, _TP_BLOCK):
+        count = min(_TP_BLOCK, n - centre)
+        lo, hi = centre - half, centre + count - 1 + _TP_TAPS - half
+        seg = np.zeros(hi - lo, dtype=np.float64)
+        a, b = max(lo, 0), min(hi, n)
+        if b > a:
+            seg[a - lo:b - lo] = audio[a:b]
+        block = env[centre - first:centre - first + count]
+        for k in range(_TP_OVERSAMPLE):
+            np.maximum(block, np.abs(np.convolve(seg, phases[::-1, k], mode="valid")), out=block)
+    return env
+
+
 def true_peak_db(x: np.ndarray) -> float:
     """True peak (dBTP) of a mono signal: 4x oversampled by a polyphase windowed-sinc
     interpolator (48 taps per phase), in blocks. Silence reads -120."""
     audio = np.asarray(x, dtype=np.float32).reshape(-1)
-    n = len(audio)
-    phases = _true_peak_phases()
-    peak = 0.0
-    seg_len = _TP_BLOCK + _TP_TAPS - 1
-    for start in range(-_TP_TAPS, n, _TP_BLOCK):
-        lo, hi = max(start, 0), min(start + seg_len, n)
-        if hi <= lo:
-            continue
-        seg = np.zeros(seg_len, dtype=np.float64)
-        seg[lo - start:hi - start] = audio[lo:hi]
-        frames = np.lib.stride_tricks.sliding_window_view(seg, _TP_TAPS)
-        peak = max(peak, float(np.max(np.abs(frames @ phases))))
+    env = _true_peak_envelope(audio, -(_TP_TAPS // 2))
+    peak = float(np.max(env)) if len(env) else 0.0
     return 20.0 * math.log10(peak) if peak > 1e-6 else -120.0
 
 
-# pedalboard.Limiter (JUCE dsp::Limiter) is a 4:1 compressor above a fixed -10 dBFS, a
-# 1000:1 stage at threshold_db, a make-up gain of (3.75 - threshold_db) dB and a hard clip
-# at 0 dBFS. At threshold_db -6.25 the make-up is +10 dB, so the clip sits exactly on the
-# compressor's -10 dBFS knee. Scaling the mix by (-10 - ceiling) dB in and (ceiling) dB out
-# turns that into a peak limiter at MASTER_LIMITER_CEILING_DB with unity gain below it.
-_PB_LIMITER_KNEE_DB = -10.0
-_PB_LIMITER_THRESHOLD_DB = -6.25
-_PB_LIMITER_MAKEUP_DB = 3.75 - _PB_LIMITER_THRESHOLD_DB
+# Master limiter: a true-peak limiter with lookahead and no clipper. The gain each sample
+# needs comes from the 4x oversampled envelope, so inter-sample overs are prevented rather
+# than trimmed off the whole mix afterwards. It runs offline, so the lookahead adds no
+# delay: the gain ramps down over _LIMITER_ATTACK_S ahead of a peak and reaches what the
+# peak needs exactly on it, then recovers at _LIMITER_RELEASE_PER_S (linear gain per
+# second: quick out of a deep reduction, gentler near unity).
+_LIMITER_ATTACK_S = 0.003
+_LIMITER_RELEASE_PER_S = 10.0
+_MASTER_MAX_PASSES = 6        # master_stage measures the limited mix at most this often
+_MASTER_TOLERANCE_LU = 0.05
 
 
-def _limit_true_peak(x: np.ndarray, sr: int) -> Tuple[np.ndarray, float]:
-    """Peak limiter (pedalboard.Limiter) at MASTER_LIMITER_CEILING_DB sample peak, then a
-    static trim if the result still reads above TRUE_PEAK_CEILING_DB true peak.
-    Returns (audio, true peak in dBTP)."""
-    if not vocal_chain.available():
-        raise EffectsUnavailable()
-    pb = vocal_chain._pedalboard_module()
-    audio = np.ascontiguousarray(_sanitize_finite_audio(x, context="master limiter input")).reshape(-1)
-    if not len(audio):
-        return audio, -120.0
-    in_db = _PB_LIMITER_KNEE_DB - MASTER_LIMITER_CEILING_DB
-    out_db = MASTER_LIMITER_CEILING_DB - _PB_LIMITER_KNEE_DB - _PB_LIMITER_MAKEUP_DB
-    limiter = pb.Limiter(threshold_db=_PB_LIMITER_THRESHOLD_DB)
-    staged = (audio * np.float32(10.0 ** (in_db / 20.0))).astype(np.float32)
-    out = np.asarray(limiter(staged, sr), dtype=np.float64).reshape(-1)
-    out = (out * (10.0 ** (out_db / 20.0))).astype(np.float32)
+def _window_min_forward(x: np.ndarray, width: int) -> np.ndarray:
+    """out[i] = min(x[i : i + width]), the window cut short at the end of x. O(n),
+    vectorized (van Herk / Gil-Werman: per-block prefix and suffix minima)."""
+    n = len(x)
+    if width <= 1 or n == 0:
+        return x.copy()
+    blocks = -(-(n + width - 1) // width)
+    padded = np.full(blocks * width, np.inf)
+    padded[:n] = x
+    grid = padded.reshape(blocks, width)
+    prefix = np.minimum.accumulate(grid, axis=1).reshape(-1)
+    suffix = np.minimum.accumulate(grid[:, ::-1], axis=1)[:, ::-1].reshape(-1)
+    return np.minimum(suffix[:n], prefix[width - 1:width - 1 + n])
+
+
+def _limiter_gain(env: np.ndarray, ceiling: float, sr: int) -> np.ndarray:
+    """Gain per sample that keeps gain * env at or under ceiling: the gain each sample needs,
+    held over the attack window ahead of it, released at a fixed rate, then smoothed by a
+    moving average over the attack window. Every value averaged into sample i is at most
+    the gain sample i needs, so the smoothing never lets a peak through. Only the spans
+    around overs are computed; the gain is exactly 1 everywhere else."""
+    width = max(1, int(round(_LIMITER_ATTACK_S * sr))) + 1
+    needed = np.minimum(1.0, ceiling / np.maximum(env, 1e-12))
+    gain = np.ones(len(needed))
+    over = np.flatnonzero(needed < 1.0)
+    if not len(over):
+        return gain
+    rate = _LIMITER_RELEASE_PER_S / float(sr)
+    # A span ends once the release is back at 1 and the smoothing has caught up.
+    tail = int(math.ceil(1.0 / rate)) + width + 1
+    starts = np.concatenate([[0], np.flatnonzero(np.diff(over) > tail + width) + 1])
+    ends = np.concatenate([starts[1:] - 1, [len(over) - 1]])
+    for s, e in zip(over[starts], over[ends]):
+        lo, hi = max(0, s - width), min(len(needed), e + tail)
+        # Unity before the span, so its first peak still gets its attack ramp.
+        held = _window_min_forward(np.concatenate([np.ones(width - 1), needed[lo:hi]]), width)
+        ramp = rate * np.arange(len(held))
+        released = np.minimum(held, np.minimum.accumulate(held - ramp) + ramp)
+        reduction = np.concatenate([[0.0], np.cumsum(1.0 - released)])
+        gain[lo:hi] = np.minimum(1.0, 1.0 - (reduction[width:] - reduction[:-width]) / width)
+    return gain
+
+
+def _limiter_envelope(audio: np.ndarray) -> np.ndarray:
+    """The limiter's detector: element j covers positions j-1 .. j+3/4, so each sample's
+    gain also answers for the inter-sample peak just before it."""
+    env = _true_peak_envelope(audio, -1)
+    return np.maximum(env[:-1], env[1:])
+
+
+def _limit_scaled(audio: np.ndarray, env: np.ndarray, gain: float, sr: int) -> np.ndarray:
+    """audio * gain through the true-peak limiter at MASTER_LIMITER_CEILING_DB, where env is
+    _limiter_envelope(audio) (it scales with the gain). Unity, sample for sample, wherever
+    the scaled signal stays under the ceiling."""
+    ceiling = 10.0 ** (MASTER_LIMITER_CEILING_DB / 20.0)
+    scaled = env * gain
+    if not len(scaled) or float(np.max(scaled)) <= ceiling:
+        return (audio * np.float32(gain)).astype(np.float32)
+    return (audio * (gain * _limiter_gain(scaled, ceiling, sr))).astype(np.float32)
+
+
+def _trim_true_peak(out: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Static trim to TRUE_PEAK_CEILING_DB if out still reads above it (a safety net: the
+    limiter's ceiling sits 0.5 dB lower). Returns (audio, true peak in dBTP)."""
     peak_db = true_peak_db(out)
     if peak_db > TRUE_PEAK_CEILING_DB:
         # 0.001 dB under the ceiling so float32 rounding can't leave it a hair above.
         out = (out * np.float32(10.0 ** ((TRUE_PEAK_CEILING_DB - 0.001 - peak_db) / 20.0))).astype(np.float32)
         peak_db = true_peak_db(out)
     return out, peak_db
+
+
+def _limit_true_peak(x: np.ndarray, sr: int) -> Tuple[np.ndarray, float]:
+    """True-peak limiter at MASTER_LIMITER_CEILING_DB (lookahead, no clipping), then the
+    static trim to TRUE_PEAK_CEILING_DB. Length is unchanged.
+    Returns (audio, true peak in dBTP)."""
+    audio = np.ascontiguousarray(_sanitize_finite_audio(x, context="master limiter input")).reshape(-1)
+    if not len(audio):
+        return audio, -120.0
+    return _trim_true_peak(_limit_scaled(audio, _limiter_envelope(audio), 1.0, sr))
 
 
 def _master_gain_db(lufs: float) -> float:
@@ -660,17 +731,34 @@ def _master_gain_db(lufs: float) -> float:
 def master_stage(mix: np.ndarray, sr: int = SR) -> Tuple[np.ndarray, Dict[str, float]]:
     """
     Masters the final mono mix: non-finite samples become silence, the mix is brought to
-    MASTER_TARGET_LUFS integrated (gain clamped to +/-24 dB, skipped at or below -70 LUFS),
-    then limited to TRUE_PEAK_CEILING_DB true peak. Length is unchanged.
-    Returns (audio, {"lufs_in", "gain_db", "true_peak_db"}).
-    Raises EffectsUnavailable when the limiter (pedalboard) isn't available.
+    MASTER_TARGET_LUFS integrated (gain clamped to +/-24 dB, skipped at or below -70 LUFS)
+    through the true-peak limiter, at or under TRUE_PEAK_CEILING_DB. Limiting a loud
+    transient (a clap, a slam) takes loudness out of the mix, so the limited mix is measured
+    again and the gain raised by what's missing until it lands on target. Length is unchanged.
+    Returns (audio, {"lufs_in", "gain_db", "true_peak_db"}); gain_db is the final gain.
     """
-    audio = _sanitize_finite_audio(mix, context="master_stage input")
+    audio = np.ascontiguousarray(_sanitize_finite_audio(mix, context="master_stage input")).reshape(-1)
     lufs_in = integrated_lufs(audio, sr)
     gain_db = _master_gain_db(lufs_in)
-    if gain_db:
-        audio = (audio * np.float32(10.0 ** (gain_db / 20.0))).astype(np.float32)
-    out, peak_db = _limit_true_peak(audio, sr)
+    env = _limiter_envelope(audio) if len(audio) else np.zeros(0)
+    out = _limit_scaled(audio, env, 10.0 ** (gain_db / 20.0), sr)
+    if lufs_in > LUFS_FLOOR:
+        # Loudness rises with the gain ever more slowly as the limiter works harder, so each
+        # step uses the slope measured over the last two passes and stays under target.
+        prev = None
+        for _ in range(_MASTER_MAX_PASSES - 1):
+            lufs_out = integrated_lufs(out, sr)
+            missing = MASTER_TARGET_LUFS - lufs_out
+            slope = 1.0
+            if prev is not None and gain_db != prev[0]:
+                slope = float(np.clip((lufs_out - prev[1]) / (gain_db - prev[0]), 0.1, 1.0))
+            next_db = float(np.clip(gain_db + missing / slope, -MASTER_GAIN_LIMIT_DB, MASTER_GAIN_LIMIT_DB))
+            if abs(missing) <= _MASTER_TOLERANCE_LU or next_db == gain_db:
+                break
+            prev = (gain_db, lufs_out)
+            gain_db = next_db
+            out = _limit_scaled(audio, env, 10.0 ** (gain_db / 20.0), sr)
+    out, peak_db = _trim_true_peak(out)
     return out, {"lufs_in": round(lufs_in, 2), "gain_db": round(gain_db, 2), "true_peak_db": round(peak_db, 2)}
 
 
@@ -1675,9 +1763,9 @@ def build_project_zip(
             except Exception as ex:
                 print(f"[ProjectZip] Error converting backing track: {ex}")
 
-        # 3. Master Vocal Mix Stem & Character Stems. Their master gain is the one that
-        # brings the whole scene (backing included) to MASTER_TARGET_LUFS.
-        master_gain_db = _master_gain_db(integrated_lufs(_mix_scene(pack, takes_dict, sr, presence_db=0.0), sr))
+        # 3. Master Vocal Mix Stem & Character Stems. Their master gain is the one the master
+        # stage settles on for the whole scene (backing included), limiter and all.
+        master_gain_db = float(master_stage(_mix_scene(pack, takes_dict, sr, presence_db=0.0), sr)[1]["gain_db"])
         master_mult = np.float32(10.0 ** (master_gain_db / 20.0))
         master_vocal_buffer = np.zeros(total_samples, dtype=np.float32)
 

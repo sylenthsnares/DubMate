@@ -36,6 +36,30 @@ def _pinkish_noise(seconds, sr, seed=7):
     return (0.1 * noise / np.sqrt(np.mean(noise ** 2))).astype(np.float32)
 
 
+def _speech_like(seconds, sr, seed=11):
+    """Voiced syllables: a gliding 140 Hz harmonic tone in 80-300 ms bursts at random
+    levels, with short gaps."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(seconds * sr)) / sr
+    phase = 2 * np.pi * np.cumsum(140 + 20 * np.sin(2 * np.pi * 0.7 * t)) / sr
+    carrier = sum(np.sin(k * phase + rng.uniform(0, 2 * np.pi)) / k for k in range(1, 25))
+    env = np.zeros(len(t))
+    i = 0
+    while i < len(env):
+        n = int(rng.uniform(0.08, 0.3) * sr)
+        seg = np.hanning(n)[:len(env) - i] * 10 ** (rng.uniform(-6, 0) / 20)
+        env[i:i + len(seg)] = seg
+        i += n + int(rng.uniform(0.05, 0.2) * sr)
+    return (0.1 * carrier * env).astype(np.float32)
+
+
+def _clap(peak_dbfs, sr, seed=3):
+    """A 25 ms clap: white noise with a 6 ms decay, peaking at peak_dbfs."""
+    n = int(0.025 * sr)
+    c = np.random.default_rng(seed).standard_normal(n) * np.exp(-np.arange(n) / (0.006 * sr))
+    return (c / np.max(np.abs(c)) * 10 ** (peak_dbfs / 20)).astype(np.float32)
+
+
 def _python_lfilter(x, stages):
     """Plain-Python direct-form IIR, the reference for the FIR K-weighting."""
     sig = [float(v) for v in x]
@@ -156,18 +180,7 @@ class TestMasterStage(unittest.TestCase):
         # short gaps): at -16 LUFS their peaks sit about 2.5 dB over the limiter's ceiling,
         # and the result still lands on target under -1 dBTP.
         sr = 48000
-        rng = np.random.default_rng(11)
-        t = np.arange(8 * sr) / sr
-        phase = 2 * np.pi * np.cumsum(140 + 20 * np.sin(2 * np.pi * 0.7 * t)) / sr
-        carrier = sum(np.sin(k * phase + rng.uniform(0, 2 * np.pi)) / k for k in range(1, 25))
-        env = np.zeros(len(t))
-        i = 0
-        while i < len(env):
-            n = int(rng.uniform(0.08, 0.3) * sr)
-            seg = np.hanning(n)[:len(env) - i] * 10 ** (rng.uniform(-6, 0) / 20)
-            env[i:i + len(seg)] = seg
-            i += n + int(rng.uniform(0.05, 0.2) * sr)
-        x = (0.1 * carrier * env).astype(np.float32)
+        x = _speech_like(8, sr)
         gain = 10 ** (audio_processor._master_gain_db(audio_processor.integrated_lufs(x, sr)) / 20)
         self.assertGreater(audio_processor.true_peak_db(x * np.float32(gain)), audio_processor.MASTER_LIMITER_CEILING_DB)
         self._check(x, sr)
@@ -180,26 +193,63 @@ class TestMasterStage(unittest.TestCase):
         self.assertAlmostEqual(audio_processor.integrated_lufs(out, sr), info["lufs_in"] + 24.0, delta=0.05)
 
 
-class TestPeakLimiter(unittest.TestCase):
-    """The pedalboard.Limiter stage on its own (before the true-peak trim)."""
+    def test_loud_clap_over_speech(self):
+        # Film mixes put effects 20 dB and more over the dialogue. A 25 ms clap peaking at
+        # +6 or +12 dBFS over speech at -16 LUFS must not pull the mix under target: the
+        # limiter turns the clap down on its own and the master makes up what that removed.
+        sr = 44100
+        speech = _speech_like(8, sr)
+        speech *= np.float32(10 ** ((-16.0 - audio_processor.integrated_lufs(speech, sr)) / 20))
+        for peak_dbfs in (6.0, 12.0):
+            with self.subTest(clap_dbfs=peak_dbfs):
+                x = speech.copy()
+                clap = _clap(peak_dbfs, sr)
+                x[4 * sr:4 * sr + len(clap)] += clap
+                out, _ = self._check(x, sr)
+                # The speech away from the clap keeps its level: no mix-wide trim.
+                self.assertAlmostEqual(audio_processor.integrated_lufs(out[:3 * sr], sr),
+                                       audio_processor.integrated_lufs(speech[:3 * sr], sr), delta=0.3)
 
-    def test_holds_the_sample_peak_ceiling(self):
+
+class TestPeakLimiter(unittest.TestCase):
+    """The true-peak limiter on its own (_limit_true_peak, no loudness gain)."""
+
+    def test_holds_the_true_peak_ceiling(self):
         sr = 44100
         x = _pinkish_noise(4, sr) * np.float32(4.0)  # peaks far past 0 dBFS
         out, peak_db = audio_processor._limit_true_peak(x, sr)
         self.assertEqual(len(out), len(x))
-        self.assertLessEqual(20 * np.log10(np.max(np.abs(out))), audio_processor.MASTER_LIMITER_CEILING_DB + 0.01)
-        self.assertLessEqual(peak_db, audio_processor.TRUE_PEAK_CEILING_DB)
+        self.assertLessEqual(peak_db, audio_processor.MASTER_LIMITER_CEILING_DB + 0.01)
         self.assertAlmostEqual(peak_db, audio_processor.true_peak_db(out), places=6)
 
     def test_unity_gain_just_under_the_ceiling(self):
-        # A 220 Hz sine peaking at -2 dBFS: under the limiter's knee, so it passes untouched,
-        # sample for sample (no make-up gain left over, no delay).
+        # A 220 Hz sine peaking at -2 dBFS is under the ceiling, so it passes untouched,
+        # sample for sample (no delay).
         sr = 48000
         x = _sine(220, 10 ** (-2 / 20), 2, sr)
         out, peak_db = audio_processor._limit_true_peak(x, sr)
-        np.testing.assert_allclose(out, x, rtol=0, atol=2e-6)
+        np.testing.assert_array_equal(out, x)
         self.assertAlmostEqual(peak_db, -2.0, delta=0.01)
+
+    def test_a_clap_is_turned_down_not_clipped(self):
+        # A +12 dBFS clap in a quiet tone: the gain ramps down ahead of it and back up after
+        # it, never faster than the attack allows, and the tone away from it is untouched.
+        sr = 44100
+        x = _sine(300, 0.05, 3, sr)
+        clap = _clap(12.0, sr)
+        x[sr:sr + len(clap)] += clap
+        out, peak_db = audio_processor._limit_true_peak(x, sr)
+        self.assertLessEqual(peak_db, audio_processor.MASTER_LIMITER_CEILING_DB + 0.01)
+        ceiling = 10 ** (audio_processor.MASTER_LIMITER_CEILING_DB / 20)
+        gain = audio_processor._limiter_gain(audio_processor._limiter_envelope(x), ceiling, sr)
+        np.testing.assert_allclose(out, x * gain, rtol=1e-6, atol=1e-7)
+        self.assertLess(gain.min(), 10 ** (-12 / 20))
+        width = int(round(audio_processor._LIMITER_ATTACK_S * sr)) + 1
+        self.assertLessEqual(np.max(np.abs(np.diff(gain))), 1.0 / width + 1e-9)
+        # The interpolator sees the clap up to half its taps early.
+        before = sr - width - audio_processor._TP_TAPS // 2 - 1
+        np.testing.assert_array_equal(out[:before], x[:before])
+        np.testing.assert_array_equal(out[2 * sr:], x[2 * sr:])
 
 
 if __name__ == "__main__":

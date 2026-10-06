@@ -483,10 +483,27 @@ class TestRenderRoute(RenderRoutesCase):
 
     def test_recording_deleted_during_the_render_is_not_found(self):
         self._rack_room()
-        with mock.patch.object(audio_processor, "render_take_cached", side_effect=FileNotFoundError("gone")):
+        wav = audio_processor.take_wav_path(self.ROOM, "t1000", self.take["take_id"])
+        kept = wav + ".kept"
+
+        def deleted_while_rendering(*args, **kwargs):
+            os.replace(wav, kept)
+            raise FileNotFoundError("gone")
+
+        with mock.patch.object(audio_processor, "render_take_cached", side_effect=deleted_while_rendering):
             res = self._render()
         self.assertEqual(res.status_code, 404, res.text)
         self.assertEqual(res.json()["detail"], "This take's recording is missing.")
+        os.replace(kept, wav)
+        self.assertEqual(self._render().status_code, 200)   # the render slot was freed
+
+    def test_other_missing_files_are_not_a_missing_recording(self):
+        # A missing tool (ffmpeg, say) while the recording is still there is a server error,
+        # not "recording missing".
+        self._rack_room()
+        with mock.patch.object(audio_processor, "render_take_cached", side_effect=FileNotFoundError("ffmpeg")):
+            with self.assertRaises(FileNotFoundError):
+                self._render()
         self.assertEqual(self._render().status_code, 200)   # the render slot was freed
 
     def test_render_needs_no_permission(self):
