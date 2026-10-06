@@ -240,13 +240,13 @@ export class ExportMethods {
     });
   }
 
-  async exportFinalVideo() {
+  async exportFinalVideo(aspectRatio = this.selectedAspectRatio) {
     if (!this.roomState) return;
     this.openExportModal();
 
     try {
       const presenceParam = encodeURIComponent(this.masterDialoguePresence || 0.0);
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${this.selectedAspectRatio}&presence=${presenceParam}`, {
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${aspectRatio}&presence=${presenceParam}`, {
         method: 'POST',
       });
 
@@ -263,7 +263,7 @@ export class ExportMethods {
       // If background rendering in progress, update step 2 and poll until ready
       this.updateExportModalStep(2, 65, "Encoding multi-track audio & video stems in frame-accurate sync...");
 
-      const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${this.selectedAspectRatio}`;
+      const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${aspectRatio}`;
       let attempts = 0;
       const maxAttempts = 90; // up to 3 minutes
 
@@ -400,13 +400,41 @@ export class ExportMethods {
   }
 
   /**
-   * Saves a second copy of the rendered master wherever the browser puts downloads.
-   * The render itself already sits in the user's Render & Export folder; only the
-   * webview decides where this copy lands, which is why the settings copy says so.
+   * Gets the rendered master to the user, saved exactly once.
+   *
+   * On the engine's own computer the render is already in the Render & Export
+   * folder, so pulling it through the browser only made a second copy in the OS
+   * Downloads folder. There the button names the folder instead (rendering that
+   * aspect into it first if it has not been rendered yet). Everyone else, whose
+   * file lives on the host's machine, gets a normal browser download.
    */
   async downloadExportVideo(aspectRatio, control) {
-    const href = control ? control.getAttribute('href') : '';
     const roomId = this.roomState?.room_id;
+    if (this.isEngineLocal()) {
+      if (!roomId) {
+        this.showToast('Render the dubbed video first.');
+        return false;
+      }
+      let ready = false;
+      try {
+        const res = await fetch(`/api/rooms/${roomId}/export/status?aspect_ratio=${encodeURIComponent(aspectRatio)}`);
+        ready = res.ok && (await res.json())?.status === 'ready';
+      } catch { /* unknown: the render route below answers at once if the file exists */ }
+      if (!ready) {
+        // Same route as the Render button: writes into the export folder and ends
+        // with the "Saved to ..." line in the export modal.
+        await this.exportFinalVideo(aspectRatio);
+        return false;
+      }
+      const dir = await this.fetchExportsDir();
+      this.showExportSavedPath();
+      this.showToast(dir
+        ? `✅ Already saved to ${dir}`
+        : '✅ Already saved in your Render & Export Folder.');
+      return true;
+    }
+
+    const href = control ? control.getAttribute('href') : '';
     // handleExportSuccess fills the href; fall back to the canonical route so a
     // reconnect that never replayed the export event still downloads.
     const url = (href && href !== '#')
@@ -473,10 +501,15 @@ export class ExportMethods {
 
   /**
    * Names the folder the finished render was written to, in the export modal.
-   * Stays hidden rather than guessing if the backend does not report a folder.
+   * Stays hidden rather than guessing if the backend does not report a folder,
+   * and for remote members, where that folder is on the host's computer.
    */
   async showExportSavedPath() {
     if (!this.exportSavedPath) return;
+    if (!this.isEngineLocal()) {
+      this.exportSavedPath.classList.remove('is-visible');
+      return;
+    }
     const dir = await this.fetchExportsDir();
     if (!dir) {
       this.exportSavedPath.classList.remove('is-visible');

@@ -2630,6 +2630,15 @@ class DubMateApp {
     return this.user.id === hostId || (allowDummy && hostId === 'host');
   }
 
+  /**
+   * True when this page is served by an engine on this same computer (the desktop
+   * app's loopback origin), so renders already land in this user's export folder.
+   * False for anyone reaching the engine through a tunnel or LAN address.
+   */
+  isEngineLocal() {
+    return isLoopbackOrigin(window.location.origin);
+  }
+
   /** Your assigned character, or any line when nobody is cast and you host. */
   canRecordLine(line) {
     const myAssignedChars = this.getMyAssignedCharacters();
