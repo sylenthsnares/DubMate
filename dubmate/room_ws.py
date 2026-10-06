@@ -14,7 +14,7 @@ import traceback
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import audio_processor
-from dubmate import common, rooms
+from dubmate import common, rooms, rooms_api
 
 router = APIRouter()
 
@@ -91,9 +91,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 take_id = payload.get("take_id")
                 take = room.find_take(line_id, take_id) if isinstance(line_id, str) else None
                 if take:
+                    # Until the booth edits chains itself, a moved Pitch or Reverb slider
+                    # changes the take's chain and its level is matched on the new sound.
+                    # That message's gain_db is the slider as the booth last showed it, which
+                    # the new match may be about to move, so it is not applied.
+                    line = room.find_line(line_id)
+                    chain = rooms_api.legacy_sliders_onto_chain(room, line, take, payload, take) if line else None
                     for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
-                        if key in payload:
+                        if key in payload and not (chain and key == "gain_db"):
                             take[key] = payload[key]
+                    if chain:
+                        take["chain"] = chain
+                        rooms_api.rematch_later(room, [(line_id, take_id)])
                     room.invalidate_exports()
                     await room.broadcast("take_params_updated", {"line_id": line_id, "take_id": take_id})
 
@@ -119,9 +128,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     # Auto-master the scene into MP4 for the cast
                     try:
                         out_path = room.export_out_path("16:9")
+                        takes = await rooms_api.mix_for_export(room)
                         await asyncio.to_thread(
                             audio_processor.export_dub_video,
-                            room.pack, room.mix_takes(), out_path,
+                            room.pack, takes, out_path,
                         )
                         room.exported_video_path = out_path
                         await room.broadcast("export_ready", room.export_ready_payload("16:9"))

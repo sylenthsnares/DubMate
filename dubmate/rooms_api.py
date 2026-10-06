@@ -2,7 +2,7 @@
 """
 dubmate/rooms_api.py
 Room REST routes (/api/rooms/*): create, share, state, noise profile, takes,
-export render, video streaming and downloads.
+voice chains and level matching, export render, video streaming and downloads.
 
 Works on the room model in dubmate.rooms and never imports app.
 """
@@ -13,14 +13,14 @@ import uuid
 import asyncio
 import functools
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, Iterable, Optional, Tuple
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse
 
 import audio_processor
 import pack_loader
-from dubmate import common, packs_cache, rooms, room_registry
+from dubmate import common, packs_cache, rooms, room_registry, vocal_chain
 
 router = APIRouter()
 
@@ -137,17 +137,98 @@ def _render_level(room, line_id: str, take_id: str, wav_path: str, chain, target
     return audio_processor.calculate_take_auto_gain(path, target_lufs=target_lufs)
 
 
-def _rematch_level(take: Dict[str, Any], level, measured: Dict[str, Any]) -> None:
-    """Stores a take's new matched level (from _render_level, or when that is None the
-    one measured on the take's own audio, without loudness_lufs). A take that was sitting
-    at its auto gain moves to the new auto gain."""
+async def _rematch_level(room, line_id: str, take: Dict[str, Any], target_lufs: Optional[float] = None,
+                         measured: Optional[Dict[str, Any]] = None) -> bool:
+    """Matches a take's level again on the render of its resolved chain and stores
+    loudness_lufs, target_lufs and auto_gain_db. A take that was sitting at its auto gain
+    (within 0.05 dB) moves to the new auto gain. Without the voice effects the level
+    measured on the take's own audio (`measured`, from an audio rewrite) is stored without
+    loudness_lufs; with neither nothing changes. Returns whether a level was stored.
+    The caller holds room.processing_lock."""
+    line = room.find_line(line_id)
+    if line is None:
+        return False
+    if target_lufs is None:
+        target_lufs = await asyncio.to_thread(_line_target_loudness, room.pack, line)
+    level = await asyncio.to_thread(
+        _render_level, room, line_id, take["take_id"],
+        audio_processor.take_wav_path(room.room_id, line_id, take["take_id"]),
+        room.take_sound(line, take), target_lufs)
     if level is None:
+        if measured is None:
+            return False
         level = {"target_lufs": measured["target_lufs"], "auto_gain_db": measured["auto_gain_db"]}
         take.pop("loudness_lufs", None)
     old_auto = take.get("auto_gain_db")
     if old_auto is not None and abs(float(take.get("gain_db", 0.0)) - float(old_auto)) < 0.05:
         take["gain_db"] = level["auto_gain_db"]
     take.update(level)
+    return True
+
+
+def rematch_later(room, pairs: Iterable[Tuple[str, str]]) -> None:
+    """Matches these (line_id, take_id) takes' levels again in the background
+    (room.voice_job), then sends levels_updated. Pairs added while the job runs join it."""
+    room.rematch_pending.update(pairs)
+    if room.voice_job is None or room.voice_job.done():
+        room.voice_job = asyncio.create_task(_rematch_pending(room))
+
+
+async def _rematch_pending(room) -> None:
+    while room.rematch_pending:
+        batch = sorted(room.rematch_pending)
+        room.rematch_pending.clear()
+        matched = []
+        for line_id, take_id in batch:
+            try:
+                async with room.processing_lock:
+                    take = room.find_take(line_id, take_id)
+                    if take and await _rematch_level(room, line_id, take):
+                        matched.append({"line_id": line_id, "take_id": take_id})
+            except Exception as ex:
+                print(f"[Loudness] Could not match the level of take {take_id} of line {line_id}: {ex}")
+        if matched:
+            room.invalidate_exports()
+            await room.broadcast("levels_updated", {"takes": matched})
+
+
+async def mix_for_export(room) -> Dict[int, Dict[str, Any]]:
+    """Room.mix_takes() once background level matching is done. A picked take that was
+    levelled while the voice effects weren't installed (target_lufs but no loudness_lufs)
+    is matched on its render first."""
+    if room.voice_job is not None:
+        await asyncio.wait({room.voice_job})
+    changed = False
+    for line in room.pack.lines:
+        take = room.picked_take(line["line_id"])
+        if take and "target_lufs" in take and "loudness_lufs" not in take:
+            async with room.processing_lock:
+                changed |= await _rematch_level(room, line["line_id"], take)
+    if changed:
+        room.mark_dirty()
+    return room.mix_takes()
+
+
+def legacy_sliders_onto_chain(room, line, take: Dict[str, Any], values: Dict[str, Any],
+                             shown: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Until the booth edits chains itself: the old Pitch and Reverb sliders' values
+    (pitch_semitones, reverb_wet) that differ from what the take showed (`shown`) are put
+    on the take's resolved chain (vocal_chain.chain_with_legacy). Returns that chain, or
+    None when neither slider moved."""
+    moved = {}
+    for key in ("pitch_semitones", "reverb_wet"):
+        if key not in values:
+            continue
+        try:
+            value, before = float(values[key]), float(shown.get(key) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if abs(value - before) > 1e-6:
+            moved[key] = value
+    if not moved:
+        return None
+    return vocal_chain.chain_with_legacy(room.take_sound(line, take), pitch=moved.get("pitch_semitones"),
+                                         reverb_wet=moved.get("reverb_wet"))
 
 
 def _require_line_actor(room, line, user_id: str) -> None:
@@ -228,10 +309,18 @@ async def upload_take(
         audio_processor.delete_take_files(take_dir, take_id)
         raise HTTPException(status_code=400, detail=str(ex))
 
+    # A new take keeps the sound of the take it replaces in the dub (its own chain, if any).
+    previous = room.picked_take(line_id) or {}
+    sound = {"chain": previous["chain"]} if isinstance(previous.get("chain"), dict) else {}
+    legacy = legacy_sliders_onto_chain(
+        room, line, sound, {"pitch_semitones": pitch_semitones, "reverb_wet": reverb_wet}, previous)
+    if legacy is not None:
+        sound["chain"] = legacy
+
     # The level is matched on the take's sound through its chain. Without the voice
     # effects it stays the one measured on the take itself, and loudness_lufs is left out.
-    chain = audio_processor.take_chain({"pitch_semitones": pitch_semitones, "reverb_wet": reverb_wet})
-    level = await asyncio.to_thread(_render_level, room, line_id, take_id, saved["wav_path"], chain, target_loudness)
+    level = await asyncio.to_thread(_render_level, room, line_id, take_id, saved["wav_path"],
+                                    room.take_sound(line, sound), target_loudness)
     if level is None:
         level = {"target_lufs": saved.get("target_lufs"), "auto_gain_db": saved.get("auto_gain_db", 0.0)}
 
@@ -250,6 +339,7 @@ async def upload_take(
         "timing_score": saved["timing_score"],
         "pitch_semitones": pitch_semitones,
         "reverb_wet": reverb_wet,
+        **sound,
         # auto_gain: the client asked for the scene-matched level, applied here so the
         # take_recorded broadcast already carries it.
         "gain_db": level["auto_gain_db"] if auto_gain else gain_db,
@@ -342,15 +432,13 @@ async def toggle_take_noise_reduction_endpoint(
                 # A fitted take stays fitted; its timing fields don't change.
                 stretch=float(take.get("stretch", 1.0)),
             )
-            level = await asyncio.to_thread(_render_level, room, line_id, take_id, toggled["wav_path"],
-                                            audio_processor.take_chain(take), target_loudness)
-        take["noise_reduction"] = enable
-        take["audio_version"] = int(time.time() * 1000)
-        take["peaks"] = toggled["peaks"]
-        take["duration"] = toggled["duration"]
-        # The swapped audio has a different level: re-match, and keep a take that was
-        # sitting at its auto gain on the new auto gain.
-        _rematch_level(take, level, toggled)
+            take["noise_reduction"] = enable
+            take["audio_version"] = int(time.time() * 1000)
+            take["peaks"] = toggled["peaks"]
+            take["duration"] = toggled["duration"]
+            # The swapped audio has a different level: re-match, and keep a take that was
+            # sitting at its auto gain on the new auto gain.
+            await _rematch_level(room, line_id, take, target_loudness, measured=toggled)
         wire = room.wire_take(line_id, take)
         room.invalidate_exports()
         await room.broadcast("take_params_updated", {
@@ -397,12 +485,11 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             int(take.get("start_offset_ms", take.get("offset_ms", 0))),
             allow_stretch=False,
         )
-        level = _render_level(room, line_id, take_id, written["wav_path"], audio_processor.take_chain(take), target_loudness)
-        return written, timing, level
+        return written, timing
 
     try:
         async with room.processing_lock:
-            written, timing, level = await asyncio.to_thread(rewrite)
+            written, timing = await asyncio.to_thread(rewrite)
             old_auto_offset = take.get("auto_offset_ms", take.get("offset_ms", 0))
             if abs(int(take.get("offset_ms", 0)) - int(old_auto_offset)) < 5:
                 take["offset_ms"] = timing["auto_offset_ms"]
@@ -413,7 +500,7 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
             take["audio_version"] = int(time.time() * 1000)
             take["peaks"] = written["peaks"]
             take["duration"] = written["duration"]
-            _rematch_level(take, level, written)
+            await _rematch_level(room, line_id, take, target_loudness, measured=written)
     except Exception as ex:
         print(f"[OriginalSpeedError] {ex}")
         raise HTTPException(status_code=400, detail=str(ex))
@@ -426,6 +513,84 @@ async def take_original_speed(room_id: str, line_id: str, take_id: str, payload:
         "url": wire["url"],
     })
     return {"status": "ok", "line_id": line_id, "take": wire}
+
+
+def _chain_or_none(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The request's "chain", normalized, or None to clear it. 400 for anything else."""
+    raw = payload.get("chain")
+    if raw is None:
+        return None
+    try:
+        return vocal_chain.normalize_chain(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="That sound couldn't be read.")
+
+
+@router.put("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/chain")
+async def set_take_chain(room_id: str, line_id: str, take_id: str, payload: Dict[str, Any]):
+    """Sets the take's own sound, or with chain null makes it follow its character and the
+    room again. Its level is matched on the new sound."""
+    room = rooms.room_or_404(room_id)
+    user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
+    line, take = _take_or_404(room, line_id, take_id)
+    _require_line_actor(room, line, user_id)
+    chain = _chain_or_none(payload)
+
+    async with room.processing_lock:
+        if chain is None:
+            take.pop("chain", None)
+        else:
+            take["chain"] = chain
+        await _rematch_level(room, line_id, take)
+    room.invalidate_exports()
+    await room.broadcast("take_params_updated", {"line_id": line_id, "take_id": take_id})
+    return {"status": "ok", "line_id": line_id, "take": room.wire_take(line_id, take), "line": room.wire_line(line_id)}
+
+
+@router.put("/api/rooms/{room_id}/voice")
+async def set_room_voice(room_id: str, payload: Dict[str, Any]):
+    """Sets (or with chain null clears) the sound of all of one character's lines (scope
+    "character") or of every line (scope "session"). The takes on those lines drop their
+    own sound, and "session" also drops every character's, so the new sound is heard.
+    Their levels are matched again in the background."""
+    room = rooms.room_or_404(room_id)
+    user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
+    scope = payload.get("scope")
+    is_host = user_id == room.host_id or room.host_id == "host"
+
+    if scope == "character":
+        character = payload.get("character")
+        if not isinstance(character, str) or character not in room.pack.characters:
+            raise HTTPException(status_code=400, detail="That character isn't in this scene.")
+        assigned = room.role_assignments.get(character) or []
+        if assigned and user_id not in assigned and not is_host:
+            raise HTTPException(status_code=403,
+                                detail=f"Only {character}'s actor or the host can change {character}'s sound.")
+        chain = _chain_or_none(payload)
+        if chain is None:
+            room.voice["characters"].pop(character, None)
+        else:
+            room.voice["characters"][character] = chain
+        lines = [l for l in room.pack.lines if l.get("character") == character]
+    elif scope == "session":
+        character = None
+        if not is_host:
+            raise HTTPException(status_code=403, detail="Only the host can change every line's sound.")
+        room.voice["session"] = _chain_or_none(payload)
+        room.voice["characters"] = {}
+        lines = room.pack.lines
+    else:
+        raise HTTPException(status_code=400, detail="Choose a character or every line.")
+
+    affected = []
+    for line in lines:
+        for take in (room.line_entry(line["line_id"]) or {}).get("takes", []):
+            take.pop("chain", None)
+            affected.append((line["line_id"], take["take_id"]))
+    room.invalidate_exports()
+    rematch_later(room, affected)
+    await room.broadcast("voice_updated", {"scope": scope, "character": character})
+    return {"status": "ok", "voice": room.to_state_dict()["voice"]}
 
 
 @router.get("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/peaks")
@@ -488,6 +653,7 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
 
     room.export_status[aspect_ratio] = "processing"
     await room.broadcast("export_started", {"aspect_ratio": aspect_ratio})
+    takes = await mix_for_export(room)
 
     # Captured here, on the event loop thread: the worker thread has no running loop
     # of its own, so asyncio.get_event_loop() there cannot reach the clients.
@@ -498,8 +664,6 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
             asyncio.run_coroutine_threadsafe(room.broadcast(message_type, payload), loop)
         except Exception as ex:
             print(f"[ExportWorkerWarning] Could not broadcast {message_type} for {room.room_id} ({aspect_ratio}): {ex}")
-
-    takes = room.mix_takes()
 
     def render_worker():
         try:
@@ -577,12 +741,13 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
     target_path = room.ready_export_path(aspect_ratio)
     if not target_path:
         out_path = room.export_out_path(aspect_ratio)
+        takes = await mix_for_export(room)
         # ffmpeg render is fully synchronous; off-loading keeps it from stalling the
         # event loop (and therefore every other room's websocket) for its whole duration.
         try:
             await asyncio.to_thread(
                 audio_processor.export_dub_video,
-                room.pack, room.mix_takes(), out_path,
+                room.pack, takes, out_path,
                 aspect_ratio="9:16" if is_9_16 else "16:9",
                 master_dialogue_presence_db=room.master_dialogue_presence_db,
             )
@@ -616,13 +781,14 @@ async def download_room_project_zip(room_id: str):
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
     zip_path = os.path.join(common.exports_dir(), zip_filename)
+    takes = await mix_for_export(room)
 
     try:
         await asyncio.to_thread(
             functools.partial(
                 audio_processor.build_project_zip,
                 pack=room.pack,
-                takes_dict=room.mix_takes(),
+                takes_dict=takes,
                 role_assignments=room.role_assignments,
                 users=room.users,
                 output_zip_path=zip_path,

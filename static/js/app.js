@@ -987,6 +987,20 @@ class DubMateApp {
     this.socket.on('take_picked', onTakeChanged);
     this.socket.on('take_deleted', onTakeChanged);
 
+    // The engine matched levels again after a sound change; a take that sat at its
+    // matched level moved with it, so show the current take's new level.
+    this.socket.on('levels_updated', (data) => {
+      if (!this.applyIncomingState(data)) return;
+      const take = this.currentView === 'booth' && this.takeForLine(this.currentLineIndex);
+      if (!take || !(data.payload?.takes || []).some((t) => t.take_id === take.take_id)) return;
+      const gainDb = parseFloat(take.gain_db) || 0;
+      this.sliderGain.value = gainDb;
+      this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
+      this.audio.setGain(gainDb);
+      this.updateKnobsVisuals();
+      if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
+    });
+
     this.socket.on('status_changed', (data) => {
       if (!this.applyIncomingState(data)) return;
       const newStatus = data.payload?.status || data.status;

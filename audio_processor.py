@@ -1042,11 +1042,10 @@ def room_render_dir(room_id: str) -> str:
     return os.path.join(get_room_cache_dir(room_id), "renders")
 
 
-def take_chain(take: Dict[str, Any]) -> Dict[str, Any]:
-    """A take's normalized chain: its own "chain", else its old pitch and reverb on Clean."""
-    if isinstance(take.get("chain"), dict):
-        return vocal_chain.normalize_chain(take["chain"])
-    return vocal_chain.chain_from_legacy(float(take.get("pitch_semitones") or 0.0), float(take.get("reverb_wet") or 0.0))
+def take_chain(take_info: Dict[str, Any]) -> Dict[str, Any]:
+    """A mix entry's normalized "chain" (Room.mix_takes resolves it); Clean when it has none."""
+    chain = take_info.get("chain")
+    return vocal_chain.normalize_chain(chain if isinstance(chain, dict) else vocal_chain.CLEAN)
 
 
 def _file_sha1(path: str) -> str:
@@ -1268,7 +1267,7 @@ def _mix_scene(
     offset with its effects, gain and presence_db, and the original voice
     (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take.
     takes_dict format (Room.mix_takes): {line_index: {"wav_path": str, "render_dir": str,
-    "offset_ms": int, "gain_db": float, and "chain" or the old "pitch_semitones" / "reverb_wet"}}
+    "offset_ms": int, "gain_db": float, "chain": dict}}
     """
     total_samples = _timeline_samples(pack, sr)
     mix_buffer = np.zeros(total_samples, dtype=np.float32)

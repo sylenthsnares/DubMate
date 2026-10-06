@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import audio_processor
-from dubmate import rooms_api, vocal_chain
+from dubmate import rooms, rooms_api, vocal_chain
 from test_recording_timing import UploadCase, speech_like
 
 SR = audio_processor.SR
@@ -265,7 +265,7 @@ class TestEffectsUnavailable(RenderCase):
         self.assertFalse(os.path.exists(self.render_dir))
 
     def test_export_path_fails_instead_of_dropping_the_effects(self):
-        take = {"wav_path": self.take, "render_dir": self.render_dir, "reverb_wet": 0.3}
+        take = {"wav_path": self.take, "render_dir": self.render_dir, "chain": vocal_chain.chain_from_legacy(0, 0.3)}
         with mock.patch.object(vocal_chain, "available", return_value=False):
             with self.assertRaises(audio_processor.EffectsUnavailable):
                 audio_processor._render_take(take, SR, 0.0, "test")
@@ -286,7 +286,7 @@ class TestEffectsUnavailable(RenderCase):
 
 class TestExportThroughTheChain(RenderCase):
     def test_level_multiplies_the_render(self):
-        take = {"wav_path": self.take, "render_dir": self.render_dir, "pitch_semitones": -3.0}
+        take = {"wav_path": self.take, "render_dir": self.render_dir, "chain": vocal_chain.chain_from_legacy(-3.0, 0.0)}
         unity = audio_processor._render_take(take, SR, 0.0, "test")
         louder = audio_processor._render_take(take, SR, 6.0, "test")
         np.testing.assert_allclose(louder, unity * np.float32(10 ** (6.0 / 20.0)), rtol=1e-5, atol=1e-7)
@@ -294,11 +294,12 @@ class TestExportThroughTheChain(RenderCase):
             self.take, vocal_chain.chain_from_legacy(-3.0, 0.0), self.render_dir)[0])
         np.testing.assert_array_equal(unity, rendered)
 
-    def test_take_chain_prefers_the_chain_over_legacy_fields(self):
+    def test_take_chain_reads_the_resolved_chain_only(self):
+        """The mix entry's chain is resolved by Room.mix_takes; the old pitch / reverb fields
+        are not read here any more (a migrated take carries them in its chain)."""
         radio = vocal_chain.PRESETS["radio"]["chain"]
         self.assertEqual(audio_processor.take_chain({"chain": radio, "pitch_semitones": 4}), vocal_chain.normalize_chain(radio))
-        self.assertEqual(audio_processor.take_chain({"pitch_semitones": 4, "reverb_wet": 0.3}),
-                         vocal_chain.chain_from_legacy(4, 0.3))
+        self.assertEqual(audio_processor.take_chain({"pitch_semitones": 4, "reverb_wet": 0.3}), vocal_chain.CLEAN)
         self.assertEqual(audio_processor.take_chain({})["preset"], "clean")
 
     def test_cue_sheet_names_the_sound(self):
@@ -333,8 +334,9 @@ class TestExportThroughTheChain(RenderCase):
         old[:len(filtered)] = filtered
         old += conv * np.float32(wet * 0.7)
 
-        new = audio_processor._render_take({"wav_path": self.take, "render_dir": self.render_dir,
-                                            "pitch_semitones": 0.0, "reverb_wet": wet}, SR, 0.0, "test")
+        take = {"wav_path": self.take, "render_dir": self.render_dir, "pitch_semitones": 0.0, "reverb_wet": wet}
+        rooms._legacy_take_chain(take)  # what loading the old room adds
+        new = audio_processor._render_take(take, SR, 0.0, "test")
         m = min(len(old), len(new))
         self.assertGreaterEqual(len(new), len(old) - 1)
         diff_db = 20 * np.log10(np.sqrt(np.mean((new[:m] - old[:m]) ** 2)) / np.sqrt(np.mean(old[:m] ** 2)))
