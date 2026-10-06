@@ -43,7 +43,7 @@ New module `dubmate/vocal_chain.py` (the `dubmate/` folder already ships whole i
 
 Fixed order, no reordering. Each node has `on` and `mix` (0 to 1; output = dry + mix × (wet − dry)). Hidden constants are not stored.
 
-| Node | Stored params (range, Clean default) | Implementation (pedalboard 0.9.25 unless noted) |
+| Node | Stored params (range, Clean default) | Implementation (pedalboard 0.9.24 unless noted) |
 |---|---|---|
 | `lowcut` | `hz` 40–400 (80), on | Two `HighpassFilter(hz / 1.554)` in series: −3.0 dB at `hz`, −8.5 dB an octave below, 12 dB/octave (decision 8) |
 | `gate` | `threshold_db` −80…−20 (−50), off | `NoiseGate(threshold_db, ratio=10, attack_ms=1, release_ms=120)` |
@@ -119,7 +119,7 @@ In Dubious (PLAN.md §5.5–5.6) the character default lives on the project and 
 
 1. NaN/inf sanitized (`sanitize_finite_audio`, as `master_soft_limiter` does today).
 2. Gain to −16 LUFS integrated (`integrated_lufs`), clamped to ±24 dB; skipped when the mix is below −70.
-3. `pedalboard.BrickwallLimiter(ceiling_db=−1.5, true_peak=True)` (checked: 1.58 dBTP in, −1.59 dBTP out, length unchanged).
+3. `pedalboard.Limiter` as a sample-peak limiter at −1.5 dBFS. It is a 4:1 compressor above a fixed −10 dBFS, a 1000:1 stage at `threshold_db`, a make-up gain of (3.75 − `threshold_db`) dB and a hard clip at 0 dBFS. With `threshold_db=−6.25` the make-up is +10 dB and the clip sits on the −10 dBFS knee, so the mix is scaled by −8.5 dB in and −1.5 dB out: unity gain below −1.5 dBFS (sample for sample, no delay, length unchanged), limited above it. 0.9.24 has no `BrickwallLimiter`; on voiced test bursts 2.5 dB over the ceiling the result lands within 0.2 dB of −16 LUFS (on harsher pink-noise bursts 6.6 dB over, it reads −17.2 LUFS, where 0.9.25's `BrickwallLimiter` read −18.1).
 4. `true_peak_db` = 4× oversampled peak (numpy polyphase windowed-sinc, 48 taps per phase, in blocks). If it is still above −1.0 dBTP, a static trim takes it to −1.0.
 
 It replaces `master_soft_limiter`. `render_dub_mix` is split into `_mix_scene(pack, takes, sr, presence_db)` (backing × 0.65, takes × level × presence, unrecorded originals × 0.9 × presence, all unchanged) and `master_stage`. Because the master sets the overall loudness, dialogue presence now changes the balance of voices against the backing rather than the whole export's volume, which is what it was for. The −1 dBTP is measured before AAC/MP3 encoding; encoders can add a few tenths of a dB (hands-on measures it on real exports; lowering the ceiling is a one-number change).
@@ -193,7 +193,7 @@ Sound of migrated takes (in `tests/test_vocal_chain.py`): (a) the reverb part is
 
 ## Dependencies and packaging
 
-- `requirements.txt`: `pedalboard==0.9.25` (GPLv3, numpy only, needs Python ≥ 3.10). Wheels exist for cp312 `win_amd64`, `macosx_11_0_arm64`, `macosx_10_14_x86_64` and cp311 `manylinux_2_28_x86_64` (CI). No other new dependency (decision 1).
+- `requirements.txt`: `pedalboard==0.9.24` (GPLv3, numpy only, needs Python ≥ 3.10). 0.9.25 and 0.9.21 crash on import with "Illegal instruction" on the GitHub Ubuntu runner (manylinux x86_64 wheel), a risk for users' CPUs too; 0.9.24 imports cleanly there. Wheels exist for cp312 `win_amd64`, `macosx_11_0_arm64`, `macosx_10_14_x86_64`, cp311 `manylinux_2_28_x86_64` (CI) and cp310 on all four. No other new dependency (decision 1).
 - `setup_dubmate_win.bat` and `setup_dubmate_mac.sh` raise their minimum from Python 3.9 to 3.10 (their install hints already say 3.10+).
 - No ship-list change (`dubmate/` ships whole). Both import-smoke steps in `release.yml` add `import pedalboard`, because the macOS staging `pip install` ends in `|| true` and would otherwise ship without it.
 - In-place desktop updates replace only the Python and static files; the bundled runtime of an existing install has no pedalboard, and the updater that runs is the old one. So the engine heals itself: at startup, if `import pedalboard` fails and `DUBMATE_TOOLS_DIR` is set (desktop), a background thread runs `sys.executable -m pip install --no-input --no-deps --target <CACHE_DIR>/engine-packages/py3XY pedalboard==<pin from requirements.txt>` (timeout 300 s), adds that folder to `sys.path` and imports. Source installs get it from `update.bat` / `update.sh`, which already run `pip install -r requirements.txt`.
@@ -249,7 +249,7 @@ Sound of migrated takes (in `tests/test_vocal_chain.py`): (a) the reverb part is
 19. A new take copies the picked take's own chain.
 20. Decay keeps today's 0.2–4.0 s range; the impulse cap rises from 2.0 to 4.0 s (identical output up to 2.0 s).
 21. When the original line can't be measured, the target is −21 LUFS.
-22. pedalboard is pinned to 0.9.25 and its version is part of the render key; Python 3.10 becomes the minimum for source installs.
+22. pedalboard is pinned to 0.9.24 (0.9.25's Linux wheel crashes on import) and its version is part of the render key; Python 3.10 becomes the minimum for source installs.
 23. Pitch onset shift (up to ~10 ms at ±5 st, ~19 ms at ±12 st) is accepted, not compensated; tests pin it.
 24. The project ZIP's master gain uses dialogue presence 0, matching its stems, which never carried presence.
 25. `room_state.json` stays version 2 with additive fields, so older engines keep every take; the client wire version alone goes to 3. Newer-than-known files are left untouched instead of being treated as version 1.

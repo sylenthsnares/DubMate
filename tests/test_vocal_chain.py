@@ -321,7 +321,7 @@ class TestSelfInstall(unittest.TestCase):
 
     def test_pin_comes_from_requirements(self):
         requirements = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "requirements.txt")
-        self.assertEqual(vc._pinned_version(requirements), "0.9.25")
+        self.assertEqual(vc._pinned_version(requirements), "0.9.24")
         self.assertIsNone(vc._pinned_version(os.path.join(os.path.dirname(requirements), "missing.txt")))
 
     def test_source_installs_never_start_it(self):
@@ -347,14 +347,14 @@ class TestSelfInstall(unittest.TestCase):
                 mock.patch.object(vc.threading, "Thread") as thread:
             req = os.path.join(cache, "requirements.txt")
             with open(req, "w", encoding="utf-8") as fh:
-                fh.write("numpy>=1.24.0\npedalboard==0.9.25\n")
+                fh.write("numpy>=1.24.0\npedalboard==0.9.24\n")
             vc.start_self_install(cache, req)
             self.assertEqual(vc.install_status(), "installing")
             thread.call_args.kwargs["target"]()  # run the worker inline
             cmd, kwargs = calls[0]
             target = os.path.join(cache, "engine-packages", f"py{sys.version_info[0]}{sys.version_info[1]}")
             self.assertEqual(cmd, [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps",
-                                   "--target", target, "pedalboard==0.9.25"])
+                                   "--target", target, "pedalboard==0.9.24"])
             self.assertEqual(kwargs["timeout"], 300)
             self.assertTrue(os.path.isdir(target))
             self.assertEqual(vc._install_state, "ready")

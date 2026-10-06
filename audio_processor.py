@@ -48,7 +48,7 @@ AUTO_GAIN_PEAK_CEILING_DB = -1.0  # auto gain never boosts a take's sample peak 
 # Master stage on the final mix (render, export, project ZIP stems).
 MASTER_TARGET_LUFS = -16.0
 MASTER_GAIN_LIMIT_DB = 24.0          # the loudness gain is clamped to +/- this
-MASTER_LIMITER_CEILING_DB = -1.5     # brickwall limiter ceiling (true peak)
+MASTER_LIMITER_CEILING_DB = -1.5     # peak limiter ceiling (sample peak, dBFS)
 TRUE_PEAK_CEILING_DB = -1.0          # static trim if the limited mix still reads above this
 LUFS_FLOOR = -70.0                   # silence; also BS.1770's absolute gate
 
@@ -551,17 +551,32 @@ def true_peak_db(x: np.ndarray) -> float:
     return 20.0 * math.log10(peak) if peak > 1e-6 else -120.0
 
 
+# pedalboard.Limiter (JUCE dsp::Limiter) is a 4:1 compressor above a fixed -10 dBFS, a
+# 1000:1 stage at threshold_db, a make-up gain of (3.75 - threshold_db) dB and a hard clip
+# at 0 dBFS. At threshold_db -6.25 the make-up is +10 dB, so the clip sits exactly on the
+# compressor's -10 dBFS knee. Scaling the mix by (-10 - ceiling) dB in and (ceiling) dB out
+# turns that into a peak limiter at MASTER_LIMITER_CEILING_DB with unity gain below it.
+_PB_LIMITER_KNEE_DB = -10.0
+_PB_LIMITER_THRESHOLD_DB = -6.25
+_PB_LIMITER_MAKEUP_DB = 3.75 - _PB_LIMITER_THRESHOLD_DB
+
+
 def _limit_true_peak(x: np.ndarray, sr: int) -> Tuple[np.ndarray, float]:
-    """Brickwall limiter at MASTER_LIMITER_CEILING_DB (true peak), then a static trim if the
-    result still reads above TRUE_PEAK_CEILING_DB. Returns (audio, true peak in dBTP)."""
+    """Peak limiter (pedalboard.Limiter) at MASTER_LIMITER_CEILING_DB sample peak, then a
+    static trim if the result still reads above TRUE_PEAK_CEILING_DB true peak.
+    Returns (audio, true peak in dBTP)."""
     if not vocal_chain.available():
         raise EffectsUnavailable()
     pb = vocal_chain._pedalboard_module()
     audio = np.ascontiguousarray(_sanitize_finite_audio(x, context="master limiter input")).reshape(-1)
     if not len(audio):
         return audio, -120.0
-    limiter = pb.BrickwallLimiter(ceiling_db=MASTER_LIMITER_CEILING_DB, true_peak=True)
-    out = np.asarray(limiter(audio, sr), dtype=np.float32).reshape(-1)
+    in_db = _PB_LIMITER_KNEE_DB - MASTER_LIMITER_CEILING_DB
+    out_db = MASTER_LIMITER_CEILING_DB - _PB_LIMITER_KNEE_DB - _PB_LIMITER_MAKEUP_DB
+    limiter = pb.Limiter(threshold_db=_PB_LIMITER_THRESHOLD_DB)
+    staged = (audio * np.float32(10.0 ** (in_db / 20.0))).astype(np.float32)
+    out = np.asarray(limiter(staged, sr), dtype=np.float64).reshape(-1)
+    out = (out * (10.0 ** (out_db / 20.0))).astype(np.float32)
     peak_db = true_peak_db(out)
     if peak_db > TRUE_PEAK_CEILING_DB:
         # 0.001 dB under the ceiling so float32 rounding can't leave it a hair above.

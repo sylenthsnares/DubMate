@@ -151,12 +151,55 @@ class TestMasterStage(unittest.TestCase):
         self.assertEqual(info["gain_db"], 0.0)
         self.assertFalse(np.any(out))
 
+    def test_speech_like_bursts(self):
+        # Voiced syllables (a gliding 140 Hz harmonic tone, 80-300 ms bursts at random levels,
+        # short gaps): at -16 LUFS their peaks sit about 2.5 dB over the limiter's ceiling,
+        # and the result still lands on target under -1 dBTP.
+        sr = 48000
+        rng = np.random.default_rng(11)
+        t = np.arange(8 * sr) / sr
+        phase = 2 * np.pi * np.cumsum(140 + 20 * np.sin(2 * np.pi * 0.7 * t)) / sr
+        carrier = sum(np.sin(k * phase + rng.uniform(0, 2 * np.pi)) / k for k in range(1, 25))
+        env = np.zeros(len(t))
+        i = 0
+        while i < len(env):
+            n = int(rng.uniform(0.08, 0.3) * sr)
+            seg = np.hanning(n)[:len(env) - i] * 10 ** (rng.uniform(-6, 0) / 20)
+            env[i:i + len(seg)] = seg
+            i += n + int(rng.uniform(0.05, 0.2) * sr)
+        x = (0.1 * carrier * env).astype(np.float32)
+        gain = 10 ** (audio_processor._master_gain_db(audio_processor.integrated_lufs(x, sr)) / 20)
+        self.assertGreater(audio_processor.true_peak_db(x * np.float32(gain)), audio_processor.MASTER_LIMITER_CEILING_DB)
+        self._check(x, sr)
+
     def test_gain_is_clamped(self):
         sr = 44100
         x = _sine(997, 10 ** (-60 / 20), 3, sr)  # about -63 LUFS: needs +47 dB, gets +24
         out, info = audio_processor.master_stage(x, sr)
         self.assertEqual(info["gain_db"], 24.0)
         self.assertAlmostEqual(audio_processor.integrated_lufs(out, sr), info["lufs_in"] + 24.0, delta=0.05)
+
+
+class TestPeakLimiter(unittest.TestCase):
+    """The pedalboard.Limiter stage on its own (before the true-peak trim)."""
+
+    def test_holds_the_sample_peak_ceiling(self):
+        sr = 44100
+        x = _pinkish_noise(4, sr) * np.float32(4.0)  # peaks far past 0 dBFS
+        out, peak_db = audio_processor._limit_true_peak(x, sr)
+        self.assertEqual(len(out), len(x))
+        self.assertLessEqual(20 * np.log10(np.max(np.abs(out))), audio_processor.MASTER_LIMITER_CEILING_DB + 0.01)
+        self.assertLessEqual(peak_db, audio_processor.TRUE_PEAK_CEILING_DB)
+        self.assertAlmostEqual(peak_db, audio_processor.true_peak_db(out), places=6)
+
+    def test_unity_gain_just_under_the_ceiling(self):
+        # A 220 Hz sine peaking at -2 dBFS: under the limiter's knee, so it passes untouched,
+        # sample for sample (no make-up gain left over, no delay).
+        sr = 48000
+        x = _sine(220, 10 ** (-2 / 20), 2, sr)
+        out, peak_db = audio_processor._limit_true_peak(x, sr)
+        np.testing.assert_allclose(out, x, rtol=0, atol=2e-6)
+        self.assertAlmostEqual(peak_db, -2.0, delta=0.01)
 
 
 if __name__ == "__main__":
