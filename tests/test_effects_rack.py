@@ -4,9 +4,9 @@ test_effects_rack.py
 Voice chains in the room (documentation/design/effects-rack.md, "Settings resolution",
 "Data shapes and on-disk layout", "Existing data", "API and WebSocket"): the room's
 "voice" and take "chain" on disk, the legacy migration, the loader's version check,
-resolution in the mix, the chain and voice routes, level re-matching, the old
-Pitch / Reverb sliders reaching the chain, and the render routes (supersede, 503,
-range streaming, background preset renders).
+resolution in the mix, the chain and voice routes, level re-matching, timing and level
+messages leaving the sound alone, and the render routes (supersede, 503, range
+streaming, background preset renders).
 """
 
 import asyncio
@@ -195,7 +195,7 @@ class TestResolution(RoomCase):
         room = self._room()
         self._add(room, "t1000", 300, chain=PRESET["warm"])
         state = room.to_state_dict()
-        self.assertEqual(state["state_version"], 2)
+        self.assertEqual(state["state_version"], 3)   # the wire version; the saved file stays 2
         self.assertEqual((state["voice"]["session"], state["voice"]["characters"]), (None, {}))
         self.assertEqual([p["id"] for p in state["voice"]["presets"]], ["clean", "warm", "radio", "monster"])
         self.assertEqual(state["voice"]["presets"][2], {"id": "radio", "name": "Radio", "chain": PRESET["radio"]})
@@ -381,47 +381,37 @@ class TestVoiceRoute(RackRoutesCase):
         self.assertEqual(take["auto_gain_db"], self._render_level(take, PRESET["radio"])["auto_gain_db"])
 
 
-class TestOldSliders(RackRoutesCase):
-    """update_take_params until the booth edits chains (step 6)."""
+class TestTakeParams(RackRoutesCase):
+    """update_take_params carries a take's timing and level only; its sound changes with
+    PUT .../chain, and a new take keeps the picked take's sound."""
 
     def _send(self, ws, **params):
         ws.send_json({"type": "update_take_params",
                       "payload": {"line_id": "t1000", "take_id": self.take["take_id"], **params}})
 
-    def test_pitch_slider_reaches_the_chain_and_the_level(self):
+    def test_pitch_and_reverb_are_ignored(self):
         room = self._rack_room()
         room.voice["characters"]["Ana"] = PRESET["warm"]
         take = room.find_take("t1000", self.take["take_id"])
-        start_gain = take["gain_db"]
         with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
-            # Every slider message carries all four values; only Pitch moved here, and its
-            # gain_db is the booth's (now stale) reading, which is not applied.
-            self._send(ws, offset_ms=45, pitch_semitones=-4, reverb_wet=0.0, gain_db=start_gain + 5)
+            self._send(ws, offset_ms=45, pitch_semitones=-4, reverb_wet=0.35, gain_db=-1.5)
             self._until(ws, "take_params_updated")
-            msg = self._until(ws, "levels_updated")
-        self.assertEqual(msg["payload"], {"takes": [{"line_id": "t1000", "take_id": take["take_id"]}]})
-        expected_chain = vocal_chain.chain_with_legacy(PRESET["warm"], pitch=-4)
-        self.assertEqual(take["chain"], expected_chain)
-        self.assertTrue(take["chain"]["nodes"]["reverb"]["on"])  # Warm's reverb kept: that slider didn't move
-        self.assertEqual((take["offset_ms"], take["pitch_semitones"]), (45, -4))
-        expected = self._render_level(take, expected_chain)
-        self.assertEqual((take["auto_gain_db"], take["gain_db"]), (expected["auto_gain_db"], expected["auto_gain_db"]))
+        self.assertEqual((take["offset_ms"], take["gain_db"]), (45, -1.5))
+        self.assertNotIn("chain", take)
+        self.assertNotIn("pitch_semitones", take)
+        self.assertNotIn("reverb_wet", take)
+        self.assertEqual(room.rematch_pending, set())
+        self.assertIsNone(room.voice_job)
+        self.assertEqual(room.mix_takes()[0]["chain"], PRESET["warm"])
 
-        # A nudge with the sliders where they are leaves the chain alone and applies the level.
-        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
-            self._send(ws, offset_ms=50, pitch_semitones=-4, reverb_wet=0.0, gain_db=-1.5)
-            self._until(ws, "take_params_updated")
-        self.assertEqual(take["chain"], expected_chain)
-        self.assertEqual((take["offset_ms"], take["gain_db"]), (50, -1.5))
-
-    def test_reverb_slider_on_a_take_without_a_chain(self):
+    def test_a_new_take_keeps_the_picked_sound(self):
         room = self._rack_room()
-        take = room.find_take("t1000", self.take["take_id"])
-        with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
-            self._send(ws, offset_ms=take["offset_ms"], pitch_semitones=0, reverb_wet=0.35, gain_db=take["gain_db"])
-            self._until(ws, "levels_updated")
-        self.assertEqual(take["chain"], vocal_chain.chain_from_legacy(0, 0.35))
-        self.assertEqual(room.mix_takes()[0]["chain"], vocal_chain.chain_from_legacy(0, 0.35))
+        legacy = vocal_chain.chain_from_legacy(-3, 0.4)
+        room.find_take("t1000", self.take["take_id"]).update(pitch_semitones=-3.0, reverb_wet=0.4, chain=legacy)
+        second = self._upload("t1000", speech_like(duration=2.0, lead=0.3))   # the booth sends no slider fields
+        take = room.find_take("t1000", second["take_id"])
+        self.assertEqual(take["chain"], legacy)
+        self.assertNotIn("pitch_semitones", take)
 
 
 class RenderRoutesCase(RackRoutesCase):

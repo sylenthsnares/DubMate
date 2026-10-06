@@ -27,6 +27,9 @@ from dubmate import common, packs_cache, vocal_chain
 # room_state.json layout. Version 1 (no state_version) kept one take per line index.
 # Voice chains ("voice" and take "chain") are additive, so they stay version 2.
 STATE_VERSION = 2
+# Room state sent to the studio (to_state_dict). 3: the booth edits voice chains, so a
+# tab from before that stops applying state and asks for a reload (takes.js TAKE_STATE_VERSION).
+CLIENT_STATE_VERSION = 3
 
 
 def generate_room_code() -> str:
@@ -274,7 +277,7 @@ class Room:
         has_export_16_9 = self.exported_video_path is not None and os.path.exists(self.exported_video_path)
         has_export = has_export_16_9
         return {
-            "state_version": STATE_VERSION,
+            "state_version": CLIENT_STATE_VERSION,
             "room_id": self.room_id,
             "pack": self.pack.to_dict(),
             "host_id": self.host_id,

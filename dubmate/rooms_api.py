@@ -214,10 +214,10 @@ async def mix_for_export(room) -> Dict[int, Dict[str, Any]]:
 
 def legacy_sliders_onto_chain(room, line, take: Dict[str, Any], values: Dict[str, Any],
                              shown: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Until the booth edits chains itself: the old Pitch and Reverb sliders' values
-    (pitch_semitones, reverb_wet) that differ from what the take showed (`shown`) are put
-    on the take's resolved chain (vocal_chain.chain_with_legacy). Returns that chain, or
-    None when neither slider moved."""
+    """The old Pitch and Reverb sliders' values (pitch_semitones, reverb_wet), still accepted
+    on an upload from a studio that sends them (the booth now edits chains and doesn't):
+    values that differ from what the take showed (`shown`) are put on the take's resolved
+    chain (vocal_chain.chain_with_legacy). Returns that chain, or None when neither moved."""
     moved = {}
     for key in ("pitch_semitones", "reverb_wet"):
         if key not in values:
@@ -265,8 +265,9 @@ async def upload_take(
     user_id: str = Form(...),
     user_name: str = Form("Actor"),
     offset_ms: int = Form(0),
-    pitch_semitones: float = Form(0.0),
-    reverb_wet: float = Form(0.0),
+    # Old studios only; the booth leaves them out and the take keeps the picked take's sound.
+    pitch_semitones: Optional[float] = Form(None),
+    reverb_wet: Optional[float] = Form(None),
     gain_db: float = Form(0.0),
     noise_reduction: bool = Form(False),
     auto_gain: bool = Form(False),
@@ -315,8 +316,8 @@ async def upload_take(
     # A new take keeps the sound of the take it replaces in the dub (its own chain, if any).
     previous = room.picked_take(line_id) or {}
     sound = {"chain": previous["chain"]} if isinstance(previous.get("chain"), dict) else {}
-    legacy = legacy_sliders_onto_chain(
-        room, line, sound, {"pitch_semitones": pitch_semitones, "reverb_wet": reverb_wet}, previous)
+    sliders = {k: v for k, v in (("pitch_semitones", pitch_semitones), ("reverb_wet", reverb_wet)) if v is not None}
+    legacy = legacy_sliders_onto_chain(room, line, sound, sliders, previous)
     if legacy is not None:
         sound["chain"] = legacy
 
@@ -340,8 +341,7 @@ async def upload_take(
         "aligned": saved["aligned"],
         "stretch": saved["stretch"],
         "timing_score": saved["timing_score"],
-        "pitch_semitones": pitch_semitones,
-        "reverb_wet": reverb_wet,
+        **sliders,
         **sound,
         # auto_gain: the client asked for the scene-matched level, applied here so the
         # take_recorded broadcast already carries it.

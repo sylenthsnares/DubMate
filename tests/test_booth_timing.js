@@ -107,7 +107,7 @@ const shown = (el) => !!el && el.style.display !== "none";
 /** Puts `takes` (picked = `picked`) on the room's only line and opens it in the booth. */
 async function showLine(env, takes, picked, extra = {}) {
   env.app.roomState = {
-    state_version: 2, room_id: "R1", host_id: "u1", users: {}, role_assignments: {},
+    state_version: 3, room_id: "R1", host_id: "u1", users: {}, role_assignments: {},
     pack: { id: "P", lines: [LINE], characters: ["Ana"], video_url: "/v.mp4" },
     takes: takes.length ? { t1000: { picked, next_number: takes.length + 1, takes } } : {},
     ...extra,
@@ -168,18 +168,29 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     console.log("PASS: old takes show no caption and Auto resets them to 0");
   }
 
-  // 4. Changing pitch on an aligned take at -135 sends -135 back and is not a nudge.
+  // 4. Changing pitch on an aligned take at -135 changes its sound (PUT .../chain), not its
+  // timing: the offset stays -135 and the caption stays.
   {
     await showLine(env, [mk("p1", 1, { offset_ms: -135, auto_offset_ms: -135, aligned: true, stretch: 1.0, timing_score: 0.7 })], "p1");
     if (!shown(caption)) fail("caption not shown at -135");
+    const sentBefore = env.sent.length;
     const pitch = env.app.sliderPitch;
     pitch.value = "2";
     pitch.dispatchEvent(new env.w.Event("input"));
-    const last = env.sent[env.sent.length - 1];
-    if (!last || last.offset_ms !== -135 || last.pitch_semitones !== 2) fail(`pitch change sent ${JSON.stringify(last)}`);
+    pitch.dispatchEvent(new env.w.Event("change"));   // let go: saved now
+    await tick();
+    const put = env.calls.find((c) => c.method === "PUT" && c.url === "/api/rooms/R1/lines/t1000/takes/p1/chain");
+    if (!put) fail("pitch change did not save the take's sound");
+    const body = JSON.parse(put.body);
+    if (body.user_id !== "u1" || body.chain?.nodes?.pitch?.on !== true || body.chain.nodes.pitch.semitones !== 2) {
+      fail(`pitch change saved ${put.body}`);
+    }
+    if (env.sent.length !== sentBefore) fail(`pitch change sent timing: ${JSON.stringify(env.sent.slice(sentBefore))}`);
+    if (env.app.sliderNudge.value !== "-135") fail(`offset after a pitch change: ${env.app.sliderNudge.value}`);
     await env.app.loadBoothLine(0);
+    if (env.app.sliderPitch.value !== "2") fail(`pitch after reload: ${env.app.sliderPitch.value}`);
     if (!shown(caption)) fail("pitch change on an aligned take counted as a nudge");
-    console.log("PASS: a pitch change keeps the caption (offset -135 round-trips unchanged)");
+    console.log("PASS: a pitch change saves the take's sound (pitch 2) and keeps offset -135 and the caption");
   }
 
   // 5. Fitted take: fitted caption and Original speed; the button posts and the reply refreshes.

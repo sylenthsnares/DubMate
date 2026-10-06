@@ -4618,3 +4618,35 @@ svg {
 @media (prefers-reduced-motion: reduce) {
   .dm-tip { transition: none; }
 }
+
+/* Voice effects: the sound is the engine's render; a dot pulses while it catches up,
+   and a play button pulses while it waits for its sound. */
+.voice-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-brass);
+  animation: sound-catching-up 1.6s infinite ease-in-out;
+}
+
+.is-waiting-sound {
+  animation: sound-catching-up 1.2s infinite ease-in-out;
+}
+
+@keyframes sound-catching-up {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.voice-effects-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--foreground-dim);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-status-dot,
+  .is-waiting-sound { animation: none; }
+}

@@ -143,6 +143,13 @@ class TestResolution(unittest.TestCase):
             resolved = vc.resolve_chain(voice, case["character"], take)
             self.assertEqual(resolved, vc.normalize_chain(_chain(case["expect"])), case["name"])
 
+    def test_fixture_presets_are_the_engine_presets(self):
+        """The studio's tests read the presets from the fixture (and check its Clean
+        fallback against it), so the fixture must spell out the engine's presets exactly."""
+        with open(FIXTURE, "r", encoding="utf-8") as fh:
+            presets = json.load(fh)["presets"]
+        self.assertEqual(presets, {pid: p["chain"] for pid, p in vc.PRESETS.items()})
+
     def test_returns_a_copy(self):
         voice = {"session": copy.deepcopy(vc.PRESETS["radio"]["chain"]), "characters": {}}
         resolved = vc.resolve_chain(voice, None, None)

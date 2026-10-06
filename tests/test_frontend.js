@@ -39,9 +39,12 @@ dom.window.HTMLCanvasElement.prototype.getContext = () => ({
   rotate: () => {},
   createLinearGradient: () => ({ addColorStop: () => {} }),
 });
+const audioParam = (value) => ({ value, setValueAtTime() {}, setValueCurveAtTime() {}, cancelScheduledValues() {} });
 dom.window.AudioContext = class {
-  createGain() { return { gain: { value: 1.0 }, connect: () => {} }; }
-  createAnalyser() { return { fftSize: 2048, getByteTimeDomainData: () => {} }; }
+  constructor() { this.currentTime = 0; this.destination = {}; }
+  createGain() { return { gain: audioParam(1.0), connect: () => {}, disconnect: () => {} }; }
+  createBufferSource() { return { buffer: null, connect: () => {}, disconnect: () => {}, start() {}, stop() {} }; }
+  createAnalyser() { return { fftSize: 2048, getByteTimeDomainData: () => {}, connect: () => {}, disconnect: () => {} }; }
   createBiquadFilter() { return { type: 'highpass', frequency: { value: 80 }, Q: { value: 0.707 }, connect: () => {} }; }
   createDynamicsCompressor() { return { threshold: { value: -20 }, knee: { value: 10 }, ratio: { value: 3 }, attack: { value: 0.01 }, release: { value: 0.1 }, connect: () => {} }; }
   createConvolver() { return { buffer: null, connect: () => {} }; }
@@ -275,7 +278,7 @@ try {
         return realFetch(url, opts);
       };
       const prevTake = { take_id: "old1", number: 1, user_id: app.user.id, url: "/api/rooms/B3ROOM/lines/t1200/takes/old1/audio?v=1", gain_db: 6, auto_gain_db: 6 };
-      const roomB3 = () => ({ state_version: 2, room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0],
+      const roomB3 = () => ({ state_version: 3, room_id: "B3ROOM", host_id: app.user.id, pack: mockPacks[0],
         takes: { t1200: { picked: "old1", next_number: 2, takes: [{ ...prevTake }] } }, users: {} });
 
       // Slider still shows the previous take's auto gain: the new take must get its own.
@@ -298,22 +301,32 @@ try {
         process.exit(1);
       }
 
+      // The booth builds no effects of its own: it plays the engine's render, with the
+      // take's level as a plain gain after it.
       app.audio.initContext();
       const ctx = app.audio.ctx;
-      let compressorBuilt = false;
-      const realComp = ctx.createDynamicsCompressor;
-      ctx.createDynamicsCompressor = function () { compressorBuilt = true; return realComp.call(this); };
-      const chain = app.audio.buildVocalDSPChain({ gainDb: -4, reverbWet: 0 });
-      ctx.createDynamicsCompressor = realComp;
-      if (compressorBuilt || chain.compressor || dom.window.document.getElementById("check-compressor")) {
-        console.error("FAIL: B3 preview vocal chain still compresses takes");
+      const effectNodes = [];
+      const realNodes = {};
+      for (const name of ["createDynamicsCompressor", "createBiquadFilter", "createConvolver"]) {
+        realNodes[name] = ctx[name];
+        ctx[name] = function () { effectNodes.push(name); return realNodes[name].call(this); };
+      }
+      const render = { duration: 2.5, render: true };
+      app.audio.previewTakeIsolated({ takeBuffer: render, lineStartSec: 1.2, gainDb: -4 });
+      Object.assign(ctx, realNodes);
+      const played = app.audio.takeVoice?.current;
+      if (effectNodes.length || played?.buffer !== render
+          || Math.abs(app.audio.takeVoice.level.gain.value - Math.pow(10, -4 / 20)) > 1e-9
+          || dom.window.document.getElementById("check-compressor")) {
+        console.error("FAIL: B3 the booth preview adds effects of its own:", effectNodes);
         process.exit(1);
       }
+      app.audio.stopAllPlayback();
 
       dom.window.fetch = realFetch;
       app.audio.loadAudioBuffer = realLoad;
       app.leaveRoom();
-      console.log("PASS: B3 re-takes get their own auto gain and the preview chain matches the export!");
+      console.log("PASS: B3 re-takes get their own auto gain and the preview plays the engine's render!");
     }
 
     // Test 4: Dialogue completion & "I'm Finished" button state
@@ -514,7 +527,7 @@ try {
         ["takeCount counts", T.takeCount(takes, l0) === 2 && T.takeCount(takes, l1) === 0],
         ["takeAudioKey drops ?v=", T.takeAudioKey(take0) === "/api/rooms/R/lines/t1200/takes/b2/audio"],
         ["takeAudioKey without a url", T.takeAudioKey({}) === null && T.takeAudioKey(undefined) === null],
-        ["TAKE_STATE_VERSION is 2", T.TAKE_STATE_VERSION === 2],
+        ["TAKE_STATE_VERSION is 3", T.TAKE_STATE_VERSION === 3],
       ];
       const failed = checks.filter(([, ok]) => !ok).map(([name]) => name);
       if (failed.length) {
@@ -523,7 +536,7 @@ try {
       }
 
       // The studio reads the take through the same helper.
-      app.roomState = { state_version: 2, room_id: "R", pack: mockPacks[0], takes, users: {} };
+      app.roomState = { state_version: 3, room_id: "R", pack: mockPacks[0], takes, users: {} };
       if (app.takeForLine(0) !== take0 || app.takeForLine(1) !== undefined || app.takeForLine(99) !== undefined) {
         console.error("FAIL: takeForLine did not return the line's take");
         process.exit(1);
@@ -550,10 +563,10 @@ try {
     {
       const lines = mockPacks[0].lines;
       const withPeaks = { take_id: "a1", number: 1, url: "/api/rooms/R/lines/t1200/takes/a1/audio?v=1", peaks: [[0.1, 0.2]] };
-      app.roomState = { state_version: 2, room_id: "R", pack: mockPacks[0], users: {},
+      app.roomState = { state_version: 3, room_id: "R", pack: mockPacks[0], users: {},
         takes: { t1200: { picked: "a1", next_number: 2, takes: [withPeaks] } } };
       // a1 is no longer picked, so the server sends it without peaks.
-      const applied = app.applyIncomingState({ state: { state_version: 2, room_id: "R", users: {}, takes: {
+      const applied = app.applyIncomingState({ state: { state_version: 3, room_id: "R", users: {}, takes: {
         t1200: { picked: "b2", next_number: 3, takes: [
           { take_id: "a1", number: 1, url: withPeaks.url },
           { take_id: "b2", number: 2, url: "/api/rooms/R/lines/t1200/takes/b2/audio?v=1", peaks: [[0.5, 0.6]] },
@@ -569,7 +582,7 @@ try {
       const bannerText = dom.window.document.getElementById("connection-banner-text");
       app.socket.emit("take_deleted", { type: "take_deleted", payload: { line_index: 0, take_id: "b2" },
         state: { room_id: "R", pack: mockPacks[0], users: {}, takes: { 0: { url: "/api/rooms/R/takes/0/audio" } } } });
-      const stale = app.applyIncomingState({ state: { state_version: 3, room_id: "R", takes: {} } });
+      const stale = app.applyIncomingState({ state: { state_version: 4, room_id: "R", takes: {} } });
       app.renderConnectionState({ state: "open" });
       if (stale !== false || app.roomState !== before || app.takeForLine(0)?.take_id !== "b2"
           || banner.style.display !== "flex"
@@ -584,7 +597,7 @@ try {
 
     // Test 8e: take history in the booth. "Takes (N)" shows only with 2+ takes on a line
     // you can record; rows list takes oldest first; Use picks, delete confirms, Play
-    // uses the take's own settings and leaves the sliders alone.
+    // plays the engine's render of the take's own sound and leaves the controls alone.
     {
       const doc = dom.window.document;
       const btnTakes = doc.getElementById("btn-take-history");
@@ -599,7 +612,7 @@ try {
       const mk = (id, number, name, extra = {}) => ({ take_id: id, number, user_id: app.user.id, user_name: name,
         duration: 2.41, url: `/api/rooms/TH/lines/t1200/takes/${id}/audio?v=1`,
         offset_ms: 0, pitch_semitones: 0, reverb_wet: 0, gain_db: 0, ...extra });
-      const roomWith = (takes, extra = {}) => ({ state_version: 2, room_id: "TH", host_id: app.user.id,
+      const roomWith = (takes, extra = {}) => ({ state_version: 3, room_id: "TH", host_id: app.user.id,
         pack: mockPacks[0], users: {}, role_assignments: {}, takes, ...extra });
       const toasts = [];
       app.showToast = (m) => toasts.push(m);
@@ -611,8 +624,9 @@ try {
       if (takesBox.style.display !== "none") fail("button shown with one take");
 
       // Two takes on a line someone else is cast for: no button.
+      const a1Chain = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1.0, semitones: 2 } } };
       const two = () => ({ t1200: { picked: "b2", next_number: 4, takes: [
-        mk("a1", 1, "Ana", { offset_ms: 120, pitch_semitones: 2, reverb_wet: 0.3, gain_db: -5 }),
+        mk("a1", 1, "Ana", { offset_ms: 120, chain: a1Chain, gain_db: -5 }),
         mk("b2", 3, "Ben", { duration: 1.96 })] } });
       app.roomState = roomWith(two(), { host_id: "someone", role_assignments: { Deku: ["u9"] } });
       await app.loadBoothLine(0);
@@ -633,18 +647,32 @@ try {
           || rows[1].querySelector(".take-history-use")) fail("picked row not marked, or Use shown on it");
       if (rows[0].querySelector(".take-history-use").dataset.tip !== "Use this take in the dub") fail("Use tooltip");
 
-      // Play: the take's own settings go to the preview; the sliders don't move.
+      // Play: the engine renders the take's own sound, and that render plays at the take's
+      // timing and level; the controls don't move.
       const sliders = () => [app.sliderNudge.value, app.sliderPitch.value, app.sliderReverb.value, app.sliderGain.value].join(",");
       const slidersBefore = sliders();
       let previewArgs = null;
+      let renderBody = null;
       app.audio.previewTakeIsolated = (args) => { previewArgs = args; };
+      app.audio.loadAudioBuffer = (url) => Promise.resolve({ duration: 2.5, url });
       app.syncVideoSeek = () => Promise.resolve();
+      dom.window.fetch = (url, opts) => {
+        if (String(url) === "/api/rooms/TH/lines/t1200/takes/a1/render") {
+          renderBody = JSON.parse(opts.body);
+          return Promise.resolve({ ok: true, status: 200,
+            json: () => Promise.resolve({ url: "/api/rooms/TH/renders/00000000000000a1.wav", key: "00000000000000a1", duration: 2.5 }) });
+        }
+        return realFetch(url, opts);
+      };
       rows[0].querySelector(".take-history-play").click();
       await new Promise((r) => setTimeout(r, 20));
-      if (!previewArgs || previewArgs.offsetMs !== 120 || previewArgs.pitchSemitones !== 2
-          || previewArgs.reverbWet !== 0.3 || previewArgs.gainDb !== -5) fail("Play used the wrong settings", previewArgs);
+      dom.window.fetch = realFetch;
+      if (JSON.stringify(renderBody?.chain) !== JSON.stringify(a1Chain) || !renderBody.client_id) fail("Play asked for the wrong sound", renderBody);
+      if (!previewArgs || previewArgs.takeBuffer?.url !== "/api/rooms/TH/renders/00000000000000a1.wav"
+          || previewArgs.offsetMs !== 120 || previewArgs.gainDb !== -5) fail("Play used the wrong settings", previewArgs);
       if (sliders() !== slidersBefore) fail("Play moved the sliders", slidersBefore, sliders());
       app.stopBoothPlayback();
+      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
 
       // Use: POST pick, toast, the picked row moves.
       let sent = null;

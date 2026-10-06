@@ -91,18 +91,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 take_id = payload.get("take_id")
                 take = room.find_take(line_id, take_id) if isinstance(line_id, str) else None
                 if take:
-                    # Until the booth edits chains itself, a moved Pitch or Reverb slider
-                    # changes the take's chain and its level is matched on the new sound.
-                    # That message's gain_db is the slider as the booth last showed it, which
-                    # the new match may be about to move, so it is not applied.
-                    line = room.find_line(line_id)
-                    chain = rooms_api.legacy_sliders_onto_chain(room, line, take, payload, take) if line else None
-                    for key in ("offset_ms", "pitch_semitones", "reverb_wet", "gain_db"):
-                        if key in payload and not (chain and key == "gain_db"):
+                    # Timing and level only; the take's sound changes with PUT .../chain.
+                    for key in ("offset_ms", "gain_db"):
+                        if key in payload:
                             take[key] = payload[key]
-                    if chain:
-                        take["chain"] = chain
-                        rooms_api.rematch_later(room, [(line_id, take_id)])
                     room.invalidate_exports()
                     await room.broadcast("take_params_updated", {"line_id": line_id, "take_id": take_id})
 

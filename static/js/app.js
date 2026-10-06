@@ -65,6 +65,7 @@ class DubMateApp {
   // leaveRoom() and at the start of joinRoom().
   resetRoomSession() {
     this.stopShareWatch();
+    this.stopTakeVoice();
     this.roomShare = null;
     this.roomState = null;
     this.currentLineIndex = 0;
@@ -239,6 +240,8 @@ class DubMateApp {
     this.valDecay = document.getElementById('val-decay');
     this.sliderPredelay = document.getElementById('slider-predelay');
     this.valPredelay = document.getElementById('val-predelay');
+    this.voiceStatusDot = document.getElementById('voice-status-dot');
+    this.voiceEffectsNote = document.getElementById('voice-effects-note');
 
     // Studio Noise Reduction & Mic Profile Calibration Elements
     this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
@@ -720,23 +723,31 @@ class DubMateApp {
       });
     });
 
+    // Effect controls edit the take's voice chain (the engine renders it); letting go saves it.
     this.sliderPitch.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valPitch.innerText = (val > 0 ? '+' : '') + val + ' st';
-      this.syncTakeParams();
+      this.editTakeVoice('pitch', val !== 0 ? { on: true, semitones: val } : { on: false });
     });
 
     this.sliderReverb.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10);
       this.valReverb.innerText = val + '%';
-      this.syncTakeParams();
+      // As the old export did: 2% or less is no reverb.
+      this.editTakeVoice('reverb', val / 100 > 0.02 ? { on: true, mix: val / 100 } : { on: false });
     });
 
+    for (const control of [this.sliderPitch, this.sliderReverb, this.sliderDecay, this.sliderPredelay]) {
+      control.addEventListener('change', () => this.flushVoiceSave());
+    }
+
+    // Level is not an effect: a gain after the take's sound, sent with its timing.
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
       const take = this.takeForLine(this.currentLineIndex);
       if (take && take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, val);
+      this.audio.setGain(val);
       this.syncTakeParams();
     });
 
@@ -772,22 +783,21 @@ class DubMateApp {
       }
     });
 
-    this.checkLowcut.addEventListener('change', () => this.syncTakeParams());
+    this.checkLowcut.addEventListener('change', () => {
+      this.editTakeVoice('lowcut', { on: this.checkLowcut.checked });
+      this.flushVoiceSave();
+    });
 
     this.sliderDecay.addEventListener('input', (e) => {
       const decay = parseFloat(e.target.value);
       this.valDecay.innerText = decay.toFixed(1) + 's';
-      const predelay = parseFloat(this.sliderPredelay.value);
-      this.audio.updateReverbImpulse(decay, 0.5, predelay);
-      this.syncTakeParams();
+      this.editTakeVoice('reverb', { decay_s: decay });
     });
 
     this.sliderPredelay.addEventListener('input', (e) => {
       const predelay = parseFloat(e.target.value);
       this.valPredelay.innerText = Math.round(predelay) + 'ms';
-      const decay = parseFloat(this.sliderDecay.value);
-      this.audio.updateReverbImpulse(decay, 0.5, predelay);
-      this.syncTakeParams();
+      this.editTakeVoice('reverb', { predelay_ms: predelay });
     });
 
     this.btnPrevLine.addEventListener('click', () => this.stepLine(-1));
@@ -993,12 +1003,7 @@ class DubMateApp {
       if (!this.applyIncomingState(data)) return;
       const take = this.currentView === 'booth' && this.takeForLine(this.currentLineIndex);
       if (!take || !(data.payload?.takes || []).some((t) => t.take_id === take.take_id)) return;
-      const gainDb = parseFloat(take.gain_db) || 0;
-      this.sliderGain.value = gainDb;
-      this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
-      this.audio.setGain(gainDb);
-      this.updateKnobsVisuals();
-      if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
+      this.showTakeLevel(take);
     });
 
     this.socket.on('status_changed', (data) => {

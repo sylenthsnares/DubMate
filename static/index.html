@@ -848,6 +848,8 @@
                   <path d="M18 12h4" />
                 </svg>
                 <span>VOICE EFFECTS</span>
+                <span id="voice-status-dot" class="voice-status-dot" data-tip="Your sound is updating"
+                  role="status" aria-label="Your sound is updating" style="display: none;"></span>
               </div>
               <button id="btn-toggle-advanced-rack" class="amp-advanced-btn" aria-expanded="false"
                 aria-controls="advanced-vocal-rack">Advanced ▾</button>
@@ -897,6 +899,8 @@
                 </div>
               </div>
             </div>
+
+            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
 
             <!-- Expandable Advanced Studio Rack (Vintage I/O Rockers & Dials) -->
             <div id="advanced-vocal-rack" class="advanced-rack-box">
