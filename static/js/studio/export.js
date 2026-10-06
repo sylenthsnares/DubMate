@@ -404,7 +404,15 @@ export class ExportMethods {
         return true;
       }
 
-      const blob = await res.blob();
+      // A big file the browser could not hold fails here with the browser's own
+      // words ("network error"); the user gets the plain error line instead.
+      let blob;
+      try {
+        blob = await res.blob();
+      } catch {
+        this.showToast(errorText);
+        return false;
+      }
       objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.style.display = 'none';

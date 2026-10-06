@@ -2,7 +2,7 @@
 
 Roadmap feature 6, "Stems export" (**S**). Owner decision: October 2026 interview, "Export and sessions": the dialogue and the music & effects (M&E) as separate WAV files, for people who finish the mix in another editor. Builds on the effects rack (`effects-rack.md`, PR #15: one render engine, float renders, master stage) and Calibrate Mic (`calibrate-mic.md`, PR #16: exports wait while older takes are refreshed). Branch `feat/stems-export`.
 
-**Gate.** ROADMAP.md asks for a design review with the owner before any code. Step 1 waits for sign-off on "Decided overnight, revisit".
+**Status.** The code for every step has landed on `feat/stems-export`. The "Decided overnight, revisit" list still awaits the owner's review; any change there lands as a follow-up.
 
 ## Where it stands
 

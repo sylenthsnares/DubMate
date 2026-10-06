@@ -27,7 +27,7 @@
 - **Refresh Older Takes**: takes cleaned before your latest check can be cleaned again with it. Your original recordings are kept.
 - **Use Standard Cleanup**: forgets your room check. New takes get standard cleanup; takes already cleaned keep their sound until you refresh them.
 - **Guests' Room Checks**: a guest's room check lasts until the host restarts DubMate. After that the guest's row says "Not checked yet" and their earlier takes keep the cleanup they were made with.
-- **Stems**: the Stems button next to Project files saves the voices and the music and effects as separate WAV files, plus one per character, to finish the mix in another editor. They all start with the scene and have the same length. Played together they have the video's balance and loudness, without its peak limiting.
+- **Stems**: the Stems button next to Project files saves the voices and the music and effects as separate WAV files, plus one per character, to finish the mix in another editor. They all start with the scene and have the same length. Played together they have the video's balance and loudness, without its peak limiting. While stems or a video are being made, Refresh older takes waits and says "An export is running. Refresh older takes when it's done."
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.

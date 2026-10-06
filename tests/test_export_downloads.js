@@ -683,6 +683,28 @@ try {
     stemsFailure = null;
     if (toasts[toasts.length - 1] !== "Couldn't get the stems. Try again.") fail("a 500 did not toast the stems error", toasts);
     if (savedFiles.length !== savesBeforeFail) fail("a failed stems request still saved a file");
+
+    // A download the browser couldn't hold: the body read fails with the
+    // browser's own words, which must never reach the user.
+    const labelBeforeBlobFail = stemsBtn.querySelector("span").innerText;
+    stemsFailure = { ...blobResponse(), blob: () => Promise.reject(new dom.window.TypeError("network error")) };
+    toasts.length = 0;
+    const savesBeforeBlobFail = savedFiles.length;
+    const urlsBeforeBlobFail = objectUrls.created;
+    clickUi(stemsBtn);
+    await settle();
+    stemsFailure = null;
+    if (toasts[toasts.length - 1] !== "Couldn't get the stems. Try again.") fail("a failed body read did not toast the stems error", toasts);
+    if (toasts.some(t => /network error/i.test(t))) fail("the browser's own error text reached the user", toasts);
+    if (savedFiles.length !== savesBeforeBlobFail || objectUrls.created !== urlsBeforeBlobFail) {
+      fail("a failed body read still saved a file");
+    }
+    if (stemsBtn.disabled || stemsBtn.hasAttribute("aria-busy") || stemsBtn.dataset.downloading) {
+      fail("the Stems button stayed busy after a failed body read");
+    }
+    if (stemsBtn.querySelector("span").innerText !== labelBeforeBlobFail) {
+      fail("the Stems button did not get its label back after a failed body read", stemsBtn.querySelector("span").innerText);
+    }
     pass("a busy refusal shows its reason and any other failure says Couldn't get the stems");
     delete app.isEngineLocal;
 
