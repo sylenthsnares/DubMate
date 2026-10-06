@@ -214,6 +214,8 @@ class DubMateApp {
     this.btnRecordMain = document.getElementById('btn-record-main');
     this.recordIcon = document.getElementById('record-icon');
     this.recordStatusLabel = document.getElementById('record-status-label');
+    this.btnTakeHistory = document.getElementById('btn-take-history');
+    this.takeHistoryPanel = document.getElementById('take-history-panel');
     this.btnPlayOrig = document.getElementById('btn-play-orig');
     this.btnPreviewTake = document.getElementById('btn-preview-take');
     this.sliderNudge = document.getElementById('slider-nudge');
@@ -778,6 +780,7 @@ class DubMateApp {
     this.btnPrevLine.addEventListener('click', () => this.stepLine(-1));
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
+    this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
 
     // Studio Noise Reduction Synchronization & Calibration Listeners
     const onNoiseToggleChange = (e) => {
@@ -907,6 +910,7 @@ class DubMateApp {
         }
         if (this.currentView === 'booth') {
           this.renderTimelineChips();
+          this.renderTakeHistory();
         }
         this.renderCastActivityHUD();
         this.updateScreeningControls();

@@ -2562,6 +2562,62 @@ body.resizing .resize-grip-pill {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
+/* Take history under the record status: a popover, so opening it doesn't squeeze the booth */
+.take-history {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+}
+.take-history-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel-deep);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-sm);
+}
+.take-history-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.take-history-row.picked {
+  background: var(--border-gold-glow);
+}
+.take-history-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--foreground);
+}
+.take-history-picked {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-brass);
+  white-space: nowrap;
+}
+
+/* The open take history hangs over the cards below it */
+.record-btn-container.take-history-open {
+  overflow: visible;
+  z-index: 5;
+}
+
 /* Full-Width Record Console Transport */
 .full-width-transport {
   display: grid !important;

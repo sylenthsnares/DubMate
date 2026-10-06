@@ -186,6 +186,7 @@ export class BoothMethods {
 
     this.recordState = 'idle';
     this.updateRecordButtonUI(take);
+    this.renderTakeHistory();
     this.setABMode('A');
 
     // 1. INSTANT WAVEFORM RENDERING (0ms latency via precomputed peaks)
@@ -420,6 +421,7 @@ export class BoothMethods {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     this.isPlayingReference = false;
     this.isPlayingTake = false;
+    this.playingHistoryTakeId = null;
     this.audio.stopAllPlayback();
     if (this.stageVideo) {
       this.stageVideo.pause();
@@ -509,11 +511,20 @@ export class BoothMethods {
       return;
     }
 
+    await this.playTakeOverScene(line, this.currentTakeBuffer, {
+      offsetMs: parseInt(this.sliderNudge.value, 10),
+      pitch: parseFloat(this.sliderPitch.value),
+      reverb: parseFloat(this.sliderReverb.value) / 100.0,
+      gain: parseFloat(this.sliderGain.value),
+    });
+  }
+
+  /** Plays a take buffer over the scene from the line's start with the given settings. */
+  async playTakeOverScene(line, takeBuffer, { offsetMs, pitch, reverb, gain }) {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     const token = this.activePlaybackToken;
     this.isPlayingTake = true;
 
-    const offsetMs = parseInt(this.sliderNudge.value, 10);
     const offsetSec = offsetMs / 1000.0;
     const previewStartSec = Math.max(0, line.start + Math.min(0, offsetSec));
 
@@ -524,13 +535,10 @@ export class BoothMethods {
       await this.stageVideo.play();
     } catch (e) { }
 
-    const pitch = parseFloat(this.sliderPitch.value);
-    const reverb = parseFloat(this.sliderReverb.value) / 100.0;
-    const gain = parseFloat(this.sliderGain.value);
     const lowcut = this.checkLowcut.checked;
 
     const startAudioTime = performance.now();
-    const previewDurationSec = Math.max(line.duration || 3.0, (this.currentTakeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
+    const previewDurationSec = Math.max(line.duration || 3.0, (takeBuffer?.duration || 3.0) + Math.max(0, offsetSec)) + 0.3;
 
     const animPlayhead = () => {
       if (token !== this.activePlaybackToken) return;
@@ -548,7 +556,7 @@ export class BoothMethods {
     this.audio.previewTakeIsolated({
       backingBuffer: this.backingBuffer,
       lineStartSec: line.start,
-      takeBuffer: this.currentTakeBuffer,
+      takeBuffer,
       origBuffer: this.origBuffer,
       offsetMs,
       pitchSemitones: pitch,
@@ -1201,12 +1209,16 @@ export class BoothMethods {
   }
 
   /** Deletes the take in the dub; the line falls back to its newest other take. */
-  async clearCurrentTake() {
+  clearCurrentTake() {
+    return this.deleteTake(this.takeForLine(this.currentLineIndex));
+  }
+
+  /** Deletes one of the current line's takes after a confirm. */
+  async deleteTake(take) {
     if (this.isProcessingTake) return;
     this.cancelCurrentCountdown();
     const lineIndex = this.currentLineIndex;
     const line = this.roomState?.pack?.lines?.[lineIndex];
-    const take = this.takeForLine(lineIndex);
     if (!line || !take) {
       this.showToast("Record a take first");
       return;
@@ -1232,6 +1244,121 @@ export class BoothMethods {
       if (lineIndex === this.currentLineIndex) this.loadBoothLine(lineIndex);
     } catch (err) {
       this.showToast(this.friendlyError(err, "That take wasn't deleted. Try again."));
+    }
+  }
+
+  // --- Take history ---
+
+  toggleTakeHistory() {
+    this.takeHistoryOpen = !this.takeHistoryOpen;
+    this.renderTakeHistory();
+  }
+
+  /** The "Takes (N)" button and its panel. Shown only with 2+ takes on a line you can record. */
+  renderTakeHistory() {
+    if (!this.btnTakeHistory || !this.takeHistoryPanel) return;
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (line?.line_id !== this.takeHistoryLineId) {
+      // A different line starts with the history closed.
+      this.takeHistoryLineId = line?.line_id;
+      this.takeHistoryOpen = false;
+    }
+    const takes = line ? lineTakes(this.roomState.takes, line) : [];
+    const show = !!line && takes.length >= 2 && this.canRecordLine(line);
+    const open = show && !!this.takeHistoryOpen;
+    this.btnTakeHistory.parentElement.style.display = show ? '' : 'none';
+    this.btnTakeHistory.innerText = `Takes (${takes.length})`;
+    this.btnTakeHistory.setAttribute('aria-expanded', String(open));
+    this.takeHistoryPanel.style.display = open ? '' : 'none';
+    this.takeHistoryPanel.closest('.record-btn-container')?.classList.toggle('take-history-open', open);
+    this.takeHistoryPanel.innerHTML = '';
+    if (!open) return;
+
+    const picked = pickedTake(this.roomState.takes, line);
+    for (const take of takes) {
+      const row = document.createElement('div');
+      row.className = 'take-history-row' + (take === picked ? ' picked' : '');
+      const label = document.createElement('span');
+      label.className = 'take-history-label';
+      label.textContent = `Take ${take.number} · ${take.user_name || 'Cast member'} · ${(Number(take.duration) || 0).toFixed(1)}s`;
+      row.appendChild(label);
+
+      const addButton = (text, cls, onClick, tip) => {
+        const btn = document.createElement('button');
+        btn.className = `btn btn-xs ${cls}`;
+        btn.textContent = text;
+        if (tip) btn.dataset.tip = tip;
+        btn.addEventListener('click', onClick);
+        row.appendChild(btn);
+        return btn;
+      };
+      addButton('Play', 'btn-secondary take-history-play', () => this.playHistoryTake(take));
+      if (take === picked) {
+        const badge = document.createElement('span');
+        badge.className = 'take-history-picked';
+        badge.textContent = 'In the dub';
+        row.appendChild(badge);
+      } else {
+        addButton('Use', 'btn-primary take-history-use', () => this.pickTake(take), 'Use this take in the dub');
+      }
+      const del = addButton('✕', 'btn-ghost take-history-delete', () => this.deleteTake(take), 'Delete this take');
+      del.setAttribute('aria-label', `Delete take ${take.number}`);
+      this.takeHistoryPanel.appendChild(row);
+    }
+  }
+
+  /** Plays a take from the history over the scene with its own settings; sliders stay put. */
+  async playHistoryTake(take) {
+    this.cancelCurrentCountdown();
+    const wasThisTake = this.isPlayingTake && this.playingHistoryTakeId === take.take_id;
+    this.stopBoothPlayback();
+    if (wasThisTake || !take.url) return;
+
+    const line = this.roomState.pack.lines[this.currentLineIndex];
+    let buffer = null;
+    try {
+      buffer = await this.audio.loadAudioBuffer(take.url);
+    } catch (e) {
+      console.warn("[App] Error loading take audio:", e);
+    }
+    if (!buffer) {
+      this.showToast("The take is still loading. Try again in a moment.");
+      return;
+    }
+    if (line !== this.roomState?.pack?.lines?.[this.currentLineIndex]) return;
+    this.playingHistoryTakeId = take.take_id;
+    await this.playTakeOverScene(line, buffer, {
+      offsetMs: take.offset_ms || 0,
+      pitch: take.pitch_semitones || 0,
+      reverb: take.reverb_wet || 0,
+      gain: take.gain_db || 0,
+    });
+  }
+
+  /** Puts one of the current line's takes in the dub. */
+  async pickTake(take) {
+    if (this.isProcessingTake) return;
+    const lineIndex = this.currentLineIndex;
+    const line = this.roomState?.pack?.lines?.[lineIndex];
+    if (!line || !take) return;
+    try {
+      const res = await fetch(
+        `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}/pick`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: this.user.id }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.line) this.roomState.takes[line.line_id] = data.line;
+      this.showToast(`Take ${take.number} is in the dub`);
+      if (lineIndex === this.currentLineIndex) this.loadBoothLine(lineIndex);
+    } catch (err) {
+      this.showToast(this.friendlyError(err, "That take wasn't picked. Try again."));
     }
   }
 }

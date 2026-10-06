@@ -801,6 +801,14 @@
             <!-- Tape Transport Status Readout Strip -->
             <div id="record-status-label" class="record-status-label">Press Space to record</div>
 
+            <!-- Take history: one click away, only with 2+ takes on a line you can record -->
+            <div id="take-history" class="take-history" style="display: none;">
+              <button id="btn-take-history" class="btn btn-ghost btn-xs" aria-expanded="false"
+                aria-controls="take-history-panel"
+                data-tip="Listen to your other takes and choose the one used in the dub">Takes (2)</button>
+              <div id="take-history-panel" class="take-history-panel" style="display: none;"></div>
+            </div>
+
             <!-- Full-Width Audition / Playback Transport Controls -->
             <div class="listen-btn-group full-width-transport">
               <button id="btn-play-orig" class="btn btn-secondary btn-transport-full" data-tip="Play the original line">

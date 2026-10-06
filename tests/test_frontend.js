@@ -582,6 +582,113 @@ try {
       console.log("PASS: a tab from another DubMate version stops applying state and asks for a reload!");
     }
 
+    // Test 8e: take history in the booth. "Takes (N)" shows only with 2+ takes on a line
+    // you can record; rows list takes oldest first; Use picks, delete confirms, Play
+    // uses the take's own settings and leaves the sliders alone.
+    {
+      const doc = dom.window.document;
+      const btnTakes = doc.getElementById("btn-take-history");
+      const takesBox = doc.getElementById("take-history");
+      const panel = doc.getElementById("take-history-panel");
+      const realFetch = dom.window.fetch;
+      const realConfirm = dom.window.confirm;
+      const realToast = app.showToast;
+      const realLoad = app.audio.loadAudioBuffer;
+      const realPreview = app.audio.previewTakeIsolated;
+      const fail = (msg, ...rest) => { console.error("FAIL: take history:", msg, ...rest); process.exit(1); };
+      const mk = (id, number, name, extra = {}) => ({ take_id: id, number, user_id: app.user.id, user_name: name,
+        duration: 2.41, url: `/api/rooms/TH/lines/t1200/takes/${id}/audio?v=1`,
+        offset_ms: 0, pitch_semitones: 0, reverb_wet: 0, gain_db: 0, ...extra });
+      const roomWith = (takes, extra = {}) => ({ state_version: 2, room_id: "TH", host_id: app.user.id,
+        pack: mockPacks[0], users: {}, role_assignments: {}, takes, ...extra });
+      const toasts = [];
+      app.showToast = (m) => toasts.push(m);
+      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
+
+      // One take: no button.
+      app.roomState = roomWith({ t1200: { picked: "a1", next_number: 2, takes: [mk("a1", 1, "Ana")] } });
+      await app.loadBoothLine(0);
+      if (takesBox.style.display !== "none") fail("button shown with one take");
+
+      // Two takes on a line someone else is cast for: no button.
+      const two = () => ({ t1200: { picked: "b2", next_number: 4, takes: [
+        mk("a1", 1, "Ana", { offset_ms: 120, pitch_semitones: 2, reverb_wet: 0.3, gain_db: -5 }),
+        mk("b2", 3, "Ben", { duration: 1.96 })] } });
+      app.roomState = roomWith(two(), { host_id: "someone", role_assignments: { Deku: ["u9"] } });
+      await app.loadBoothLine(0);
+      if (takesBox.style.display !== "none") fail("button shown on a line you can't record");
+
+      // Two takes on your line: button shown, panel opens with rows oldest first.
+      app.roomState = roomWith(two());
+      await app.loadBoothLine(0);
+      if (takesBox.style.display === "none" || btnTakes.innerText !== "Takes (2)") fail("button not shown with 2 takes", btnTakes.innerText);
+      if (btnTakes.dataset.tip !== "Listen to your other takes and choose the one used in the dub") fail("button tooltip");
+      if (panel.style.display !== "none") fail("panel open before the button is clicked");
+      btnTakes.click();
+      const rows = [...panel.querySelectorAll(".take-history-row")];
+      const labels = rows.map((r) => r.querySelector(".take-history-label").textContent);
+      if (labels.join("|") !== "Take 1 · Ana · 2.4s|Take 3 · Ben · 2.0s") fail("rows", labels);
+      if (rows[0].querySelector(".take-history-picked") || !rows[0].querySelector(".take-history-use")
+          || rows[1].querySelector(".take-history-picked")?.textContent !== "In the dub"
+          || rows[1].querySelector(".take-history-use")) fail("picked row not marked, or Use shown on it");
+      if (rows[0].querySelector(".take-history-use").dataset.tip !== "Use this take in the dub") fail("Use tooltip");
+
+      // Play: the take's own settings go to the preview; the sliders don't move.
+      const sliders = () => [app.sliderNudge.value, app.sliderPitch.value, app.sliderReverb.value, app.sliderGain.value].join(",");
+      const slidersBefore = sliders();
+      let previewArgs = null;
+      app.audio.previewTakeIsolated = (args) => { previewArgs = args; };
+      app.syncVideoSeek = () => Promise.resolve();
+      rows[0].querySelector(".take-history-play").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (!previewArgs || previewArgs.offsetMs !== 120 || previewArgs.pitchSemitones !== 2
+          || previewArgs.reverbWet !== 0.3 || previewArgs.gainDb !== -5) fail("Play used the wrong settings", previewArgs);
+      if (sliders() !== slidersBefore) fail("Play moved the sliders", slidersBefore, sliders());
+      app.stopBoothPlayback();
+
+      // Use: POST pick, toast, the picked row moves.
+      let sent = null;
+      dom.window.fetch = (url, opts) => {
+        if (String(url).includes("/takes/a1") && opts && opts.method) {
+          sent = { url: String(url), opts };
+          const line = { ...two().t1200, picked: "a1" };
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", line_id: "t1200", line }) });
+        }
+        return realFetch(url, opts);
+      };
+      rows[0].querySelector(".take-history-use").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (sent?.url !== "/api/rooms/TH/lines/t1200/takes/a1/pick" || sent.opts.method !== "POST"
+          || JSON.parse(sent.opts.body).user_id !== app.user.id) fail("Use did not send the pick", sent);
+      if (!toasts.includes("Take 1 is in the dub") || app.takeForLine(0).take_id !== "a1") fail("pick not applied", toasts);
+
+      // Delete: asks first; cancel sends nothing, OK sends DELETE.
+      app.roomState = roomWith(two());
+      await app.loadBoothLine(0);
+      // The history stays open after a pick on the same line.
+      if (panel.style.display === "none") fail("history closed after picking a take");
+      const asked = [];
+      sent = null;
+      dom.window.confirm = (m) => { asked.push(m); return false; };
+      panel.querySelector(".take-history-row .take-history-delete").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (asked[0] !== "Delete take 1? This can't be undone." || sent) fail("delete without a confirm", asked, sent);
+      dom.window.confirm = () => true;
+      panel.querySelector(".take-history-row .take-history-delete").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if (sent?.url !== `/api/rooms/TH/lines/t1200/takes/a1?user_id=${encodeURIComponent(app.user.id)}`
+          || sent.opts.method !== "DELETE") fail("delete did not send DELETE", sent);
+
+      dom.window.fetch = realFetch;
+      dom.window.confirm = realConfirm;
+      app.showToast = realToast;
+      app.audio.loadAudioBuffer = realLoad;
+      app.audio.previewTakeIsolated = realPreview;
+      delete app.syncVideoSeek;
+      app.leaveRoom();
+      console.log("PASS: take history shows on your lines with 2+ takes, and Play, Use and delete work!");
+    }
+
     // Test 8: Sample-Accurate Video Seek & Playback Stop helpers
     if (typeof app.syncVideoSeek === "function" && typeof app.stopBoothPlayback === "function") {
       app.stopBoothPlayback();
