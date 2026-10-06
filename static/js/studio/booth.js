@@ -1131,6 +1131,10 @@ export class BoothMethods {
       this.audio.evictTakeCache(this.takeForLine(lineIndex));
 
       if (lineIndex === this.currentLineIndex) {
+        // The take's audio changed, so its render is of the old audio: ask for a new one.
+        this.voiceRender = null;
+        if (this.voiceScheduler) this.voiceScheduler.want(this.voiceChain, this.voicePlayState());
+
         const line = this.roomState.pack.lines[lineIndex];
         const take = this.takeForLine(lineIndex);
         let origPeaks = line.peaks || [];

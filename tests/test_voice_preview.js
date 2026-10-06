@@ -359,6 +359,10 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
       const u = String(input || "");
       calls.push({ url: u, method: opts.method || "GET", body: opts.body });
       if (/\/render$/.test(u) && renderReply) return renderReply(JSON.parse(opts.body));
+      if (/\/noise_reduction$/.test(u)) {
+        const swapped = { ...take, url: "/api/rooms/R1/lines/t1000/takes/k1/audio?v=2", noise_reduction: JSON.parse(opts.body).noise_reduction };
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ take: swapped }) });
+      }
       const body = u.startsWith("/api/packs") ? [] : u.startsWith("/api/config") ? { mic_sync: {} } : {};
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     };
@@ -472,6 +476,23 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     await app.loadBoothLine(0);
     await tick(200);
     if (app.sliderPitch.disabled || app.voiceEffectsNote.style.display !== "none") fail("controls not back once effects are installed");
+
+    // Noise reduction swaps the take's audio: the old render is dropped, a new one is
+    // asked for, and Preview plays it (never the render of the audio before the swap).
+    {
+      const before = calls.length;
+      renderReply = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ url: "/api/rooms/R1/renders/00000000000000d2.wav", key: "00000000000000d2", duration: 2 }) });
+      await app.toggleTakeNoiseReduction(0, true);
+      if (app.voiceRender && app.voiceRender.url === "/api/rooms/R1/renders/fedcba9876543210.wav") fail("the render of the old audio was kept");
+      await tick(200);
+      const renders = calls.slice(before).filter((c) => /\/render$/.test(c.url));
+      if (renders.length !== 1 || renders[0].url !== "/api/rooms/R1/lines/t1000/takes/k1/render") fail(`renders after noise reduction: ${JSON.stringify(renders)}`);
+      played.length = 0;
+      btn.click();
+      await tick(20);
+      if (played.length !== 1 || played[0].takeBuffer?.url !== "/api/rooms/R1/renders/00000000000000d2.wav") fail(`Preview after noise reduction played ${JSON.stringify(played)}`);
+      app.stopBoothPlayback();
+    }
 
     if (errors.length) fail(`console errors: ${errors.join("\n")}`);
     console.log("PASS: Preview waits for the take's render and plays it; without voice effects it plays the take as recorded");
