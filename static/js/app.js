@@ -35,6 +35,7 @@ class DubMateApp {
 
     // Countdown & Recording Mutex
     this.recordState = 'idle'; // 'idle' | 'countdown' | 'recording' | 'processing'
+    this.recordingGuideVoice = false; // guide-voice checkbox as it was when the current take started
     this.countdownSessionId = 0;
     this.recordingTimeout = null;
     this.filterMyLinesOnly = true;

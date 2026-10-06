@@ -4,7 +4,8 @@
  * Automatic timing in the booth (static/js/studio/booth.js): the "Lined up
  * automatically" caption by the timing readout until the take is nudged, the fitted
  * caption and Original speed, the Auto reset, "Timing N%" in the Takes panel, and a
- * fitted take never previewing the local recording. Socket and fetch are stubbed.
+ * fitted take never previewing the local recording, and guide_voice following the
+ * checkbox as it was when the take started recording. Socket and fetch are stubbed.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -270,6 +271,58 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     if ((await upload(1.06)).reused) fail("fitted take reused the local recording");
     if (!(await upload(1.0)).reused) fail("unfitted take did not reuse the local recording");
     console.log("PASS: a fitted take previews the engine's audio, not the local recording");
+  }
+
+  // 8. guide_voice is the checkbox as it was when recording started, not when the take saves.
+  {
+    const app = env.app;
+    const audio = app.audio;
+    const saved = {
+      ensureMicReady: app.ensureMicReady, ensureBackingBuffer: app.ensureBackingBuffer,
+      startRecording: audio.startRecording, stopRecording: audio.stopRecording,
+      stopAllPlayback: audio.stopAllPlayback, playMetronomePip: audio.playMetronomePip,
+      origBuffer: app.origBuffer, backingBuffer: app.backingBuffer,
+    };
+    app.ensureMicReady = async () => true;
+    app.ensureBackingBuffer = () => {};
+    audio.startRecording = async () => {};
+    audio.stopRecording = async () => ({ blob: new env.w.Blob(["x"], { type: "audio/webm" }), audioBuffer: null });
+    audio.stopAllPlayback = () => {};
+    audio.playMetronomePip = () => {};
+
+    const record = async (atStart, atSave) => {
+      await showLine(env, [], null);
+      // No audio graph in JSDOM: skip the guide and backing playback.
+      app.origBuffer = null;
+      app.backingBuffer = null;
+      env.reply = (u) => (/\/takes$/.test(u)
+        ? { take: mk("g1", 1), line: { picked: "g1", next_number: 2, takes: [mk("g1", 1)] } }
+        : {});
+      app.checkGuideVoice.checked = atStart;
+      const started = app.startCountdownAndRecord();
+      for (let i = 0; i < 100 && app.recordState !== "recording"; i++) await tick();
+      await started;
+      if (app.recordState !== "recording") fail(`never started recording (state ${app.recordState})`);
+      app.checkGuideVoice.checked = atSave;
+      const before = env.calls.length;
+      await app.finishRecording();
+      env.reply = null;
+      const post = env.calls.slice(before).find((c) => c.method === "POST" && /\/takes$/.test(c.url));
+      if (!post) fail("finishing the take did not POST it");
+      return post.body.get("guide_voice");
+    };
+
+    let sent = await record(true, false);
+    if (sent !== "true") fail(`guide voice on while recording, off at save: sent ${sent}`);
+    sent = await record(false, true);
+    if (sent !== "false") fail(`guide voice off while recording, on at save: sent ${sent}`);
+
+    Object.assign(app, { ensureMicReady: saved.ensureMicReady, ensureBackingBuffer: saved.ensureBackingBuffer,
+      origBuffer: saved.origBuffer, backingBuffer: saved.backingBuffer });
+    Object.assign(audio, { startRecording: saved.startRecording, stopRecording: saved.stopRecording,
+      stopAllPlayback: saved.stopAllPlayback, playMetronomePip: saved.playMetronomePip });
+    app.checkGuideVoice.checked = false;
+    console.log("PASS: guide_voice follows the checkbox at recording start, not at save");
   }
 
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
