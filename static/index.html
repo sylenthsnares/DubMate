@@ -162,6 +162,8 @@
         <span id="audio-settings-alert-dot" class="audio-settings-alert-dot" style="display: none;"
           data-tip="Microphone isn't set up yet" aria-hidden="true"></span>
       </button>
+      <button id="btn-shortcuts" class="btn btn-ghost btn-sm btn-shortcuts" type="button"
+        aria-label="Keyboard shortcuts" data-tip="Keyboard shortcuts (?)" aria-haspopup="dialog">?</button>
       <button id="btn-leave-room" class="btn btn-ghost btn-sm" style="display: none;" aria-label="Leave room">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
@@ -204,6 +206,13 @@
         <h1 class="hero-title">Dub scenes <span class="hero-title-accent">with friends</span></h1>
         <p class="hero-subtitle">Pick a scene, cast the characters, record your lines and watch the dub together.</p>
       </div>
+
+      <section id="recent-sessions" class="glass-card recent-sessions" aria-labelledby="recent-sessions-title" hidden>
+        <div class="panel-header">
+          <h2 id="recent-sessions-title" class="panel-title">Continue where you left off</h2>
+        </div>
+        <ul id="recent-sessions-list" class="recent-sessions-list"></ul>
+      </section>
 
       <div class="landing-grid">
         <!-- Left: User Profile & Session Setup -->
@@ -472,6 +481,15 @@
               <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
             </svg>
             <span>Copy invite</span>
+          </button>
+          <button id="btn-get-scene" class="btn btn-secondary" type="button" data-tip="Download this scene to add to your own DubMate" hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" x2="12" y1="15" y2="3" />
+            </svg>
+            <span>Get this scene</span>
           </button>
           <button id="btn-start-session" class="btn btn-primary btn-lg">
             <span>Start recording ›</span>
@@ -1487,6 +1505,20 @@
       <p class="modal-status-text" id="import-modal-status-text">Checking the file…</p>
       <div class="modal-progress-track">
         <div class="modal-progress-fill indeterminate"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share a scene: where the file was saved (engine's own computer only) -->
+  <div id="modal-share-pack" class="studio-modal-overlay" role="dialog" aria-modal="true"
+    aria-labelledby="share-pack-title" aria-describedby="share-pack-text" hidden>
+    <div class="studio-modal-card share-pack-card">
+      <h3 id="share-pack-title" class="modal-title">Ready to send</h3>
+      <p id="share-pack-text" class="modal-status-text">Send this file to a friend. They add it with Import pack in DubMate.</p>
+      <input type="text" id="share-pack-path" class="form-input share-pack-path" readonly aria-label="File location">
+      <div class="modal-actions share-pack-actions">
+        <button id="btn-share-pack-copy" class="btn btn-secondary btn-md" type="button">Copy</button>
+        <button id="btn-share-pack-done" class="btn btn-primary btn-md" type="button">Done</button>
       </div>
     </div>
   </div>

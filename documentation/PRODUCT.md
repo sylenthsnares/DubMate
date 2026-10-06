@@ -22,7 +22,7 @@ Simple by default, deep on request. A friend who opens an invite link can record
 
 ## Operating Context
 
-Recording at a desk with headphones and a USB or XLR mic, often in an untreated room. Sessions are social: people record on their own, then watch the dub together. Recording relies on the keyboard (Space to record, `[` and `]` to nudge timing, arrows to move between lines).
+Recording at a desk with headphones and a USB or XLR mic, often in an untreated room. Sessions are social: people record on their own, then watch the dub together. Recording relies on the keyboard (Space to record or stop, `[` and `]` to nudge timing by 25 ms, Shift with `[` or `]` for 100 ms; `?` shows every shortcut).
 
 ## Capabilities and Constraints
 

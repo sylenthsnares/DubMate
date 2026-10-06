@@ -5,6 +5,9 @@
  * host's tunnel) has no DubMate of their own to go back to. Leaving the room
  * shows a small "You left the room" view with a room-code box, never the host's
  * home screen and pack library. Hosts still land on the home screen as before.
+ *
+ * Also: Copy invite in a continued session (code not published again) copies the
+ * direct link with "Invite link copied."
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -120,6 +123,31 @@ const isActive = (w, id) => w.document.getElementById(id).classList.contains("ac
     if (isActive(w, "view-left")) fail(`host at ${origin} saw the left view`);
   }
   console.log("PASS: P22 a host who leaves sees the home screen as before");
+
+  // 3. Copy invite in a continued session copies the direct link.
+  {
+    const { w, app } = await boot("http://127.0.0.1:8123/");
+    app.roomState = fakeRoom(app.user.id);
+    const direct = "https://abc.trycloudflare.com?room=DUB-AB12";
+    let share = { room_id: "DUB-AB12", code_is_live: false, join_url: "", direct_url: direct,
+      state: "not_published", message: "Room codes stop working when DubMate closes. Copy invite gives a link that works now." };
+    w.fetch = (input) => Promise.resolve({ ok: /\/share$/.test(String(input)), status: 200, json: () => Promise.resolve(share) });
+    let copied = null;
+    Object.defineProperty(w.navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { copied = t; } } });
+    const toasts = [];
+    app.showToast = (msg) => toasts.push(msg);
+    await app.copyRoomLink();
+    if (copied !== direct) fail(`not_published copied ${copied}`);
+    if (toasts[toasts.length - 1] !== "Invite link copied.") fail(`not_published toast: ${toasts[toasts.length - 1]}`);
+    if (!String(app.headerRoomBadge?.dataset.tip || "").startsWith(share.message)) fail("badge tooltip does not explain the code");
+
+    share = { ...share, state: "waiting", message: "Getting your room code ready." };
+    await app.copyRoomLink();
+    if (toasts[toasts.length - 1] !== "Room code isn't ready yet, so the invite link was copied instead.") {
+      fail(`waiting toast changed: ${toasts[toasts.length - 1]}`);
+    }
+  }
+  console.log("PASS: Copy invite in a continued session copies the direct link");
 
   console.log("ALL P22 LEFT ROOM TESTS PASSED");
   process.exit(0);

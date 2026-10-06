@@ -209,3 +209,31 @@ def refresh_exports_dir() -> str:
     _exports_dir = pack_loader.get_exports_dir()
     os.makedirs(_exports_dir, exist_ok=True)
     return _exports_dir
+
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def is_own_computer(request: Request) -> bool:
+    """True only for a request made on this computer by DubMate's own page: no Cloudflare
+    tunnel headers, a loopback Host, and an Origin that is absent or the same as the Host.
+    Refuses tunnel guests, LAN devices, DNS-rebinding pages and other sites calling
+    127.0.0.1."""
+    headers = request.headers
+    if "cf-ray" in headers or "cf-connecting-ip" in headers:
+        return False
+    host = (headers.get("host") or "").strip()
+    if host.startswith("["):
+        hostname = host[1:host.find("]")] if "]" in host else ""
+    else:
+        hostname = host.rsplit(":", 1)[0] if ":" in host else host
+    if hostname.lower() not in _LOOPBACK_HOSTS:
+        return False
+    origin = headers.get("origin")
+    return origin is None or origin == "http://" + host
+
+
+def require_own_computer(request: Request) -> None:
+    """Refuses (403) a request that is_own_computer() doesn't accept."""
+    if not is_own_computer(request):
+        raise HTTPException(status_code=403, detail="This only works on the host's computer.")

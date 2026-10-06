@@ -1,5 +1,20 @@
 // ui_common.js - Small UI helpers shared by the studio (app.js) and the Pack Builder (pack_builder.js)
 
+/**
+ * Joins a folder on the engine's computer with names below it, using that computer's
+ * separator throughout: a Windows folder (drive letter or any backslash) gets
+ * backslashes only, anything else forward slashes.
+ */
+export function joinLocalPath(dir, ...names) {
+  const base = String(dir ?? '');
+  const windows = /^[A-Za-z]:/.test(base) || base.includes('\\');
+  const sep = windows ? '\\' : '/';
+  const fix = (p) => (windows ? String(p).replace(/\//g, sep) : String(p));
+  const head = fix(base).replace(/[\\/]+$/, '');
+  const rest = names.map((n) => fix(n).replace(/^[\\/]+|[\\/]+$/g, '')).filter(Boolean);
+  return [head, ...rest].join(sep);
+}
+
 export function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',
@@ -228,4 +243,74 @@ export function mixin(Target, ...Sources) {
     }
   }
   return Target;
+}
+
+let openDialogCount = 0;
+
+/** True while a dialog opened by openDialog() is showing. */
+export function isDialogOpen() {
+  return openDialogCount > 0;
+}
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), '
+  + 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Shows a modal overlay: focuses its first control, keeps Tab / Shift+Tab inside,
+ * closes on Escape or a click on the backdrop (the overlay itself), and gives
+ * focus back to returnFocus. Returns close().
+ */
+export function openDialog(overlay, { returnFocus = document.activeElement } = {}) {
+  const doc = overlay.ownerDocument;
+  const focusables = () => Array.from(overlay.querySelectorAll(FOCUSABLE)).filter((el) => !el.closest('[hidden]'));
+  let isOpen = true;
+
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const items = focusables();
+    if (!items.length) {
+      e.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = doc.activeElement;
+    if (e.shiftKey && (active === first || !overlay.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !overlay.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+  const onClick = (e) => {
+    if (e.target === overlay) close();
+  };
+
+  function close() {
+    if (!isOpen) return;
+    isOpen = false;
+    openDialogCount -= 1;
+    doc.removeEventListener('keydown', onKeydown, true);
+    overlay.removeEventListener('click', onClick);
+    overlay.classList.remove('is-open');
+    overlay.hidden = true;
+    if (returnFocus && typeof returnFocus.focus === 'function' && returnFocus.isConnected) returnFocus.focus();
+  }
+
+  openDialogCount += 1;
+  overlay.hidden = false;
+  overlay.classList.add('is-open');
+  // Capture phase, so Escape closes only this dialog and not what is behind it.
+  doc.addEventListener('keydown', onKeydown, true);
+  overlay.addEventListener('click', onClick);
+  const first = focusables()[0];
+  if (first) first.focus();
+  return close;
 }

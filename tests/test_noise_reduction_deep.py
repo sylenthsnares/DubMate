@@ -87,7 +87,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.client.__exit__(None, None, None)
-        rooms.prune_sessions(keep_room_id="NONE")
+        rooms.prune_sessions(keep_room_id="NONE", keep=0)
 
     def _profile_cache(self):
         """Room checks go to a temp CACHE_DIR for this test."""

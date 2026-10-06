@@ -136,6 +136,7 @@ function blobResponse() {
   return {
     ok: true,
     status: 200,
+    headers: { get: (name) => (String(name).toLowerCase() === "x-dubmate-file" ? "DubMate_Pack_Deku_vs_Todoroki.zip" : null) },
     blob: () => Promise.resolve(new dom.window.Blob(["dubmate-bytes"], { type: "application/octet-stream" })),
     arrayBuffer: () => Promise.resolve(new ArrayBuffer(16)),
     json: () => Promise.reject(new Error("Unexpected token, not valid JSON")),
@@ -535,10 +536,10 @@ try {
     });
     const zipChecks = [
       ...zipButtons.map((el) => ({ el, route: "/export/project_zip", folder: EXPORTS_DIR })),
-      { el: doc.querySelector(".btn-pack-download-icon"), route: "/api/packs/", folder: `${EXPORTS_DIR}\\packs` },
+      { el: doc.querySelector(".btn-pack-download-icon"), route: "/api/packs/", sharePath: `${EXPORTS_DIR}\\packs\\DubMate_Pack_Deku_vs_Todoroki.zip` },
     ];
     const createdBeforeZips = objectUrls.created;
-    for (const { el, route, folder } of zipChecks) {
+    for (const { el, route, folder, sharePath } of zipChecks) {
       const savesBefore = savedFiles.length;
       const fetchesBefore = fetchLog.length;
       toasts.length = 0;
@@ -554,7 +555,14 @@ try {
       if (savedFiles.length !== savesBefore) {
         fail(`${el.id || el.className} saved a second copy of the ZIP on the host's own computer`);
       }
-      if (!toasts.some(t => t === `Saved to ${folder}`)) {
+      if (sharePath) {
+        // The pack's Share opens "Ready to send" with the file's full path instead.
+        const pathInput = doc.getElementById("share-pack-path");
+        if (doc.getElementById("modal-share-pack").hidden || pathInput.value !== sharePath) {
+          fail("the pack Share did not show where the file was saved", pathInput.value);
+        }
+        doc.getElementById("btn-share-pack-done").click();
+      } else if (!toasts.some(t => t === `Saved to ${folder}`)) {
         fail(`${el.id || el.className} did not say which folder the ZIP was saved to`, toasts);
       }
       if (el.hasAttribute("aria-busy")) {
