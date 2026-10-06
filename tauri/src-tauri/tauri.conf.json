@@ -39,7 +39,6 @@
       "resources/**/*"
     ],
     "externalBin": [
-      "sidecar/python-runtime/python",
       "sidecar/cloudflared",
       "sidecar/ffmpeg"
     ],

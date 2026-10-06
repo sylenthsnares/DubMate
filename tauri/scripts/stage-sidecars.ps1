@@ -25,12 +25,7 @@ if (-not (Test-Path $PyZip)) {
 Write-Host "[1/4] Extracting Python Embeddable Package..."
 Expand-Archive $PyZip $PyRuntimeDir -Force
 
-# Rename python.exe to triple-suffixed binary name required by Tauri sidecars
-$PySourceExe = Join-Path $PyRuntimeDir "python.exe"
-$PyTargetExe = Join-Path $PyRuntimeDir "python-$Triple.exe"
-if (Test-Path $PySourceExe) {
-    Copy-Item $PySourceExe $PyTargetExe -Force
-}
+$PyExe = Join-Path $PyRuntimeDir "python.exe"
 
 # Enable 'import site' in ._pth file so embedded python supports pip and site-packages
 $PthFiles = Get-ChildItem $PyRuntimeDir -Filter "*._pth"
@@ -42,11 +37,6 @@ foreach ($pth in $PthFiles) {
     }
     Set-Content -Path $pth.FullName -Value $pthContent -Encoding ASCII
 }
-$Py312Pth = Join-Path $PyRuntimeDir "python312._pth"
-$TriplePth = Join-Path $PyRuntimeDir "python-$Triple._pth"
-if (Test-Path $Py312Pth) {
-    Copy-Item $Py312Pth $TriplePth -Force
-}
 
 # 2. Bootstrap PIP & Install Dependencies into Embedded Python
 Write-Host "[2/4] Bootstrapping pip into embedded Python..."
@@ -54,15 +44,15 @@ $GetPipPy = Join-Path $env:TEMP "get-pip.py"
 if (-not (Test-Path $GetPipPy)) {
     Invoke-WebRequest "https://bootstrap.pypa.io/get-pip.py" -OutFile $GetPipPy -UseBasicParsing
 }
-& $PyTargetExe $GetPipPy --no-warn-script-location --quiet
+& $PyExe $GetPipPy --no-warn-script-location --quiet
 # Build backends for sdist-only AI packages (openai-whisper, demucs).
 # Embedded Python ignores pip's isolated build env, so these must be resident.
-& $PyTargetExe -m pip install setuptools wheel --no-warn-script-location --quiet
+& $PyExe -m pip install setuptools wheel --no-warn-script-location --quiet
 
 $ReqFile = Join-Path $ProjectRoot "requirements.txt"
 if (Test-Path $ReqFile) {
     Write-Host "[2/4] Installing Python requirements into embedded runtime..."
-    & $PyTargetExe -m pip install -r $ReqFile --target (Join-Path $PyRuntimeDir "Lib\site-packages") --no-warn-script-location --quiet
+    & $PyExe -m pip install -r $ReqFile --target (Join-Path $PyRuntimeDir "Lib\site-packages") --no-warn-script-location --quiet
 }
 
 # 3. FFmpeg Static Windows Binary

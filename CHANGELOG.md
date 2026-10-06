@@ -16,6 +16,7 @@
 - **ZIPs Saved Once**: on the host's own computer, project and pack ZIPs are saved once to the export folder instead of also landing in Downloads.
 - **Error Details**: raw error text now sits behind "Show details".
 - **Smaller Install**: scipy is no longer needed.
+- **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
 
 ### Removed

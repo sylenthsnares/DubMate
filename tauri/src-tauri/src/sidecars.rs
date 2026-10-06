@@ -120,7 +120,6 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
             return;
         }
     };
-    let app_dir = app_py_path.parent().unwrap_or(&app_py_path);
 
     let _ = app.emit("startup-progress", "Starting DubMate");
 
@@ -142,45 +141,6 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
         match spawn_engine(&app, &app_py_path, &py_exe, port) {
             Ok(()) => spawned = true,
             Err(e) => eprintln!("[Sidecar Error] Failed to spawn Python directly: {}", e),
-        }
-    }
-
-    // Fallback: try Tauri shell sidecar API
-    if !spawned {
-        // Flattened name, for the same reason as cloudflared above. This branch only
-        // runs when the direct path failed, which is why the wrong name went unnoticed.
-        if let Ok(sidecar_cmd) = app.shell().sidecar("python") {
-            let cmd = sidecar_cmd
-                .current_dir(app_dir)
-                .args(["-u", app_py_path.to_str().unwrap()]);
-
-            if let Ok((mut rx, child)) = cmd.spawn() {
-                spawned = true;
-                {
-                    let state = app.state::<SharedState>();
-                    let mut data = state.0.lock().unwrap();
-                    data.python_pid = Some(child.pid());
-                    data.python_image = find_python_exe(&app)
-                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
-                }
-
-                let app_clone = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    while let Some(event) = rx.recv().await {
-                        match event {
-                            CommandEvent::Stdout(bytes) => {
-                                let line = String::from_utf8_lossy(&bytes);
-                                print!("[Python] {}", line);
-                            }
-                            CommandEvent::Stderr(bytes) => {
-                                let line = String::from_utf8_lossy(&bytes);
-                                eprintln!("[Python ERR] {}", line);
-                            }
-                            _ => {}
-                        }
-                    }
-                });
-            }
         }
     }
 

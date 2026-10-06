@@ -67,7 +67,7 @@ All of this goes into one PR.
   - Finish splitting `app.js` (booth, packs, lobby).
   - Turn hex colours into tokens.
   - Drop scipy.
-  - **Not in PR 2:** S38, removing the Python sidecar fallback. It's done separately with the owner, because it needs an installer build and a macOS CI run.
+  - S38: remove the Python sidecar fallback, so the installer no longer ships a second Python copy. Verified when the owner builds and installs PR 2, plus one macOS CI run.
 
 ## Features, in build order
 
