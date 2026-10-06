@@ -13,10 +13,12 @@ Deep, rigorous test suite for DubMate Studio Noise Reduction & Mic Profiling:
 """
 
 import os
+import json
 import shutil
 import tempfile
 import zipfile
 import unittest
+from types import SimpleNamespace
 from typing import Tuple
 import numpy as np
 from starlette.testclient import TestClient
@@ -412,8 +414,55 @@ class TestDeepNoiseReduction(unittest.TestCase):
                 self.assertTrue(any("Timeline_Cues.txt" in n for n in namelist))
                 self.assertTrue(any("Audio_Stems/" in n for n in namelist))
 
+                # Every single-file entry the manifest lists must really be in the archive.
+                manifest_name = next(n for n in namelist if n.endswith("project_manifest.json"))
+                manifest = json.loads(zf.read(manifest_name))
+                root = manifest_name.split("/")[0]
+                self.assertIsNotNone(manifest["files"]["master_vocal_mix"])
+                for key in ("clean_video", "backing_track", "master_vocal_mix"):
+                    rel = manifest["files"][key]
+                    if rel is not None:
+                        self.assertIn(f"{root}/{rel}", namelist, key)
+
         finally:
             shutil.rmtree(room_dir, ignore_errors=True)
+
+    def test_07_project_zip_manifest_omits_unwritten_files(self):
+        """
+        The manifest lists clean_video / backing_track only when they were actually written.
+        A pack whose video and backing track are missing on disk gets None for both.
+        """
+        sr = 44100
+        work_dir = tempfile.mkdtemp(prefix="dubmate_manifest_")
+        try:
+            line_audio, _, _ = generate_audio_signal(1.0, sr=sr, noise_type="white", noise_level=0.01)
+            audio_processor.write_wav_mono(os.path.join(work_dir, "l0.wav"), line_audio, sr)
+            pack = SimpleNamespace(
+                pack_id="manifest_fixture", name="Manifest Fixture", folder=work_dir, duration=2.0,
+                characters=["Alice"],
+                backing_track_path=os.path.join(work_dir, "missing_backing.wav"),
+                web_video_path=None, video_path=os.path.join(work_dir, "missing_video.mp4"),
+                lines=[{"index": 0, "start": 0.1, "end": 1.1, "character": "Alice", "filename": "l0.wav", "caption": "Hi"}],
+                ensure_web_ready=lambda: None,
+            )
+            zip_out = os.path.join(work_dir, "project.zip")
+            audio_processor.build_project_zip(pack, {}, output_zip_path=zip_out, room_id="MANIFEST")
+
+            with zipfile.ZipFile(zip_out, "r") as zf:
+                namelist = zf.namelist()
+                manifest_name = next(n for n in namelist if n.endswith("project_manifest.json"))
+                manifest = json.loads(zf.read(manifest_name))
+                cues = zf.read(next(n for n in namelist if n.endswith("Timeline_Cues.txt"))).decode("utf-8")
+
+            files = manifest["files"]
+            self.assertIsNone(files["clean_video"])
+            self.assertIsNone(files["backing_track"])
+            self.assertEqual(files["master_vocal_mix"], "Audio_Stems/Master_Vocal_Mix.mp3")
+            self.assertFalse(any(n.startswith(manifest_name.split("/")[0] + "/Video/") and not n.endswith("/") for n in namelist))
+            self.assertIn("[Line 01] 00.100s -> 01.100s (Dur: 1.00s)", cues)
+            self.assertIn("  Status    : Reference / Unrecorded", cues)
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

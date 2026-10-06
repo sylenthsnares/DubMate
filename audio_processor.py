@@ -32,6 +32,11 @@ SR = 44100  # Standard audio sample rate
 GAIN_DB_MIN = -60.0
 GAIN_DB_MAX = 24.0
 
+# Mix levels shared by render_dub_mix and build_project_zip.
+LIMITER_CEILING_DB = -0.3   # master soft limiter ceiling for the final mix and every stem
+BACKING_TRACK_LEVEL = 0.65  # backing music & SFX under the dialogue (calibrated DAW level)
+ORIGINAL_LINE_LEVEL = 0.90  # unrecorded lines fall back to the original reference audio at this level
+
 # Only these characters are allowed in filesystem-derived identifiers (room_id, user_id, ...).
 _SAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
@@ -520,7 +525,7 @@ def get_reverb_impulse(decay_sec: float = 1.5, sr: int = SR) -> np.ndarray:
     return impulse
 
 
-def master_soft_limiter(audio: np.ndarray, ceiling_db: float = -0.3) -> np.ndarray:
+def master_soft_limiter(audio: np.ndarray, ceiling_db: float = LIMITER_CEILING_DB) -> np.ndarray:
     """
     Transparent studio soft-knee limiter that prevents digital clipping
     without crushing relative track dynamics or individual volume knob levels.
@@ -618,6 +623,53 @@ def apply_audio_effects(
     return audio
 
 
+def _timeline_samples(pack: PackInfo, sr: int) -> int:
+    """Mix buffer length for a pack: the scene (at least 1s) or the last line end + 2s, plus 1s of tail."""
+    total_sec = max(pack.duration, 1.0)
+    for line in pack.lines:
+        total_sec = max(total_sec, line["end"] + 2.0)
+    return int(total_sec * sr) + sr
+
+
+def _render_take(take_info: Dict[str, Any], sr: int, gain_db: float, log_tag: str) -> Optional[np.ndarray]:
+    """
+    Runs a take through apply_audio_effects with its pitch/reverb and the given gain.
+    If that fails, falls back to the unprocessed take audio. Returns None when the take
+    cannot be read at all; what that means is the caller's failure policy.
+    """
+    wav_path = take_info["wav_path"]
+    pitch = float(take_info.get("pitch_semitones", 0.0))
+    reverb = float(take_info.get("reverb_wet", 0.0))
+    try:
+        return apply_audio_effects(wav_path, pitch_semitones=pitch, reverb_wet=reverb, gain_db=gain_db, sr=sr)
+    except Exception as ex:
+        print(f"[{log_tag}] WARNING: apply_audio_effects failed ({wav_path!r}): {ex}. Falling back to unprocessed take audio.")
+    try:
+        return read_wav_mono(wav_path, sr)
+    except Exception as ex:
+        print(f"[{log_tag}] ERROR: fallback read also failed: {ex}.")
+        return None
+
+
+def _mix_into(buffers: List[np.ndarray], audio: np.ndarray, pos_sec: float, sr: int) -> None:
+    """
+    Adds audio into every buffer starting at pos_sec. A negative position trims the head
+    of the audio; anything running past the end of a buffer is dropped.
+    """
+    if pos_sec < 0:
+        skip_samples = int(-pos_sec * sr)
+        if skip_samples >= len(audio):
+            return
+        audio = audio[skip_samples:]
+        start_sample = 0
+    else:
+        start_sample = int(pos_sec * sr)
+    for buf in buffers:
+        end_sample = min(len(buf), start_sample + len(audio))
+        if end_sample > start_sample:
+            buf[start_sample:end_sample] += audio[:end_sample - start_sample]
+
+
 def render_dub_mix(
     pack: PackInfo,
     takes_dict: Dict[int, Dict[str, Any]],
@@ -629,17 +681,13 @@ def render_dub_mix(
     Renders complete mix with millisecond offsets, voice effects, and master dialogue presence.
     takes_dict format: {line_index: {"wav_path": str, "offset_ms": int, "pitch_semitones": float, "reverb_wet": float, "gain_db": float}}
     """
-    total_sec = max(pack.duration, 1.0)
-    for line in pack.lines:
-        total_sec = max(total_sec, line["end"] + 2.0)
-    total_samples = int(total_sec * sr) + sr
-
+    total_samples = _timeline_samples(pack, sr)
     mix_buffer = np.zeros(total_samples, dtype=np.float32)
 
-    # 1. Backing track (music & sound effects at calibrated DAW level 0.65)
+    # 1. Backing track (music & sound effects at the calibrated backing level)
     if pack.backing_track_path and os.path.isfile(pack.backing_track_path):
         try:
-            backing_data = read_wav_mono(pack.backing_track_path, sr) * 0.65
+            backing_data = read_wav_mono(pack.backing_track_path, sr) * BACKING_TRACK_LEVEL
             n_copy = min(len(backing_data), total_samples)
             mix_buffer[:n_copy] = backing_data[:n_copy]
         except Exception as ex:
@@ -653,59 +701,27 @@ def render_dub_mix(
 
         if take_info and os.path.isfile(take_info.get("wav_path", "")):
             offset_sec = float(take_info.get("offset_ms", 0)) / 1000.0
-            pitch = float(take_info.get("pitch_semitones", 0.0))
-            reverb = float(take_info.get("reverb_wet", 0.0))
             # Take gain plus master dialogue presence trim
             gain = float(take_info.get("gain_db", 0.0)) + float(master_dialogue_presence_db)
-
-            try:
-                processed_audio = apply_audio_effects(
-                    take_info["wav_path"],
-                    pitch_semitones=pitch,
-                    reverb_wet=reverb,
-                    gain_db=gain,
-                    sr=sr
-                )
-            except Exception as ex:
-                print(f"[render_dub_mix] WARNING: apply_audio_effects failed for line {idx} ({take_info.get('wav_path')!r}): {ex}. Falling back to unprocessed take audio so the render can continue.")
-                try:
-                    processed_audio = read_wav_mono(take_info["wav_path"], sr)
-                except Exception as ex2:
-                    print(f"[render_dub_mix] ERROR: fallback read also failed for line {idx}: {ex2}. Skipping this line.")
-                    continue
-
-            pos_sec = start_sec + offset_sec
-            if pos_sec < 0:
-                skip_samples = int(-pos_sec * sr)
-                if skip_samples < len(processed_audio):
-                    audio_slice = processed_audio[skip_samples:]
-                    start_sample = 0
-                    end_sample = min(total_samples, len(audio_slice))
-                    if end_sample > 0:
-                        mix_buffer[start_sample:end_sample] += audio_slice[:end_sample]
-            else:
-                start_sample = int(pos_sec * sr)
-                end_sample = min(total_samples, start_sample + len(processed_audio))
-                samples_to_add = end_sample - start_sample
-                if samples_to_add > 0:
-                    mix_buffer[start_sample:end_sample] += processed_audio[:samples_to_add]
+            processed_audio = _render_take(take_info, sr, gain, f"render_dub_mix line {idx}")
+            if processed_audio is None:
+                # Failure policy: an unreadable take is skipped so the render can continue.
+                print(f"[render_dub_mix] Skipping line {idx}: take audio could not be read.")
+                continue
+            _mix_into([mix_buffer], processed_audio, start_sec + offset_sec, sr)
 
         else:
             orig_path = os.path.join(pack.folder, line["filename"])
             if os.path.isfile(orig_path):
                 try:
                     orig_audio = read_wav_mono(orig_path, sr)
-                    start_sample = int(start_sec * sr)
-                    end_sample = min(total_samples, start_sample + len(orig_audio))
-                    samples_to_add = end_sample - start_sample
-                    if samples_to_add > 0:
-                        orig_mult = 0.90 * (10.0 ** (float(master_dialogue_presence_db) / 20.0))
-                        mix_buffer[start_sample:end_sample] += orig_audio[:samples_to_add] * np.float32(orig_mult)
+                    orig_mult = ORIGINAL_LINE_LEVEL * (10.0 ** (float(master_dialogue_presence_db) / 20.0))
+                    _mix_into([mix_buffer], orig_audio * np.float32(orig_mult), start_sec, sr)
                 except Exception as ex:
                     print(f"Error loading original audio for line {idx}: {ex}")
 
     # 3. Apply master transparent soft limiter (preserves dynamics, volume knob levels, and reverb tails)
-    master_mix = master_soft_limiter(mix_buffer, ceiling_db=-0.3)
+    master_mix = master_soft_limiter(mix_buffer, ceiling_db=LIMITER_CEILING_DB)
 
     write_wav_mono(output_wav, master_mix, sr)
     return output_wav
@@ -822,6 +838,80 @@ def convert_file_to_mp3(src_path: str, dst_path: str, sr: int = SR, bitrate: str
     return dst_path
 
 
+def _project_cue_sheet(
+    pack: PackInfo, room_id: str, sr: int, bitrate: str, manifest_lines: List[Dict[str, Any]]
+) -> str:
+    """Human-readable Timeline_Cues.txt for build_project_zip, formatted from the manifest line entries."""
+    out = [
+        "DubMate Studio Pro - Project Timeline & Dialogue Cues",
+        f"Project: {pack.name} (Pack ID: {pack.pack_id})",
+        f"Room ID: {room_id}",
+        f"Duration: {pack.duration:.2f}s | Audio Sample Rate: {sr}Hz | Format: MP3 ({bitrate})",
+        f"Total Lines: {len(pack.lines)}",
+        "=" * 80,
+        "",
+    ]
+    for entry in manifest_lines:
+        start_sec, end_sec = entry["start"], entry["end"]
+        out.append(f"[Line {entry['line_number']:02d}] {start_sec:06.3f}s -> {end_sec:06.3f}s (Dur: {end_sec - start_sec:.2f}s)")
+        out.append(f"  Character : {entry['character']}")
+        if entry["is_recorded"]:
+            out.extend([
+                f"  Actor     : {entry['actor_name']}",
+                f"  Dialogue  : \"{entry['text']}\"",
+                f"  DSP Tuning: Offset: {entry['offset_ms']:+d}ms | Pitch: {entry['pitch_semitones']:+.1f}st"
+                f" | Reverb: {int(entry['reverb_wet'] * 100)}% | Gain: {entry['gain_db']:+.1f}dB",
+                f"  File      : {entry['take_file']}",
+            ])
+        else:
+            out.extend([
+                "  Actor     : [Not Recorded]",
+                f"  Dialogue  : \"{entry['text']}\"",
+                "  Status    : Reference / Unrecorded",
+            ])
+        out.append("-" * 80)
+    return "\n".join(out)
+
+
+def _project_manifest(
+    pack: PackInfo,
+    room_id: str,
+    sr: int,
+    bitrate: str,
+    characters: List[str],
+    role_assignments: Dict[str, List[str]],
+    users: Dict[str, Any],
+    manifest_lines: List[Dict[str, Any]],
+    video_written: bool,
+    backing_written: bool,
+    master_vocal_written: bool,
+) -> Dict[str, Any]:
+    """project_manifest.json for build_project_zip. Single files are listed only if they were written."""
+    return {
+        "application": "DubMate Studio Pro",
+        "version": "2.3",
+        "room_id": room_id,
+        "pack_id": pack.pack_id,
+        "pack_name": pack.name,
+        "duration": round(pack.duration, 3),
+        "sample_rate": sr,
+        "bitrate": bitrate,
+        "created_at": time.time(),
+        "characters": characters,
+        "role_assignments": role_assignments,
+        "users": users,
+        "lines": manifest_lines,
+        "files": {
+            "clean_video": f"Video/{sanitize_filename(pack.name)}_Clean_Video.mp4" if video_written else None,
+            "backing_track": "Audio_Stems/Backing_Music_SFX.mp3" if backing_written else None,
+            "master_vocal_mix": "Audio_Stems/Master_Vocal_Mix.mp3" if master_vocal_written else None,
+            "character_stems_dir": "Audio_Stems/Character_Stems/",
+            "raw_takes_dir": "Raw_Takes/",
+            "cues_text": "Timeline_Cues.txt",
+        }
+    }
+
+
 def build_project_zip(
     pack: PackInfo,
     takes_dict: Dict[int, Dict[str, Any]],
@@ -847,10 +937,7 @@ def build_project_zip(
     role_assignments = role_assignments or {}
     users = users or {}
 
-    total_sec = max(pack.duration, 1.0)
-    for line in pack.lines:
-        total_sec = max(total_sec, line["end"] + 2.0)
-    total_samples = int(total_sec * sr) + sr
+    total_samples = _timeline_samples(pack, sr)
 
     # Sanitize the caller-supplied room_id before it becomes part of any filesystem path.
     try:
@@ -877,18 +964,22 @@ def build_project_zip(
         # 1. Clean Scene Video
         pack.ensure_web_ready()
         src_video = pack.web_video_path or pack.video_path
+        video_written = False
         if src_video and os.path.isfile(src_video):
             dst_video = os.path.join(video_dir, f"{pack_sanitized}_Clean_Video.mp4")
             try:
                 shutil.copy2(src_video, dst_video)
+                video_written = True
             except Exception as ex:
                 print(f"[ProjectZip] Error copying video: {ex}")
 
         # 2. Backing Music & SFX Track
+        backing_written = False
         if pack.backing_track_path and os.path.isfile(pack.backing_track_path):
             dst_backing = os.path.join(stems_dir, "Backing_Music_SFX.mp3")
             try:
                 convert_file_to_mp3(pack.backing_track_path, dst_backing, sr=sr, bitrate=bitrate)
+                backing_written = True
             except Exception as ex:
                 print(f"[ProjectZip] Error converting backing track: {ex}")
 
@@ -907,15 +998,6 @@ def build_project_zip(
         }
 
         manifest_lines = []
-        cues_text_lines = [
-            "DubMate Studio Pro - Project Timeline & Dialogue Cues",
-            f"Project: {pack.name} (Pack ID: {pack.pack_id})",
-            f"Room ID: {room_id}",
-            f"Duration: {pack.duration:.2f}s | Audio Sample Rate: {sr}Hz | Format: MP3 ({bitrate})",
-            f"Total Lines: {len(pack.lines)}",
-            "=" * 80,
-            "",
-        ]
 
         for line in pack.lines:
             idx = line["index"]
@@ -953,42 +1035,17 @@ def build_project_zip(
                 reverb = float(take_info.get("reverb_wet", 0.0))
                 gain = float(take_info.get("gain_db", 0.0))
 
-                try:
-                    processed_audio = apply_audio_effects(
-                        take_info["wav_path"],
-                        pitch_semitones=pitch,
-                        reverb_wet=reverb,
-                        gain_db=gain,
-                        sr=sr
-                    )
-                except Exception as ex:
-                    print(f"[ProjectZip] WARNING: apply_audio_effects failed for line {idx} ({take_info.get('wav_path')!r}): {ex}. Falling back to unprocessed take audio so the export can continue.")
-                    try:
-                        processed_audio = read_wav_mono(take_info["wav_path"], sr)
-                    except Exception as ex2:
-                        print(f"[ProjectZip] ERROR: fallback read also failed for line {idx}: {ex2}. Using near-silent placeholder so the export and manifest still complete.")
-                        processed_audio = np.zeros(1, dtype=np.float32)
+                processed_audio = _render_take(take_info, sr, gain, f"ProjectZip line {idx}")
+                if processed_audio is None:
+                    # Failure policy: an unreadable take becomes a near-silent placeholder so
+                    # the export, its Raw_Takes file and the manifest entry still complete.
+                    print(f"[ProjectZip] Using near-silent placeholder for line {idx}.")
+                    processed_audio = np.zeros(1, dtype=np.float32)
 
-                offset_sec = float(offset_ms) / 1000.0
-                pos_sec = start_sec + offset_sec
-
-                if pos_sec < 0:
-                    skip_samples = int(-pos_sec * sr)
-                    if skip_samples < len(processed_audio):
-                        audio_slice = processed_audio[skip_samples:]
-                        end_s = min(total_samples, len(audio_slice))
-                        if end_s > 0:
-                            master_vocal_buffer[:end_s] += audio_slice[:end_s]
-                            if char in char_buffers:
-                                char_buffers[char][:end_s] += audio_slice[:end_s]
-                else:
-                    start_s = int(pos_sec * sr)
-                    end_s = min(total_samples, start_s + len(processed_audio))
-                    s_to_add = end_s - start_s
-                    if s_to_add > 0:
-                        master_vocal_buffer[start_s:end_s] += processed_audio[:s_to_add]
-                        if char in char_buffers:
-                            char_buffers[char][start_s:end_s] += processed_audio[:s_to_add]
+                target_buffers = [master_vocal_buffer]
+                if char in char_buffers:
+                    target_buffers.append(char_buffers[char])
+                _mix_into(target_buffers, processed_audio, start_sec + float(offset_ms) / 1000.0, sr)
 
                 # Save take to Raw_Takes/
                 char_clean = sanitize_filename(char)
@@ -1008,45 +1065,25 @@ def build_project_zip(
                 line_entry["pitch_semitones"] = pitch
                 line_entry["reverb_wet"] = reverb
                 line_entry["gain_db"] = gain
-
-                cues_text_lines.extend([
-                    f"[Line {idx + 1:02d}] {start_sec:06.3f}s -> {end_sec:06.3f}s (Dur: {end_sec - start_sec:.2f}s)",
-                    f"  Character : {char}",
-                    f"  Actor     : {actor_name}",
-                    f"  Dialogue  : \"{dialogue_text}\"",
-                    f"  DSP Tuning: Offset: {offset_ms:+d}ms | Pitch: {pitch:+.1f}st | Reverb: {int(reverb * 100)}% | Gain: {gain:+.1f}dB",
-                    f"  File      : Raw_Takes/{take_filename}",
-                    "-" * 80,
-                ])
             else:
                 orig_path = os.path.join(pack.folder, line.get("filename", ""))
                 if os.path.isfile(orig_path):
                     try:
                         orig_audio = read_wav_mono(orig_path, sr)
-                        start_s = int(start_sec * sr)
-                        end_s = min(total_samples, start_s + len(orig_audio))
-                        s_to_add = end_s - start_s
-                        if s_to_add > 0:
-                            master_vocal_buffer[start_s:end_s] += orig_audio[:s_to_add] * 0.90
+                        # The original reference goes into the master vocal stem only, never a character stem.
+                        _mix_into([master_vocal_buffer], orig_audio * ORIGINAL_LINE_LEVEL, start_sec, sr)
                     except Exception:
-                        pass
-
-                cues_text_lines.extend([
-                    f"[Line {idx + 1:02d}] {start_sec:06.3f}s -> {end_sec:06.3f}s (Dur: {end_sec - start_sec:.2f}s)",
-                    f"  Character : {char}",
-                    f"  Actor     : [Not Recorded]",
-                    f"  Dialogue  : \"{dialogue_text}\"",
-                    f"  Status    : Reference / Unrecorded",
-                    "-" * 80,
-                ])
+                        pass  # Failure policy: an unreadable original line is silently left out.
 
             manifest_lines.append(line_entry)
 
         # Write Master_Vocal_Mix.mp3
-        master_vocal_limited = master_soft_limiter(master_vocal_buffer, ceiling_db=-0.3)
+        master_vocal_limited = master_soft_limiter(master_vocal_buffer, ceiling_db=LIMITER_CEILING_DB)
         master_vocal_path = os.path.join(stems_dir, "Master_Vocal_Mix.mp3")
+        master_vocal_written = False
         try:
             write_mp3_mono(master_vocal_path, master_vocal_limited, sr=sr, bitrate=bitrate)
+            master_vocal_written = True
         except Exception as ex:
             print(f"[ProjectZip] Error writing Master_Vocal_Mix.mp3: {ex}")
 
@@ -1057,7 +1094,7 @@ def build_project_zip(
             actor_suffix = f"_{sanitize_filename(actor_names[0])}" if actor_names else ""
             char_filename = f"{sanitize_filename(char)}{actor_suffix}.mp3"
             char_stem_path = os.path.join(char_stems_dir, char_filename)
-            char_limited = master_soft_limiter(buf, ceiling_db=-0.3)
+            char_limited = master_soft_limiter(buf, ceiling_db=LIMITER_CEILING_DB)
             try:
                 write_mp3_mono(char_stem_path, char_limited, sr=sr, bitrate=bitrate)
             except Exception as ex:
@@ -1066,32 +1103,15 @@ def build_project_zip(
         # Write Timeline_Cues.txt
         cues_txt_path = os.path.join(proj_root, "Timeline_Cues.txt")
         with open(cues_txt_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(cues_text_lines))
+            f.write(_project_cue_sheet(pack, room_id, sr, bitrate, manifest_lines))
 
         # Write project_manifest.json
-        manifest_data = {
-            "application": "DubMate Studio Pro",
-            "version": "2.3",
-            "room_id": room_id,
-            "pack_id": pack.pack_id,
-            "pack_name": pack.name,
-            "duration": round(pack.duration, 3),
-            "sample_rate": sr,
-            "bitrate": bitrate,
-            "created_at": time.time(),
-            "characters": characters,
-            "role_assignments": role_assignments,
-            "users": users,
-            "lines": manifest_lines,
-            "files": {
-                "clean_video": f"Video/{pack_sanitized}_Clean_Video.mp4",
-                "backing_track": "Audio_Stems/Backing_Music_SFX.mp3" if pack.backing_track_path else None,
-                "master_vocal_mix": "Audio_Stems/Master_Vocal_Mix.mp3",
-                "character_stems_dir": "Audio_Stems/Character_Stems/",
-                "raw_takes_dir": "Raw_Takes/",
-                "cues_text": "Timeline_Cues.txt",
-            }
-        }
+        manifest_data = _project_manifest(
+            pack, room_id, sr, bitrate, characters, role_assignments, users, manifest_lines,
+            video_written=video_written,
+            backing_written=backing_written,
+            master_vocal_written=master_vocal_written,
+        )
         manifest_json_path = os.path.join(proj_root, "project_manifest.json")
         with open(manifest_json_path, "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, indent=2)
