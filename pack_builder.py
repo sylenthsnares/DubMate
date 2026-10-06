@@ -12,6 +12,7 @@ import re
 import sys
 import json
 import time
+import datetime
 import shutil
 import threading
 import subprocess
@@ -31,6 +32,23 @@ class MissingPipelineError(RuntimeError):
     of printing "pip install -r requirements_builder.txt" at someone who just
     wants to dub a clip.
     """
+
+
+class StaleYtDlpError(RuntimeError):
+    """
+    A link import failed and the installed yt-dlp is old enough to be the likely cause.
+
+    Kept apart from a generic RuntimeError so the API passes this message through
+    instead of the catch-all "check the link" text, which sends the user hunting for
+    a problem with their link.
+
+    str(error) is the short, outcome-first line. `details` holds the steps to update,
+    which can include a full folder path, so the UI keeps them out of the headline.
+    """
+
+    def __init__(self, message: str, details: str = ""):
+        super().__init__(message)
+        self.details = details
 
 
 def ensure_ai_packages_on_path():
@@ -211,7 +229,8 @@ def extract_audio_from_video(video_path: str, output_wav: str) -> str:
     except (subprocess.CalledProcessError, RuntimeError):
         pass
 
-    raise RuntimeError(f"FFmpeg audio extraction failed: {extract_error or 'Unknown error'}")
+    print(f"[PackBuilder] Audio extraction failed: {extract_error or 'unknown error'}")
+    raise RuntimeError("Couldn't read the audio in this video. Try a different file.")
 
 
 # Captions are written under their own prefix so the scan below cannot confuse them
@@ -299,6 +318,58 @@ def fetch_subtitles_best_effort(
     return found
 
 
+# yt-dlp versions are release dates (YYYY.MM.DD). Sites change their players often
+# enough that a release this old is the most likely reason a link stops working.
+YTDLP_STALE_AFTER_DAYS = 60
+
+
+def ytdlp_age_days(version: str, today: Optional[datetime.date] = None) -> Optional[int]:
+    """Days since the yt-dlp release named by `version`, or None if it isn't a date."""
+    match = re.match(r"^\s*(\d{4})\.(\d{1,2})\.(\d{1,2})", str(version or ""))
+    if not match:
+        return None
+    try:
+        released = datetime.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return None
+    return max(0, ((today or datetime.date.today()) - released).days)
+
+
+def stale_ytdlp_error(yt_dlp_module, today: Optional[datetime.date] = None) -> Optional[StaleYtDlpError]:
+    """
+    The user-facing error for a failed import when yt-dlp is out of date, or None
+    when it is recent enough (or its age can't be told) to not be the suspect.
+
+    The update steps depend on where yt-dlp lives. The desktop app installs it once
+    into 'ai-packages' and never upgrades it in place, so the only way to a newer
+    version there is to let the launcher download Pack Builder again. A source install
+    gets it from requirements_builder.txt, which update.bat / update.sh upgrade.
+    """
+    try:
+        version = yt_dlp_module.version.__version__
+    except AttributeError:
+        version = getattr(yt_dlp_module, "__version__", "")
+    age = ytdlp_age_days(version, today)
+    if age is None or age <= YTDLP_STALE_AFTER_DAYS:
+        return None
+
+    print(f"[PackBuilder] yt-dlp {version} is {age} days old; suggesting an update.")
+    message = "Couldn't import that video. Pack Builder needs an update."
+    package_dir = os.path.dirname(os.path.abspath(getattr(yt_dlp_module, "__file__", "") or ""))
+    install_dir = os.path.dirname(package_dir)
+    if os.path.basename(install_dir).lower() == "ai-packages":
+        details = (
+            "Close DubMate, delete this folder, then open DubMate again. "
+            f"Pack Builder downloads again (about 2 GB).\n{install_dir}"
+        )
+    else:
+        details = (
+            "Run update.bat (Windows) or update.sh (macOS and Linux) in your DubMate folder, "
+            "then restart DubMate."
+        )
+    return StaleYtDlpError(message, details)
+
+
 def download_video_from_url(
     url: str,
     output_dir: str,
@@ -310,7 +381,7 @@ def download_video_from_url(
     Merges high-res video and audio tracks via project FFmpeg binary.
     """
     if not url or not url.strip():
-        raise ValueError("No video URL provided.")
+        raise ValueError("Paste a video link first.")
 
     clean_url = url.strip()
 
@@ -363,18 +434,23 @@ def download_video_from_url(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(clean_url, download=True)
             if not info:
-                raise ValueError("Could not extract video metadata from the provided URL.")
+                raise ValueError("Couldn't read that link. Check it and try again.")
 
             title = info.get("title") or "Imported YouTube Scene"
             duration = float(info.get("duration") or 0.0)
             if duration > max_duration_seconds:
                 raise ValueError(
-                    f"Video duration ({duration:.1f}s) exceeds the maximum allowed scene length ({max_duration_seconds/60:.0f} minutes)."
+                    f"This video is {duration/60:.1f} minutes long. Scenes can be up to {max_duration_seconds/60:.0f} minutes."
                 )
     except Exception as ex:
         err_msg = str(ex)
         if "Unsupported URL" in err_msg or "is not a valid URL" in err_msg:
-            raise ValueError(f"Invalid or unsupported video URL: {clean_url}")
+            raise ValueError("That link isn't supported. Use a YouTube link or a direct video link.")
+        # Our own messages above (too long, unreadable link) are not yt-dlp's fault.
+        stale = None if isinstance(ex, ValueError) else stale_ytdlp_error(yt_dlp)
+        if stale:
+            print(f"[PackBuilder] URL import failed on an outdated yt-dlp: {err_msg}")
+            raise stale
         raise RuntimeError(f"Failed to download video with yt-dlp: {err_msg}")
 
     # Best-effort captions, after the video is safely on disk.
@@ -544,11 +620,11 @@ def separate_audio_stems(audio_wav: str, output_dir: str, model_name: str = "htd
         "used_fallback": True,
         "fallback_reason": fallback_reason,
         "fallback_notice": (
-            "AI vocal separation isn't installed, so a basic filter was used. "
-            "Background audio may bleed into the dialogue track."
+            "Voice separation isn't installed, so a basic filter was used. "
+            "Some background sound may stay in the dialogue."
             if fallback_reason == "not_installed" else
-            "AI vocal separation couldn't run, so a basic filter was used. "
-            "Background audio may bleed into the dialogue track."
+            "Voice separation couldn't run, so a basic filter was used. "
+            "Some background sound may stay in the dialogue."
         ),
     }
 
@@ -910,9 +986,10 @@ def slice_audio_lines(
             # Both attempts failed: stop the build with a clear message instead of
             # installing a pack that is silently missing this line's audio.
             if fallback_error is not None or not os.path.isfile(out_wav):
+                print(f"[PackBuilder] Slice {i + 1} failed: {fallback_error or 'no audio file was written'}")
                 raise RuntimeError(
-                    f"Could not cut dialogue line {i + 1} ({start:.3f}s-{end:.3f}s) from the vocals track: "
-                    f"{fallback_error or 'no audio file was written'}"
+                    f"Could not cut dialogue line {i + 1} ({start:.2f}s to {end:.2f}s). "
+                    "Adjust its start or end and build again."
                 )
 
         enriched_segments.append({

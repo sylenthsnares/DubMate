@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "DubMate Studio",
+        "title": "DubMate",
         "width": 960,
         "height": 680,
         "minWidth": 800,
@@ -39,7 +39,6 @@
       "resources/**/*"
     ],
     "externalBin": [
-      "sidecar/python-runtime/python",
       "sidecar/cloudflared",
       "sidecar/ffmpeg"
     ],

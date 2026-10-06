@@ -1,4 +1,4 @@
-// launcher.js - Bridges the Tauri desktop window into DubMate Studio Pro.
+// launcher.js - Bridges the Tauri desktop window into DubMate.
 // The engine port is chosen at runtime (8000 unless taken), so never hardcode it.
 
 const splash = document.getElementById("splash");
@@ -17,6 +17,8 @@ const statusText = document.getElementById("status-text");
 const detailText = document.getElementById("detail-text");
 const errorMsg = document.getElementById("error-msg");
 const errorTitle = document.getElementById("error-title");
+const errorDetails = document.getElementById("error-details");
+const errorRaw = document.getElementById("error-raw");
 const updaterTitle = document.getElementById("updater-title");
 const btnRetry = document.getElementById("btn-retry");
 const btnOpenBrowser = document.getElementById("btn-open-browser");
@@ -56,13 +58,21 @@ function showUpdater() {
   if (errorBox) errorBox.style.display = "none";
 }
 
-function showError(msg, title) {
+// `detail` is the raw error text. It sits behind "Show details" so the message
+// stays plain, and stays selectable for bug reports.
+function showError(msg, title, detail) {
   if (isEntering || isUpdating || isInstallingBuilder) return;
   if (splash) splash.style.display = "none";
   if (updaterBox) updaterBox.style.display = "none";
   if (errorBox) errorBox.style.display = "block";
   if (errorTitle && title) errorTitle.innerText = title;
-  if (errorMsg) errorMsg.innerText = msg || "Studio engine is taking longer than expected to start.";
+  if (errorMsg) errorMsg.innerText = msg || "DubMate is taking longer than usual to start. Click Try again.";
+  if (errorDetails && errorRaw) {
+    const raw = detail ? String(detail) : "";
+    errorRaw.innerText = raw;
+    errorDetails.open = false;
+    errorDetails.style.display = raw ? "block" : "none";
+  }
 }
 
 function updateStatus(mainMsg, subMsg) {
@@ -75,7 +85,7 @@ async function init() {
   if (btnRetry) {
     btnRetry.addEventListener("click", async () => {
       showSplash();
-      updateStatus("Restarting Studio Engine...", "Re-initializing processes...");
+      updateStatus("Restarting DubMate", "");
       if (window.__TAURI__?.core?.invoke) {
         try {
           await window.__TAURI__.core.invoke("trigger_start_sidecars");
@@ -118,7 +128,7 @@ async function init() {
           isUpdating = true;
           showUpdater();
           if (updaterMsg) {
-            updaterMsg.innerText = payload.data.changelog || "Downloading core update bundle...";
+            updaterMsg.innerText = payload.data.changelog || "Downloading the update";
           }
 
           try {
@@ -131,12 +141,11 @@ async function init() {
             isUpdating = false;
             builderCheckPending = false;
             showError(
-              `${e}
-
-DubMate could not apply update ${payload.data.latest_version}. ` +
-              `It is still running version ${payload.data.current_version}. ` +
-              `Click Retry to start the studio with the current version.`,
-              "Update Failed"
+              `The update to version ${payload.data.latest_version} didn't install. ` +
+              `DubMate is still on version ${payload.data.current_version}. ` +
+              `Click Try again to open it.`,
+              "Update failed",
+              e
             );
           }
         } else {
@@ -163,17 +172,25 @@ DubMate could not apply update ${payload.data.latest_version}. ` +
           if (techDetails) techDetails.style.display = "none";
           if (progressBar) progressBar.classList.remove("is-idle");
           if (progressHeadline) progressHeadline.innerText = "Downloading the update";
-          if (progressFill) progressFill.style.width = `${p.percentage}%`;
-          if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
-          if (progressText) {
-            progressText.innerText = `${(p.received / (1024 * 1024)).toFixed(1)} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
+          const receivedMb = (p.received / (1024 * 1024)).toFixed(1);
+          if (p.total > 0) {
+            if (progressFill) progressFill.style.width = `${p.percentage}%`;
+            if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
+            if (progressText) {
+              progressText.innerText = `${receivedMb} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
+            }
+          } else {
+            // Size unknown: a full bar with the moving sheen, and just the amount so far.
+            if (progressFill) progressFill.style.width = "100%";
+            if (progressPercent) progressPercent.innerText = "";
+            if (progressText) progressText.innerText = `${receivedMb} MB`;
           }
         }
       });
 
       // Listen for update completion
       listen("update-complete", () => {
-        if (progressText) progressText.innerText = "Restarting Studio...";
+        if (progressText) progressText.innerText = "Restarting";
         setTimeout(() => {
           window.location.reload();
         }, 500);
@@ -182,14 +199,22 @@ DubMate could not apply update ${payload.data.latest_version}. ` +
       // Listen for startup progress events from Rust
       listen("startup-progress", (event) => {
         if (!isUpdating && !isEntering && event.payload) {
-          updateStatus("Starting Studio Engine...", event.payload);
+          updateStatus("Starting DubMate", event.payload);
         }
       });
 
       // Listen for server error events from Rust
       listen("server-error", (event) => {
         if (!isUpdating && !isEntering) {
-          showError(event.payload || "Failed to initialize studio engine.");
+          // Rust appends the raw error as "\n\nDetails: ..."; keep it behind Show details.
+          const text = String(event.payload || "DubMate couldn't start. Click Try again.");
+          const marker = "\n\nDetails: ";
+          const cut = text.indexOf(marker);
+          if (cut >= 0) {
+            showError(text.slice(0, cut), "DubMate didn't start", text.slice(cut + marker.length));
+          } else {
+            showError(text, "DubMate didn't start");
+          }
         }
       });
 
@@ -277,9 +302,7 @@ async function maybeInstallPackBuilder(invoke) {
     // Say what it does, not what it is called. Package names mean nothing to
     // someone who just wants to turn a video into a dubbing scene.
     updaterMsg.innerText =
-      "Setting up the tools that turn a video into a dub pack — separating vocals " +
-      "from background audio and transcribing the dialogue. This is a one-time " +
-      "download of about 2 GB. You can keep this window open and come back later.";
+      "Downloading Pack Builder, about 2 GB. This happens once.";
   }
   if (builderStages) builderStages.style.display = "flex";
   if (techDetails) techDetails.style.display = "block";
@@ -297,11 +320,10 @@ async function maybeInstallPackBuilder(invoke) {
     console.error("[PackBuilder] Install failed:", e);
     isInstallingBuilder = false;
     showError(
-      `${e}
-
-DubMate Studio itself is unaffected and runs normally without the AI ` +
-      `pack builder. Click Retry to continue into the studio.`,
-      "Pack Builder Install Failed"
+      `Pack Builder didn't install. Everything else works. ` +
+      `Click Try again to open DubMate. Pack Builder will install the next time you start it.`,
+      "Pack Builder didn't install",
+      e
     );
     return false;
   }
@@ -331,18 +353,18 @@ async function pollAndEnterStudio() {
 
     // Live continuous status updates
     if (i <= 5) {
-      updateStatus("Starting Studio Engine...", `Connecting to local engine (${i}/${maxAttempts})...`);
+      updateStatus("Starting DubMate", "");
     } else if (i <= 15) {
-      updateStatus("Starting Studio Engine...", `Launching Python runtime (${i}/${maxAttempts})...`);
+      updateStatus("Starting DubMate", "");
     } else if (i <= 25) {
-      updateStatus("Connecting to Studio Engine...", `Warming up audio engines & packs (${i}/${maxAttempts})...`);
+      updateStatus("Starting DubMate", "");
     } else {
-      updateStatus("Connecting to Studio Engine...", `Awaiting port ${enginePort} response (${i}/${maxAttempts})...`);
+      updateStatus("Still starting", "");
     }
 
     // After 25 attempts (12.5s), show error recovery if taking unusually long
     if (i === 30 && !isEntering && !isUpdating) {
-      showError(`Studio engine is taking longer than expected. Port ${enginePort} has not responded yet.`);
+      showError("DubMate is taking longer than usual to start. Click Try again, or open it in your browser.", "Still starting");
     }
 
     await new Promise((r) => setTimeout(r, 500));
@@ -350,15 +372,19 @@ async function pollAndEnterStudio() {
 
   pollingActive = false;
   if (!isUpdating && !isEntering) {
-    showError(`Studio engine did not respond on ${engineUrl()} within 60 seconds. Click Retry to restart it.`);
+    showError(
+      "DubMate didn't start within a minute. Click Try again to restart it.",
+      "DubMate didn't start",
+      `Address: ${engineUrl()}`
+    );
   }
 }
 
 function enterStudio() {
   if (isUpdating || isEntering || isInstallingBuilder || builderCheckPending) return;
   isEntering = true;
-  updateStatus("Loading Studio Interface...", "Redirecting to local DAW workspace...");
-  // Seamlessly load the full DubMate Studio Pro interface into the native window
+  updateStatus("Opening DubMate", "");
+  // Seamlessly load the full DubMate interface into the native window
   window.location.replace(engineUrl());
 }
 

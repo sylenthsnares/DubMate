@@ -20,15 +20,13 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
   # 1. Standalone Python Runtime (indygreg / python-build-standalone)
   PY_RUNTIME_DIR="$SIDECAR_DIR/python-runtime"
   mkdir -p "$PY_RUNTIME_DIR"
-  PY_TARGET="$PY_RUNTIME_DIR/python-$TRIPLE"
-  if [ ! -f "$PY_TARGET" ]; then
+  PY_STAGED="$PY_RUNTIME_DIR/.staged-$TRIPLE"
+  if [ ! -f "$PY_STAGED" ]; then
     echo "[1/3] Downloading Standalone Python 3.12 for $TRIPLE..."
     PY_TAR="/tmp/python-$TRIPLE.tar.gz"
     curl -fsSL "https://github.com/indygreg/python-build-standalone/releases/download/20240713/cpython-3.12.4+20240713-${TRIPLE}-install_only.tar.gz" -o "$PY_TAR"
     mkdir -p "/tmp/py-$TRIPLE"
     tar -xzf "$PY_TAR" -C "/tmp/py-$TRIPLE"
-    cp "/tmp/py-$TRIPLE/python/bin/python3" "$PY_TARGET"
-    chmod +x "$PY_TARGET"
 
     # Install dependencies into standalone Python runtime
     "/tmp/py-$TRIPLE/python/bin/python3" -m pip install -r "$PROJECT_ROOT/requirements.txt" --no-warn-script-location -q || true
@@ -38,6 +36,7 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     # Copy full standalone runtime into resources
     mkdir -p "$RESOURCE_DIR/python-runtime"
     cp -r "/tmp/py-$TRIPLE/python/"* "$RESOURCE_DIR/python-runtime/" || true
+    touch "$PY_STAGED"
   fi
 
   # 2. FFmpeg Static Binary

@@ -8,7 +8,8 @@
  *   - a failed download must produce a toast, not a page;
  *   - a successful render must name the folder it was written to;
  *   - on the engine's own computer (loopback origin) a Download button must not
- *     save a second copy: the render is already in the export folder (bug B4).
+ *     save a second copy: the render is already in the export folder (bug B4);
+ *     the same holds for the project ZIP and pack ZIP buttons (P23).
  *
  * Navigation detection note: jsdom cannot have `location.assign` patched (it is an
  * unforgeable own property), but every navigation route it could take --
@@ -166,6 +167,9 @@ dom.window.fetch = async (url, opts) => {
     return blobResponse();
   }
   if (u.startsWith("/api/packs/") && u.includes("/export")) {
+    return blobResponse();
+  }
+  if (u.startsWith("/api/rooms/TEST12/export/project_zip")) {
     return blobResponse();
   }
   if (u.startsWith("/api/rooms/TEST12/export/status")) {
@@ -395,7 +399,7 @@ try {
     if (!/\.zip$/.test(savedFiles[savedFiles.length - 1].download || "")) {
       fail("the pack ZIP saved under the wrong filename", savedFiles[savedFiles.length - 1]);
     }
-    if (toastsMatching(/packaging/i).length === 0 || toastsMatching(/downloaded/i).length === 0) {
+    if (toastsMatching(/preparing/i).length === 0 || toastsMatching(/downloaded/i).length === 0) {
       fail("the pack ZIP download did not toast start + completion", toasts);
     }
     if (app.selectedPackId !== selectedBeforePack) {
@@ -517,6 +521,61 @@ try {
       fail("rendering a missing aspect did not end on the 'Saved to' line");
     }
     pass("an unrendered aspect on the host renders once into the export folder, no browser copy");
+
+    // --- Test 9 (P23): ZIPs are written to the export folder by the server,
+    // so on the engine's computer they are not saved a second time either.
+    const zipButtons = ["btn-download-project-zip", "btn-toolbar-project-zip"].map((id) => {
+      const el = doc.getElementById(id);
+      if (!el) fail(`#${id} missing from the DOM`);
+      return el;
+    });
+    const zipChecks = [
+      ...zipButtons.map((el) => ({ el, route: "/export/project_zip", folder: EXPORTS_DIR })),
+      { el: doc.querySelector(".btn-pack-download-icon"), route: "/api/packs/", folder: `${EXPORTS_DIR}\\packs` },
+    ];
+    const createdBeforeZips = objectUrls.created;
+    for (const { el, route, folder } of zipChecks) {
+      const savesBefore = savedFiles.length;
+      const fetchesBefore = fetchLog.length;
+      toasts.length = 0;
+      app.exportsDirCache = undefined;
+
+      clickUi(el);
+      await settle();
+
+      const requested = fetchLog.slice(fetchesBefore).filter(u => u.includes(route) && !u.startsWith("/api/config"));
+      if (requested.length !== 1) {
+        fail(`${el.id || el.className} did not ask the engine to write the ZIP exactly once`, requested);
+      }
+      if (savedFiles.length !== savesBefore) {
+        fail(`${el.id || el.className} saved a second copy of the ZIP on the host's own computer`);
+      }
+      if (!toasts.some(t => t === `Saved to ${folder}`)) {
+        fail(`${el.id || el.className} did not say which folder the ZIP was saved to`, toasts);
+      }
+      if (el.hasAttribute("aria-busy")) {
+        fail(`${el.id || el.className} was left busy after saving`);
+      }
+    }
+    if (objectUrls.created !== createdBeforeZips) {
+      fail("a ZIP on the host path still created a blob URL");
+    }
+    pass("on the engine's own computer, project and pack ZIP buttons name the folder and save no copy");
+
+    // A remote member still gets the project ZIP as a normal download.
+    app.isEngineLocal = () => false;
+    const savesBeforeRemoteZip = savedFiles.length;
+    toasts.length = 0;
+    clickUi(zipButtons[0]);
+    await settle();
+    delete app.isEngineLocal;
+    if (savedFiles.length !== savesBeforeRemoteZip + 1 || !/\.zip$/.test(savedFiles[savedFiles.length - 1].download || "")) {
+      fail("a remote member did not get the project ZIP as a download");
+    }
+    if (toasts.some(t => t.includes(EXPORTS_DIR))) {
+      fail("a remote member was shown the host's folder for the project ZIP", toasts);
+    }
+    pass("a remote member still downloads the project ZIP");
 
     if (objectUrls.created === 0) {
       fail("no object URL was ever created; the blob path did not run");

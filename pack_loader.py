@@ -191,16 +191,16 @@ def set_custom_packs_dir(path_str: str) -> Tuple[bool, str, int]:
     Returns: (success, message, pack_count)
     """
     if not path_str or not str(path_str).strip():
-        return False, "Pack folder path cannot be empty.", 0
+        return False, "Enter a folder path.", 0
 
     clean_path = str(path_str).strip().strip('"').strip("'")
     resolved_path = os.path.abspath(os.path.expanduser(clean_path))
 
     if not os.path.exists(resolved_path):
-        return False, f"Directory does not exist: {resolved_path}", 0
+        return False, f"That folder doesn't exist: {resolved_path}", 0
 
     if not os.path.isdir(resolved_path):
-        return False, f"Path is not a valid directory: {resolved_path}", 0
+        return False, f"That path isn't a folder: {resolved_path}", 0
 
     # Check if the user pointed directly to a single scene pack folder (e.g. contains dub_video.* or clips)
     is_single_pack = False
@@ -235,9 +235,9 @@ def set_custom_packs_dir(path_str: str) -> Tuple[bool, str, int]:
     count = len(all_packs)
 
     if count == 0:
-        return True, f"Configured '{target_dir}', but 0 valid scene packs were found in that folder.", count
+        return True, "Folder saved, but it has no scene packs yet.", count
 
-    return True, f"Successfully loaded {count} scene pack(s) from '{target_dir}'.", count
+    return True, f"Loaded {count} scene pack{'' if count == 1 else 's'}.", count
 
 
 def get_current_packs_config() -> Dict[str, Any]:

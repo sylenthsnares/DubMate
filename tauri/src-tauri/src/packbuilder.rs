@@ -1,7 +1,7 @@
-//! Optional Pack Builder AI pipeline: install status, the pip install itself and
-//! the plain-language progress shown while it runs.
+//! Optional Pack Builder AI pipeline: install status, the pip install itself, the
+//! plain-language progress shown while it runs, and removing it again.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 use crate::paths::{
@@ -36,23 +36,23 @@ const PACKBUILDER_EXPECTED_BYTES: f64 = 2.0 * 1024.0 * 1024.0 * 1024.0;
 fn friendly_component_name(package: &str) -> &'static str {
     let p = package.to_ascii_lowercase();
     if p.starts_with("nvidia-") || p.starts_with("triton") || p.starts_with("cuda") {
-        "GPU acceleration libraries"
+        "graphics card support"
     } else if p.starts_with("torch") {
-        "the neural network engine"
+        "the processing engine"
     } else if p.starts_with("demucs") || p.starts_with("julius") || p.starts_with("dora") {
-        "the vocal separation model"
+        "voice separation"
     } else if p.contains("whisper") || p.starts_with("tiktoken") {
-        "the speech recognition model"
+        "speech recognition"
     } else if p.starts_with("yt-dlp") || p.starts_with("yt_dlp") {
-        "the video downloader"
+        "the link importer"
     } else if p.starts_with("numpy") || p.starts_with("scipy") || p.starts_with("numba")
         || p.starts_with("llvmlite") || p.starts_with("sympy") || p.starts_with("mpmath")
     {
-        "audio maths libraries"
+        "audio tools"
     } else if p.starts_with("pykakasi") {
         "Japanese text support"
     } else {
-        "supporting components"
+        "supporting files"
     }
 }
 
@@ -153,16 +153,16 @@ impl PipProgressParser {
                 ),
             ),
             "installing" => (
-                "Unpacking and installing".to_string(),
+                "Installing".to_string(),
                 if self.install_count > 0 {
-                    format!("{} components", self.install_count)
+                    "Almost there".to_string()
                 } else {
                     "Almost there".to_string()
                 },
             ),
             _ => (
                 "Finishing up".to_string(),
-                "Restarting the studio engine".to_string(),
+                "Restarting DubMate".to_string(),
             ),
         };
 
@@ -245,10 +245,10 @@ mod packbuilder_progress_tests {
 
     #[test]
     fn maps_packages_to_language_a_person_understands() {
-        assert_eq!(friendly_component_name("torch"), "the neural network engine");
-        assert_eq!(friendly_component_name("nvidia-cublas-cu12"), "GPU acceleration libraries");
-        assert_eq!(friendly_component_name("openai-whisper"), "the speech recognition model");
-        assert_eq!(friendly_component_name("some-random-dep"), "supporting components");
+        assert_eq!(friendly_component_name("torch"), "the processing engine");
+        assert_eq!(friendly_component_name("nvidia-cublas-cu12"), "graphics card support");
+        assert_eq!(friendly_component_name("openai-whisper"), "speech recognition");
+        assert_eq!(friendly_component_name("some-random-dep"), "supporting files");
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod packbuilder_progress_tests {
         // Announcing the next file means the first one landed.
         let second = p.push("Downloading demucs-4.0.1.whl (50.0 MB)");
         assert!(second.detail.starts_with("100 MB of"), "got {}", second.detail);
-        assert_eq!(second.headline, "Downloading the vocal separation model");
+        assert_eq!(second.headline, "Downloading voice separation");
     }
 
     #[test]
@@ -312,19 +312,56 @@ pub struct PackBuilderStatus {
     pub installed: bool,
     /// Where the dependencies live, shown to the user before a ~2 GB download.
     pub target_dir: String,
+    /// Disk space the install uses, in bytes. Only measured when asked for
+    /// (`withSize`): walking ~2 GB of files on every launch would slow startup.
+    pub size_bytes: Option<u64>,
 }
 
+/// Async so that measuring the folder never blocks the window's main thread.
 #[tauri::command]
-pub fn get_packbuilder_status(app: tauri::AppHandle) -> PackBuilderStatus {
+pub async fn get_packbuilder_status(
+    app: tauri::AppHandle,
+    with_size: Option<bool>,
+) -> PackBuilderStatus {
     let root = install_root_dir(&app);
+    let target = root.join(AI_PACKAGES_DIR);
+    let installed = target.join(AI_COMPLETE_MARKER).is_file();
+    let size_bytes = if installed && with_size.unwrap_or(false) {
+        let dir = target.clone();
+        tauri::async_runtime::spawn_blocking(move || folder_size(&dir))
+            .await
+            .ok()
+    } else {
+        None
+    };
     PackBuilderStatus {
         opted_in: root.join(PACKBUILDER_OPTIN_MARKER).is_file(),
-        installed: root
-            .join(AI_PACKAGES_DIR)
-            .join(AI_COMPLETE_MARKER)
-            .is_file(),
-        target_dir: root.join(AI_PACKAGES_DIR).to_string_lossy().to_string(),
+        installed,
+        target_dir: target.to_string_lossy().to_string(),
+        size_bytes,
     }
+}
+
+/// Total size of the files under `dir`. Links are counted as themselves and never
+/// followed, matching what removal deletes.
+fn folder_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // DirEntry::file_type does not follow links, so a link is never a dir here.
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }
 
 /// Streams `pip install --target` output back to the launcher so a multi-gigabyte
@@ -442,13 +479,267 @@ pub async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
         PackBuilderProgress {
             phase: "finalizing".to_string(),
             headline: "Finishing up".to_string(),
-            detail: "Restarting the studio engine".to_string(),
+            detail: "Restarting DubMate".to_string(),
             percent: 98.0,
-            raw: "Restarting Studio Engine...".to_string(),
+            raw: "Restarting DubMate".to_string(),
         },
     );
     kill_sidecars(&app);
     start_sidecars(app.clone()).await;
 
     Ok(())
+}
+
+/// The folder removal is allowed to delete: the real `ai-packages` folder directly
+/// inside the install folder, or `None` when there is none. Anything else in its
+/// place is refused, because a link or junction there would point the delete at
+/// files that are not Pack Builder's.
+fn removal_target(root: &Path) -> Result<Option<PathBuf>, String> {
+    let target = root.join(AI_PACKAGES_DIR);
+    let meta = match std::fs::symlink_metadata(&target) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Could not read {}: {}", target.display(), e)),
+    };
+    // On Windows a junction also reports as a symlink here.
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(format!(
+            "Refusing to remove {}: it is not a plain folder.",
+            target.display()
+        ));
+    }
+
+    // Resolve both ends so a link higher up cannot move the folder somewhere else.
+    let real_root = root
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve {}: {}", root.display(), e))?;
+    let real_target = target
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve {}: {}", target.display(), e))?;
+    let is_add_on_folder = real_target.parent() == Some(real_root.as_path())
+        && real_target
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case(AI_PACKAGES_DIR));
+    if !is_add_on_folder {
+        return Err(format!(
+            "Refusing to remove {}: it is not the Pack Builder folder in {}.",
+            real_target.display(),
+            real_root.display()
+        ));
+    }
+    Ok(Some(real_target))
+}
+
+/// Deletes the checked folder, then the installer's opt-in marker so the launcher
+/// does not download Pack Builder again. The marker goes last: if the folder can't
+/// be deleted, the user's choice is kept and nothing claims it was removed.
+fn delete_packbuilder_files(root: &Path, target: Option<PathBuf>) -> Result<(), String> {
+    if let Some(dir) = target {
+        // An engine that was just stopped can hold its files open for a moment.
+        let mut attempt = 0;
+        loop {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(_) if attempt < 4 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                Err(e) => return Err(format!("Could not remove {}: {}", dir.display(), e)),
+            }
+        }
+    }
+    match std::fs::remove_file(root.join(PACKBUILDER_OPTIN_MARKER)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Could not remove {}: {}", PACKBUILDER_OPTIN_MARKER, e)),
+    }
+}
+
+/// Removes the Pack Builder add-on and restarts the engine without it. Resolves once
+/// the engine answers again, so the caller can reload the studio straight away.
+#[tauri::command]
+pub async fn remove_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
+    let root = install_root_dir(&app);
+    // Checked before anything stops, so a refusal leaves DubMate running.
+    let target = removal_target(&root)?;
+
+    // Windows won't delete a library the engine still has loaded, so stop it first.
+    // The restart afterwards is also what makes Pack Builder show as not installed:
+    // the engine only looks for the add-on when it starts.
+    kill_sidecars(&app);
+    let removed = tauri::async_runtime::spawn_blocking(move || {
+        delete_packbuilder_files(&root, target)
+    })
+    .await
+    .map_err(|e| format!("Removal task failed: {}", e))
+    .and_then(|result| result);
+
+    start_sidecars(app.clone()).await;
+    removed
+}
+
+#[cfg(test)]
+mod packbuilder_removal_tests {
+    use super::*;
+
+    /// A fresh, empty folder standing in for the install folder.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dubmate-p40-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Makes `link` lead to the folder `target`: a junction on Windows (no admin
+    /// rights needed), a symlink elsewhere. False if the system refuses.
+    fn link_folder(target: &Path, link: &Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+    }
+
+    /// Removes a link without touching what it leads to.
+    fn unlink(link: &Path) {
+        let _ = std::fs::remove_dir(link).or_else(|_| std::fs::remove_file(link));
+    }
+
+    #[test]
+    fn accepts_the_add_on_folder_inside_the_install_folder() {
+        let root = scratch("plain");
+        std::fs::create_dir_all(root.join(AI_PACKAGES_DIR).join("torch")).unwrap();
+
+        let target = removal_target(&root).unwrap().expect("should be removable");
+        assert_eq!(target, root.join(AI_PACKAGES_DIR).canonicalize().unwrap());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn nothing_to_remove_when_the_folder_is_missing() {
+        let root = scratch("missing");
+        assert_eq!(removal_target(&root).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refuses_a_file_in_place_of_the_folder() {
+        let root = scratch("file");
+        std::fs::write(root.join(AI_PACKAGES_DIR), b"not a folder").unwrap();
+        assert!(removal_target(&root).is_err());
+        assert!(root.join(AI_PACKAGES_DIR).is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refuses_a_link_that_leads_out_of_the_install_folder() {
+        let root = scratch("link");
+        let outside = scratch("link-outside");
+        std::fs::write(outside.join("keep.txt"), b"keep me").unwrap();
+        let link = root.join(AI_PACKAGES_DIR);
+        if !link_folder(&outside, &link) {
+            eprintln!("skipped: this system would not create a folder link");
+            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&outside);
+            return;
+        }
+
+        assert!(removal_target(&root).is_err());
+        assert!(outside.join("keep.txt").is_file(), "the link's target must be untouched");
+
+        unlink(&link);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn removal_deletes_only_the_add_on_and_its_opt_in() {
+        let root = scratch("delete");
+        let outside = scratch("delete-outside");
+        std::fs::write(outside.join("keep.txt"), b"keep me").unwrap();
+        let add_on = root.join(AI_PACKAGES_DIR);
+        std::fs::create_dir_all(add_on.join("torch")).unwrap();
+        std::fs::write(add_on.join(AI_COMPLETE_MARKER), b"1.1.3").unwrap();
+        std::fs::write(root.join(PACKBUILDER_OPTIN_MARKER), b"").unwrap();
+        std::fs::write(root.join("DubMate.exe"), b"app").unwrap();
+        // A link inside the add-on must be removed as a link, not followed.
+        let inner_link = add_on.join("linked");
+        let linked = link_folder(&outside, &inner_link);
+
+        let target = removal_target(&root).unwrap();
+        delete_packbuilder_files(&root, target).unwrap();
+
+        assert!(!add_on.exists(), "the add-on folder should be gone");
+        assert!(!root.join(PACKBUILDER_OPTIN_MARKER).exists(), "the opt-in should be gone");
+        assert!(root.join("DubMate.exe").is_file(), "files beside it must stay");
+        if linked {
+            assert!(outside.join("keep.txt").is_file(), "a link's target must stay");
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn removal_with_nothing_installed_is_a_no_op() {
+        let root = scratch("noop");
+        std::fs::write(root.join("DubMate.exe"), b"app").unwrap();
+        delete_packbuilder_files(&root, removal_target(&root).unwrap()).unwrap();
+        assert!(root.join("DubMate.exe").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_the_studio_on_this_computer_may_remove_it() {
+        use std::str::FromStr;
+        use tauri::utils::acl::{capability::Capability, RemoteUrlPattern};
+
+        let capability: Capability =
+            serde_json::from_str(include_str!("../capabilities/studio.json")).unwrap();
+        assert!(!capability.local, "the launcher has its own capability");
+        let patterns: Vec<RemoteUrlPattern> = capability
+            .remote
+            .expect("the studio page is a remote origin")
+            .urls
+            .iter()
+            .map(|url| RemoteUrlPattern::from_str(url).unwrap())
+            .collect();
+        let allowed = |url: &str| {
+            let url = tauri::Url::parse(url).unwrap();
+            patterns.iter().any(|pattern| pattern.test(&url))
+        };
+
+        // The engine picks its port at runtime, so any port on the loopback address.
+        assert!(allowed("http://127.0.0.1:8000/"));
+        assert!(allowed("http://127.0.0.1:8023/builder.html?select_pack=x"));
+        // A host's room page, a LAN address or a look-alike host must not get in.
+        assert!(!allowed("https://abc.trycloudflare.com/"));
+        assert!(!allowed("http://192.168.1.20:8000/"));
+        assert!(!allowed("http://127.0.0.1.evil.example:8000/"));
+    }
+
+    #[test]
+    fn measures_the_files_under_a_folder() {
+        let root = scratch("size");
+        std::fs::create_dir_all(root.join("a").join("b")).unwrap();
+        std::fs::write(root.join("one.bin"), vec![0u8; 1000]).unwrap();
+        std::fs::write(root.join("a").join("b").join("two.bin"), vec![0u8; 24]).unwrap();
+        assert_eq!(folder_size(&root), 1024);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

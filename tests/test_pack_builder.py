@@ -380,6 +380,105 @@ NOTE This is a test subtitle file
                 shutil.rmtree(session_folder, ignore_errors=True)
             BUILDER_SESSIONS.pop(session_id, None)
 
+    def test_08b_ytdlp_age_days(self):
+        """yt-dlp versions are release dates; the age is counted in days from them."""
+        import datetime
+        today = datetime.date(2026, 3, 1)
+        self.assertEqual(pack_builder.ytdlp_age_days("2026.03.01", today), 0)
+        self.assertEqual(pack_builder.ytdlp_age_days("2025.12.31", today), 60)
+        self.assertEqual(pack_builder.ytdlp_age_days("2025.12.30", today), 61)
+        # Nightly builds append a time; single-digit months/days are fine too.
+        self.assertEqual(pack_builder.ytdlp_age_days("2026.2.1.232744", today), 28)
+        # A future date (clock skew) is not negative.
+        self.assertEqual(pack_builder.ytdlp_age_days("2026.04.01", today), 0)
+        for unknown in ("", None, "dev", "2026.13.40"):
+            self.assertIsNone(pack_builder.ytdlp_age_days(unknown, today))
+
+    def _fake_ytdlp(self, version, package_dir, error="ERROR: Unable to extract player response"):
+        """A stand-in yt_dlp module whose download always fails with `error`."""
+        import types
+
+        class FakeYDL:
+            def __init__(self, opts):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def extract_info(self, url, download=True):
+                raise Exception(error)
+
+        mod = types.ModuleType("yt_dlp")
+        mod.__file__ = os.path.join(package_dir, "yt_dlp", "__init__.py")
+        mod.version = types.SimpleNamespace(__version__=version)
+        mod.YoutubeDL = FakeYDL
+        return mod
+
+    def test_08c_stale_ytdlp_message_on_failed_import(self):
+        """A failed link import says Pack Builder needs an update, with the steps kept apart."""
+        import datetime
+        import sys
+        from unittest.mock import patch
+
+        old = (datetime.date.today() - datetime.timedelta(days=90)).strftime("%Y.%m.%d")
+        fresh = (datetime.date.today() - datetime.timedelta(days=10)).strftime("%Y.%m.%d")
+        url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        out_dir = os.path.join(self.tmp_dir, "stale_import")
+
+        # Source install: points at the update scripts.
+        source_mod = self._fake_ytdlp(old, os.path.join(self.tmp_dir, "site-packages"))
+        with patch.dict(sys.modules, {"yt_dlp": source_mod}):
+            with self.assertRaises(pack_builder.StaleYtDlpError) as ctx:
+                pack_builder.download_video_from_url(url, out_dir)
+        msg = str(ctx.exception)
+        steps = ctx.exception.details
+        # The headline is short and outcome-first: no tool name, no steps, no raw error.
+        self.assertTrue(msg.startswith("Couldn't import that video."), msg)
+        self.assertNotIn("yt-dlp", msg)
+        self.assertNotIn("update.bat", msg)
+        self.assertNotIn("Unable to extract", msg)  # raw error stays in the log
+        self.assertLess(len(msg), 80)
+        self.assertIn("update.bat", steps)
+        self.assertIn("update.sh", steps)
+
+        # Desktop app: points at re-downloading Pack Builder from its ai-packages folder.
+        ai_dir = os.path.join(self.tmp_dir, "ai-packages")
+        desktop_mod = self._fake_ytdlp(old, ai_dir)
+        with patch.dict(sys.modules, {"yt_dlp": desktop_mod}):
+            with self.assertRaises(pack_builder.StaleYtDlpError) as ctx:
+                pack_builder.download_video_from_url(url, out_dir)
+        msg = str(ctx.exception)
+        steps = ctx.exception.details
+        self.assertNotIn(ai_dir, msg)
+        self.assertIn(ai_dir, steps)
+        self.assertIn("open DubMate again", steps)
+        self.assertNotIn("update.bat", steps)
+
+        # A recent yt-dlp keeps the plain failure; so do our own link errors.
+        fresh_mod = self._fake_ytdlp(fresh, os.path.join(self.tmp_dir, "site-packages"))
+        with patch.dict(sys.modules, {"yt_dlp": fresh_mod}):
+            with self.assertRaises(RuntimeError) as ctx:
+                pack_builder.download_video_from_url(url, out_dir)
+        self.assertNotIsInstance(ctx.exception, pack_builder.StaleYtDlpError)
+        unsupported_mod = self._fake_ytdlp(
+            old, os.path.join(self.tmp_dir, "site-packages"), error="Unsupported URL: x")
+        with patch.dict(sys.modules, {"yt_dlp": unsupported_mod}):
+            with self.assertRaises(ValueError):
+                pack_builder.download_video_from_url(url, out_dir)
+
+        # The API passes the message and update steps through instead of the generic text.
+        with patch("pack_builder.download_video_from_url",
+                   side_effect=pack_builder.StaleYtDlpError("STALE-MESSAGE", "STALE-STEPS")):
+            res = self.client.post("/api/builder/import_url", json={"url": url})
+        self.assertEqual(res.status_code, 500)
+        detail = res.json()["detail"]
+        self.assertEqual(detail["code"], "ytdlp_stale")
+        self.assertEqual(detail["message"], "STALE-MESSAGE")
+        self.assertEqual(detail["details"], "STALE-STEPS")
+
     def test_09_extract_audio_silent_video(self):
         """Tests that extract_audio_from_video handles silent video files without crashing."""
         # Create a video with NO audio stream

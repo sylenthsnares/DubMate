@@ -187,8 +187,8 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
                 _set_room_status(
                     code,
                     "unauthorized",
-                    "This build has no valid registry key, so public room codes are "
-                    "unavailable. Share the direct invite link instead.",
+                    "Room codes aren't available. "
+                    "Share the invite link instead.",
                     tunnel_url,
                 )
                 print(f"[Worker Registry] Registry rejected our key; room {code} not published.")
@@ -198,7 +198,7 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
                 _set_room_status(
                     code,
                     "conflict",
-                    "That room code is already in use by another host. Create a new room.",
+                    "That room code is already taken. Create a new room.",
                     tunnel_url,
                 )
                 print(f"[Worker Registry] Room code {code} is already held by another host; not overwriting.")
@@ -207,13 +207,13 @@ async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: 
             _set_room_status(
                 code,
                 "error",
-                f"The room registry returned an error ({resp.status_code}). Retrying...",
+                "Couldn't publish your room code. Retrying.",
                 tunnel_url,
             )
             print(f"[Worker Registry] Registration rejected ({resp.status_code}): {resp.text[:200]}")
             return False
     except Exception as e:
-        _set_room_status(code, "error", "Could not reach the room registry. Retrying...", tunnel_url)
+        _set_room_status(code, "error", "Couldn't publish your room code. Retrying.", tunnel_url)
         print(f"[Worker Registry] Note: Could not register with worker: {e}")
         return False
 
@@ -246,7 +246,7 @@ async def publish_pending_rooms() -> None:
         if not tunnel or not tunnel.startswith("https://"):
             for code in WORKER_PENDING_ROOMS:
                 if WORKER_ROOM_STATUS.get(code, {}).get("state") in (None, "publishing"):
-                    _set_room_status(code, "waiting", "Waiting for the public tunnel to come up...")
+                    _set_room_status(code, "waiting", "Getting your room code ready.")
             return
 
         for code, app_version in list(WORKER_PENDING_ROOMS.items()):
@@ -288,7 +288,7 @@ def build_room_share_payload(room_id: str) -> Dict[str, Any]:
     """Everything the UI needs to hand out an invite, including a working fallback."""
     code = room_id.upper()
     default_state = "waiting"
-    default_message = "Waiting for the public tunnel to come up..."
+    default_message = "Getting your room code ready."
     if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL:
         default_state = "tunnel_unavailable"
         default_message = TUNNEL_ERROR

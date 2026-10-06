@@ -10,6 +10,7 @@ import re
 import wave
 import json
 import time
+import hashlib
 import shutil
 import zipfile
 import tempfile
@@ -41,6 +42,12 @@ AUTO_GAIN_PEAK_CEILING_DB = -1.0  # auto gain never boosts a take's sample peak 
 LIMITER_CEILING_DB = -0.3   # master soft limiter ceiling for the final mix and every stem
 BACKING_TRACK_LEVEL = 0.65  # backing music & SFX under the dialogue (calibrated DAW level)
 ORIGINAL_LINE_LEVEL = 0.90  # unrecorded lines fall back to the original reference audio at this level
+
+# Noise reduction. DeepFilterNet's attenuation limit in dB: 100 is maximum suppression and
+# removes breaths and whispers, so takes are cleaned more gently by default.
+NR_ATTENUATION_DB = 30.0
+# Bump whenever the denoise chain changes, so cached cleaned takes are rebuilt.
+NR_VERSION = 2
 
 # Only these characters are allowed in filesystem-derived identifiers (room_id, user_id, ...).
 _SAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
@@ -117,6 +124,30 @@ def _transcode_upload(audio_bytes: bytes, filename_hint: str, dst_wav: str, time
         _ffmpeg_to_mono_wav(raw_tmp, dst_wav, SR, timeout, context)
     finally:
         _remove_quietly(raw_tmp)
+
+
+def _noise_reduction_engine() -> str:
+    """Returns which denoiser apply_noise_reduction will run: "dfn" (DeepFilterNet) or "fallback" (ffmpeg)."""
+    df_bin = get_deep_filter_path()
+    return "dfn" if df_bin and os.path.isfile(df_bin) else "fallback"
+
+
+def denoised_take_path(room_dir: str, line_index: int) -> str:
+    """Path of a line's cleaned take for the current noise-reduction settings.
+    The name carries a short hash of (NR_VERSION, attenuation, engine), so changed settings
+    point at a file that does not exist yet and the take is cleaned again."""
+    key_src = f"{NR_VERSION}:{NR_ATTENUATION_DB}:{_noise_reduction_engine()}"
+    key = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:8]
+    return os.path.join(room_dir, f"take_line_{line_index}_denoised_{key}.wav")
+
+
+def _remove_old_denoised_takes(room_dir: str, line_index: int, keep: Optional[str] = None) -> None:
+    """Deletes take_line_{line_index}_denoised*.wav files other than keep. Raw takes are never touched."""
+    prefix = f"take_line_{line_index}_denoised"
+    keep_name = os.path.basename(keep) if keep else None
+    for name in os.listdir(room_dir):
+        if name.startswith(prefix) and name.endswith(".wav") and name != keep_name:
+            _remove_quietly(os.path.join(room_dir, name))
 
 
 def get_room_cache_dir(room_id: str) -> str:
@@ -309,14 +340,14 @@ def apply_noise_reduction(
     input_wav: str,
     output_wav: str,
     noise_profile_wav: Optional[str] = None,
-    reduction_db: float = 100.0,
+    reduction_db: float = NR_ATTENUATION_DB,
     sr: int = SR
 ) -> str:
     """
     Applies state-of-the-art DeepFilterNet 3 neural speech enhancement & vocal de-noising.
     Preserves 100% of quiet dialogue, subtle mouth grit, breath, and natural dynamics
     while removing heavy fan noise, AC hum, and preamp hiss with zero phase warble.
-    Falls back gracefully to highpass + adaptive spectral gating if deep-filter binary is absent.
+    Falls back gracefully to highpass + adaptive spectral denoising if deep-filter binary is absent.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_wav)), exist_ok=True)
     df_bin = get_deep_filter_path()
@@ -337,7 +368,7 @@ def apply_noise_reduction(
             _ffmpeg_to_mono_wav(input_wav, tmp_48k_in, 48000, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample to 48k")
 
             # Run DeepFilterNet with delay compensation (-D)
-            atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else 100.0
+            atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else NR_ATTENUATION_DB
             cmd_df = [
                 df_bin, "-D",
                 "-a", str(int(atten_lim)),
@@ -376,7 +407,6 @@ def apply_noise_reduction(
         af_filters = [
             "highpass=f=80",
             f"afftdn=nr={min(18.0, reduction_db):.1f}:nf=-35:tn=1",
-            "agate=threshold=-34dB:ratio=2.0:range=-18dB:attack=15:release=120",
         ]
         fd, tmp_out = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
@@ -403,7 +433,7 @@ def save_uploaded_take(
     """
     Saves raw uploaded audio from browser (WebM/WAV/OGG) to standard WAV.
     Preserves pristine raw audio (take_line_{index}_raw.wav) and generates denoised
-    audio (take_line_{index}_denoised.wav) when requested.
+    audio (take_line_{index}_denoised_{key}.wav, see denoised_take_path) when requested.
     Calculates speech-gated loudness and smart auto-gain calibration against scene target.
     Returns active path, duration, waveform peaks, auto_gain_db, and noise reduction status.
     """
@@ -413,7 +443,7 @@ def save_uploaded_take(
     room_dir = get_room_cache_dir(room_id)
     target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
     raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
-    denoised_wav = os.path.join(room_dir, f"take_line_{line_index}_denoised.wav")
+    denoised_wav = denoised_take_path(room_dir, line_index)
 
     try:
         _transcode_upload(audio_bytes, filename_hint, raw_wav, SUBPROCESS_TIMEOUT_PROCESS, "take upload transcoding")
@@ -431,10 +461,13 @@ def save_uploaded_take(
     if not os.path.isfile(profile_path or ""):
         profile_path = None
 
+    # A new raw take makes every earlier cleaned version of this line stale.
     if enable_noise_reduction:
         apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+        _remove_old_denoised_takes(room_dir, line_index, keep=denoised_wav)
         shutil.copy2(denoised_wav, target_wav)
     else:
+        _remove_old_denoised_takes(room_dir, line_index)
         shutil.copy2(raw_wav, target_wav)
 
     audio_data = read_wav_mono(target_wav)
@@ -475,7 +508,7 @@ def toggle_take_noise_reduction(
     room_dir = get_room_cache_dir(room_id)
     target_wav = os.path.join(room_dir, f"take_line_{line_index}.wav")
     raw_wav = os.path.join(room_dir, f"take_line_{line_index}_raw.wav")
-    denoised_wav = os.path.join(room_dir, f"take_line_{line_index}_denoised.wav")
+    denoised_wav = denoised_take_path(room_dir, line_index)
 
     if not os.path.exists(raw_wav):
         if os.path.exists(target_wav):
@@ -496,6 +529,7 @@ def toggle_take_noise_reduction(
     if enable_noise_reduction:
         if not os.path.exists(denoised_wav) or os.path.getsize(denoised_wav) < 100:
             apply_noise_reduction(raw_wav, denoised_wav, profile_path)
+            _remove_old_denoised_takes(room_dir, line_index, keep=denoised_wav)
         shutil.copy2(denoised_wav, target_wav)
     else:
         shutil.copy2(raw_wav, target_wav)
@@ -542,6 +576,18 @@ def get_reverb_impulse(decay_sec: float = 1.5, sr: int = SR) -> np.ndarray:
 
     _REVERB_CACHE[cache_key] = impulse
     return impulse
+
+
+def _fft_convolve(signal: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """
+    Full linear convolution (length len(signal) + len(kernel) - 1) through numpy's real FFT.
+    Replaces scipy.signal.fftconvolve, the only thing scipy was installed for. The FFT runs
+    in float64 and the result is float32, like fftconvolve gave for float32 input.
+    """
+    n = len(signal) + len(kernel) - 1
+    nfft = 1 << (n - 1).bit_length()
+    spectrum = np.fft.rfft(np.asarray(signal, dtype=np.float64), nfft) * np.fft.rfft(np.asarray(kernel, dtype=np.float64), nfft)
+    return np.fft.irfft(spectrum, nfft)[:n].astype(np.float32)
 
 
 def master_soft_limiter(audio: np.ndarray, ceiling_db: float = LIMITER_CEILING_DB) -> np.ndarray:
@@ -626,14 +672,8 @@ def apply_audio_effects(
     # 4. Studio Acoustic Room Convolution Reverb
     # Direct vocal stays at 100% punch; lush room reflections and natural reverb decay ring out seamlessly
     if reverb_wet > 0.02 and len(audio) > 0:
-        # Imported here, not at module scope. scipy.signal is used by this one line
-        # in the whole codebase, but importing it cost ~1.5s of engine cold start
-        # and ~67 MB of resident memory for every user, whether or not they ever
-        # applied reverb.
-        import scipy.signal
-
         impulse = get_reverb_impulse(decay_sec=1.5, sr=sr)
-        wet = scipy.signal.fftconvolve(audio, impulse)
+        wet = _fft_convolve(audio, impulse)
         out_audio = np.zeros(len(wet), dtype=np.float32)
         out_audio[:len(audio)] = audio
         out_audio += wet * np.float32(reverb_wet * 0.70)

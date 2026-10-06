@@ -1,4 +1,4 @@
-# 🎙️ DubMate Studio Pro — Collaborative Multiplayer Voice Dubbing DAW
+# DubMate
 
 [![Release](https://img.shields.io/github/v/release/sylenthsnares/DubMate?color=gold)](https://github.com/sylenthsnares/DubMate/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -8,7 +8,7 @@
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-Hardware%20Accelerated-555555.svg)](https://ffmpeg.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
-**DubMate Studio Pro** is a high-performance, browser-native Digital Audio Workstation (DAW) and real-time multiplayer scene dubbing suite. It allows voice actors, streamers, content creators, and friends to jump into shared online rooms, claim character roles on an interactive casting board, record lines with instant dual-waveform visual alignment, sculpt takes using vintage analog DSP hardware controls, screen the mastered scene live in the Premiere Theater, and export multi-format master videos or full NLE-ready DAW project bundles.
+Dub anime and film scenes with friends. Pick a scene, cast the characters, record your lines against the video, and watch the finished dub together. DubMate removes the original voices, lines up and levels your takes, cleans up room noise and renders the video. The Pack Builder turns any video into a scene you can dub.
 
 ---
 
@@ -47,9 +47,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the changes in each release.
 - **Zero-Config Internet Play**: Launch public rooms across the web without port forwarding using built-in Cloudflare Tunnels (`run_cloudflare.bat`).
 - **Interactive Character Casting**: Assign actors to specific characters; support for multi-character casting and solo workflows.
 - **Live Cast Activity HUD**: Monitor online presence, line completion progress, and actor readiness status in real time.
-- **Flexible Workflow Modes**:
-  - **Solo Recording Booth**: Record your assigned lines self-paced without waiting on others.
-  - **Synced Studio Prompter**: Step through dialogue chronologically as a group.
+- **Self-Paced Recording**: Record your assigned lines at your own pace without waiting on others.
 
 ### 🎛️ Virtual Voice Booth & Analog DSP Deck
 - **Tactile Rotary Amp Dials**: Authentic 270° sweep knobs with vertical drag, scroll wheel, and keyboard controls.
@@ -96,7 +94,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the changes in each release.
 ## 🏗️ System Architecture
 
 ```
-DubMate Studio Pro
+DubMate
 ├── Backend (FastAPI + WebSockets + Uvicorn)
 │   ├── app.py                 # FastAPI app: lifespan, middleware, /api/config, static routes; includes the routers below
 │   ├── dubmate/               # Backend package
@@ -110,7 +108,7 @@ DubMate Studio Pro
 │   │   └── builder_api.py     # /api/builder Pack Builder routes
 │   ├── pack_builder.py        # Video ingestion, Demucs AI stems, Whisper speech-to-text, pack assembly
 │   ├── pack_loader.py         # Dual-engine scene pack parser (DubMate & Choicer Voicer)
-│   ├── audio_processor.py     # NumPy/SciPy DSP, FFT convolution reverb, FFmpeg mastering
+│   ├── audio_processor.py     # NumPy DSP, FFT convolution reverb, FFmpeg mastering
 │   ├── requirements.txt       # Core studio dependencies (ultra-lightweight)
 │   └── requirements_builder.txt # Optional AI pipeline dependencies (PyTorch + Demucs + Whisper)
 ├── Frontend (Modern Vanilla JS + CSS3 + Web Audio API)
@@ -119,7 +117,7 @@ DubMate Studio Pro
 │   ├── static/css/style.css   # Warm Wood & Analog Hardware Studio design system
 │   ├── static/css/builder.css # Pack Builder styles
 │   ├── static/js/app.js       # Core application controller & stage state machine
-│   ├── static/js/studio/      # Studio feature modules mixed into app.js (audio_setup.js, export.js, screening.js)
+│   ├── static/js/studio/      # Studio feature modules mixed into app.js (audio_setup.js, booth.js, export.js, lobby.js, packs.js, screening.js)
 │   ├── static/js/ui_common.js # Shared UI helpers (escapeHtml, toasts, mode dropdown, mixin)
 │   ├── static/js/pack_builder.js # Pack Builder timeline controller & SSE client
 │   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Reverb)
@@ -153,7 +151,7 @@ DubMate Studio Pro
 
 ## 🚀 Quick Start (Zero Global Pollution)
 
-DubMate Studio Pro installs all Python packages and portable media tools **strictly inside the project folder** (`.venv/` and `tools/`). **No packages or binaries are installed globally on your system, and your system PATH is never modified.**
+DubMate installs all Python packages and portable media tools **strictly inside the project folder** (`.venv/` and `tools/`). **No packages or binaries are installed globally on your system, and your system PATH is never modified.**
 
 ### 1-Click Installation & Setup
 
@@ -202,7 +200,7 @@ Works on Apple Silicon and Intel Macs. Open Terminal in the DubMate project root
 
 ```bash
 # 1. 1-Click Setup
-chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
+chmod +x setup_dubmate_mac.sh run_mac.sh run_cloudflare.sh update.sh
 ./setup_dubmate_mac.sh
 
 # 2. Launch
@@ -211,13 +209,7 @@ chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
 
 Then open **`http://localhost:8000`** and allow **Microphone Access** when the browser asks.
 
-**Internet multiplayer (Cloudflare Tunnel)**: keep `./run_mac.sh` running, and in a second Terminal tab start the tunnel:
-
-```bash
-python3 scripts/run_tunnel.py --cloudflared tools/cloudflared --port 8000
-```
-
-Copy the generated `https://xxxx.trycloudflare.com` link and send it to your cast.
+**Internet multiplayer (Cloudflare Tunnel)**: run `./run_cloudflare.sh` instead of `./run_mac.sh`. It starts DubMate and opens a public tunnel. Copy the generated `https://xxxx.trycloudflare.com` link and send it to your cast.
 
 **Microphone permissions**: if the browser does not capture microphone audio:
 1. Open **System Settings** on macOS.

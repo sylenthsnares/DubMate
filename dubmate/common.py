@@ -81,9 +81,12 @@ def safe_join(base_dir: str, *user_parts: str) -> str:
     Containment is checked with realpath because component-level filtering is
     not sufficient on Windows: a backslash is a path separator there but is
     not a URL separator, so one URL segment can still traverse directories.
+    Backslashes are rejected outright on every OS: no served file name contains
+    one, and on POSIX a name like '..\\..\\x' stays inside base_dir, so the
+    containment check alone would treat the same request differently per platform.
     """
     for part in user_parts:
-        if part is None or chr(0) in part:
+        if part is None or chr(0) in part or "\\" in part:
             raise HTTPException(status_code=400, detail="Invalid path")
 
     candidate = os.path.join(base_dir, *user_parts)

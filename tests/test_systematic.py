@@ -335,6 +335,39 @@ class TestSystematicDualEngine(unittest.TestCase):
             if os.path.exists(wav_tmp):
                 os.remove(wav_tmp)
 
+    def test_07b_new_room_keeps_saved_exports(self):
+        """Creating a room must not delete earlier renders, project ZIPs or the user's own files.
+
+        The host is told these are saved in the exports folder, and on the desktop app
+        the project ZIP is not downloaded anywhere else, so pruning them loses the work.
+        """
+        from dubmate import common
+        packs = pack_loader.get_all_packs()
+        pack = list(packs.values())[0]
+        exports = common.exports_dir()
+        names = [
+            f"DubMate_Project_{pack.pack_id}_OLDRM1.zip",
+            f"Dub_{pack.pack_id}_OLDRM1.mp4",
+            "my_own_holiday_video.mp4",
+        ]
+        paths = [os.path.join(exports, n) for n in names]
+        try:
+            for path in paths:
+                with open(path, "wb") as f:
+                    f.write(b"0" * 2048)
+            res = self.client.post("/api/rooms", json={
+                "pack_id": pack.pack_id,
+                "host_name": "NextSession",
+                "host_color": "#cca458",
+            })
+            self.assertEqual(res.status_code, 200)
+            for path in paths:
+                self.assertTrue(os.path.isfile(path), f"{os.path.basename(path)} was deleted by a new room")
+        finally:
+            for path in paths:
+                if os.path.exists(path):
+                    os.remove(path)
+
     def test_08_video_export_cinema_and_shorts(self):
         """Test video export endpoints for 16:9 cinema and 9:16 vertical shorts."""
         packs = pack_loader.get_all_packs()
@@ -378,7 +411,7 @@ class TestSystematicDualEngine(unittest.TestCase):
         self.assertIn(".mp4", res_dl.headers.get("content-disposition", ""))
 
     def test_09_websocket_realtime_sync(self):
-        """Test WebSocket events: connect, join, assign_role, set_line, update_take_params, ping."""
+        """Test WebSocket events: connect, join, assign_role, ping."""
         packs = pack_loader.get_all_packs()
         pack = list(packs.values())[0]
 
@@ -410,16 +443,7 @@ class TestSystematicDualEngine(unittest.TestCase):
             self.assertEqual(join_msg["type"], "user_joined")
             self.assertEqual(join_msg["state"]["users"][user_id]["name"], "SocketActor")
 
-            # 4. Set line
-            ws.send_text(json.dumps({
-                "type": "set_line",
-                "payload": {"line_index": 1}
-            }))
-            line_msg = json.loads(ws.receive_text())
-            self.assertEqual(line_msg["type"], "line_changed")
-            self.assertEqual(line_msg["state"]["current_line"], 1)
-
-            # 5. Assign role
+            # 4. Assign role
             if pack.characters:
                 char = pack.characters[0]
                 ws.send_text(json.dumps({

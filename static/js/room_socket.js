@@ -264,16 +264,8 @@ export class RoomSocket {
     this.send('assign_role', { character, user_ids: userIds });
   }
 
-  setMode(mode) {
-    this.send('set_mode', { mode });
-  }
-
   setStatus(status) {
     this.send('set_status', { status });
-  }
-
-  setLine(lineIndex) {
-    this.send('set_line', { line_index: lineIndex });
   }
 
   updateTakeParams(lineIndex, params) {

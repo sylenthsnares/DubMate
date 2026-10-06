@@ -7,6 +7,7 @@ Regression suite for DSP-layer correctness and robustness hardening:
   - clamped client-supplied gain_db (no overflow)
   - master limiter respects its ceiling
   - reverb impulse generation does not mutate the global numpy RNG
+  - the numpy reverb convolution matches what scipy.signal.fftconvolve produced
 Uses Python's standard unittest framework, mirroring tests/test_noise_reduction.py conventions.
 """
 
@@ -209,6 +210,60 @@ class TestReverbImpulseRngIsolation(unittest.TestCase):
         audio_processor._REVERB_CACHE.clear()
         impulse_b = audio_processor.get_reverb_impulse(decay_sec=0.8, sr=44100).copy()
         np.testing.assert_array_equal(impulse_a, impulse_b)
+
+
+
+class TestReverbConvolution(unittest.TestCase):
+    """
+    The reverb used scipy.signal.fftconvolve; _fft_convolve replaces it with numpy's FFT.
+    These pin it to direct convolution, a closed form, and values scipy produced.
+    """
+
+    def setUp(self):
+        audio_processor._REVERB_CACHE.clear()
+
+    def _assert_close(self, actual, expected):
+        self.assertEqual(len(actual), len(expected))
+        rel = np.max(np.abs(actual - expected)) / np.max(np.abs(expected))
+        self.assertLess(rel, 1e-6, f"relative error {rel:.2e}")
+
+    def test_matches_direct_convolution(self):
+        impulse = audio_processor.get_reverb_impulse(decay_sec=0.2, sr=44100)
+        signal = (np.random.default_rng(3).random(1500).astype(np.float32) * 2.0 - 1.0) * 0.4
+        wet = audio_processor._fft_convolve(signal, impulse)
+        self.assertEqual(wet.dtype, np.float32)
+        self._assert_close(wet, np.convolve(signal.astype(np.float64), impulse.astype(np.float64)))
+
+    def test_unit_click_returns_the_impulse_shifted(self):
+        impulse = audio_processor.get_reverb_impulse(decay_sec=1.5, sr=44100)
+        click = np.zeros(100, dtype=np.float32)
+        click[37] = 1.0
+        wet = audio_processor._fft_convolve(click, impulse)
+        expected = np.zeros(len(click) + len(impulse) - 1)
+        expected[37:37 + len(impulse)] = impulse
+        self._assert_close(wet, expected)
+
+    def test_reverb_matches_values_scipy_produced(self):
+        # Exact (float64) scipy.signal.fftconvolve output for the 1.5s room impulse and a
+        # 0.1s 220 Hz sine, recorded before scipy was dropped.
+        impulse = audio_processor.get_reverb_impulse(decay_sec=1.5, sr=44100)
+        signal = (0.5 * np.sin(2 * np.pi * 220 * np.arange(4410) / 44100)).astype(np.float32)
+        wet = audio_processor._fft_convolve(signal, impulse)
+        self.assertEqual(len(wet), 70559)
+        peak = 0.5031437009364494
+        self.assertLess(abs(np.max(np.abs(wet)) - peak) / peak, 1e-6)
+        expected = {
+            0: 0.0,
+            881: 0.0,
+            1000: -0.04858226076354005,
+            4409: 0.10291148651404873,
+            4410: 0.09646071517548908,
+            10000: -0.3019853120853915,
+            40000: -0.07149926804006297,
+            70558: 1.0478345404326067e-05,
+        }
+        for index, value in expected.items():
+            self.assertLess(abs(float(wet[index]) - value) / peak, 1e-6, f"sample {index}")
 
 
 if __name__ == "__main__":

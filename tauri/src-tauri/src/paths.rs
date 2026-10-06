@@ -56,7 +56,7 @@ pub fn find_app_py(app: &tauri::AppHandle) -> Option<PathBuf> {
 
 /// Python executable names probed under each packaged runtime root, in probe order.
 #[cfg(target_os = "windows")]
-const PYTHON_EXE_NAMES: [&str; 2] = ["python.exe", "python-x86_64-pc-windows-msvc.exe"];
+const PYTHON_EXE_NAMES: [&str; 1] = ["python.exe"];
 #[cfg(not(target_os = "windows"))]
 const PYTHON_EXE_NAMES: [&str; 4] = ["bin/python3", "bin/python", "python3", "python"];
 
@@ -68,7 +68,6 @@ pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
                 res_dir.join("python-runtime").join(name),
                 res_dir.join("resources").join("python-runtime").join(name),
                 res_dir.join("sidecar").join("python-runtime").join(name),
-                res_dir.join(name),
             ];
             for p in candidates {
                 if p.is_file() {
@@ -86,7 +85,6 @@ pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
                     exe_dir.join("resources").join("python-runtime").join(name),
                     exe_dir.join("python-runtime").join(name),
                     exe_dir.join("sidecar").join("python-runtime").join(name),
-                    exe_dir.join(name),
                 ];
                 for p in candidates {
                     if p.is_file() {
@@ -102,7 +100,6 @@ pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
         #[cfg(target_os = "windows")]
         let candidates = [
             cwd.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python.exe"),
-            cwd.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python-x86_64-pc-windows-msvc.exe"),
             cwd.join("src-tauri").join("sidecar").join("python-runtime").join("python.exe"),
             cwd.join("sidecar").join("python-runtime").join("python.exe"),
             cwd.join(".venv").join("Scripts").join("python.exe"),
@@ -124,7 +121,6 @@ pub fn find_python_exe(app: &tauri::AppHandle) -> Option<PathBuf> {
             #[cfg(target_os = "windows")]
             let p_cands = [
                 parent.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python.exe"),
-                parent.join("tauri").join("src-tauri").join("sidecar").join("python-runtime").join("python-x86_64-pc-windows-msvc.exe"),
                 parent.join(".venv").join("Scripts").join("python.exe"),
             ];
             #[cfg(not(target_os = "windows"))]

@@ -80,25 +80,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     room.role_assignments[character] = assigned_user_ids
                     await room.broadcast("role_assigned", {"character": character, "user_ids": assigned_user_ids})
 
-            elif msg_type == "set_mode":
-                new_mode = payload.get("mode", "booth")
-                if new_mode in ("booth", "studio"):
-                    room.mode = new_mode
-                    await room.broadcast("mode_changed", {"mode": new_mode})
-
             elif msg_type == "set_status":
                 new_status = payload.get("status", "lobby")
                 if new_status in ("lobby", "recording", "screening"):
                     room.status = new_status
                     await room.broadcast("status_changed", {"status": new_status})
-
-            elif msg_type == "set_line":
-                line_idx = payload.get("line_index", 0)
-                if 0 <= line_idx < len(room.pack.lines):
-                    room.current_line = line_idx
-                    if user_id in room.users:
-                        room.users[user_id]["current_line"] = line_idx
-                    await room.broadcast("line_changed", {"line_index": line_idx, "user_id": user_id})
 
             elif msg_type == "update_take_params":
                 raw_idx = payload.get("line_index")

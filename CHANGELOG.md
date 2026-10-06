@@ -1,8 +1,26 @@
-# DubMate Studio Changelog
+# DubMate Changelog
 
 ## [Unreleased]
 
+### Added
+- **Remove Pack Builder**: in the desktop app, Audio settings can remove the Pack Builder add-on and show how much space that frees. DubMate restarts afterwards.
+- **Version Note When Joining**: if your DubMate and the host's are on different versions, joining shows which side should update. Joining is never blocked.
+- **"You Left" Screen**: members who joined from a browser link see a short screen with a room-code box after leaving, instead of the host's pack library.
+- **Update Progress**: desktop updates show real download progress instead of jumping to 100%.
+- **macOS Room Codes Launcher**: `run_cloudflare.sh` starts DubMate with a public room code on macOS source installs.
+- **Tooltips**: secondary explanations moved into tooltips that also open on keyboard focus.
+
+### Changed
+- **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
+- **Gentler Noise Reduction**: noise reduction no longer runs at maximum strength, and the fallback no longer gates out whispers and breaths. Cleaned takes are rebuilt when the settings change.
+- **ZIPs Saved Once**: on the host's own computer, project and pack ZIPs are saved once to the export folder instead of also landing in Downloads.
+- **Error Details**: raw error text now sits behind "Show details".
+- **Smaller Install**: scipy is no longer needed.
+- **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
+- **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
+
 ### Removed
+- **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
 - **Host Transfer**: the "Make Host" button and the hand-off flow that moved a running room to another member's machine are gone. The unused client-version check on room join was removed with it.
 - **COMPRESS Rocker**: the booth's compressor switch only affected the in-browser preview; the exported video was never compressed, so previews played louder or quieter than the export. Preview and export now go through the same processing.
 - **Registry `/rooms/:code/update` Route (worker)**: nothing called it, and it let anyone holding the shared app key repoint a live room. Re-registering a room now always needs that room's own token. Takes effect after the worker is redeployed with `npm run cf:deploy`.
@@ -10,6 +28,9 @@
 - **Legacy Leftovers**: `scripts/launch_local.py`, reuse of cached FFmpeg zips from the temp folder, copying of a root-level `cloudflared.exe` into `tools\`, and several unused engine routes.
 
 ### Fixed
+- **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.
+- **Export Folder Cleanup**: creating a room no longer deletes earlier renders and ZIPs from your export folder.
+- **Outdated Link Importer**: when a link import fails because the downloader is out of date, Pack Builder says so and shows how to update it.
 - **Wrong Background Track in the Next Scene**: after recording one scene, the next scene could play the previous scene's backing track.
 - **Leaving a Host's Room**: party members who joined a room hosted on another machine now return to their own studio and pack list when they leave, instead of staying on the host's.
 - **Auto Volume Matching**: each take is now matched to the loudness measured from its own original line, instead of a fixed -21 dBFS for every line. Re-takes get their own level, boosts never push the take's peak above -1 dBFS, and toggling noise reduction re-matches the take. Stale per-pack `*_loudness.json` files from older versions are no longer read.

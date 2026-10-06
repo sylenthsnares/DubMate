@@ -1,5 +1,5 @@
 ---
-name: DubMate Studio Pro
+name: DubMate
 description: Warm Wood & Minimalist Analog Guitar Amp Studio DAW
 colors:
   bg-darkest: "#0d080b"

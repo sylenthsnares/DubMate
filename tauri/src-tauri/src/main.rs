@@ -62,6 +62,7 @@ fn main() {
             apply_update,
             packbuilder::get_packbuilder_status,
             packbuilder::install_packbuilder,
+            packbuilder::remove_packbuilder,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed
@@ -106,7 +107,7 @@ async fn apply_update(download_url: String, app: tauri::AppHandle) -> Result<(),
 
     // The running engine still holds the previous Python modules in memory. Without this
     // restart the freshly downloaded fixes stay inert until the next cold launch.
-    let _ = app.emit("startup-progress", "Restarting Studio Engine with the update...");
+    let _ = app.emit("startup-progress", "Restarting DubMate to finish the update");
     kill_sidecars(&app);
     start_sidecars(app.clone()).await;
 

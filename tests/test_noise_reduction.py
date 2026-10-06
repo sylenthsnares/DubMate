@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 import numpy as np
 from starlette.testclient import TestClient
 
@@ -117,7 +118,8 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertTrue(os.path.isfile(saved["denoised_path"]))
 
             raw_wav = os.path.join(room_dir, "take_line_0_raw.wav")
-            denoised_wav = os.path.join(room_dir, "take_line_0_denoised.wav")
+            denoised_wav = audio_processor.denoised_take_path(room_dir, 0)
+            self.assertEqual(saved["denoised_path"], denoised_wav)
             active_wav = os.path.join(room_dir, "take_line_0.wav")
 
             self.assertTrue(os.path.exists(raw_wav))
@@ -147,6 +149,48 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertTrue(toggled_on["noise_reduction"])
             self.assertEqual(os.path.getsize(active_wav), os.path.getsize(denoised_wav))
 
+        finally:
+            shutil.rmtree(room_dir, ignore_errors=True)
+
+    def test_03b_changed_setting_rebuilds_cleaned_take(self):
+        """A changed noise-reduction setting cleans the take again and deletes the old cleaned files."""
+        test_room = "TEST_NR_ROOM_REFRESH"
+        room_dir = audio_processor.get_room_cache_dir(test_room)
+        take_bytes = generate_synthetic_wav_bytes(1.0, add_noise=True)
+        try:
+            saved = audio_processor.save_uploaded_take(
+                test_room, line_index=0, audio_bytes=take_bytes, enable_noise_reduction=True
+            )
+            old_denoised = saved["denoised_path"]
+            raw_wav = os.path.join(room_dir, "take_line_0_raw.wav")
+            self.assertTrue(os.path.isfile(old_denoised))
+            # A cleaned file left by an older version, and another line's cleaned take.
+            legacy = os.path.join(room_dir, "take_line_0_denoised.wav")
+            shutil.copy2(old_denoised, legacy)
+            other_line = os.path.join(room_dir, "take_line_10_denoised.wav")
+            shutil.copy2(old_denoised, other_line)
+
+            # Same settings: the cached cleaned take is reused.
+            with mock.patch.object(audio_processor, "apply_noise_reduction") as nr:
+                audio_processor.toggle_take_noise_reduction(test_room, 0, enable_noise_reduction=True)
+            nr.assert_not_called()
+
+            # Changed setting: a fresh cleaned file is written and the old ones are removed.
+            with mock.patch.object(audio_processor, "NR_ATTENUATION_DB", 20.0):
+                new_denoised = audio_processor.denoised_take_path(room_dir, 0)
+                self.assertNotEqual(new_denoised, old_denoised)
+                toggled = audio_processor.toggle_take_noise_reduction(test_room, 0, enable_noise_reduction=True)
+            self.assertTrue(toggled["noise_reduction"])
+            self.assertTrue(os.path.isfile(new_denoised))
+            self.assertFalse(os.path.exists(old_denoised))
+            self.assertFalse(os.path.exists(legacy))
+            self.assertTrue(os.path.exists(other_line))
+            self.assertTrue(os.path.isfile(raw_wav))
+
+            # A new recording saved without noise reduction drops the stale cleaned take.
+            audio_processor.save_uploaded_take(test_room, line_index=0, audio_bytes=take_bytes, enable_noise_reduction=False)
+            self.assertFalse(os.path.exists(new_denoised))
+            self.assertTrue(os.path.isfile(raw_wav))
         finally:
             shutil.rmtree(room_dir, ignore_errors=True)
 

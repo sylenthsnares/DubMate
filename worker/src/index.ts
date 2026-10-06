@@ -97,7 +97,7 @@ function errorHtml(message: string): Response {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DubMate Studio - Room Error</title>
+  <title>DubMate - Room Error</title>
   <style>
     body {
       margin: 0;
@@ -145,7 +145,7 @@ function errorHtml(message: string): Response {
   <div class="card">
     <h1>⚠️ Room Unavailable</h1>
     <p>${message}</p>
-    <div class="badge">DubMate Studio</div>
+    <div class="badge">DubMate</div>
   </div>
 </body>
 </html>`;

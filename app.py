@@ -61,7 +61,7 @@ def require_local_request(request: Request) -> None:
     tunnel guest from the host; the headers Cloudflare adds can.
     """
     if request.headers.get("cf-connecting-ip") or request.headers.get("cf-ray"):
-        raise HTTPException(status_code=403, detail="This setting can only be changed on the host machine")
+        raise HTTPException(status_code=403, detail="This can only be changed on the host's computer.")
 
 
 DEFAULT_ENGINE_PORT = 8000
@@ -221,7 +221,7 @@ async def update_config(payload: Dict[str, Any], request: Request):
     packs_dir = (payload.get("packs_dir") or "").strip()
     exports_dir = (payload.get("exports_dir") or "").strip()
     if not packs_dir and not exports_dir:
-        raise HTTPException(status_code=400, detail="packs_dir or exports_dir is required")
+        raise HTTPException(status_code=400, detail="Enter a folder path.")
 
     messages = []
     count = None
@@ -230,14 +230,14 @@ async def update_config(payload: Dict[str, Any], request: Request):
         if not pack_loader._dir_is_writable(exports_dir):
             raise HTTPException(
                 status_code=400,
-                detail=f"Export folder is not writable: {exports_dir}",
+                detail=f"DubMate can't save to {exports_dir}. Choose another folder.",
             )
         cfg = pack_loader.load_config()
         cfg["exports_dir"] = exports_dir
         if not pack_loader.save_config(cfg):
-            raise HTTPException(status_code=500, detail="Could not persist export folder setting")
+            raise HTTPException(status_code=500, detail="Couldn't save the export folder. Try again.")
         new_exports_dir = common.refresh_exports_dir()
-        messages.append(f"Export folder set to {new_exports_dir}")
+        messages.append(f"Export folder set to {new_exports_dir}.")
 
     if packs_dir:
         success, message, count = await asyncio.to_thread(packs_cache.switch_packs_dir, packs_dir)

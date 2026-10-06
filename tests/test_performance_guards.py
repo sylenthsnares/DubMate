@@ -32,7 +32,7 @@ from app import app
 
 
 def test_scipy_is_not_imported_at_startup():
-    """scipy must stay lazy; importing it eagerly is most of the cold start."""
+    """scipy is no longer a dependency; if it comes back eagerly it is most of the cold start."""
     import subprocess
     probe = (
         "import sys, app; "
@@ -41,7 +41,7 @@ def test_scipy_is_not_imported_at_startup():
     res = subprocess.run([_sys.executable, "-c", probe], capture_output=True, text=True, cwd=PROJECT_ROOT)
     assert res.returncode == 0, f"probe failed to import app:\n{res.stderr[-400:]}"
     assert "SCIPY_LOADED False" in res.stdout, (
-        "scipy is being imported at startup again; keep it inside the reverb path.\n"
+        "scipy is being imported at startup again; the reverb uses numpy's FFT and does not need it.\n"
         f"stdout={res.stdout[-400:]}\nstderr={res.stderr[-400:]}"
     )
     print("[PASS] scipy stays out of the startup import graph")

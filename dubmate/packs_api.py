@@ -38,7 +38,7 @@ async def rescan_packs():
         "count": len(registry),
         "packs": [p.to_dict() for p in registry.values()],
         "scanned_paths": scanned_folders,
-        "message": f"Successfully rescanned {len(registry)} scene packs from {', '.join(scanned_folders)}",
+        "message": f"Found {len(registry)} scene packs.",
     }
 
 
@@ -61,7 +61,7 @@ async def import_pack_files(
         uploaded_files.append(file)
 
     if not uploaded_files:
-        raise HTTPException(status_code=400, detail="No files uploaded for pack import.")
+        raise HTTPException(status_code=400, detail="No file was uploaded.")
 
     # 1. Check if folder tree with relative paths was provided
     if paths:
@@ -100,16 +100,16 @@ async def import_pack_files(
         try:
             content = await single_file.read()
             if len(content) > pack_loader.MAX_ARCHIVE_SIZE_BYTES:
-                raise HTTPException(status_code=413, detail="Archive exceeds maximum allowed size (500 MB).")
+                raise HTTPException(status_code=413, detail="That file is over the 500 MB limit.")
 
             pack = await asyncio.to_thread(pack_loader.import_pack_archive, content, single_file.filename)
             if not pack:
-                raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
+                raise HTTPException(status_code=422, detail="That .zip doesn't contain a scene pack.")
 
             await asyncio.to_thread(packs_cache.get_packs_registry, True)
             return {
                 "status": "ok",
-                "message": f"Successfully verified and imported pack '{pack.name}'",
+                "message": f"Imported '{pack.name}'.",
                 "pack": pack.to_dict(),
                 "packs": [pack.to_dict()],
                 "imported_count": 1,
@@ -125,7 +125,7 @@ async def import_pack_files(
             raise
         except Exception as ex:
             print(f"[app] Error importing pack: {ex}")
-            raise HTTPException(status_code=500, detail=f"Import failed: {str(ex)}")
+            raise HTTPException(status_code=500, detail="Couldn't import that pack. Check the file and try again.")
 
     # Multi-zip batch upload
     archive_tuples = []
@@ -135,7 +135,7 @@ async def import_pack_files(
             archive_tuples.append((content, uf.filename))
 
     if not archive_tuples:
-        raise HTTPException(status_code=400, detail="No valid .zip archives found in upload.")
+        raise HTTPException(status_code=400, detail="Choose a .zip file.")
 
     result = await asyncio.to_thread(pack_loader.import_multiple_pack_archives, archive_tuples)
     await asyncio.to_thread(packs_cache.get_packs_registry, True)
@@ -244,4 +244,4 @@ async def export_pack_zip(pack_id: str):
         )
     except Exception as ex:
         print(f"[PackExportError] Error generating pack ZIP for {pack_id}: {ex}")
-        raise HTTPException(status_code=500, detail=f"Failed to export pack ZIP: {str(ex)}")
+        raise HTTPException(status_code=500, detail="Couldn't prepare that pack for download. Try again.")

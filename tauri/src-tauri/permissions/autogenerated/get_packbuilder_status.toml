@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-packbuilder-status"
+description = "Enables the get_packbuilder_status command without any pre-configured scope."
+commands.allow = ["get_packbuilder_status"]
+
+[[permission]]
+identifier = "deny-get-packbuilder-status"
+description = "Denies the get_packbuilder_status command without any pre-configured scope."
+commands.deny = ["get_packbuilder_status"]

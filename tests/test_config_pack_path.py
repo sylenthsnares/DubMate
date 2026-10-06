@@ -76,7 +76,7 @@ class TestConfigPackPath(unittest.TestCase):
         fake_path = os.path.join(tempfile.gettempdir(), "non_existent_packs_dir_99999")
         resp2 = self.client.post("/api/config", json={"packs_dir": fake_path})
         self.assertEqual(resp2.status_code, 400)
-        self.assertIn("Directory does not exist", resp2.json()["detail"])
+        self.assertIn("That folder doesn't exist", resp2.json()["detail"])
         print("[Test 2] Invalid paths rejected with 400 status and clear error message.")
 
     def test_03_custom_packs_folder_persistence_and_scan(self):

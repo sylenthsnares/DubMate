@@ -39,6 +39,11 @@ export class AnalogKnob {
     this.container.setAttribute('aria-valuemin', this.min);
     this.container.setAttribute('aria-valuemax', this.max);
     this.container.setAttribute('aria-valuenow', this.input.value);
+    // The dial, not the hidden input, takes focus, so it carries the tooltip.
+    if (this.input.dataset.tip) {
+      this.container.dataset.tip = this.input.dataset.tip;
+      this.input.removeAttribute('data-tip');
+    }
 
     // Insert wrapper right before input, then move input inside (hidden for screen readers)
     this.input.parentNode.insertBefore(this.container, this.input);

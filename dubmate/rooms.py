@@ -50,8 +50,6 @@ class Room:
 
         # Takes: line_index -> take info dict
         self.takes: Dict[int, Dict[str, Any]] = {}
-        self.current_line: int = 0
-        self.mode: str = "booth"  # "booth" (solo self-paced) or "studio" (synced prompter)
         self.status: str = "lobby"  # "lobby" | "recording" | "screening"
         self.exported_video_path: Optional[str] = None
         self.exported_video_9_16_path: Optional[str] = None
@@ -135,8 +133,6 @@ class Room:
                 "users": self.users,
                 "role_assignments": self.role_assignments,
                 "takes": self.takes,
-                "current_line": self.current_line,
-                "mode": self.mode,
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
             }
@@ -179,8 +175,6 @@ class Room:
                 }
                 for k, v in self.takes.items()
             },
-            "current_line": self.current_line,
-            "mode": self.mode,
             "status": self.status,
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
             "has_export": has_export,
@@ -218,7 +212,11 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     """
     Strict Single-Session Retention Policy:
     Ensures only the latest / active session is kept on disk and in memory.
-    Purges all older room folders, old takes, and outdated export videos to keep the server ultra-light.
+    Purges all older room folders and their takes to keep the server ultra-light.
+
+    The exports folder is never touched. It is the user's folder (often one they
+    chose), the host is told a render or project ZIP is "saved" there, and it can
+    hold files DubMate didn't write. Pruning it deleted those on the next new room.
     """
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
@@ -269,20 +267,6 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     for r in to_delete:
         ROOMS.pop(r, None)
 
-    # Prune old exports in the exports folder
-    if os.path.isdir(common.exports_dir()):
-        for fname in os.listdir(common.exports_dir()):
-            if fname.endswith((".mp4", ".zip")):
-                if retained_id and retained_id in fname.upper():
-                    continue
-                if any(a in fname.upper() for a in active_ids):
-                    continue
-                try:
-                    os.remove(os.path.join(common.exports_dir(), fname))
-                    print(f"[DubMate Cache Pruner] Removed old export/zip: {fname}")
-                except Exception:
-                    pass
-
 
 def load_persisted_rooms():
     prune_sessions()
@@ -313,8 +297,6 @@ def load_persisted_rooms():
                     room.role_assignments = data.get("role_assignments", room.role_assignments)
                     raw_takes = data.get("takes", {})
                     room.takes = {int(k): v for k, v in raw_takes.items()}
-                    room.current_line = data.get("current_line", 0)
-                    room.mode = data.get("mode", "booth")
                     room.status = data.get("status", "lobby")
                     room.exported_video_path = data.get("exported_video_path")
                     ROOMS[r_id.upper()] = room

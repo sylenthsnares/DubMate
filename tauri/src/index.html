@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DubMate Studio Pro</title>
+  <title>DubMate</title>
   <style>
     :root {
       --bg: #0d0d10;
@@ -252,6 +252,9 @@
     }
     .tech-details summary::-webkit-details-marker { display: none; }
     .tech-details summary:hover { color: var(--text-muted); }
+    .error-details {
+      margin: -8px 0 16px 0;
+    }
     .tech-log {
       margin-top: 8px;
       font-family: monospace;
@@ -271,15 +274,15 @@
 </head>
 <body>
   <div id="splash" class="splash">
-    <div class="logo">🎙️ DUBMATE <span>STUDIO PRO</span></div>
+    <div class="logo">DUBMATE</div>
     <div class="spinner"></div>
-    <div id="status-text" class="status">Starting Studio Engine...</div>
-    <div id="detail-text" class="detail">Initializing local services...</div>
+    <div id="status-text" class="status">Starting DubMate</div>
+    <div id="detail-text" class="detail"></div>
   </div>
 
   <div id="updater-box" class="updater-box">
-    <div class="logo">🎙️ DUBMATE <span id="updater-title">UPDATE</span></div>
-    <p id="updater-msg" style="font-size: 13px; color: #a1a1aa; margin-top: 8px;">Applying update...</p>
+    <div class="logo">DUBMATE <span id="updater-title">UPDATE</span></div>
+    <p id="updater-msg" style="font-size: 13px; color: #a1a1aa; margin-top: 8px;">Updating DubMate</p>
 
     <div id="builder-stages" class="stages" style="display: none;">
       <div class="stage" data-stage="preparing"><span class="stage-dot"></span>Prepare</div>
@@ -298,23 +301,27 @@
     </div>
     <div class="progress-meta">
       <span id="progress-percent">0%</span>
-      <span id="progress-text">Downloading bundle...</span>
+      <span id="progress-text"></span>
     </div>
 
     <details id="tech-details" class="tech-details" style="display: none;">
-      <summary>Technical details</summary>
+      <summary>Details</summary>
       <div id="tech-log" class="tech-log"></div>
     </details>
   </div>
 
   <div id="error-box" class="error-box">
-    <div class="logo">🎙️ DUBMATE <span>STUDIO</span></div>
+    <div class="logo">DUBMATE</div>
     <div class="error-icon">⚠️</div>
-    <h3 id="error-title" class="error-title">Engine Startup Delayed</h3>
-    <p id="error-msg" class="error-msg">The Studio engine at http://127.0.0.1:8000 could not be reached.</p>
+    <h3 id="error-title" class="error-title">DubMate didn't start</h3>
+    <p id="error-msg" class="error-msg">Click Try again, or open DubMate in your browser.</p>
+    <details id="error-details" class="tech-details error-details" style="display: none;">
+      <summary>Show details</summary>
+      <div id="error-raw" class="tech-log"></div>
+    </details>
     <div class="error-actions">
-      <button id="btn-retry" class="btn btn-primary">🔄 Retry Connection</button>
-      <button id="btn-open-browser" class="btn btn-secondary">🌐 Open in Browser</button>
+      <button id="btn-retry" class="btn btn-primary">Try again</button>
+      <button id="btn-open-browser" class="btn btn-secondary">Open in browser</button>
     </div>
   </div>
 

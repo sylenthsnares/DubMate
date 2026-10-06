@@ -12,7 +12,6 @@ import ast
 import json
 import os
 import re
-import tomllib
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -77,12 +76,39 @@ def test_app_local_imports_are_shipped():
     print(f"[PASS] every project module app.py imports is shipped: {sorted(local)}")
 
 
+def test_ffmpeg_pin_matches():
+    """Both Windows scripts fetch one pinned FFmpeg and check its SHA-256 before extracting."""
+    pins = {}
+    for parts in (("scripts", "download_tools.ps1"), ("tauri", "scripts", "stage-sidecars.ps1")):
+        src = _read(*parts)
+        url = re.search(r'\$FfmpegUrl\s*=\s*"([^"]+)"', src).group(1)
+        sha = re.search(r'\$FfmpegSha256\s*=\s*"([^"]+)"', src).group(1)
+        assert re.fullmatch(r"[0-9a-f]{64}", sha), f"{parts[-1]}: bad SHA-256 {sha!r}"
+        assert "latest" not in url, f"{parts[-1]}: FFmpeg URL is not pinned: {url}"
+        block = src[src.index("$FfmpegUrl"):]
+        assert block.index("-ne $FfmpegSha256") < block.index("Expand-Archive"), f"{parts[-1]}: extracts before verifying"
+        others = set(re.findall(r'https://[^"\s]*ffmpeg[^"\s]*', src, re.I)) - {url}
+        assert not others, f"{parts[-1]}: unpinned FFmpeg URLs: {sorted(others)}"
+        pins[parts[-1]] = (url, sha)
+    assert len(set(pins.values())) == 1, f"FFmpeg pins differ: {pins}"
+    print(f"[PASS] both Windows scripts pin {pins['download_tools.ps1'][0].rsplit('/', 1)[-1]} with one SHA-256")
+
+
+def _cargo_package_version(cargo_toml: str) -> str:
+    # tomllib is 3.11+; the project supports 3.10, and only [package].version is needed.
+    package = re.search(r"^\[package\]\s*$(.*?)(?=^\[|\Z)", cargo_toml, re.M | re.S)
+    assert package, "Cargo.toml has no [package] section"
+    version = re.search(r'^version\s*=\s*"([^"]+)"', package.group(1), re.M)
+    assert version, "Cargo.toml [package] has no version"
+    return version.group(1)
+
+
 def test_versions_consistent():
     versions = {
         "VERSION": _read("VERSION").strip(),
         "tauri.conf.json": json.loads(_read("tauri", "src-tauri", "tauri.conf.json"))["version"],
         "package.json": json.loads(_read("tauri", "package.json"))["version"],
-        "Cargo.toml": tomllib.loads(_read("tauri", "src-tauri", "Cargo.toml"))["package"]["version"],
+        "Cargo.toml": _cargo_package_version(_read("tauri", "src-tauri", "Cargo.toml")),
     }
     assert len(set(versions.values())) == 1, f"version mismatch: {versions}"
     print(f"[PASS] all versions are {versions['VERSION']}")
@@ -91,5 +117,6 @@ def test_versions_consistent():
 if __name__ == "__main__":
     test_ship_lists_match()
     test_app_local_imports_are_shipped()
+    test_ffmpeg_pin_matches()
     test_versions_consistent()
     print("\n[OK] Release metadata suite passed")
