@@ -163,10 +163,18 @@ Details: ${e}`,
           if (techDetails) techDetails.style.display = "none";
           if (progressBar) progressBar.classList.remove("is-idle");
           if (progressHeadline) progressHeadline.innerText = "Downloading the update";
-          if (progressFill) progressFill.style.width = `${p.percentage}%`;
-          if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
-          if (progressText) {
-            progressText.innerText = `${(p.received / (1024 * 1024)).toFixed(1)} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
+          const receivedMb = (p.received / (1024 * 1024)).toFixed(1);
+          if (p.total > 0) {
+            if (progressFill) progressFill.style.width = `${p.percentage}%`;
+            if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
+            if (progressText) {
+              progressText.innerText = `${receivedMb} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
+            }
+          } else {
+            // Size unknown: a full bar with the moving sheen, and just the amount so far.
+            if (progressFill) progressFill.style.width = "100%";
+            if (progressPercent) progressPercent.innerText = "";
+            if (progressText) progressText.innerText = `${receivedMb} MB`;
           }
         }
       });
