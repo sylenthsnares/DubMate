@@ -4503,6 +4503,27 @@ svg {
   margin-top: 4px;
 }
 
+.room-check-standard {
+  margin-top: 4px;
+  padding-left: 0;
+}
+
+.room-check-loud {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.room-check-loud p {
+  align-self: stretch;
+}
+
+.room-check-refresh {
+  margin-top: 9px;
+}
+
 @media (max-width: 640px) {
   .audio-recovery-grid {
     grid-template-columns: 1fr;

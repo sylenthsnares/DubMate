@@ -696,6 +696,12 @@ export class AudioEngine {
     if (this.currentClip) this.currentClip.cancel();
   }
 
+  /** Decodes a recordClip() blob into an AudioBuffer. */
+  async decodeClip(blob) {
+    this.initContext();
+    return this.ctx.decodeAudioData(await blob.arrayBuffer());
+  }
+
   /** Drops every cached version of this take's audio (any ?v=). */
   evictTakeCache(take) {
     const audioKey = takeAudioKey(take);

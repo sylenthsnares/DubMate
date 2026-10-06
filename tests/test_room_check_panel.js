@@ -6,8 +6,11 @@
  * card (light, word, sentence, advice) and the row's text. A silent check stores nothing;
  * a different microphone asks for a new check and its takes are sent with no check id; a
  * stored check the engine no longer has is dropped when Audio settings opens; mic sync
- * and the check wait for each other. The audio engine's recordClip and the engine routes
- * are stubbed; recordClip itself is checked against a stub MediaRecorder.
+ * and the check wait for each other. Use standard cleanup forgets the check, Refresh older
+ * takes posts my id and the current check and ends on cleanup_refreshed, and Check your
+ * loudest line gives level advice without storing or sending anything. The audio engine's
+ * recordClip and the engine routes are stubbed; recordClip itself is checked against a stub
+ * MediaRecorder.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -113,6 +116,7 @@ async function boot(url, { stored = null, profileStatus = 200, post = { profile_
     }
     if (u.startsWith("/api/noise_profiles/") && method === "GET") return respond(env.profileStatus, env.profileStatus === 200 ? { verdict: "good" } : { detail: "gone" });
     if (u.startsWith("/api/noise_profiles/") && method === "DELETE") return respond(200, { status: "ok", deleted: true });
+    if (/\/cleanup\/refresh$/.test(u)) return env.refresh ? respond(env.refresh.status, env.refresh.body) : respond(200, { status: "ok", refreshing: 2 });
     if (/\/takes$/.test(u)) {
       return respond(200, { take: { take_id: "k1", url: "/x.wav" }, line: { picked: "k1", next_number: 2, takes: [] } });
     }
@@ -139,7 +143,7 @@ async function boot(url, { stored = null, profileStatus = 200, post = { profile_
   audio.startInputMonitor = async () => { env.log.meterOn++; return {}; };
   audio.stopInputMonitor = () => { env.log.meterOff++; };
   audio.readInputLevel = () => ({ rmsDb: -60, peakDb: -60 });
-  audio.recordClip = (ms, onProgress) => new Promise((resolve, reject) => {
+  audio.recordClip = (ms, onProgress = () => {}) => new Promise((resolve, reject) => {
     onProgress(0, ms);
     onProgress(ms / 2, ms);
     env.log.clips.push(ms);
@@ -148,6 +152,15 @@ async function boot(url, { stored = null, profileStatus = 200, post = { profile_
       reject,
     };
   });
+  // The loudest line: a 440 Hz tone peaking at env.loudPeak (linear), after 0.3 s of silence.
+  env.loudPeak = 0.74;
+  audio.decodeClip = async () => {
+    env.log.decodes = (env.log.decodes || 0) + 1;
+    const rate = 8000;
+    const samples = new Float32Array(Math.round(rate * 3.3));
+    for (let i = Math.round(rate * 0.3); i < samples.length; i++) samples[i] = env.loudPeak * Math.sin(2 * Math.PI * 440 * i / rate);
+    return { sampleRate: rate, getChannelData: () => samples };
+  };
   audio.cancelClip = () => {
     env.log.cancels++;
     if (env.clip) env.clip.reject(new Error("Recording cancelled"));
@@ -284,6 +297,7 @@ async function upload(env) {
     if (!shown(card) || !card.classList.contains("is-error")) fail("silent check not shown as a problem");
     if (text($(env, "room-check-sentence")) !== SILENT) fail(`silent copy: ${text($(env, "room-check-sentence"))}`);
     if (shown($(env, "room-check-verdict")) || shown($(env, "room-check-advice"))) fail("silent card shows a light or advice");
+    if (shown($(env, "room-check-loud"))) fail("silent card offers the loudest-line check");
     if (env.w.localStorage.getItem(KEY) !== null) fail("a silent check was stored");
     if (text($(env, "room-check-status")) !== "Not checked yet") fail(`row after a silent check: ${text($(env, "room-check-status"))}`);
     if (text($(env, "btn-room-check")) !== "Check your room") fail("button after a silent check");
@@ -437,12 +451,133 @@ async function upload(env) {
     const env = await boot(GUEST);
     const status = $(env, "room-check-status");
     if (status.getAttribute("data-tip") !== GUEST_TIP || status.getAttribute("tabindex") !== "0") fail("guest tooltip");
-    for (const id of ["btn-room-check", "btn-start-room-check", "btn-cancel-room-check"]) {
+    for (const id of ["btn-room-check", "btn-start-room-check", "btn-cancel-room-check", "btn-room-check-standard",
+      "btn-room-loud-line", "btn-room-check-refresh"]) {
       const b = $(env, id);
       if (!b || b.tagName !== "BUTTON" || b.getAttribute("type") !== "button" || b.tabIndex < 0 || !text(b)) fail(`${id} is not a named button`);
     }
     if ($(env, "modal-mic-calibration") || $(env, "btn-calibrate-mic")) fail("the old calibration dialog is still there");
     console.log("PASS: guests see the row with the tooltip; buttons are focusable and named; the old dialog is gone");
+  }
+
+  // 10. Use standard cleanup forgets the check; Refresh older takes moves my takes over.
+  {
+    const { TAKE_STATE_VERSION } = await import(pathToFileURL(path.join(PROJECT_ROOT, "static", "js", "studio", "takes.js")).href);
+    const env = await boot(HOST, { stored: storedCheck() });
+    const takesWith = (profileId) => ({
+      t1000: { picked: "k1", next_number: 3, takes: [
+        { take_id: "k1", user_id: "u1", noise_reduction: true, nr_settings: profileId ? { profile_id: profileId, attenuation_db: 28, notches_hz: [] } : null },
+        { take_id: "k2", user_id: "u1", noise_reduction: true, nr_settings: profileId ? { profile_id: profileId, attenuation_db: 28, notches_hz: [] } : null },
+        { take_id: "k3", user_id: "u2", noise_reduction: true, nr_settings: null },
+      ] },
+    });
+    const setRoom = (takes) => {
+      env.app.user = { id: "u1", name: "Ana" };
+      env.app.roomState = {
+        room_id: "DUB-AB12", host_id: "u1", state_version: TAKE_STATE_VERSION,
+        pack: { id: "P", lines: [{ line_id: "t1000", character: "Ana" }], characters: ["Ana"] },
+        takes, users: {},
+      };
+      env.app.renderRoomCheckRow();
+    };
+    setRoom(takesWith(OLD_ID));
+    const link = $(env, "btn-room-check-standard");
+    const refresh = $(env, "room-check-refresh");
+    if (!shown(link) || text(link) !== "Use standard cleanup") fail("Use standard cleanup not offered with a check");
+    if (link.getAttribute("data-tip") !== "Forget this room check. New takes get standard cleanup.") fail(`link tooltip: ${link.getAttribute("data-tip")}`);
+    if (shown(refresh)) fail("Refresh offered with every take on the current check");
+
+    link.click();
+    await tick(20);
+    const del = env.calls.filter((c) => c.method === "DELETE");
+    if (del.length !== 1 || del[0].url !== `/api/noise_profiles/${OLD_ID}`) fail(`deletes: ${JSON.stringify(del.map((c) => c.url))}`);
+    if (env.w.localStorage.getItem(KEY) !== null) fail("Use standard cleanup kept the stored check");
+    if (text($(env, "room-check-status")) !== "Not checked yet") fail(`row after Use standard cleanup: ${text($(env, "room-check-status"))}`);
+    if (shown(link)) fail("Use standard cleanup still shown");
+    if (env.w.document.activeElement !== $(env, "btn-room-check")) fail("focus lost after Use standard cleanup");
+    if (!shown(refresh)) fail("Refresh not offered for takes cleaned with the forgotten check");
+    if (text($(env, "room-check-refresh-text")) !== "2 of your takes were cleaned with an earlier room check.") {
+      fail(`refresh text: ${text($(env, "room-check-refresh-text"))}`);
+    }
+    if ((await upload(env)).get("noise_profile_id") !== "") fail("standard cleanup upload sent a check id");
+    setRoom(takesWith(OLD_ID));
+
+    // Refresh posts my id and the current check (none), then waits for cleanup_refreshed.
+    const btn = $(env, "btn-room-check-refresh");
+    btn.click();
+    await tick(20);
+    const post = env.calls.find((c) => c.url === "/api/rooms/DUB-AB12/cleanup/refresh");
+    if (!post || post.method !== "POST") fail("Refresh did not post");
+    if (post.body !== JSON.stringify({ user_id: "u1", noise_profile_id: null })) fail(`refresh body: ${post.body}`);
+    if (!btn.disabled || text($(env, "room-check-refresh-text")) !== "Refreshing older takes…") fail("no sign the refresh is running");
+    env.toasts.length = 0;
+    const state = { ...env.app.roomState, takes: takesWith(null) };
+    env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u2", count: 1 }, state });
+    if (env.toasts.length) fail(`someone else's refresh toasted: ${JSON.stringify(env.toasts)}`);
+    env.app.socket.emit("cleanup_refreshed", { type: "cleanup_refreshed", payload: { user_id: "u1", count: 2 }, state });
+    if (JSON.stringify(env.toasts) !== JSON.stringify(["Older takes refreshed."])) fail(`toasts: ${JSON.stringify(env.toasts)}`);
+    if (shown(refresh)) fail("Refresh still offered after the refresh");
+
+    // A new check: the takes are older than it. A render in progress refuses with its reason.
+    env.w.localStorage.setItem(KEY, storedCheck({ profile_id: NEW_ID }));
+    env.app.renderRoomCheckRow();
+    if (text($(env, "room-check-refresh-text")) !== "2 of your takes were cleaned before this check.") {
+      fail(`refresh text with a check: ${text($(env, "room-check-refresh-text"))}`);
+    }
+    if (btn.getAttribute("data-tip") !== "Cleans them again with your latest room check. Your original recordings are kept.") fail("refresh tooltip");
+    env.refresh = { status: 409, body: { detail: "A video is rendering. Refresh older takes when it's done." } };
+    env.toasts.length = 0;
+    const posts = env.calls.length;
+    btn.click();
+    await tick(20);
+    const refused = env.calls.slice(posts).find((c) => /cleanup\/refresh$/.test(c.url));
+    if (!refused || JSON.parse(refused.body).noise_profile_id !== NEW_ID) fail("refresh did not send the current check");
+    if (JSON.stringify(env.toasts) !== JSON.stringify(["A video is rendering. Refresh older takes when it's done."])) fail(`409 toasts: ${JSON.stringify(env.toasts)}`);
+    if (btn.disabled || !shown(refresh) || text($(env, "room-check-refresh-text")) !== "2 of your takes were cleaned before this check.") fail("refused refresh left the row busy");
+
+    // Not while the row asks for a new microphone's check.
+    const input = $(env, "select-audio-input");
+    input.value = "usb2";
+    input.dispatchEvent(new env.w.Event("change"));
+    await tick(50);
+    if (shown(refresh)) fail("Refresh offered for a new microphone");
+    if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
+    console.log("PASS: Use standard cleanup forgets the check; Refresh posts my id, shows its reason when refused and hides once cleanup_refreshed arrives");
+  }
+
+  // 11. Check your loudest line: advice from the browser's own measurement, nothing stored or sent.
+  {
+    const env = await boot(HOST);
+    await runCheck(env);
+    const btn = $(env, "btn-room-loud-line");
+    const result = $(env, "room-check-loud-result");
+    if (!shown($(env, "room-check-loud")) || text(btn) !== "Check your loudest line") fail("loudest-line check not on the card");
+    if (shown(result)) fail("loudest-line result shown before a check");
+    const storedBefore = env.w.localStorage.getItem(KEY);
+    const callsBefore = env.calls.length;
+
+    const loudLine = async (peak) => {
+      env.loudPeak = peak;
+      env.clip = null;
+      btn.click();
+      await until(() => env.clip, "the loudest line");
+      if (text(result) !== "Say your loudest line now.") fail(`prompt: ${text(result)}`);
+      if (!btn.disabled || text(btn) !== "Listening…") fail("loudest-line button not busy while listening");
+      if (env.log.clips[env.log.clips.length - 1] !== 3300) fail("loudest line not 3.3 s");
+      env.clip.finish();
+      await until(() => !env.app.roomCheckBusy, "the loudest line to finish");
+      return text(result);
+    };
+    if (await loudLine(0.74) !== "Turn your mic down by about 5 dB. Your voice is about 47 dB louder than the room.") fail(`loud: ${text(result)}`);
+    if (btn.disabled || text(btn) !== "Check your loudest line") fail("button not back after the check");
+    if (await loudLine(0.4) !== "Good level. Your voice is about 41 dB louder than the room.") fail(`good: ${text(result)}`);
+    if (!(await loudLine(1.0)).startsWith("Your loudest line clips. Turn your mic down by about 8 dB.")) fail(`clip: ${text(result)}`);
+    if (await loudLine(0.001) !== "DubMate couldn't hear you. Try again, a bit louder.") fail(`quiet: ${text(result)}`);
+    if (env.w.localStorage.getItem(KEY) !== storedBefore) fail("the loudest line changed the stored check");
+    if (env.calls.length !== callsBefore) fail(`the loudest line called the engine: ${JSON.stringify(env.calls.slice(callsBefore).map((c) => c.url))}`);
+    if (!shown($(env, "room-check-card"))) fail("card closed by the loudest line");
+    if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
+    console.log("PASS: Check your loudest line gives level advice and the gap to the room, and stores and sends nothing");
   }
 
   console.log("ALL ROOM CHECK PANEL TESTS PASSED");

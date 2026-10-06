@@ -130,6 +130,7 @@ let exportDownloadGate = null;   // set to a promise to hold the response open
 let exportDownloadFails = false;
 let configHasExportsDir = true;
 let exportStatusReady = true;    // what /export/status reports for the host path
+let exportRefusal = null;        // a {detail} the render route answers 409 with
 
 function blobResponse() {
   return {
@@ -178,6 +179,9 @@ dom.window.fetch = async (url, opts) => {
       status: 200,
       json: () => Promise.resolve({ status: exportStatusReady ? "ready" : "idle" }),
     };
+  }
+  if (u.startsWith("/api/rooms/TEST12/export?") && exportRefusal) {
+    return { ok: false, status: 409, json: () => Promise.resolve(exportRefusal) };
   }
   if (u.startsWith("/api/rooms/TEST12/export?")) {
     const aspect = /aspect_ratio=([^&]+)/.exec(u)[1];
@@ -580,6 +584,15 @@ try {
     if (objectUrls.created === 0) {
       fail("no object URL was ever created; the blob path did not run");
     }
+
+    // A render the engine refuses says why (older takes are being refreshed).
+    const REFRESHING = "Older takes are being refreshed. Try again in a moment.";
+    exportRefusal = { detail: REFRESHING };
+    toasts.length = 0;
+    await app.exportFinalVideo("16:9");
+    exportRefusal = null;
+    if (!toasts.includes(REFRESHING)) fail("a refused render did not say why", toasts);
+    pass("a render refused during a refresh shows the engine's reason");
 
     console.log("ALL EXPORT & DOWNLOAD FEEDBACK TESTS PASSED!");
     process.exit(0);

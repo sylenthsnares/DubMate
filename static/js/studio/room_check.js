@@ -11,6 +11,7 @@ const ROOM_PROFILE_ID_RE = /^[0-9a-f]{12}$/;
 const ROOM_VERDICTS = ['good', 'ok', 'noisy'];
 // The engine drops the first 0.3 s (it can hold the click of the recording starting).
 const ROOM_CHECK_MS = 3300;
+const ROOM_CLICK_SEC = 0.3;
 const ROOM_DEVICE_FIELD_MAX = 200;
 
 const ROOM_ROW_COPY = {
@@ -30,6 +31,20 @@ const ROOM_PANEL_COPY = {
 const ROOM_NOT_CHECKED = 'Not checked yet';
 const ROOM_NEW_MIC = 'New microphone. Check your room so cleanup fits it.';
 const ROOM_SAVE_FAILED = "DubMate couldn't finish the check. Try again.";
+const ROOM_MIC_FAILED = "Can't read this microphone. Try another one or press Rescan.";
+const ROOM_REFRESH_FAILED = "DubMate couldn't refresh your older takes. Try again.";
+
+// The loudest-line check, in dB of peak: Good from -12 to -4, advice aims at -8 and an
+// "up" never lands the loudest line above -6, so a shout keeps its headroom.
+const LOUD_GOOD_MIN_DB = -12;
+const LOUD_GOOD_MAX_DB = -4;
+const LOUD_TARGET_DB = -8;
+const LOUD_UP_CEILING_DB = -6;
+const LOUD_CLIP_DB = -0.1;
+// Below this peak, or this close to the room, nobody spoke.
+const LOUD_QUIET_PEAK_DB = -45;
+const LOUD_MIN_ABOVE_ROOM_DB = 6;
+const LOUD_UNHEARD = "DubMate couldn't hear you. Try again, a bit louder.";
 
 function validRoomCheck(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -118,6 +133,71 @@ export function roomCardModel(report) {
   return { light, word: copy.word, sentence: copy.sentence, tooltip, advice, unusable };
 }
 
+/**
+ * The peak and the speech level of a recording, in dB: the level is the mean power of the
+ * 100 ms frames within 20 dB of the loudest one, so pauses don't pull it down.
+ */
+export function clipLevels(samples, sampleRate) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  const frame = Math.max(1, Math.round(sampleRate * 0.1));
+  const powers = [];
+  for (let start = 0; start + frame <= samples.length; start += frame) {
+    let sum = 0;
+    for (let i = start; i < start + frame; i++) sum += samples[i] * samples[i];
+    powers.push(sum / frame);
+  }
+  if (!powers.length || peak === 0) return { peakDb: -Infinity, voiceDb: -Infinity };
+  const loudest = Math.max(...powers);
+  const loud = powers.filter((p) => p >= loudest / 100);
+  return {
+    peakDb: 20 * Math.log10(peak),
+    voiceDb: 10 * Math.log10(loud.reduce((a, b) => a + b, 0) / loud.length),
+  };
+}
+
+/**
+ * Level advice for a loudest line: {text, snrText}. `floorDb` is the room's background
+ * noise from the check (null when unknown); snrText is '' when it can't be worked out.
+ */
+export function loudLineAdvice(peakDb, voiceDb, floorDb) {
+  const known = (v) => typeof v === 'number' && Number.isFinite(v);
+  const aboveRoom = known(voiceDb) && known(floorDb) ? voiceDb - floorDb : null;
+  if (!known(peakDb) || peakDb < LOUD_QUIET_PEAK_DB || (aboveRoom !== null && aboveRoom < LOUD_MIN_ABOVE_ROOM_DB)) {
+    return { text: LOUD_UNHEARD, snrText: '' };
+  }
+  let text = 'Good level.';
+  const down = Math.max(1, Math.round(peakDb - LOUD_TARGET_DB));
+  if (peakDb >= LOUD_CLIP_DB) {
+    text = `Your loudest line clips. Turn your mic down by about ${down} dB.`;
+  } else if (peakDb > LOUD_GOOD_MAX_DB) {
+    text = `Turn your mic down by about ${down} dB.`;
+  } else if (peakDb < LOUD_GOOD_MIN_DB) {
+    const up = Math.min(Math.round(LOUD_TARGET_DB - peakDb), Math.floor(LOUD_UP_CEILING_DB - peakDb));
+    text = `Turn your mic up by about ${up} dB.`;
+  }
+  const snr = aboveRoom === null ? 0 : Math.round(aboveRoom);
+  return { text, snrText: snr > 0 ? `Your voice is about ${snr} dB louder than the room.` : '' };
+}
+
+/**
+ * How many of this person's takes with noise reduction on were cleaned with another check
+ * than `profileId` (null: standard cleanup). `takesByLine` is the room state's takes.
+ */
+export function olderTakeCount(takesByLine, userId, profileId) {
+  if (!takesByLine || typeof takesByLine !== 'object' || !userId) return 0;
+  const current = profileId || null;
+  let count = 0;
+  for (const entry of Object.values(takesByLine)) {
+    for (const take of (entry && Array.isArray(entry.takes)) ? entry.takes : []) {
+      if (!take || take.user_id !== userId || !take.noise_reduction) continue;
+      const made = (take.nr_settings && take.nr_settings.profile_id) || null;
+      if (made !== current) count++;
+    }
+  }
+  return count;
+}
+
 function roomCheckStorage() {
   try {
     return (typeof window !== 'undefined' && window.localStorage) || null;
@@ -131,9 +211,16 @@ export class RoomCheckMethods {
     this.roomCheckRun = 0;
     this.roomCheckBusy = false;
     this.roomCheckStep = null;
+    // The background noise of the check on the card, for the loudest-line comparison.
+    this.roomCheckFloorDb = null;
+    // The room whose older takes are being refreshed, or null.
+    this.roomCheckRefreshingRoom = null;
     if (this.btnRoomCheck) this.btnRoomCheck.addEventListener('click', () => this.openRoomCheckPanel());
     if (this.btnStartRoomCheck) this.btnStartRoomCheck.addEventListener('click', () => this.runRoomCheck());
     if (this.btnCancelRoomCheck) this.btnCancelRoomCheck.addEventListener('click', () => this.cancelRoomCheck());
+    if (this.btnRoomCheckStandard) this.btnRoomCheckStandard.addEventListener('click', () => this.useStandardCleanup());
+    if (this.btnRoomLoudLine) this.btnRoomLoudLine.addEventListener('click', () => this.runLoudLineCheck());
+    if (this.btnRoomCheckRefresh) this.btnRoomCheckRefresh.addEventListener('click', () => this.refreshOlderTakes());
   }
 
   roomCheckInputs() {
@@ -162,6 +249,37 @@ export class RoomCheckMethods {
     if (this.btnRoomCheck) {
       this.btnRoomCheck.textContent = check && matches ? 'Check again' : 'Check your room';
       this.btnRoomCheck.disabled = !!(this.roomCheckBusy || this.micSyncBusy);
+    }
+    if (this.btnRoomCheckStandard) {
+      this.btnRoomCheckStandard.style.display = check ? '' : 'none';
+      this.btnRoomCheckStandard.disabled = !!this.roomCheckBusy;
+    }
+    this.renderRoomCheckRefresh(check, !!check && !matches);
+  }
+
+  isRefreshingOlderTakes() {
+    return !!this.roomCheckRefreshingRoom && this.roomCheckRefreshingRoom === (this.roomState && this.roomState.room_id);
+  }
+
+  // Offers Refresh older takes while some of my takes were cleaned with another check,
+  // except when the row is asking for a check of a new microphone.
+  renderRoomCheckRefresh(check, newMic) {
+    if (!this.roomCheckRefresh) return;
+    const refreshing = this.isRefreshingOlderTakes();
+    const count = newMic ? 0 : olderTakeCount(
+      this.roomState && this.roomState.takes, this.user && this.user.id, check ? check.profile_id : null);
+    this.roomCheckRefresh.style.display = refreshing || count > 0 ? '' : 'none';
+    if (this.roomCheckRefreshText) {
+      const when = check ? 'before this check' : 'with an earlier room check';
+      this.roomCheckRefreshText.textContent = refreshing
+        ? 'Refreshing older takes…'
+        : `${count} of your takes ${count === 1 ? 'was' : 'were'} cleaned ${when}.`;
+    }
+    if (this.btnRoomCheckRefresh) {
+      this.btnRoomCheckRefresh.disabled = refreshing;
+      this.btnRoomCheckRefresh.setAttribute('data-tip', check
+        ? 'Cleans them again with your latest room check. Your original recordings are kept.'
+        : 'Cleans them again with standard cleanup. Your original recordings are kept.');
     }
   }
 
@@ -209,8 +327,11 @@ export class RoomCheckMethods {
   showRoomCard(model) {
     if (!this.roomCheckCard) return;
     this.roomCheckCard.style.display = model ? 'block' : 'none';
+    this.showLoudLineResult('');
+    this.setLoudLineListening(false);
     if (!model) return;
     const unusable = !!model.unusable;
+    if (this.roomCheckLoud) this.roomCheckLoud.style.display = unusable ? 'none' : '';
     this.roomCheckCard.classList.toggle('is-error', unusable);
     if (this.roomCheckVerdict) this.roomCheckVerdict.style.display = unusable ? 'none' : '';
     if (this.roomCheckLight) {
@@ -254,6 +375,7 @@ export class RoomCheckMethods {
     const wasOpen = !!this.roomCheckStep;
     this.roomCheckRun++;
     this.roomCheckBusy = false;
+    this.setLoudLineListening(false);
     this.showRoomCheckPanel(null);
     if (wasBusy) {
       this.audio.cancelClip();
@@ -284,7 +406,7 @@ export class RoomCheckMethods {
         if (run !== this.roomCheckRun) return;
         console.warn('[DubMate] Room check could not record:', err);
         this.showRoomCheckPanel('ready');
-        this.showToast("Can't read this microphone. Try another one or press Rescan.");
+        this.showToast(ROOM_MIC_FAILED);
         return;
       }
       if (run !== this.roomCheckRun) return;
@@ -323,6 +445,7 @@ export class RoomCheckMethods {
         if (kept && previous && previous.profile_id !== profileId) this.deleteRoomProfile(previous.profile_id);
       }
       this.showRoomCheckPanel(null);
+      this.roomCheckFloorDb = Number.isFinite(data.report.speech_floor_db) ? data.report.speech_floor_db : null;
       this.showRoomCard(model);
       if (this.btnRoomCheck) this.btnRoomCheck.focus();
     } finally {
@@ -338,7 +461,112 @@ export class RoomCheckMethods {
   // Best effort: a check left behind is pruned by the engine eventually.
   deleteRoomProfile(profileId) {
     fetch(`/api/noise_profiles/${profileId}`, { method: 'DELETE' }).catch((err) => {
-      console.warn('[DubMate] Could not remove the previous room check:', err);
+      console.warn('[DubMate] Could not remove a room check:', err);
     });
+  }
+
+  // Use standard cleanup: forgets the check here and on the engine. Takes already cleaned
+  // keep their sound until Refresh older takes, which the row then offers.
+  useStandardCleanup() {
+    const store = roomCheckStorage();
+    const check = readRoomCheck(store);
+    if (!check || this.roomCheckBusy) return;
+    this.deleteRoomProfile(check.profile_id);
+    clearRoomCheck(store);
+    this.roomCheckFloorDb = null;
+    this.showRoomCard(null);
+    this.renderRoomCheckRow();
+    if (this.btnRoomCheck) this.btnRoomCheck.focus();
+  }
+
+  showLoudLineResult(text) {
+    if (!this.roomCheckLoudResult) return;
+    this.roomCheckLoudResult.textContent = text;
+    this.roomCheckLoudResult.style.display = text ? '' : 'none';
+  }
+
+  setLoudLineListening(on) {
+    if (!this.btnRoomLoudLine) return;
+    this.btnRoomLoudLine.disabled = on;
+    this.btnRoomLoudLine.textContent = on ? 'Listening…' : 'Check your loudest line';
+  }
+
+  // Check your loudest line: 3 s measured in the browser and turned into level advice.
+  // Nothing is stored or sent.
+  async runLoudLineCheck() {
+    if (this.roomCheckBusy || this.roomCheckRefused()) return;
+    const run = ++this.roomCheckRun;
+    this.roomCheckBusy = true;
+    this.stopInputMeter();
+    this.setLoudLineListening(true);
+    this.showLoudLineResult('Say your loudest line now.');
+    this.renderRoomCheckRow();
+    this.renderMicSyncRow();
+    try {
+      let levels;
+      try {
+        const blob = await this.audio.recordClip(ROOM_CHECK_MS);
+        if (run !== this.roomCheckRun) return;
+        const buffer = await this.audio.decodeClip(blob);
+        if (run !== this.roomCheckRun) return;
+        const rate = buffer.sampleRate;
+        // Skips the click of the recording starting, as the room check does.
+        levels = clipLevels(buffer.getChannelData(0).subarray(Math.round(rate * ROOM_CLICK_SEC)), rate);
+      } catch (err) {
+        if (run !== this.roomCheckRun) return;
+        console.warn('[DubMate] Loudest line check could not record:', err);
+        this.showLoudLineResult('');
+        this.showToast(ROOM_MIC_FAILED);
+        return;
+      }
+      const advice = loudLineAdvice(levels.peakDb, levels.voiceDb, this.roomCheckFloorDb);
+      this.showLoudLineResult([advice.text, advice.snrText].filter(Boolean).join(' '));
+    } finally {
+      if (run === this.roomCheckRun) {
+        this.roomCheckBusy = false;
+        this.setLoudLineListening(false);
+        this.renderRoomCheckRow();
+        this.renderMicSyncRow();
+        if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
+      }
+    }
+  }
+
+  // Refresh older takes: the engine moves my takes to the current check (or standard
+  // cleanup) and re-cleans them in the background; cleanup_refreshed says when it's done.
+  async refreshOlderTakes() {
+    if (this.isRefreshingOlderTakes() || !this.roomState || !this.user) return;
+    const check = readRoomCheck(roomCheckStorage());
+    const roomId = this.roomState.room_id;
+    this.roomCheckRefreshingRoom = roomId;
+    this.renderRoomCheckRow();
+    let failure = null;
+    try {
+      const res = await fetch(`/api/rooms/${roomId}/cleanup/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: this.user.id, noise_profile_id: check ? check.profile_id : null }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail = body && typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
+        failure = this.friendlyError(new Error(detail), ROOM_REFRESH_FAILED);
+      }
+    } catch (err) {
+      failure = this.friendlyError(err, ROOM_REFRESH_FAILED);
+    }
+    if (failure === null) return;
+    if (this.roomCheckRefreshingRoom === roomId) this.roomCheckRefreshingRoom = null;
+    this.showToast(failure);
+    this.renderRoomCheckRow();
+  }
+
+  /** The cleanup_refreshed message: my older takes are done. */
+  onCleanupRefreshed(data) {
+    if (!this.applyIncomingState(data)) return;
+    if (!this.user || !data.payload || data.payload.user_id !== this.user.id) return;
+    this.roomCheckRefreshingRoom = null;
+    this.showToast('Older takes refreshed.');
+    this.renderRoomCheckRow();
   }
 }

@@ -310,6 +310,13 @@ class DubMateApp {
     this.roomCheckWord = document.getElementById('room-check-word');
     this.roomCheckSentence = document.getElementById('room-check-sentence');
     this.roomCheckAdvice = document.getElementById('room-check-advice');
+    this.btnRoomCheckStandard = document.getElementById('btn-room-check-standard');
+    this.roomCheckLoud = document.getElementById('room-check-loud');
+    this.roomCheckLoudResult = document.getElementById('room-check-loud-result');
+    this.btnRoomLoudLine = document.getElementById('btn-room-loud-line');
+    this.roomCheckRefresh = document.getElementById('room-check-refresh');
+    this.roomCheckRefreshText = document.getElementById('room-check-refresh-text');
+    this.btnRoomCheckRefresh = document.getElementById('btn-room-check-refresh');
 
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
@@ -1031,6 +1038,8 @@ class DubMateApp {
       }
       this.failExport(new Error(payload?.error || 'failed'));
     });
+
+    this.socket.on('cleanup_refreshed', (data) => this.onCleanupRefreshed(data));
 
     this.socket.on('dialogue_presence_sync', (data) => {
       const pres = parseFloat(data.payload?.presence_db ?? 0.0);

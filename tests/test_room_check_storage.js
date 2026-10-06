@@ -5,7 +5,7 @@
  * in localStorage (malformed values rejected), whether it belongs to the microphone in
  * use (chosen like mic sync: selected, else 'default', else the first; label, else
  * deviceId), the check id a new take is sent, and the report card's words per verdict,
- * advice line and unusable case.
+ * advice line and unusable case, the loudest-line advice and the count of older takes.
  */
 const path = require("path");
 const { pathToFileURL } = require("url");
@@ -39,6 +39,8 @@ const CHECK = {
   profile_id: "3fa9c01b7d2e", verdict: "ok", device_label: "Microphone (Yeti X)",
   device_id: "default", measured_at: 1790000000000,
 };
+const OLD = "0123456789ab";
+const NEW = CHECK.profile_id;
 const INPUTS = [
   { deviceId: "default", label: "Microphone (Yeti X)" },
   { deviceId: "usb2", label: "USB Headset Mic" },
@@ -168,6 +170,65 @@ function report(extra = {}) {
     eq(rc.roomCardModel("ok"), null, "string report");
     eq(rc.roomCardModel(report({ speech_floor_db: null })).tooltip, "", "no level, no tooltip");
     console.log("PASS: silent and clipped checks carry the reason; unreadable reports give no card");
+  }
+
+  // 6. Loudest-line advice: Good from -12 to -4, aim at -8, "up" never above -6.
+  {
+    const UNHEARD = { text: "DubMate couldn't hear you. Try again, a bit louder.", snrText: "" };
+    eq(rc.loudLineAdvice(-8, -20, -58), { text: "Good level.", snrText: "Your voice is about 38 dB louder than the room." }, "good");
+    eq(rc.loudLineAdvice(-12, -24, -60).text, "Good level.", "good, low edge");
+    eq(rc.loudLineAdvice(-4, -16, -60).text, "Good level.", "good, high edge");
+    eq(rc.loudLineAdvice(-2.6, -14, -60).text, "Turn your mic down by about 5 dB.", "down");
+    eq(rc.loudLineAdvice(-12.4, -24, -60).text, "Turn your mic up by about 4 dB.", "up");
+    for (let peak = -44.9; peak < -12; peak += 0.1) {
+      const m = /up by about (\d+) dB/.exec(rc.loudLineAdvice(peak, peak - 12, -70).text);
+      if (!m) fail(`no up advice at ${peak}`);
+      const up = Number(m[1]);
+      if (up < 1 || peak + up > -6) fail(`up ${up} dB from ${peak} lands above -6`);
+    }
+    eq(rc.loudLineAdvice(0, -10, -50), { text: "Your loudest line clips. Turn your mic down by about 8 dB.", snrText: "Your voice is about 40 dB louder than the room." }, "clip");
+    eq(rc.loudLineAdvice(-0.1, -10, -50).text, "Your loudest line clips. Turn your mic down by about 8 dB.", "clip edge");
+    eq(rc.loudLineAdvice(-0.3, -10, -50).text, "Turn your mic down by about 8 dB.", "just below clipping");
+    eq(rc.loudLineAdvice(-60, -70, -62), UNHEARD, "too quiet");
+    eq(rc.loudLineAdvice(-30, -55, -58), UNHEARD, "no louder than the room");
+    eq(rc.loudLineAdvice(-Infinity, -Infinity, -58), UNHEARD, "silence");
+    eq(rc.loudLineAdvice(NaN, NaN, null), UNHEARD, "nothing measured");
+    eq(rc.loudLineAdvice(-8, -20, null), { text: "Good level.", snrText: "" }, "no room level, no comparison");
+
+    // The levels a recording gives: a -6 dB peak tone with a quiet pause.
+    const rate = 8000;
+    const samples = new Float32Array(rate * 2);
+    for (let i = 0; i < rate; i++) samples[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / rate);
+    const levels = rc.clipLevels(samples, rate);
+    if (Math.abs(levels.peakDb - (-6.02)) > 0.1) fail(`peak ${levels.peakDb}`);
+    // A sine's RMS is 3 dB under its peak; the silent second doesn't pull it down.
+    if (Math.abs(levels.voiceDb - (-9.03)) > 0.2) fail(`speech level ${levels.voiceDb}`);
+    eq(rc.clipLevels(new Float32Array(rate), rate).peakDb, -Infinity, "silent clip");
+    console.log("PASS: loudest-line advice: good, down, up capped at -6, clipping, too quiet; levels measured from samples");
+  }
+
+  // 7. Older takes: mine, noise reduction on, cleaned with another check than the current one.
+  {
+    const takes = {
+      t1: { picked: "a", takes: [
+        { take_id: "a", user_id: "u1", noise_reduction: true, nr_settings: { profile_id: OLD } },
+        { take_id: "b", user_id: "u1", noise_reduction: true, nr_settings: { profile_id: NEW } },
+        { take_id: "c", user_id: "u1", noise_reduction: false, nr_settings: { profile_id: OLD } },
+        { take_id: "d", user_id: "u2", noise_reduction: true, nr_settings: { profile_id: OLD } },
+      ] },
+      t2: { picked: "e", takes: [
+        { take_id: "e", user_id: "u1", noise_reduction: true },
+        { take_id: "f", user_id: "u1", noise_reduction: true, nr_settings: null },
+      ] },
+    };
+    eq(rc.olderTakeCount(takes, "u1", NEW), 3, "older than the current check (standard ones included)");
+    eq(rc.olderTakeCount(takes, "u1", OLD), 3, "against the old check");
+    eq(rc.olderTakeCount(takes, "u1", null), 2, "with standard cleanup, the tuned ones");
+    eq(rc.olderTakeCount(takes, "u2", null), 1, "another person");
+    eq(rc.olderTakeCount(takes, "u3", NEW), 0, "nobody's takes");
+    eq(rc.olderTakeCount(null, "u1", NEW), 0, "no room");
+    eq(rc.olderTakeCount(takes, null, NEW), 0, "no user");
+    console.log("PASS: older takes are my cleaned takes whose check differs from the current one");
   }
 
   console.log("ALL ROOM CHECK STORAGE TESTS PASSED");

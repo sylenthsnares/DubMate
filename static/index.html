@@ -1623,6 +1623,8 @@
             <p id="room-check-status" class="audio-device-note" style="flex: 1; margin: 0;" aria-live="polite">Not checked yet</p>
             <button id="btn-room-check" class="btn btn-secondary btn-sm" type="button">Check your room</button>
           </div>
+          <button id="btn-room-check-standard" class="btn-link-sm room-check-standard" type="button" style="display: none;"
+            data-tip="Forget this room check. New takes get standard cleanup.">Use standard cleanup</button>
           <div id="room-check-panel" class="audio-inline-feedback mic-sync-panel" style="display: none;">
             <p id="room-check-message" style="margin: 0;" role="status" aria-live="polite"></p>
             <div id="room-check-progress" class="modal-progress-track" style="display: none; margin-top: 10px;">
@@ -1641,6 +1643,15 @@
             </div>
             <p id="room-check-sentence" style="margin: 0;"></p>
             <ul id="room-check-advice" class="room-check-advice" style="display: none;"></ul>
+            <div id="room-check-loud" class="room-check-loud">
+              <p id="room-check-loud-result" style="display: none; margin: 0;"></p>
+              <button id="btn-room-loud-line" class="btn btn-secondary btn-sm" type="button">Check your loudest line</button>
+            </div>
+          </div>
+          <div id="room-check-refresh" class="audio-path-row room-check-refresh" style="display: none;">
+            <p id="room-check-refresh-text" class="audio-device-note" style="flex: 1; margin: 0;" aria-live="polite"></p>
+            <button id="btn-room-check-refresh" class="btn btn-secondary btn-sm" type="button"
+              data-tip="Cleans them again with your latest room check. Your original recordings are kept.">Refresh older takes</button>
           </div>
         </div>
 
