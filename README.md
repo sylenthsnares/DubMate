@@ -47,9 +47,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the changes in each release.
 - **Zero-Config Internet Play**: Launch public rooms across the web without port forwarding using built-in Cloudflare Tunnels (`run_cloudflare.bat`).
 - **Interactive Character Casting**: Assign actors to specific characters; support for multi-character casting and solo workflows.
 - **Live Cast Activity HUD**: Monitor online presence, line completion progress, and actor readiness status in real time.
-- **Flexible Workflow Modes**:
-  - **Solo Recording Booth**: Record your assigned lines self-paced without waiting on others.
-  - **Synced Studio Prompter**: Step through dialogue chronologically as a group.
+- **Self-Paced Recording**: Record your assigned lines at your own pace without waiting on others.
 
 ### 🎛️ Virtual Voice Booth & Analog DSP Deck
 - **Tactile Rotary Amp Dials**: Authentic 270° sweep knobs with vertical drag, scroll wheel, and keyboard controls.

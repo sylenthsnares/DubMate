@@ -50,8 +50,6 @@ class Room:
 
         # Takes: line_index -> take info dict
         self.takes: Dict[int, Dict[str, Any]] = {}
-        self.current_line: int = 0
-        self.mode: str = "booth"  # "booth" (solo self-paced) or "studio" (synced prompter)
         self.status: str = "lobby"  # "lobby" | "recording" | "screening"
         self.exported_video_path: Optional[str] = None
         self.exported_video_9_16_path: Optional[str] = None
@@ -135,8 +133,6 @@ class Room:
                 "users": self.users,
                 "role_assignments": self.role_assignments,
                 "takes": self.takes,
-                "current_line": self.current_line,
-                "mode": self.mode,
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
             }
@@ -179,8 +175,6 @@ class Room:
                 }
                 for k, v in self.takes.items()
             },
-            "current_line": self.current_line,
-            "mode": self.mode,
             "status": self.status,
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
             "has_export": has_export,
@@ -313,8 +307,6 @@ def load_persisted_rooms():
                     room.role_assignments = data.get("role_assignments", room.role_assignments)
                     raw_takes = data.get("takes", {})
                     room.takes = {int(k): v for k, v in raw_takes.items()}
-                    room.current_line = data.get("current_line", 0)
-                    room.mode = data.get("mode", "booth")
                     room.status = data.get("status", "lobby")
                     room.exported_video_path = data.get("exported_video_path")
                     ROOMS[r_id.upper()] = room

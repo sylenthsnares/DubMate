@@ -1609,47 +1609,7 @@ body::after {
   gap: 20px;
 }
 
-.mode-card {
-  display: flex;
-  gap: 12px;
-  padding: 14px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  margin-bottom: 10px;
-  transition: all var(--duration-fast) var(--ease-out);
-}
-.mode-card:last-child {
-  margin-bottom: 0;
-}
-.mode-card:hover {
-  border-color: var(--border-wood);
-  background: var(--card);
-}
-.mode-card.selected {
-  border-color: var(--primary);
-  background: var(--secondary);
-  box-shadow: 0 0 0 1px var(--primary);
-}
-
-.mode-icon {
-  font-size: 20px;
-}
-.mode-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--foreground);
-  margin-bottom: 2px;
-}
-.mode-desc {
-  font-size: 12px;
-  color: var(--foreground-muted);
-  line-height: 1.4;
-}
-
 .lobby-noise-box {
-  margin-top: 12px;
   padding: 12px;
   background: var(--input);
   border: 1px solid var(--border);

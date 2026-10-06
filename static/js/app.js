@@ -214,8 +214,6 @@ class DubMateApp {
     this.castOnlineCount = document.getElementById('cast-online-count');
     this.btnStartSession = document.getElementById('btn-start-session');
     this.btnCopyInvite = document.getElementById('btn-copy-invite');
-    this.modeCardBooth = document.getElementById('mode-card-booth');
-    this.modeCardStudio = document.getElementById('mode-card-studio');
 
     // Stage / Booth elements
     this.stageVideo = document.getElementById('stage-video');
@@ -632,19 +630,6 @@ class DubMateApp {
     this.btnCopyInvite.addEventListener('click', () => this.copyRoomLink());
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
-    // Mode Selector
-    this.modeCardBooth.addEventListener('click', () => {
-      this.modeCardBooth.classList.add('selected');
-      this.modeCardStudio.classList.remove('selected');
-      this.socket.setMode('booth');
-    });
-
-    this.modeCardStudio.addEventListener('click', () => {
-      this.modeCardStudio.classList.add('selected');
-      this.modeCardBooth.classList.remove('selected');
-      this.socket.setMode('studio');
-    });
-
     this.btnStartSession.addEventListener('click', () => {
       this.socket.setStatus('recording');
       this.showView('booth');
@@ -953,19 +938,6 @@ class DubMateApp {
       }
     });
 
-    this.socket.on('line_changed', (data) => {
-      const lineIdx = data.payload?.line_index;
-      const targetUserId = data.payload?.user_id;
-      if (targetUserId && this.roomState?.users?.[targetUserId]) {
-        this.roomState.users[targetUserId].current_line = lineIdx;
-        this.renderCastActivityHUD();
-      }
-      // Only sync client line automatically if in "studio" (synced prompter) mode
-      if (this.roomState?.mode === 'studio' && lineIdx !== undefined && lineIdx !== this.currentLineIndex) {
-        this.loadBoothLine(lineIdx);
-      }
-    });
-
     this.socket.on('user_status_updated', (data) => {
       this.applyIncomingState(data);
       if (this.roomState && data.payload?.user) {
@@ -1089,9 +1061,8 @@ class DubMateApp {
 
   /**
    * Merges a socket message's room state into this.roomState. Local take peaks
-   * are kept when the incoming take carries none, and the local line is kept
-   * unless the room is in studio (synced prompter) mode. Safe to call more than
-   * once for the same message.
+   * are kept when the incoming take carries none, and the local line is always
+   * kept. Safe to call more than once for the same message.
    */
   applyIncomingState(data) {
     if (!data || !data.state) return;
@@ -1119,8 +1090,8 @@ class DubMateApp {
         users: incoming.users || this.roomState.users,
         role_assignments: incoming.role_assignments || this.roomState.role_assignments,
         takes: mergedTakes,
-        // Keep local current_line if in booth mode (solo self-paced dubbing)
-        current_line: (incoming.mode === 'studio') ? incoming.current_line : this.currentLineIndex,
+        // Each actor moves through lines at their own pace
+        current_line: this.currentLineIndex,
       };
     }
   }

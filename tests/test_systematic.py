@@ -378,7 +378,7 @@ class TestSystematicDualEngine(unittest.TestCase):
         self.assertIn(".mp4", res_dl.headers.get("content-disposition", ""))
 
     def test_09_websocket_realtime_sync(self):
-        """Test WebSocket events: connect, join, assign_role, set_line, update_take_params, ping."""
+        """Test WebSocket events: connect, join, assign_role, ping."""
         packs = pack_loader.get_all_packs()
         pack = list(packs.values())[0]
 
@@ -410,16 +410,7 @@ class TestSystematicDualEngine(unittest.TestCase):
             self.assertEqual(join_msg["type"], "user_joined")
             self.assertEqual(join_msg["state"]["users"][user_id]["name"], "SocketActor")
 
-            # 4. Set line
-            ws.send_text(json.dumps({
-                "type": "set_line",
-                "payload": {"line_index": 1}
-            }))
-            line_msg = json.loads(ws.receive_text())
-            self.assertEqual(line_msg["type"], "line_changed")
-            self.assertEqual(line_msg["state"]["current_line"], 1)
-
-            # 5. Assign role
+            # 4. Assign role
             if pack.characters:
                 char = pack.characters[0]
                 ws.send_text(json.dumps({
