@@ -544,10 +544,6 @@ class TestIsOwnComputer(unittest.TestCase):
         common.require_own_computer(_request({"Host": "127.0.0.1:8000"}))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestPackShareFileName(SessionCase):
     """Share names the saved scene file so the studio can show its full path."""
 
@@ -582,3 +578,7 @@ class TestPackShareFileName(SessionCase):
         name = unquote(res.headers["X-DubMate-File"])
         self.assertTrue(name.endswith("_Szene_ü.zip"), name)
         self.assertIn(name, os.listdir(os.path.join(exports, "packs")))
+
+
+if __name__ == "__main__":
+    unittest.main()
