@@ -27,7 +27,8 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import pack_loader
 import pack_builder
-from app import app, BUILDER_SESSIONS
+from app import app
+from dubmate.builder_api import BUILDER_SESSIONS
 
 
 def create_dummy_wav(path: str, duration_sec: float = 3.0, sample_rate: int = 44100):
