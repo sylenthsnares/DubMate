@@ -27,7 +27,6 @@ export class AudioEngine {
 
     // Shared Reverb Impulse Buffer
     this.reverbBuffer = null;
-    this.masterConvolver = null;
 
     // --- Device Routing (see setPreferredInputDevice / setPreferredOutputDevice) ---
     // preferredInputId is fed into the getUserMedia deviceId constraint.
@@ -37,7 +36,6 @@ export class AudioEngine {
     this.preferredInputId = null;
     this.preferredOutputId = null;
     this.activeInputDeviceId = null;
-    this.lastInputFallbackReason = null;
 
     // Live Input Level Monitor (settings meter only, never routed to speakers)
     this.monitorStream = null;
@@ -45,8 +43,6 @@ export class AudioEngine {
     this.monitorAnalyser = null;
     this.monitorFloatData = null;
     this.monitorByteData = null;
-    this.monitorDeviceId = null;
-    this.monitorDidFallBack = false;
   }
 
   // --- dBFS helpers (shared with the settings level meter UI) ---
@@ -393,9 +389,6 @@ export class AudioEngine {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: attempt.audio });
         this.stream = stream;
         this.activeInputDeviceId = attempt.id;
-        this.lastInputFallbackReason = (wanted && attempt.id === null)
-          ? ((lastErr && lastErr.name) || 'unavailable')
-          : null;
         return this.stream;
       } catch (err) {
         lastErr = err;
@@ -456,7 +449,6 @@ export class AudioEngine {
     this.monitorAnalyser = analyser;
     this.monitorFloatData = new Float32Array(size);
     this.monitorByteData = new Uint8Array(size);
-    this.monitorDidFallBack = didFallBack;
 
     let actualId = didFallBack ? null : wanted;
     let actualLabel = '';
@@ -468,13 +460,8 @@ export class AudioEngine {
         if (settings && settings.deviceId) actualId = settings.deviceId;
       }
     } catch (e) {}
-    this.monitorDeviceId = actualId;
 
     return { deviceId: actualId, label: actualLabel, didFallBack };
-  }
-
-  isMonitoringInput() {
-    return !!this.monitorAnalyser;
   }
 
   // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame,
@@ -541,8 +528,6 @@ export class AudioEngine {
     this.monitorAnalyser = null;
     this.monitorFloatData = null;
     this.monitorByteData = null;
-    this.monitorDeviceId = null;
-    this.monitorDidFallBack = false;
   }
 
   async startRecording() {
@@ -841,7 +826,6 @@ export class AudioEngine {
   // --- 5. Studio Vocal DSP Chain ---
   buildVocalDSPChain(options = {}) {
     const {
-      pitchSemitones = 0,
       reverbWet = 0,
       gainDb = 0,
       enableLowCut = true,
@@ -966,7 +950,6 @@ export class AudioEngine {
       takeSource.buffer = processedTake;
 
       const dsp = this.buildVocalDSPChain({
-        pitchSemitones,
         reverbWet,
         gainDb,
         enableLowCut,

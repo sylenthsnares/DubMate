@@ -14,6 +14,9 @@ function escapeHtml(value) {
   }[c]));
 }
 
+// Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
+const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
+
 // --- Audio Device Setup persistence keys & meter constants ---
 const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
 const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
@@ -69,13 +72,11 @@ class DubMateApp {
     this.packSearchQuery = '';
     this.roomState = null;
     this.currentLineIndex = 0;
-    this.currentTakeBlob = null;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
     this.origBuffer = null;
 
     // Countdown & Recording Mutex
-    this.currentLineIndex = 0;
     this.recordState = 'idle'; // 'idle' | 'countdown' | 'recording' | 'processing'
     this.countdownSessionId = 0;
     this.recordingTimeout = null;
@@ -99,7 +100,6 @@ class DubMateApp {
     // --- Audio Device Setup / First-Run Onboarding State ---
     const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
     this.audioSetup = {
-      open: false,
       firstRunMode: false,
       requesting: false,
       permission: 'unknown', // 'unknown' | 'granted' | 'denied' | 'error'
@@ -132,7 +132,6 @@ class DubMateApp {
     this.roomShare = null;
     this.roomState = null;
     this.currentLineIndex = 0;
-    this.currentTakeBlob = null;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
     this.origBuffer = null;
@@ -251,7 +250,6 @@ class DubMateApp {
     this.overlayCountdown = document.getElementById('overlay-countdown');
     this.overlayStatusText = document.getElementById('overlay-status-text');
     this.boothLineIndicator = document.getElementById('booth-line-indicator');
-    this.boothCharacterBadge = document.getElementById('booth-character-badge');
     this.boothTimeBadge = document.getElementById('booth-time-badge');
     this.stageCaptionCard = document.getElementById('stage-caption-card');
     this.prompterResizeHandle = document.getElementById('prompter-resize-handle');
@@ -841,14 +839,6 @@ class DubMateApp {
       }
     });
 
-    if (this.checkNoiseReduction) {
-      this.checkNoiseReduction.addEventListener('change', (e) => {
-        const tag = document.getElementById('tag-noise-cleaner');
-        if (tag) tag.innerText = e.target.checked ? 'DFN3' : 'OFF';
-        this.syncTakeParams();
-      });
-    }
-
     this.checkLowcut.addEventListener('change', () => this.syncTakeParams());
     this.checkCompressor.addEventListener('change', () => this.syncTakeParams());
 
@@ -883,7 +873,12 @@ class DubMateApp {
     }
     if (this.checkNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
-      this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
+      this.checkNoiseReduction.addEventListener('change', (e) => {
+        const tag = document.getElementById('tag-noise-cleaner');
+        if (tag) tag.innerText = e.target.checked ? 'DFN3' : 'OFF';
+        this.syncTakeParams();
+        onNoiseToggleChange(e);
+      });
     }
     if (this.checkRackNoiseReduction) {
       this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
@@ -1820,7 +1815,7 @@ class DubMateApp {
             <div style="font-size: 32px; margin-bottom: 8px;">🔌</div>
             <p style="margin-bottom: 8px; font-weight: 600; color: #fca5a5;">Could not connect to DubMate Engine</p>
             <p style="font-size: 12px; color: var(--foreground-muted); max-width: 440px; margin: 0 auto 16px;">
-              The studio could not reach <code>http://127.0.0.1:8000</code>. Please ensure the DubMate engine is running.
+              The studio could not reach <code>${escapeHtml(window.location.origin)}</code>. Please ensure the DubMate engine is running.
             </p>
             <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
               <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.fetchPacks()">↺ Retry Connection</button>
@@ -1922,10 +1917,6 @@ class DubMateApp {
     this.webConfigFeedback.style.border = isSuccess ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)';
     this.webConfigFeedback.style.color = isSuccess ? '#6ee7b7' : '#fca5a5';
     this.webConfigFeedback.innerText = msg;
-  }
-
-  promptSetPackFolder() {
-    this.openPackConfigModal();
   }
 
   // ==============================================================
@@ -2102,7 +2093,6 @@ class DubMateApp {
     const token = ++this.audioSetup.openToken;
     this.audioSetup.firstRunMode = !!options.firstRun;
     this.modalAudioSettings.style.display = 'flex';
-    this.audioSetup.open = true;
 
     if (this.btnCloseAudioSettings) {
       // On a genuine first run the close button is redundant with "Skip for now".
@@ -2145,7 +2135,6 @@ class DubMateApp {
     if (this.modalAudioSettings) {
       this.modalAudioSettings.style.display = 'none';
     }
-    this.audioSetup.open = false;
     this.audioSetup.firstRunMode = false;
     this.setExportsFeedback('', null);
     this.updateAudioSettingsAffordance();
@@ -2684,18 +2673,11 @@ class DubMateApp {
     }
 
     try {
-      let dataPacks = [];
       const res = await fetch('/api/packs/rescan?t=' + Date.now(), { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        dataPacks = data.packs || [];
-      } else {
-        const resGet = await fetch('/api/packs?rescan=true&t=' + Date.now());
-        if (!resGet.ok) throw new Error(`HTTP ${resGet.status}`);
-        dataPacks = await resGet.json();
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
 
-      this.packs = dataPacks;
+      this.packs = data.packs || [];
       console.log(`[DubMate] Rescan complete. Loaded ${this.packs.length} packs.`);
       this.renderPacks();
       const count = (this.packs || []).length;
@@ -2873,7 +2855,7 @@ class DubMateApp {
 
     if (!filteredPacks.length) {
       this.selectedPackId = null;
-      const safeQuery = query.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const safeQuery = escapeHtml(query);
       this.packGrid.innerHTML = `
         <div class="empty-search-state glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
           <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
@@ -3231,7 +3213,7 @@ class DubMateApp {
       if (!res.ok) {
         // If room is not hosted on this local instance, resolve via dubmate.bkaproductions.com
         try {
-          const resolveResp = await fetch(`https://dubmate.bkaproductions.com/rooms/${encodeURIComponent(cleanCode)}/resolve`, {
+          const resolveResp = await fetch(`${REGISTRY_BASE}/rooms/${encodeURIComponent(cleanCode)}/resolve`, {
             headers: { 'Accept': 'application/json' }
           });
           if (resolveResp.ok) {
@@ -3451,9 +3433,6 @@ class DubMateApp {
       charCounts[l.character] = (charCounts[l.character] || 0) + 1;
     });
 
-    const userOptionsHtml = `<option value="">-- Unassigned (Original Voice) --</option>` +
-      users.map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.name)} ${u.id === this.user.id ? '(You)' : ''}</option>`).join('');
-
     const usersChanged = (this._lastUserOptionsSummary !== userSummary);
     this._lastUserOptionsSummary = userSummary;
 
@@ -3462,7 +3441,6 @@ class DubMateApp {
     if (existingRows.length === this.roomState.pack.characters.length && !usersChanged) {
       // IN-PLACE UPDATE: Do not recreate DOM elements to avoid closing active <select> dropdowns
       this.roomState.pack.characters.forEach((char) => {
-        const safeCharId = char.replace(/\s+/g, '-').toLowerCase();
         const tr = this.castingTbody.querySelector(`tr[data-character="${char}"]`);
         if (!tr) return;
 
@@ -4104,9 +4082,9 @@ class DubMateApp {
   setABMode(state) {
     this.audio.setABState(state);
     if (state === 'A') {
-      this.labelABState.innerHTML = `<span style="color: var(--primary); font-weight: 700;">[ A: Your Dub ]</span> <span style="color: var(--text-dim);">⇄ B: Orig</span>`;
+      this.labelABState.innerHTML = `<span style="color: var(--primary); font-weight: 700;">[ A: Your Dub ]</span> <span style="color: var(--foreground-dim);">⇄ B: Orig</span>`;
     } else {
-      this.labelABState.innerHTML = `<span style="color: var(--text-dim);">A: Dub ⇄</span> <span style="color: var(--accent-brass); font-weight: 700;">[ B: Original ]</span>`;
+      this.labelABState.innerHTML = `<span style="color: var(--foreground-dim);">A: Dub ⇄</span> <span style="color: var(--accent-brass); font-weight: 700;">[ B: Original ]</span>`;
     }
   }
 
@@ -4618,8 +4596,8 @@ class DubMateApp {
       return;
     }
 
-    this.currentTakeBlob = res.blob;
-    await this.uploadTake(this.currentLineIndex, this.currentTakeBlob, res.audioBuffer);
+    const currentTakeBlob = res.blob;
+    await this.uploadTake(this.currentLineIndex, currentTakeBlob, res.audioBuffer);
   }
 
   async uploadTake(lineIndex, blob, recordedBuffer = null) {
@@ -5203,7 +5181,6 @@ class DubMateApp {
           source.buffer = shifted;
 
           const dsp = this.audio.buildVocalDSPChain({
-            pitchSemitones: take.pitch_semitones || 0,
             reverbWet: take.reverb_wet || 0,
             gainDb: take.gain_db || 0,
             enableLowCut: true,
