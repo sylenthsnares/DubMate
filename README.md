@@ -1,6 +1,6 @@
 # 🎙️ DubMate Studio Pro — Collaborative Multiplayer Voice Dubbing DAW
 
-[![Release: DubMate v1.0.9](https://img.shields.io/badge/Release-DubMate%20v1.0.9-gold.svg)](https://github.com/sylenthsnares/DubMate/releases/tag/v1.0.9)
+[![Release](https://img.shields.io/github/v/release/sylenthsnares/DubMate?color=gold)](https://github.com/sylenthsnares/DubMate/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Modern%20Async%20Backend-009688.svg)](https://fastapi.tiangolo.com/)
@@ -28,20 +28,15 @@
 - [⌨️ Keyboard Shortcuts](#️-keyboard-shortcuts)
 - [📁 Project ZIP Export Structure](#-project-zip-export-structure)
 - [🧪 Automated Testing & QA](#-automated-testing--qa)
+- [📝 Notes](#-notes)
 - [📜 Licensing](#-licensing)
 - [⚖️ Fair Use & Media Disclaimer](#️-fair-use--media-disclaimer)
 
 ---
 
-## 🌟 What's New in DubMate v1.3 + Pack Builder
+## 🌟 What's New
 
-- **Standalone Pack Builder Studio (`/builder.html`)**: Create professional custom scene dub packs from any video file or YouTube / web URL in seconds.
-- **GPU-Accelerated AI Separation (Demucs)**: Automatically separates vocals and M&E backing tracks locally with PyTorch CUDA acceleration and CPU fallbacks.
-- **Automated Speech Transcription (Whisper AI)**: Generates timestamped dialogue cues and character turn detection across English, Japanese, and multiple languages.
-- **Interactive DAW Waveform Timeline**: Full-viewport multi-track timeline editor with dynamic lane sizing, draggable cue boundary handles, and responsive playback.
-- **Resilient Multi-Stage Video Ingestion**: 3-stage visual progress feedback (Stream Download -> FFmpeg Faststart Standardization -> Studio Ingest & Waveforms) with multi-client streaming fallback.
-- **1-Click Repository Updaters (`update.bat` & `update.sh`)**: Frictionless cross-platform updating of code, virtualenv packages, and local tools.
-- **100% Self-Contained Architecture**: Standalone pure implementation with zero external dependencies.
+See [CHANGELOG.md](CHANGELOG.md) for the changes in each release.
 
 ---
 
@@ -103,7 +98,16 @@
 ```
 DubMate Studio Pro
 ├── Backend (FastAPI + WebSockets + Uvicorn)
-│   ├── app.py                # REST API, WebSocket room coordinator & builder endpoints
+│   ├── app.py                 # FastAPI app: lifespan, middleware, /api/config, static routes; includes the routers below
+│   ├── dubmate/               # Backend package
+│   │   ├── common.py          # Shared helpers (identifier/path safety, range streaming, exports folder)
+│   │   ├── packs_cache.py     # Scene pack registry cache
+│   │   ├── packs_api.py       # /api/packs routes
+│   │   ├── rooms.py           # Room model, room table & persistence
+│   │   ├── rooms_api.py       # Room REST routes: create, takes, export, downloads
+│   │   ├── room_ws.py         # Room WebSocket endpoint
+│   │   ├── room_registry.py   # Public room-code registry (worker) & /api/tunnel
+│   │   └── builder_api.py     # /api/builder Pack Builder routes
 │   ├── pack_builder.py        # Video ingestion, Demucs AI stems, Whisper speech-to-text, pack assembly
 │   ├── pack_loader.py         # Dual-engine scene pack parser (DubMate & Choicer Voicer)
 │   ├── audio_processor.py     # NumPy/SciPy DSP, FFT convolution reverb, FFmpeg mastering
@@ -113,12 +117,19 @@ DubMate Studio Pro
 │   ├── static/index.html      # Responsive Studio DAW interface & semantic DOM
 │   ├── static/builder.html    # Standalone DubMate Pack Builder Studio interface
 │   ├── static/css/style.css   # Warm Wood & Analog Hardware Studio design system
+│   ├── static/css/builder.css # Pack Builder styles
 │   ├── static/js/app.js       # Core application controller & stage state machine
+│   ├── static/js/studio/      # Studio feature modules mixed into app.js (audio_setup.js, export.js, screening.js)
+│   ├── static/js/ui_common.js # Shared UI helpers (escapeHtml, toasts, mode dropdown, mixin)
 │   ├── static/js/pack_builder.js # Pack Builder timeline controller & SSE client
 │   ├── static/js/audio_engine.js # Web Audio API DSP graph (Gain, Filter, Reverb)
 │   ├── static/js/knob.js      # Tactile 270° rotary guitar amp dial components
 │   ├── static/js/waveform.js  # Dual-waveform visual alignment & canvas renderer
 │   └── static/js/room_socket.js # Real-time WebSocket synchronization client
+├── Desktop App & Room Registry
+│   ├── tauri/                 # Tauri desktop shell (launcher, installer, sidecar staging)
+│   │   └── src-tauri/src/     # main.rs, sidecars.rs, paths.rs, packbuilder.rs, updater.rs, state.rs
+│   └── worker/                # Cloudflare Worker: public room-code registry (dubmate.bkaproductions.com)
 ├── Scene Packs & Storage
 │   ├── Packs/                 # Scene pack library directory
 │   ├── tools/                 # Project-local portable binaries (FFmpeg, FFprobe, Cloudflared)
@@ -133,9 +144,9 @@ DubMate Studio Pro
 │   ├── run_mac.sh             # macOS self-healing launcher script
 │   ├── update.bat             # Windows 1-click repository & dependencies updater
 │   ├── update.sh              # macOS/Linux 1-click repository & dependencies updater
-│   └── scripts/               # Developer helpers (tool downloader, local server launcher)
+│   └── scripts/               # Developer helpers (tool downloader, tunnel runner, test pack generator)
 ├── tests/                     # Backend, DSP, packaging & frontend JSDOM suites + run_all_tests.py
-└── documentation/             # Design notes, product brief, desktop checklist & macOS guide
+└── documentation/             # Design notes & product brief
 ```
 
 ---
@@ -187,7 +198,7 @@ Whenever a new version of DubMate is released on GitHub, update your system in o
 
 ### Launching the Studio (macOS / Linux)
 
-See the dedicated [macOS Setup & Quick Start Guide](documentation/README_MAC.md) for full instructions:
+Works on Apple Silicon and Intel Macs. Open Terminal in the DubMate project root (the folder containing `app.py`):
 
 ```bash
 # 1. 1-Click Setup
@@ -197,6 +208,22 @@ chmod +x setup_dubmate_mac.sh run_mac.sh update.sh
 # 2. Launch
 ./run_mac.sh
 ```
+
+Then open **`http://localhost:8000`** and allow **Microphone Access** when the browser asks.
+
+**Internet multiplayer (Cloudflare Tunnel)**: keep `./run_mac.sh` running, and in a second Terminal tab start the tunnel:
+
+```bash
+python3 scripts/run_tunnel.py --cloudflared tools/cloudflared --port 8000
+```
+
+Copy the generated `https://xxxx.trycloudflare.com` link and send it to your cast.
+
+**Microphone permissions**: if the browser does not capture microphone audio:
+1. Open **System Settings** on macOS.
+2. Go to **Privacy & Security** → **Microphone**.
+3. Ensure the toggle is **ON** for your web browser (e.g., Google Chrome, Safari, Brave).
+4. Restart your browser and reload `http://localhost:8000`.
 
 ---
 
@@ -294,25 +321,41 @@ DubMate_Project_[SceneName]_[RoomID]/
 
 ## 🧪 Automated Testing & QA
 
-DubMate includes comprehensive automated backend and frontend test suites to ensure 100% stability across all engines:
+DubMate includes automated backend, DSP, packaging and frontend (JSDOM) test suites. One runner discovers and runs all of them.
 
-### Run Backend & Audio DSP Test Suite
+Install the frontend test dependencies once:
 ```bash
-python tests/test_systematic.py
+npm ci --prefix tests
 ```
-*Validates pack loader parsing, character bracket extraction, time-invariant pitch shifting, convolution reverb, soft limiter dynamics, REST endpoints, room lifecycles, and project ZIP bundling.*
 
-### Run Pack Builder AI & Ingestion Test Suite
+Then run the full suite:
 ```bash
-python tests/test_pack_builder.py
+python tests/run_all_tests.py
 ```
-*Validates video extraction, Demucs stem isolation, Whisper transcription, Romaji romanization, SRT/VTT parser, and pack assembly.*
+On Windows, use the project's virtual environment: `.venv\Scripts\python.exe tests/run_all_tests.py`.
 
-### Run Frontend & DOM Test Suite
-```bash
-node tests/test_frontend.js
-```
-*Validates DOM state machines, live pack search filtering, rotary knob ranges, WebSocket reconnection handlers, and project ZIP triggers via JSDOM.*
+- The test scene packs (`Packs/ZZ_Fixture_*`) are generated automatically when they are missing.
+- Each run uses a temporary home and cache folder, so tests never touch your `~/.dubmate` settings or cache.
+
+---
+
+## 📝 Notes
+
+Common pitfalls when working on the desktop app and room registry:
+
+| Pitfall | Fix |
+|---------|-----|
+| cloudflared tunnel URL comes from **stderr**, not stdout | Listen to `CommandEvent::Stderr` in Rust sidecar listener |
+| Tauri sidecar binary missing target triple suffix | Rename: `cloudflared.exe` → `cloudflared-x86_64-pc-windows-msvc.exe` |
+| Tauri places `externalBin` binaries next to the executable, not under `sidecar/` | Request the sidecar at runtime as `cloudflared`, not `sidecar/cloudflared` |
+| CPython embeddable zip has no pip | Bootstrap with `get-pip.py` before running `pip install` |
+| KV TTL in Cloudflare uses `expirationTtl` (seconds, not unix timestamp) | Use `expirationTtl: 43200` not `expiration: <unix>` |
+| Version string compare: `"1.10" < "1.9"` is wrong lexicographically | `is_newer()` in `updater.rs` parses each segment to an int and compares numerically. Do not compare version strings |
+| `wrangler types` not re-run after KV binding added | Run `npx wrangler types` after every `wrangler.toml` change |
+| Worker key must never ship in client JS | The engine registers rooms server-side with `DUBMATE_WORKER_KEY` (compiled into the binary from a CI secret, or read from `.dubmate.env`), with no hardcoded fallback |
+| `taskkill` only works on Windows; `kill -9` on macOS | Use `cfg!(target_os = "windows")` in Rust to branch |
+| Stale Tauri build caches old sidecar binary | Run `cargo clean` between builds if a sidecar was updated |
+| `push to main` publishes duplicate release tag if VERSION not bumped | CI fails with "tag already exists"; always bump VERSION with a releasable change |
 
 ---
 

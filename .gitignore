@@ -44,13 +44,6 @@ desktop.ini
 Packs/*
 !Packs/README.md
 
-# DubStage Runtime Settings & Generated Dubs
-dubstage-1.1.0/dubforge_settings.json
-dubstage-1.1.0/dubstage_settings.json
-dubstage-1.1.0/packs/
-dubstage-1.1.0/dubs/
-dubstage-1.1.0/tools/
-
 # Development, AI Agent Tooling & Local Testing
 .agents/
 .impeccable/
@@ -74,13 +67,14 @@ test_executables/*
 *.exe
 *.msi
 *.dmg
-!tools/*.exe
 
-# PyInstaller & Build Outputs
+# Build Outputs
 build/
 dist/
-*.spec
 scratch/
+
+# Local settings written by the engine when running from the repo
+dubmate_config.json
 
 # Optional Pack Builder AI pipeline installed next to the app at runtime
 ai-packages/
