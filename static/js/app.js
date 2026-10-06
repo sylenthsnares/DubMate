@@ -51,6 +51,24 @@ function captureHomeOriginParam() {
   window.history.replaceState(window.history.state, '', url);
 }
 
+/** [major, minor] of a version string such as "1.1.3", or null when unreadable. */
+function parseMajorMinor(version) {
+  const m = /^(\d+)\.(\d+)/.exec(String(version || '').trim());
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+
+/** The version an engine reports on /health, or null when it can't be read. */
+async function fetchEngineVersion(origin) {
+  try {
+    const res = await fetch(`${origin}/health`, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data && typeof data.version === 'string') ? data.version : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 class DubMateApp {
   constructor() {
     this.audio = new AudioEngine();
@@ -2203,6 +2221,7 @@ class DubMateApp {
       return;
     }
     this.pendingJoinRoomId = cleanCode;
+    this.warnOnVersionMismatch();
 
     if (this.joinModalRoomBadge) {
       this.joinModalRoomBadge.innerText = `ROOM: ${cleanCode}`;
@@ -2231,6 +2250,32 @@ class DubMateApp {
         }
       }, 50);
     }
+  }
+
+  // On a host's page reached from the member's own DubMate (?home=), compare the
+  // two engines' versions and note in the join prompt which side should update.
+  // Never blocks joining. Browser-only guests have no home engine to compare.
+  async warnOnVersionMismatch() {
+    const note = document.getElementById('join-modal-version-note');
+    if (!note) return;
+    note.hidden = true;
+    note.textContent = '';
+    const home = getHomeOrigin();
+    if (!home || home === window.location.origin) return;
+    const [hostVersion, myVersion] = await Promise.all([
+      fetchEngineVersion(''),
+      fetchEngineVersion(home),
+    ]);
+    const host = parseMajorMinor(hostVersion);
+    const mine = parseMajorMinor(myVersion);
+    if (!host || !mine) return;
+    const diff = (mine[0] - host[0]) || (mine[1] - host[1]);
+    if (diff === 0) return;
+    const versions = `The host has DubMate ${hostVersion} and you have ${myVersion}.`;
+    note.textContent = diff < 0
+      ? `${versions} Update yours to avoid problems in this room.`
+      : `${versions} Ask the host to update to avoid problems in this room.`;
+    note.hidden = false;
   }
 
   confirmJoinModal() {
