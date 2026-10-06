@@ -31,6 +31,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 import audio_processor
 import pack_loader
 import app
+from dubmate import rooms
 
 
 def generate_audio_signal(
@@ -85,7 +86,7 @@ class TestDeepNoiseReduction(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.client.__exit__(None, None, None)
-        app.prune_sessions(keep_room_id="NONE")
+        rooms.prune_sessions(keep_room_id="NONE")
 
     def test_01_noise_attenuation_across_different_noise_types(self):
         """

@@ -9,13 +9,11 @@ import sys
 import json
 import time
 import uuid
-import random
-import shutil
 import asyncio
 import functools
 import threading
 import traceback
-from typing import Dict, List, Optional, Set, Any
+from typing import Dict, Any
 from contextlib import asynccontextmanager
 
 if sys.platform == "win32":
@@ -31,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import pack_loader
 import audio_processor
-from dubmate import common, packs_cache, builder_api, packs_api
+from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -87,308 +85,9 @@ def get_engine_port() -> int:
     return DEFAULT_ENGINE_PORT
 
 
-def generate_room_code() -> str:
-    letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "".join(random.choice(letters) for _ in range(6))
-
-
-class Room:
-    def __init__(self, room_id: str, pack: pack_loader.PackInfo, host_id: str, host_name: str, host_color: str):
-        self.room_id = room_id
-        self.pack = pack
-        self.host_id = host_id
-        self.users: Dict[str, Dict[str, Any]] = {
-            host_id: {
-                "id": host_id,
-                "name": host_name,
-                "color": host_color,
-                "is_host": True,
-                "is_online": True,
-            }
-        }
-        # Role assignments: character_name -> list of assigned user_ids
-        self.role_assignments: Dict[str, List[str]] = {char: [] for char in pack.characters}
-        # By default assign the first character to host
-        if pack.characters:
-            self.role_assignments[pack.characters[0]] = [host_id]
-
-        # Takes: line_index -> take info dict
-        self.takes: Dict[int, Dict[str, Any]] = {}
-        self.current_line: int = 0
-        self.mode: str = "booth"  # "booth" (solo self-paced) or "studio" (synced prompter)
-        self.status: str = "lobby"  # "lobby" | "recording" | "screening"
-        self.exported_video_path: Optional[str] = None
-        self.exported_video_9_16_path: Optional[str] = None
-        self.master_dialogue_presence_db: float = 0.0
-        self.export_status: Dict[str, str] = {}
-        self.sockets: Set[WebSocket] = set()
-        self._save_dirty: bool = False
-        self._save_task: Optional[asyncio.Task] = None
-        # Take processing runs in a worker thread; this keeps one room's uploads and
-        # noise-reduction toggles serialized without blocking other rooms.
-        self.processing_lock = asyncio.Lock()
-
-    def invalidate_exports(self):
-        """Drops renders made from takes or mix settings that just changed.
-
-        An in-flight render keeps its "processing" entry so a second ffmpeg cannot
-        start writing the same output file underneath it.
-        """
-        self.exported_video_path = None
-        self.exported_video_9_16_path = None
-        self.export_status = {k: v for k, v in self.export_status.items() if v == "processing"}
-
-    def export_out_path(self, aspect_ratio: str) -> str:
-        """Where a render for this aspect goes. Reads common.exports_dir() at call time so a
-        changed Render & Export Folder applies to the next export."""
-        suffix = "_9_16" if aspect_ratio == "9:16" else ""
-        return os.path.join(common.exports_dir(), f"Dub_{self.pack.pack_id}_{self.room_id}{suffix}.mp4")
-
-    def ready_export_path(self, aspect_ratio: str) -> Optional[str]:
-        """The finished render for this aspect, or None if there is no usable file."""
-        path = self.exported_video_9_16_path if aspect_ratio == "9:16" else self.exported_video_path
-        if path and os.path.exists(path) and os.path.getsize(path) > 1000:
-            return path
-        return None
-
-    def export_ready_payload(self, aspect_ratio: str) -> Dict[str, Any]:
-        """URLs and stats the clients need once a render for this aspect is on disk."""
-        path = self.exported_video_9_16_path if aspect_ratio == "9:16" else self.exported_video_path
-        file_size_mb = round(os.path.getsize(path) / (1024 * 1024), 2) if path and os.path.exists(path) else 0.0
-        timestamp_ms = int(time.time() * 1000)
-        return {
-            "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio={aspect_ratio}",
-            "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio={aspect_ratio}&v={timestamp_ms}",
-            "download_url_16_9": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9",
-            "download_url_9_16": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=9:16",
-            "file_size_mb": file_size_mb,
-            "duration": round(self.pack.duration, 1),
-            "aspect_ratio": aspect_ratio,
-        }
-
-    def mark_dirty(self):
-        self._save_dirty = True
-        if self._save_task is None or self._save_task.done():
-            try:
-                loop = asyncio.get_running_loop()
-                self._save_task = loop.create_task(self._debounced_save())
-            except RuntimeError:
-                pass
-
-    async def _debounced_save(self):
-        try:
-            await asyncio.sleep(3.0)
-            if self._save_dirty:
-                self._save_dirty = False
-                await asyncio.to_thread(self._sync_save_to_disk)
-        except asyncio.CancelledError:
-            if self._save_dirty:
-                self._save_dirty = False
-                self._sync_save_to_disk()
-        except Exception as ex:
-            print(f"[RoomPersistence] Error in debounced save: {ex}")
-
-    def _sync_save_to_disk(self):
-        try:
-            room_dir = audio_processor.get_room_cache_dir(self.room_id)
-            state_file = os.path.join(room_dir, "room_state.json")
-            data = {
-                "room_id": self.room_id,
-                "pack_id": self.pack.pack_id,
-                "host_id": self.host_id,
-                "users": self.users,
-                "role_assignments": self.role_assignments,
-                "takes": self.takes,
-                "current_line": self.current_line,
-                "mode": self.mode,
-                "status": self.status,
-                "exported_video_path": self.exported_video_path,
-            }
-            tmp_file = state_file + ".tmp"
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            if os.path.exists(state_file):
-                os.replace(tmp_file, state_file)
-            else:
-                os.rename(tmp_file, state_file)
-        except Exception as ex:
-            print(f"[RoomPersistence] Error saving room {self.room_id}: {ex}")
-
-    def to_state_dict(self) -> Dict[str, Any]:
-        has_export_16_9 = self.exported_video_path is not None and os.path.exists(self.exported_video_path)
-        has_export = has_export_16_9
-        return {
-            "room_id": self.room_id,
-            "pack": self.pack.to_dict(),
-            "host_id": self.host_id,
-            "users": self.users,
-            "role_assignments": self.role_assignments,
-            "takes": {
-                str(k): {
-                    "user_id": v.get("user_id"),
-                    "user_name": v.get("user_name"),
-                    "duration": v.get("duration"),
-                    "peaks": v.get("peaks"),
-                    "offset_ms": v.get("offset_ms", 0),
-                    "pitch_semitones": v.get("pitch_semitones", 0.0),
-                    "reverb_wet": v.get("reverb_wet", 0.0),
-                    "gain_db": v.get("gain_db", 0.0),
-                    "noise_reduction": v.get("noise_reduction", False),
-                    "has_raw": v.get("has_raw", True),
-                    "speech_loudness_db": v.get("speech_loudness_db"),
-                    "target_loudness_db": v.get("target_loudness_db"),
-                    "auto_gain_db": v.get("auto_gain_db", 0.0),
-                    "url": v.get("url"),
-                    "recorded_at": v.get("recorded_at"),
-                }
-                for k, v in self.takes.items()
-            },
-            "current_line": self.current_line,
-            "mode": self.mode,
-            "status": self.status,
-            "master_dialogue_presence_db": self.master_dialogue_presence_db,
-            "has_export": has_export,
-            "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,
-            "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9" if has_export else None,
-            "download_url_16_9": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9",
-            "download_url_9_16": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=9:16",
-            "project_zip_url": f"/api/rooms/{self.room_id}/export/project_zip",
-        }
-
-    async def broadcast(self, message_type: str, payload: Any = None):
-        self.mark_dirty()
-        state = self.to_state_dict()
-        data = json.dumps({"type": message_type, "payload": payload, "state": state})
-        dead_sockets = set()
-        for ws in list(self.sockets):
-            try:
-                await ws.send_text(data)
-            except Exception:
-                dead_sockets.add(ws)
-        self.sockets -= dead_sockets
-
-
-ROOMS: Dict[str, Room] = {}
-
 # create_room prunes old sessions in a worker thread; serializing creation keeps a
 # concurrent create from inserting a room that an older prune then removes.
 _ROOM_CREATE_LOCK = asyncio.Lock()
-
-
-def _room_or_404(room_id: str) -> Room:
-    room = ROOMS.get(room_id.upper())
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-    return room
-
-
-def prune_sessions(keep_room_id: Optional[str] = None):
-    """
-    Strict Single-Session Retention Policy:
-    Ensures only the latest / active session is kept on disk and in memory.
-    Purges all older room folders, old takes, and outdated export videos to keep the server ultra-light.
-    """
-    rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
-    if not os.path.isdir(rooms_dir):
-        return
-
-    room_folders = []
-    for r_id in os.listdir(rooms_dir):
-        full_path = os.path.join(rooms_dir, r_id)
-        if os.path.isdir(full_path):
-            try:
-                mtime = os.path.getmtime(full_path)
-            except Exception:
-                mtime = 0
-            room_folders.append((r_id, full_path, mtime))
-
-    # Sort newest first
-    room_folders.sort(key=lambda x: x[2], reverse=True)
-
-    retained_id = None
-    if keep_room_id:
-        retained_id = keep_room_id.upper()
-    elif room_folders:
-        retained_id = room_folders[0][0].upper()
-
-    # Never purge a room that still has connected actors. This previously deleted
-    # other live sessions' rooms and their recorded takes the moment anyone created
-    # a new room, breaking every REST call for that room's cast mid-session.
-    active_ids = {rid.upper() for rid, rm in ROOMS.items() if getattr(rm, "sockets", None)}
-
-    # Delete all other room directories
-    for r_id, full_path, _ in room_folders:
-        if retained_id and r_id.upper() == retained_id:
-            continue
-        if r_id.upper() in active_ids:
-            print(f"[DubMate Cache Pruner] Keeping active session: {r_id}")
-            continue
-        try:
-            shutil.rmtree(full_path, ignore_errors=True)
-            print(f"[DubMate Cache Pruner] Purged older session: {r_id}")
-        except Exception as ex:
-            print(f"[DubMate Cache Pruner] Could not delete {r_id}: {ex}")
-
-    # Prune in-memory ROOMS
-    to_delete = [
-        r for r in list(ROOMS.keys())
-        if (not retained_id or r.upper() != retained_id) and r.upper() not in active_ids
-    ]
-    for r in to_delete:
-        ROOMS.pop(r, None)
-
-    # Prune old exports in the exports folder
-    if os.path.isdir(common.exports_dir()):
-        for fname in os.listdir(common.exports_dir()):
-            if fname.endswith((".mp4", ".zip")):
-                if retained_id and retained_id in fname.upper():
-                    continue
-                if any(a in fname.upper() for a in active_ids):
-                    continue
-                try:
-                    os.remove(os.path.join(common.exports_dir(), fname))
-                    print(f"[DubMate Cache Pruner] Removed old export/zip: {fname}")
-                except Exception:
-                    pass
-
-
-def load_persisted_rooms():
-    prune_sessions()
-    registry = packs_cache.PACKS_CACHE
-    rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
-    if not os.path.isdir(rooms_dir):
-        return
-    for r_id in os.listdir(rooms_dir):
-        room_folder = os.path.join(rooms_dir, r_id)
-        if not os.path.isdir(room_folder):
-            continue
-
-        state_file = os.path.join(room_folder, "room_state.json")
-        if os.path.isfile(state_file):
-            try:
-                with open(state_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                pack_id = data.get("pack_id")
-                pack = registry.get(pack_id)
-                if pack:
-                    host_id = data.get("host_id", "host")
-                    users = data.get("users", {})
-                    host_user = users.get(host_id, {})
-                    host_name = host_user.get("name", "Host")
-                    host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
-                    room = Room(r_id, pack, host_id, host_name, host_color)
-                    room.users = data.get("users", room.users)
-                    room.role_assignments = data.get("role_assignments", room.role_assignments)
-                    raw_takes = data.get("takes", {})
-                    room.takes = {int(k): v for k, v in raw_takes.items()}
-                    room.current_line = data.get("current_line", 0)
-                    room.mode = data.get("mode", "booth")
-                    room.status = data.get("status", "lobby")
-                    room.exported_video_path = data.get("exported_video_path")
-                    ROOMS[r_id.upper()] = room
-                    print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
-            except Exception as ex:
-                print(f"[DubMate] Error restoring room {r_id}: {ex}")
 
 
 @asynccontextmanager
@@ -407,11 +106,11 @@ async def lifespan(app: FastAPI):
 
     registry = packs_cache.refresh_packs()
     print(f"[DubMate] Loaded {len(registry)} packs into studio registry.")
-    load_persisted_rooms()
+    rooms.load_persisted_rooms()
 
     # Keeps retrying room codes that could not be published on the first attempt,
     # so a slow tunnel or a network blip does not leave a room unjoinable forever.
-    heartbeat = asyncio.create_task(registry_heartbeat())
+    heartbeat = asyncio.create_task(room_registry.registry_heartbeat())
     try:
         yield
     finally:
@@ -569,324 +268,9 @@ async def update_config(payload: Dict[str, Any], request: Request):
 # their original position (rescan and import ahead of /api/packs/{pack_id}).
 app.include_router(packs_api.router)
 
-
-ACTIVE_TUNNEL_URL: Optional[str] = None
-
-# Why the public tunnel is unavailable, when the desktop shell has told us it
-# failed. Without this, a tunnel that never came up was indistinguishable from one
-# that is still starting, and the UI said "waiting" forever.
-TUNNEL_ERROR: Optional[str] = None
-
-# Public room registry. A code registered here resolves to whichever tunnel the
-# host is currently reachable on, which is what lets a guest join with six
-# characters instead of a throwaway cloudflared hostname.
-WORKER_REGISTRY_BASE = "https://dubmate.bkaproductions.com"
-
-# How often the heartbeat retries rooms that have not been published yet, and how
-# stale a published entry may get before it is rewritten to refresh the registry
-# TTL (the worker expires entries after 12 hours).
-REGISTRY_HEARTBEAT_SECONDS = 20
-REGISTRY_REFRESH_SECONDS = 4 * 60 * 60
-
-# Per-room ownership tokens issued by the public worker registry, keyed by room code.
-# Presenting the token proves ownership when re-registering an existing code; without
-# it the worker refuses to overwrite a live room, which is what prevents a third party
-# repointing someone else's room at their own server.
-WORKER_ROOM_TOKENS: Dict[str, str] = {}
-
-# Codes created by *this* process, mapped to the app version they were created with.
-# Rooms restored from disk on startup are deliberately excluded: those sessions are
-# over, and republishing them would only collide with whoever holds the code now.
-WORKER_PENDING_ROOMS: Dict[str, str] = {}
-
-# Tunnel URL (and write time) each code is currently published under. Used to skip
-# redundant writes, to force a republish when cloudflared hands out a new hostname,
-# and to refresh the TTL on long sessions.
-WORKER_PUBLISHED_TUNNEL: Dict[str, str] = {}
-WORKER_PUBLISHED_AT: Dict[str, float] = {}
-
-# Last registration outcome per code, surfaced through /api/rooms/{code}/share so a
-# failure reaches the UI instead of only a console the desktop app keeps hidden.
-WORKER_ROOM_STATUS: Dict[str, Dict[str, Any]] = {}
-
-# Serializes registry writes so the tunnel callback and a concurrent room creation
-# cannot post the same code twice.
-_REGISTRY_LOCK: Optional[asyncio.Lock] = None
-
-
-def _registry_lock() -> asyncio.Lock:
-    """Lazily built so the lock binds to the running server loop, not import time."""
-    global _REGISTRY_LOCK
-    if _REGISTRY_LOCK is None:
-        _REGISTRY_LOCK = asyncio.Lock()
-    return _REGISTRY_LOCK
-
-
-def _load_worker_api_key() -> str:
-    """
-    Shared key sent to the public room registry as X-DubMate-Key.
-
-    Resolution order:
-      1. DUBMATE_WORKER_KEY environment variable. The desktop launcher sets this
-         from a value baked in at build time; CI supplies it from a repo secret.
-      2. .dubmate.env beside the app (git-ignored) -- convenient for running the
-         web version from a source checkout.
-
-    There is deliberately no hardcoded fallback. The previous literal shipped in
-    every public build and in git history, so it was never actually a secret.
-    Authorization for overwriting a room is the per-room token above; this key
-    only throttles casual writes, and an empty value simply means public room
-    registration is unavailable rather than insecure.
-    """
-    from_env = (os.environ.get("DUBMATE_WORKER_KEY") or "").strip()
-    if from_env:
-        return from_env
-
-    try:
-        env_file = os.path.join(pack_loader.get_install_root(), ".dubmate.env")
-        if os.path.isfile(env_file):
-            with open(env_file, "r", encoding="utf-8") as f:
-                for raw in f:
-                    line = raw.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, _, value = line.partition("=")
-                    if key.strip() == "DUBMATE_WORKER_KEY":
-                        return value.strip().strip('"').strip("'")
-    except Exception as ex:
-        print(f"[Worker Registry] Could not read .dubmate.env: {ex}")
-    return ""
-
-
-WORKER_API_KEY = _load_worker_api_key()
-if not WORKER_API_KEY:
-    print(
-        "[Worker Registry] No DUBMATE_WORKER_KEY configured. Local and LAN play are "
-        "unaffected; public room codes will not be registered with the registry."
-    )
-
-
-# Verdicts that will not change on their own, so the heartbeat stops retrying them
-# until the tunnel URL changes and makes the attempt meaningfully different.
-TERMINAL_REGISTRY_STATES = ("unauthorized", "conflict")
-
-
-def _set_room_status(room_id: str, state: str, message: str, tunnel_url: Optional[str] = None) -> None:
-    """
-    Records why a code is or is not joinable. States are:
-      waiting      - queued, the public tunnel has not come up yet
-      publishing   - queued, a registry write is in flight or about to be
-      registered   - the code resolves to our current tunnel
-      unauthorized - the registry rejected our key, so codes are unavailable
-      conflict     - somebody else already holds this code
-      error        - transient failure; the heartbeat will retry
-    """
-    WORKER_ROOM_STATUS[room_id.upper()] = {
-        "state": state,
-        "message": message,
-        "tunnel": tunnel_url,
-        "updated_at": int(time.time()),
-    }
-
-
-async def register_room_with_worker(room_id: str, tunnel_url: str, app_version: str) -> bool:
-    """
-    Publishes one room code to the public registry, returning True once the code
-    resolves to `tunnel_url`. Callers use the result to decide whether the
-    heartbeat should keep retrying.
-    """
-    code = room_id.upper()
-    try:
-        import httpx
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": f"DubMate Studio Pro/{app_version}",
-            "X-DubMate-Key": WORKER_API_KEY,
-        }
-        # Re-registering our own code (e.g. after a tunnel change) requires proving
-        # ownership with the token the worker issued when we first created it.
-        existing_token = WORKER_ROOM_TOKENS.get(code)
-        if existing_token:
-            headers["Authorization"] = f"Bearer {existing_token}"
-
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                f"{WORKER_REGISTRY_BASE}/rooms/create",
-                headers=headers,
-                json={
-                    "code": code,
-                    "tunnel_url": tunnel_url,
-                    "app_version": app_version,
-                },
-            )
-            if resp.status_code in (200, 201):
-                try:
-                    token = (resp.json() or {}).get("room_token")
-                    if token:
-                        WORKER_ROOM_TOKENS[code] = token
-                except Exception:
-                    pass
-                WORKER_PUBLISHED_TUNNEL[code] = tunnel_url
-                WORKER_PUBLISHED_AT[code] = time.time()
-                _set_room_status(code, "registered", "Room code is live. Anyone can join with it.", tunnel_url)
-                print(f"[Worker Registry] Unified room code {code} registered with {tunnel_url}")
-                return True
-
-            if resp.status_code == 401:
-                _set_room_status(
-                    code,
-                    "unauthorized",
-                    "This build has no valid registry key, so public room codes are "
-                    "unavailable. Share the direct invite link instead.",
-                    tunnel_url,
-                )
-                print(f"[Worker Registry] Registry rejected our key; room {code} not published.")
-                return False
-
-            if resp.status_code == 409:
-                _set_room_status(
-                    code,
-                    "conflict",
-                    "That room code is already in use by another host. Create a new room.",
-                    tunnel_url,
-                )
-                print(f"[Worker Registry] Room code {code} is already held by another host; not overwriting.")
-                return False
-
-            _set_room_status(
-                code,
-                "error",
-                f"The room registry returned an error ({resp.status_code}). Retrying...",
-                tunnel_url,
-            )
-            print(f"[Worker Registry] Registration rejected ({resp.status_code}): {resp.text[:200]}")
-            return False
-    except Exception as e:
-        _set_room_status(code, "error", "Could not reach the room registry. Retrying...", tunnel_url)
-        print(f"[Worker Registry] Note: Could not register with worker: {e}")
-        return False
-
-
-def _needs_publish(code: str, tunnel_url: str) -> bool:
-    status = WORKER_ROOM_STATUS.get(code) or {}
-    # A rejected key or a code held by someone else will not resolve itself while the
-    # tunnel is unchanged, so stop re-asking the registry the same question.
-    if status.get("state") in TERMINAL_REGISTRY_STATES and status.get("tunnel") == tunnel_url:
-        return False
-    if WORKER_PUBLISHED_TUNNEL.get(code) != tunnel_url:
-        return True
-    # Same tunnel, but the registry entry expires; rewrite it well before it does.
-    return (time.time() - WORKER_PUBLISHED_AT.get(code, 0.0)) >= REGISTRY_REFRESH_SECONDS
-
-
-async def publish_pending_rooms() -> None:
-    """
-    Publishes every room this process created that is not already live at the
-    current tunnel URL.
-
-    This runs on room creation, on every tunnel change, and on a heartbeat rather
-    than only at creation time. The desktop app opens the studio as soon as the
-    engine answers /health and only *then* starts cloudflared, so a room created in
-    the first few seconds has no tunnel to advertise yet; publishing from here is
-    what makes those rooms joinable at all.
-    """
-    async with _registry_lock():
-        tunnel = ACTIVE_TUNNEL_URL
-        if not tunnel or not tunnel.startswith("https://"):
-            for code in WORKER_PENDING_ROOMS:
-                if WORKER_ROOM_STATUS.get(code, {}).get("state") in (None, "publishing"):
-                    _set_room_status(code, "waiting", "Waiting for the public tunnel to come up...")
-            return
-
-        for code, app_version in list(WORKER_PENDING_ROOMS.items()):
-            if code not in ROOMS:
-                WORKER_PENDING_ROOMS.pop(code, None)
-                continue
-            if not _needs_publish(code, tunnel):
-                continue
-            await register_room_with_worker(code, tunnel, app_version)
-
-
-def schedule_registry_publish() -> None:
-    """Fire-and-forget publish, safe to call from any request handler."""
-    try:
-        asyncio.get_running_loop().create_task(publish_pending_rooms())
-    except RuntimeError:
-        # No running loop (e.g. imported by a script); the heartbeat will catch up.
-        pass
-
-
-async def registry_heartbeat() -> None:
-    """
-    Retries codes that have not been published yet and refreshes ones nearing the
-    registry TTL. Without this, a single failed publish -- a tunnel that was still
-    coming up, or a momentary network blip -- left the room permanently unjoinable
-    with nothing to recover it.
-    """
-    while True:
-        try:
-            await asyncio.sleep(REGISTRY_HEARTBEAT_SECONDS)
-            await publish_pending_rooms()
-        except asyncio.CancelledError:
-            raise
-        except Exception as ex:
-            print(f"[Worker Registry] Heartbeat warning: {ex}")
-
-
-def build_room_share_payload(room_id: str) -> Dict[str, Any]:
-    """Everything the UI needs to hand out an invite, including a working fallback."""
-    code = room_id.upper()
-    default_state = "waiting"
-    default_message = "Waiting for the public tunnel to come up..."
-    if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL:
-        default_state = "tunnel_unavailable"
-        default_message = TUNNEL_ERROR
-    status = WORKER_ROOM_STATUS.get(code) or {
-        "state": default_state,
-        "message": default_message,
-    }
-    # A queued room whose tunnel has since failed should report the failure rather
-    # than the stale "waiting".
-    if TUNNEL_ERROR and not ACTIVE_TUNNEL_URL and status.get("state") == "waiting":
-        status = {"state": "tunnel_unavailable", "message": TUNNEL_ERROR}
-    is_live = (
-        status.get("state") == "registered"
-        and WORKER_PUBLISHED_TUNNEL.get(code) == ACTIVE_TUNNEL_URL
-    )
-    return {
-        "room_id": code,
-        "code_is_live": is_live,
-        "join_url": f"{WORKER_REGISTRY_BASE}/join/{code}" if is_live else "",
-        "direct_url": f"{ACTIVE_TUNNEL_URL}?room={code}" if ACTIVE_TUNNEL_URL else "",
-        "tunnel_url": ACTIVE_TUNNEL_URL,
-        "state": status.get("state"),
-        "message": status.get("message"),
-    }
-
-
-@app.post("/api/tunnel")
-async def set_tunnel_endpoint(payload: Dict[str, Any]):
-    global ACTIVE_TUNNEL_URL, TUNNEL_ERROR
-    url = payload.get("tunnel_url")
-    if url:
-        new_url = str(url).strip()
-        if new_url != ACTIVE_TUNNEL_URL:
-            ACTIVE_TUNNEL_URL = new_url
-            print(f"[DubMate] Active public tunnel registered: {ACTIVE_TUNNEL_URL}")
-        TUNNEL_ERROR = None
-        # Drain the publish queue: rooms created before the tunnel existed become
-        # joinable here, and a changed hostname republishes every live code.
-        schedule_registry_publish()
-        return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL}
-
-    # The desktop shell reports tunnel failures here too, so a room that can never
-    # be published says why instead of waiting indefinitely.
-    reported_error = payload.get("error")
-    if reported_error:
-        TUNNEL_ERROR = str(reported_error).strip()[:300]
-        print(f"[DubMate] Public tunnel unavailable: {TUNNEL_ERROR}")
-
-    return {"status": "ok", "tunnel_url": ACTIVE_TUNNEL_URL, "error": TUNNEL_ERROR}
+# Public tunnel and room registry (POST /api/tunnel) live in dubmate/room_registry.py;
+# registered here so the route keeps its original position.
+app.include_router(room_registry.router)
 
 
 @app.post("/api/rooms")
@@ -899,31 +283,31 @@ async def create_room(payload: Dict[str, Any]):
     pack = packs_cache.pack_or_404(pack_id, "Selected pack not found")
 
     async with _ROOM_CREATE_LOCK:
-        room_id = generate_room_code()
+        room_id = rooms.generate_room_code()
         # Prune any previous session recordings from disk and RAM so only the new session is kept
-        await asyncio.to_thread(prune_sessions, keep_room_id=room_id)
+        await asyncio.to_thread(rooms.prune_sessions, keep_room_id=room_id)
 
         host_id = str(uuid.uuid4())[:8]
-        room = Room(room_id, pack, host_id, host_name, host_color)
-        ROOMS[room_id] = room
+        room = rooms.Room(room_id, pack, host_id, host_name, host_color)
+        rooms.ROOMS[room_id] = room
 
     # Queue the code for the public registry instead of gating on the tunnel already
     # being up. publish_pending_rooms() sends it now if it can, and /api/tunnel or the
     # heartbeat sends it the moment the tunnel becomes available.
-    WORKER_PENDING_ROOMS[room_id.upper()] = app_version
-    _set_room_status(
+    room_registry.WORKER_PENDING_ROOMS[room_id.upper()] = app_version
+    room_registry._set_room_status(
         room_id,
-        "publishing" if ACTIVE_TUNNEL_URL else "waiting",
-        "Publishing room code to the registry..." if ACTIVE_TUNNEL_URL
+        "publishing" if room_registry.ACTIVE_TUNNEL_URL else "waiting",
+        "Publishing room code to the registry..." if room_registry.ACTIVE_TUNNEL_URL
         else "Waiting for the public tunnel to come up...",
     )
-    schedule_registry_publish()
+    room_registry.schedule_registry_publish()
 
     return {
         "room_id": room_id,
         "user_id": host_id,
-        "tunnel_url": ACTIVE_TUNNEL_URL,
-        "share": build_room_share_payload(room_id),
+        "tunnel_url": room_registry.ACTIVE_TUNNEL_URL,
+        "share": room_registry.build_room_share_payload(room_id),
         "state": room.to_state_dict(),
     }
 
@@ -932,14 +316,14 @@ async def create_room(payload: Dict[str, Any]):
 async def get_room_share(room_id: str):
     """Invite details for a room hosted here, including why a code may not be live yet."""
     code = (room_id or "").upper()
-    if code not in ROOMS:
+    if code not in rooms.ROOMS:
         raise HTTPException(status_code=404, detail="Room not found")
-    return build_room_share_payload(code)
+    return room_registry.build_room_share_payload(code)
 
 
 @app.get("/api/rooms/{room_id}")
 async def get_room(room_id: str):
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
     return room.to_state_dict()
 
 
@@ -951,7 +335,7 @@ async def upload_noise_profile(
 ):
     """Calibrates and saves a 1-second room background noise profile for an actor."""
     common.require_safe_identifier(user_id, "user_id")
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
     try:
         content = await file.read()
         res = audio_processor.save_user_noise_profile(
@@ -980,7 +364,7 @@ async def upload_take(
     noise_reduction: bool = Form(False),
 ):
     common.require_safe_identifier(user_id, "user_id")
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
 
     if line_index < 0 or line_index >= len(room.pack.lines):
         raise HTTPException(status_code=400, detail="Invalid line index")
@@ -1055,7 +439,7 @@ async def toggle_take_noise_reduction_endpoint(
     payload: Dict[str, Any]
 ):
     """Switches an existing take between raw and denoised audio without re-recording."""
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
     if line_index not in room.takes:
         raise HTTPException(status_code=404, detail="Take not found")
 
@@ -1093,7 +477,7 @@ async def toggle_take_noise_reduction_endpoint(
 @app.get("/api/rooms/{room_id}/takes/{line_index}/peaks")
 async def get_take_peaks(room_id: str, line_index: int):
     """Returns compact peaks waveform data for a specific take on-demand."""
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
     take = room.takes.get(line_index)
     if not take:
         raise HTTPException(status_code=404, detail="Take not found")
@@ -1108,7 +492,7 @@ async def get_take_peaks(room_id: str, line_index: int):
 
 @app.get("/api/rooms/{room_id}/takes/{line_index}/audio")
 async def get_take_audio(room_id: str, line_index: int, request: Request):
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
     take = room.takes.get(line_index)
     if not take or not os.path.exists(take.get("wav_path", "")):
         raise HTTPException(status_code=404, detail="Take not found")
@@ -1127,7 +511,7 @@ async def get_take_audio(room_id: str, line_index: int, request: Request):
 @app.post("/api/rooms/{room_id}/export")
 async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0):
     """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously."""
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
 
     presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
     room.master_dialogue_presence_db = presence_val
@@ -1195,7 +579,7 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
 @app.get("/api/rooms/{room_id}/export/status")
 async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
     """Pollable endpoint for export status to prevent Cloudflare 524 timeouts."""
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
 
     if room.ready_export_path(aspect_ratio):
         return {"status": "ready", **room.export_ready_payload(aspect_ratio)}
@@ -1210,7 +594,7 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
 @app.get("/api/rooms/{room_id}/export/video")
 async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: str = "16:9"):
     """Streams the rendered master MP4 video with Range support for theater playback."""
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
 
     target_path = room.ready_export_path(aspect_ratio) or room.ready_export_path("16:9")
     if not target_path:
@@ -1226,7 +610,7 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
 
 @app.get("/api/rooms/{room_id}/export/download")
 async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
 
     # A render for this aspect is already writing the file; rendering it again here
     # would put a second ffmpeg on the same output path.
@@ -1269,7 +653,7 @@ async def download_room_project_zip(room_id: str):
     """
     Assembles and streams a complete multi-track NLE project ZIP containing stems, video, markers.
     """
-    room = _room_or_404(room_id)
+    room = rooms.room_or_404(room_id)
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
     zip_path = os.path.join(common.exports_dir(), zip_filename)
@@ -1313,7 +697,7 @@ async def download_room_project_zip(room_id: str):
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     await websocket.accept()
-    room = ROOMS.get(room_id.upper())
+    room = rooms.ROOMS.get(room_id.upper())
 
     if not room:
         await websocket.send_text(json.dumps({"type": "error", "message": "Room not found"}))

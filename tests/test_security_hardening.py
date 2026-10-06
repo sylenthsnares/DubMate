@@ -18,10 +18,9 @@ import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
-import app as app_module
 import pack_loader
 from app import app
-from dubmate import common
+from dubmate import common, rooms
 from dubmate.common import safe_join, require_safe_identifier
 from dubmate.packs_cache import get_packs_registry
 
@@ -186,7 +185,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
                 guest_ws.send_json({"type": "join", "payload": {
                     "name": "Guest", "color": "#ff0000", "app_version": "1.0.0"}})
 
-                room = app_module.ROOMS.get(room_id.upper())
+                room = rooms.ROOMS.get(room_id.upper())
                 self.assertIsNotNone(room)
                 _barrier(guest_ws)
                 self.assertEqual(
@@ -203,7 +202,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
         with client.websocket_connect(f"/ws/{room_id}/{host_id}") as host_ws:
             host_ws.send_json({"type": "join", "payload": {
                 "name": "HostA", "color": "#7c5cff", "app_version": "1.0.0"}})
-            room = app_module.ROOMS.get(room_id.upper())
+            room = rooms.ROOMS.get(room_id.upper())
             if not room or not room.role_assignments:
                 self.skipTest("pack has no characters to assign")
             character = list(room.role_assignments.keys())[0]
