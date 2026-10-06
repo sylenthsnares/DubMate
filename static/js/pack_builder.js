@@ -1,6 +1,7 @@
 // pack_builder.js - High-Performance Pack Authoring Studio Controller
 // Handles Video Ingestion, Demucs/Whisper Progress SSE, Interactive Timeline & Cue Editor, and Pack Assembly
-import { escapeHtml, showToast, initModeDropdown, initTooltips } from './ui_common.js';
+import { escapeHtml, showToast, initModeDropdown, initTooltips, isDialogOpen } from './ui_common.js';
+import { initShortcutSheet } from './shortcuts.js';
 
 // The engine's error body is {detail: "..."} or {detail: {code, message}}.
 function detailText(body, fallback) {
@@ -220,6 +221,7 @@ export class PackBuilderApp {
   initEvents() {
     this.initModeDropdown();
     initTooltips();
+    initShortcutSheet({ opener: document.getElementById('btn-shortcuts') });
 
     // 0. Mode Tabs (File vs YouTube URL)
     if (this.tabBtnFile && this.tabBtnUrl) {
@@ -432,6 +434,7 @@ export class PackBuilderApp {
 
   initKeyboardShortcuts() {
     window.addEventListener('keydown', (e) => {
+      if (isDialogOpen()) return;
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
         return;
