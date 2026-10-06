@@ -72,11 +72,23 @@ if (Test-Path $LocalFfmpeg) {
     Write-Host "[3/4] Copying local FFmpeg from tools\..."
     Copy-Item $LocalFfmpeg $FfmpegTarget -Force
 } else {
+    # Same pin and SHA-256 as scripts/download_tools.ps1; move both together.
+    $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip"
+    $FfmpegSha256 = "cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835"
     Write-Host "[3/4] Downloading FFmpeg static build..."
-    $FfmpegZip = Join-Path $env:TEMP "ffmpeg-release-essentials.zip"
-    Invoke-WebRequest "https://github.com/GyanD/codexffmpeg/releases/download/7.0.2/ffmpeg-7.0.2-essentials_build.zip" -OutFile $FfmpegZip -UseBasicParsing
-    Expand-Archive $FfmpegZip (Join-Path $env:TEMP "ffmpeg-extract") -Force
-    $FoundFfmpeg = Get-ChildItem (Join-Path $env:TEMP "ffmpeg-extract") -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+    $FfmpegZip = Join-Path $env:TEMP "dubmate-ffmpeg-pinned.zip"
+    $FfmpegExtract = Join-Path $env:TEMP "dubmate-ffmpeg-pinned"
+    Invoke-WebRequest $FfmpegUrl -OutFile $FfmpegZip -UseBasicParsing
+    $ActualSha256 = (Get-FileHash $FfmpegZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($ActualSha256 -ne $FfmpegSha256) {
+        Remove-Item $FfmpegZip -Force
+        throw "FFmpeg SHA-256 mismatch, not extracting.`n  url     : $FfmpegUrl`n  expected: $FfmpegSha256`n  actual  : $ActualSha256"
+    }
+    if (Test-Path $FfmpegExtract) {
+        Remove-Item $FfmpegExtract -Recurse -Force
+    }
+    Expand-Archive $FfmpegZip $FfmpegExtract -Force
+    $FoundFfmpeg = Get-ChildItem $FfmpegExtract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
     Copy-Item $FoundFfmpeg.FullName $FfmpegTarget -Force
 }
 
