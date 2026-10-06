@@ -2526,7 +2526,11 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     # Step 1: Slice individual audio takes
     progress.update("slicing", 0.80, "Slicing audio dialogue lines with micro-fades...", stage="slicing")
     slices_dir = os.path.join(session_dir, "slices")
-    sliced_lines = pack_builder.slice_audio_lines(vocals_path, segments, slices_dir, pack_name)
+    try:
+        sliced_lines = pack_builder.slice_audio_lines(vocals_path, segments, slices_dir, pack_name)
+    except RuntimeError as slice_err:
+        progress.update("error", 0.0, str(slice_err), error=str(slice_err))
+        raise HTTPException(status_code=500, detail=str(slice_err))
 
     # Step 2: Assemble complete pack folder
     progress.update("assembling", 0.90, "Compiling metadata and installing pack into Packs/...", stage="assembling")
