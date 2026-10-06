@@ -47,14 +47,23 @@ class TestStudioNoiseReduction(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Rooms and room checks go to a temp cache, never the user's profile store
+        # (saving a check prunes old ones) or their rooms (prune_sessions below).
+        cls.cache = tempfile.mkdtemp(prefix="dm_nr_cache_")
+        cls.cache_patch = mock.patch.object(audio_processor, "CACHE_DIR", cls.cache)
+        cls.cache_patch.start()
         cls.client = TestClient(app.app)
         cls.client.__enter__()
         cls.client.get("/api/packs")
 
     @classmethod
     def tearDownClass(cls):
-        cls.client.__exit__(None, None, None)
-        rooms.prune_sessions(keep_room_id="NONE")
+        try:
+            cls.client.__exit__(None, None, None)
+            rooms.prune_sessions(keep_room_id="NONE")
+        finally:
+            cls.cache_patch.stop()
+            shutil.rmtree(cls.cache, ignore_errors=True)
 
     def test_01_apply_noise_reduction_filters(self):
         """Verifies that apply_noise_reduction processes audio and preserves signal without clipping."""
@@ -222,6 +231,8 @@ class TestStudioNoiseReduction(unittest.TestCase):
             self.assertEqual(res_prof.status_code, 200, res_prof.text)
             profile_id = res_prof.json()["profile_id"]
             self.assertRegex(profile_id, r"^[0-9a-f]{12}$")
+            stored_at = os.path.abspath(audio_processor.noise_profile_wav_path(profile_id))
+            self.assertTrue(stored_at.startswith(os.path.abspath(self.cache) + os.sep), stored_at)
 
             # 3. Upload Take with Noise Reduction ON
             take_bytes = generate_synthetic_wav_bytes(1.2, add_noise=True)
