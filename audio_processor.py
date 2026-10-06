@@ -169,18 +169,20 @@ def get_room_cache_dir(room_id: str) -> str:
     return path
 
 
-def take_dir(room_id: str, line_id: str) -> str:
-    """Returns (and creates) <room dir>/takes/<line_id>, guarding against path traversal via line_id."""
+def take_dir(room_id: str, line_id: str, create: bool = True) -> str:
+    """Returns <room dir>/takes/<line_id>, guarding against path traversal via line_id. Creates it
+    unless create is False (callers that only read or delete)."""
     takes_root = os.path.join(get_room_cache_dir(room_id), "takes")
     path = os.path.join(takes_root, _sanitize_id_token(line_id))
     _ensure_within_directory(path, takes_root)
-    os.makedirs(path, exist_ok=True)
+    if create:
+        os.makedirs(path, exist_ok=True)
     return path
 
 
 def take_wav_path(room_id: str, line_id: str, take_id: str) -> str:
-    """Path of a take's active audio file."""
-    return os.path.join(take_dir(room_id, line_id), f"{_sanitize_id_token(take_id)}.wav")
+    """Path of a take's active audio file. Creates no folders."""
+    return os.path.join(take_dir(room_id, line_id, create=False), f"{_sanitize_id_token(take_id)}.wav")
 
 
 def migrate_legacy_take_files(
@@ -190,35 +192,56 @@ def migrate_legacy_take_files(
     Files already moved are left alone, so a rerun is harmless. If the active file is missing, it is
     rebuilt from the cleaned file for the current settings (noise reduction on) or from the raw file,
     in which case noise reduction is reported off so state matches what plays.
+
+    All or nothing: if any move or copy fails (a file held open by another program on Windows),
+    the files this call moved go back to their old names, any copy it made is removed, and the
+    error is raised, so the take can be migrated on a later start. A file that can't be moved
+    back stays at its new name, where a later run finds it.
     Returns {"has_audio", "has_raw", "noise_reduction"}."""
     room_dir = get_room_cache_dir(room_id)
     dest_dir = take_dir(room_id, line_id)
     old_stem = f"take_line_{int(line_index)}"
     new_stem = _sanitize_id_token(take_id)
-    for name in os.listdir(room_dir):
-        if not name.endswith(".wav"):
-            continue
-        base = name[:-4]
-        if base == old_stem:
-            suffix = ""
-        elif base == old_stem + "_raw" or base.startswith(old_stem + "_denoised"):
-            suffix = base[len(old_stem):]
-        else:
-            continue
-        dest = os.path.join(dest_dir, new_stem + suffix + ".wav")
-        if not os.path.exists(dest):
-            os.replace(os.path.join(room_dir, name), dest)
-
     active = os.path.join(dest_dir, f"{new_stem}.wav")
     raw = os.path.join(dest_dir, f"{new_stem}_raw.wav")
     nr = bool(noise_reduction)
-    if not os.path.isfile(active):
-        denoised = denoised_take_path(dest_dir, new_stem)
-        if nr and os.path.isfile(denoised):
-            shutil.copy2(denoised, active)
-        elif os.path.isfile(raw):
-            shutil.copy2(raw, active)
-            nr = False
+    moved: List[Tuple[str, str]] = []
+    copied: Optional[str] = None
+    try:
+        for name in sorted(os.listdir(room_dir)):
+            if not name.endswith(".wav"):
+                continue
+            base = name[:-4]
+            if base == old_stem:
+                suffix = ""
+            elif base == old_stem + "_raw" or base.startswith(old_stem + "_denoised"):
+                suffix = base[len(old_stem):]
+            else:
+                continue
+            src = os.path.join(room_dir, name)
+            dest = os.path.join(dest_dir, new_stem + suffix + ".wav")
+            if not os.path.exists(dest):
+                os.replace(src, dest)
+                moved.append((src, dest))
+
+        if not os.path.isfile(active):
+            denoised = denoised_take_path(dest_dir, new_stem)
+            if nr and os.path.isfile(denoised):
+                copied = active
+                shutil.copy2(denoised, active)
+            elif os.path.isfile(raw):
+                copied = active
+                shutil.copy2(raw, active)
+                nr = False
+    except Exception:
+        if copied:
+            _remove_quietly(copied)
+        for src, dest in reversed(moved):
+            try:
+                os.replace(dest, src)
+            except OSError as ex:
+                print(f"[DubMate] Could not move {dest} back to {src} ({ex}); it is kept at the new name.")
+        raise
     return {"has_audio": os.path.isfile(active), "has_raw": os.path.isfile(raw), "noise_reduction": nr}
 
 

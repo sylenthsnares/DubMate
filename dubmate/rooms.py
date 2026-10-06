@@ -57,6 +57,9 @@ class Room:
         # "takes": [take, ...] oldest first}. Entries for lines not in the current pack
         # are kept but never shown or mixed.
         self.takes: Dict[str, Dict[str, Any]] = {}
+        # Version 1 takes (keyed by line index, files in the old layout) whose files could
+        # not be moved yet. Saved as they are and retried on the next start.
+        self.pending_v1_takes: Dict[str, Any] = {}
         self.status: str = "lobby"  # "lobby" | "recording" | "screening"
         self.exported_video_path: Optional[str] = None
         self.exported_video_9_16_path: Optional[str] = None
@@ -110,7 +113,7 @@ class Room:
         if not entry:
             return None
         if any(t["take_id"] == take_id for t in entry["takes"]):
-            audio_processor.delete_take_files(audio_processor.take_dir(self.room_id, line_id), take_id)
+            audio_processor.delete_take_files(audio_processor.take_dir(self.room_id, line_id, create=False), take_id)
             entry["takes"] = [t for t in entry["takes"] if t["take_id"] != take_id]
         if not entry["takes"]:
             del self.takes[line_id]
@@ -234,6 +237,8 @@ class Room:
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
             }
+            if self.pending_v1_takes:
+                data["pending_v1_takes"] = self.pending_v1_takes
             tmp_file = state_file + ".tmp"
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -384,8 +389,11 @@ def load_persisted_rooms():
                     room.exported_video_path = data.get("exported_video_path")
                     if data.get("state_version") == STATE_VERSION:
                         room.takes = raw_takes
+                        v1_takes = data.get("pending_v1_takes") or {}
                     else:
-                        _migrate_v1_takes(room, raw_takes)
+                        v1_takes = raw_takes
+                    if isinstance(v1_takes, dict) and v1_takes:
+                        _migrate_v1_takes(room, v1_takes)
                         room._sync_save_to_disk()
                     ROOMS[r_id.upper()] = room
                     print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
@@ -395,11 +403,17 @@ def load_persisted_rooms():
 
 def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
     """Moves a version 1 room (one take per line index, take_line_<i>*.wav in the room folder)
-    to takes by line ID: each take becomes take 1 of the line now at its index, picked. A take
-    for an index outside the current pack keeps its files where they are. Safe to rerun after a
-    crash: files already moved are found in their new place."""
+    to takes by line ID: each take becomes take1 of the line now at its index. A take for an
+    index outside the current pack keeps its files where they are.
+
+    Each take moves all or nothing. One whose files can't be moved (held open by another
+    program) keeps its old files and goes to room.pending_v1_takes, which is saved with the
+    room and retried on the next start; the rest of the room loads and works meanwhile. If
+    the line got new takes in the meantime, the old take is added after them and the pick is
+    left alone. Safe to rerun after a crash: files already moved are found in their new place."""
     lines = room.pack.lines
     now_ms = int(time.time() * 1000)
+    pending: Dict[str, Any] = {}
     for key, old in raw_takes.items():
         try:
             index = int(key)
@@ -410,15 +424,32 @@ def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
             print(f"[DubMate] Room {room.room_id}: take for line {index + 1} is not in this scene; its files stay in the room folder.")
             continue
         line_id = lines[index]["line_id"]
-        moved = audio_processor.migrate_legacy_take_files(
-            room.room_id, index, line_id, "take1", bool(old.get("noise_reduction", False))
-        )
+        if room.find_take(line_id, "take1"):
+            continue  # already migrated
+        try:
+            moved = audio_processor.migrate_legacy_take_files(
+                room.room_id, index, line_id, "take1", bool(old.get("noise_reduction", False))
+            )
+        except Exception as ex:
+            print(f"[DubMate] Room {room.room_id}: could not move the take for line {index + 1} to the new "
+                  f"layout ({type(ex).__name__}: {ex}). Its files are unchanged and it will be retried on the "
+                  f"next start; until then the line plays without it.")
+            pending[key] = old
+            continue
         if not moved["has_audio"]:
             print(f"[DubMate] Room {room.room_id}: take for line {index + 1} has no audio on disk; dropped.")
             continue
         take = {k: v for k, v in old.items() if k not in ("wav_path", "url")}
         take.update(
-            take_id="take1", number=1, audio_version=now_ms,
+            take_id="take1", audio_version=now_ms,
             has_raw=moved["has_raw"], noise_reduction=moved["noise_reduction"],
         )
-        room.takes[line_id] = {"picked": "take1", "next_number": 2, "takes": [take]}
+        entry = room.takes.get(line_id)
+        if entry is None:
+            take["number"] = 1
+            room.takes[line_id] = {"picked": "take1", "next_number": 2, "takes": [take]}
+        else:
+            take["number"] = entry["next_number"]
+            entry["next_number"] += 1
+            entry["takes"].append(take)
+    room.pending_v1_takes = pending

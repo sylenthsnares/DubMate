@@ -192,6 +192,44 @@ class TestTakeFiles(unittest.TestCase):
         result = audio_processor.migrate_legacy_take_files(self.ROOM, 3, "t3000", "take1", False)
         self.assertEqual(result, {"has_audio": False, "has_raw": False, "noise_reduction": False})
 
+    def test_failed_move_puts_moved_files_back(self):
+        key_suffix = os.path.basename(audio_processor.denoised_take_path(self.room_dir, "take_line_0"))[len("take_line_0"):-4]
+        before = self._legacy(0, "", "_raw", key_suffix)
+        real_replace = os.replace
+        calls = []
+
+        def flaky_replace(src, dst):
+            calls.append(src)
+            if len(calls) == 2:
+                raise PermissionError(13, "The process cannot access the file", src)
+            return real_replace(src, dst)
+
+        with mock.patch.object(audio_processor.os, "replace", flaky_replace):
+            with self.assertRaises(PermissionError):
+                audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", True)
+        for suffix, data in before.items():
+            self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")), data)
+        self.assertEqual(os.listdir(os.path.join(self.room_dir, "takes", "t1000")), [])
+
+    def test_failed_copy_removes_the_partial_active_file(self):
+        files = self._legacy(0, "_raw")
+
+        def broken_copy(src, dst):
+            with open(dst, "wb") as f:
+                f.write(b"partial")
+            raise OSError(28, "No space left on device")
+
+        with mock.patch.object(audio_processor.shutil, "copy2", broken_copy):
+            with self.assertRaises(OSError):
+                audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", False)
+        self.assertEqual(self._read(os.path.join(self.room_dir, "take_line_0_raw.wav")), files["_raw"])
+        self.assertEqual(os.listdir(os.path.join(self.room_dir, "takes", "t1000")), [])
+
+    def test_read_paths_create_no_folders(self):
+        audio_processor.take_wav_path(self.ROOM, "t4000", "take1")
+        audio_processor.take_dir(self.ROOM, "t4000", create=False)
+        self.assertFalse(os.path.exists(os.path.join(self.room_dir, "takes", "t4000")))
+
 
 class RoomCase(unittest.TestCase):
     """Own cache dir, an empty room table and a synthetic 3-line pack in the registry, so
@@ -495,6 +533,76 @@ class TestOldRoomMigration(RoomCase):
         room = self._reload()
         self.assertEqual(room.takes, {})
         self.assertEqual(self._load_state()["takes"], {})
+
+    def _locked_second_move(self):
+        """Patches os.replace so the second file moved fails as a file held open on Windows does."""
+        real_replace = os.replace
+        calls = []
+
+        def flaky_replace(src, dst):
+            calls.append(src)
+            if len(calls) == 2:
+                raise PermissionError(13, "The process cannot access the file because it is being used by another process", src)
+            return real_replace(src, dst)
+
+        return mock.patch.object(audio_processor.os, "replace", flaky_replace)
+
+    def test_failed_move_keeps_the_take_and_retries_next_start(self):
+        key = self._key_suffix("take_line_0")
+        line0 = {s: self._wav(os.path.join(self.room_dir, f"take_line_0{s}.wav"), f)
+                 for s, f in (("", 300), ("_raw", 350), (key, 400))}
+        line1 = self._wav(os.path.join(self.room_dir, "take_line_1.wav"), 450)
+        old0 = self._old_take(noise_reduction=True)
+        self._write_v1({"0": old0, "1": self._old_take(user_name="Ben")})
+
+        with self._locked_second_move():
+            room = self._reload()
+
+        # The room loads and works; line 1 moved, line 0 stays in the old layout untouched.
+        self.assertEqual(sorted(room.takes), ["t3000"])
+        self.assertEqual(room.mix_takes().keys(), {1})
+        for suffix, data in line0.items():
+            self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")), data)
+        self.assertEqual(os.listdir(os.path.join(self.room_dir, "takes", "t1000")), [])
+        self.assertEqual(self._read(audio_processor.take_wav_path(self.ROOM, "t3000", "take1")), line1)
+        saved = self._load_state()
+        self.assertEqual(saved["state_version"], 2)
+        self.assertEqual(saved["pending_v1_takes"], {"0": json.loads(json.dumps(old0))})
+
+        # A save during the session keeps the waiting take.
+        room._sync_save_to_disk()
+        self.assertEqual(self._load_state()["pending_v1_takes"], {"0": json.loads(json.dumps(old0))})
+
+        room = self._reload()
+        self.assertEqual(sorted(room.takes), ["t1000", "t3000"])
+        take0 = room.picked_take("t1000")
+        self.assertEqual((take0["take_id"], take0["number"], take0["offset_ms"]), ("take1", 1, 40))
+        self.assertTrue(take0["noise_reduction"])
+        new0 = os.path.join(self.room_dir, "takes", "t1000")
+        for suffix, data in line0.items():
+            self.assertEqual(self._read(os.path.join(new0, f"take1{suffix}.wav")), data)
+            self.assertFalse(os.path.exists(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")))
+        saved = self._load_state()
+        self.assertNotIn("pending_v1_takes", saved)
+        self.assertEqual(room.pending_v1_takes, {})
+        self.assertEqual(saved["takes"], json.loads(json.dumps(room.takes)))
+
+    def test_waiting_take_joins_takes_recorded_meanwhile(self):
+        old = self._wav(os.path.join(self.room_dir, "take_line_0.wav"), 300)
+        self._wav(os.path.join(self.room_dir, "take_line_0_raw.wav"), 350)
+        self._write_v1({"0": self._old_take()})
+        with self._locked_second_move():
+            room = self._reload()
+        self.assertEqual(room.takes, {})
+        self._add(room, "t1000", 500)
+        room._sync_save_to_disk()
+
+        room = self._reload()
+        entry = room.line_entry("t1000")
+        self.assertEqual([(t["take_id"], t["number"]) for t in entry["takes"]], [("k500", 1), ("take1", 2)])
+        self.assertEqual((entry["picked"], entry["next_number"]), ("k500", 3))
+        self.assertEqual(self._read(audio_processor.take_wav_path(self.ROOM, "t1000", "take1")), old)
+        self.assertNotIn("pending_v1_takes", self._load_state())
 
 
 class TestTakeRoutes(RoomCase):
