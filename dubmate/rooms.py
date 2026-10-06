@@ -71,6 +71,10 @@ class Room:
         # Take processing runs in a worker thread; this keeps one room's uploads and
         # noise-reduction toggles serialized without blocking other rooms.
         self.processing_lock = asyncio.Lock()
+        # Refresh older takes (not saved): user id -> takes still to re-clean, and the
+        # running background task. Renders are refused while anyone's refresh runs.
+        self.cleanup_refreshing: Dict[str, int] = {}
+        self.cleanup_refresh_task: Optional[asyncio.Task] = None
 
     def line_entry(self, line_id: str) -> Optional[Dict[str, Any]]:
         """The line's take history, or None if it has no takes."""

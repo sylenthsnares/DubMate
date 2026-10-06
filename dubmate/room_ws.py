@@ -116,7 +116,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     for u in room.users.values():
                         u["location"] = "screening"
 
-                    # Auto-master the scene into MP4 for the cast
+                    # Auto-master the scene into MP4 for the cast, after any refresh of
+                    # older takes, so the render doesn't mix old and new audio.
+                    refresh = room.cleanup_refresh_task
+                    if refresh is not None and not refresh.done():
+                        await asyncio.wait({refresh})
                     try:
                         out_path = room.export_out_path("16:9")
                         await asyncio.to_thread(
