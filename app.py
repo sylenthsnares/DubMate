@@ -192,6 +192,7 @@ def _config_payload() -> Dict[str, Any]:
     with packs_cache._RESCAN_LOCK:
         config_info = pack_loader.get_current_packs_config()
     registry = packs_cache.get_packs_registry()
+    mic_sync = pack_loader.load_config().get("mic_sync")
     return {
         **config_info,
         # Storage locations are user-configurable so an install on one drive does
@@ -199,8 +200,32 @@ def _config_payload() -> Dict[str, Any]:
         "exports_dir": common.exports_dir(),
         "cache_dir": pack_loader.CACHE_DIR,
         "install_root": pack_loader.get_install_root(),
+        # Measured mic delay per microphone|output pair (Audio settings, Sync your mic).
+        "mic_sync": mic_sync if isinstance(mic_sync, dict) else {},
         "packs": [p.to_dict() for p in registry.values()],
     }
+
+
+MIC_SYNC_MAX_PAIRS = 20
+
+
+def _valid_mic_sync(value: Any) -> Dict[str, Dict[str, Any]]:
+    """Checks a {"<mic>|<output>": {latency_ms, method, measured_at}} map; 400 on a bad entry."""
+    bad = HTTPException(status_code=400, detail="That sync result could not be saved.")
+    if not isinstance(value, dict):
+        raise bad
+    entries = {}
+    for key, entry in value.items():
+        if not isinstance(key, str) or not 1 <= len(key) <= 200 or not isinstance(entry, dict):
+            raise bad
+        latency = entry.get("latency_ms")
+        measured = entry.get("measured_at")
+        if (not isinstance(latency, int) or isinstance(latency, bool) or not 0 <= latency <= 800
+                or entry.get("method") not in ("clicks", "claps")
+                or not isinstance(measured, int) or isinstance(measured, bool)):
+            raise bad
+        entries[key] = {"latency_ms": latency, "method": entry["method"], "measured_at": measured}
+    return entries
 
 
 @app.get("/api/config")
@@ -212,19 +237,33 @@ async def get_config():
 @app.post("/api/config")
 async def update_config(payload: Dict[str, Any], request: Request):
     """
-    Updates persistent configuration. Accepts packs_dir and/or exports_dir; at least
-    one must be supplied. Previously packs_dir was mandatory, which made it
+    Updates persistent configuration. Accepts packs_dir, exports_dir and/or mic_sync;
+    at least one must be supplied. Previously packs_dir was mandatory, which made it
     impossible to change the export location on its own.
     """
     require_local_request(request)
 
     packs_dir = (payload.get("packs_dir") or "").strip()
     exports_dir = (payload.get("exports_dir") or "").strip()
-    if not packs_dir and not exports_dir:
+    mic_sync = payload.get("mic_sync")
+    if not packs_dir and not exports_dir and mic_sync is None:
         raise HTTPException(status_code=400, detail="Enter a folder path.")
 
     messages = []
     count = None
+
+    if mic_sync is not None:
+        entries = _valid_mic_sync(mic_sync)
+        cfg = pack_loader.load_config()
+        old = cfg.get("mic_sync") if isinstance(cfg.get("mic_sync"), dict) else {}
+        stored = {k: v for k, v in old.items() if isinstance(v, dict)}
+        stored.update(entries)
+        # Keep the most recently measured pairs.
+        newest = sorted(stored.items(), reverse=True,
+                        key=lambda kv: kv[1]["measured_at"] if isinstance(kv[1].get("measured_at"), int) else 0)
+        cfg["mic_sync"] = dict(newest[:MIC_SYNC_MAX_PAIRS])
+        if not pack_loader.save_config(cfg):
+            raise HTTPException(status_code=500, detail="That sync result could not be saved.")
 
     if exports_dir:
         if not pack_loader._dir_is_writable(exports_dir):

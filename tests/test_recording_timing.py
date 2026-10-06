@@ -527,5 +527,90 @@ class TestRoomSavedBeforeTiming(TimingRoomCase):
         self.assertEqual(rooms.ROOMS[self.ROOM].picked_take("t1000")["offset_ms"], 120)
 
 
+class TestMicSyncConfig(unittest.TestCase):
+    """GET/POST /api/config mic_sync, against a config.json in a temp dir."""
+
+    @classmethod
+    def setUpClass(cls):
+        import app
+        from starlette.testclient import TestClient
+        cls.client = TestClient(app.app)
+
+    def setUp(self):
+        import pack_loader
+        self.pack_loader = pack_loader
+        tmp = tempfile.mkdtemp(prefix="dm_mic_sync_cfg_")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        self.cfg_path = os.path.join(tmp, "config.json")
+        patcher = mock.patch.object(pack_loader, "get_config_path", return_value=self.cfg_path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.exports = os.path.join(tmp, "exports")
+        with open(self.cfg_path, "w", encoding="utf-8") as f:
+            json.dump({"packs_dir": "/some/packs", "exports_dir": self.exports}, f)
+
+    def _post(self, mic_sync, status=200, **kw):
+        res = self.client.post("/api/config", json={"mic_sync": mic_sync}, **kw)
+        self.assertEqual(res.status_code, status, res.text)
+        return res.json()
+
+    @staticmethod
+    def _entry(ms=140, at=1790000000000, method="clicks"):
+        return {"latency_ms": ms, "method": method, "measured_at": at}
+
+    def test_config_without_mic_sync_reads_empty(self):
+        res = self.client.get("/api/config")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["mic_sync"], {})
+
+    def test_posting_a_pair_merges_and_keeps_folders(self):
+        self._post({"Mic A|Phones": self._entry(100, 1)})
+        data = self._post({"Mic B|default": self._entry(140, 2, "claps")})
+        self.assertEqual(data["mic_sync"], {"Mic A|Phones": self._entry(100, 1),
+                                            "Mic B|default": self._entry(140, 2, "claps")})
+        saved = self.pack_loader.load_config()
+        self.assertEqual(saved["packs_dir"], "/some/packs")
+        self.assertEqual(saved["exports_dir"], self.exports)
+        self.assertEqual(saved["mic_sync"]["Mic B|default"]["latency_ms"], 140)
+        self.assertEqual(self.client.get("/api/config").json()["mic_sync"], saved["mic_sync"])
+
+    def test_same_pair_is_replaced(self):
+        self._post({"Mic A|Phones": self._entry(100, 1)})
+        data = self._post({"Mic A|Phones": self._entry(160, 5)})
+        self.assertEqual(data["mic_sync"], {"Mic A|Phones": self._entry(160, 5)})
+
+    def test_twenty_first_pair_drops_the_oldest(self):
+        for n in range(20):
+            self._post({f"Mic {n}|Out": self._entry(100, 1000 + n)})
+        data = self._post({"Mic new|Out": self._entry(100, 5000)})
+        pairs = data["mic_sync"]
+        self.assertEqual(len(pairs), 20)
+        self.assertNotIn("Mic 0|Out", pairs)
+        self.assertIn("Mic 1|Out", pairs)
+        self.assertIn("Mic new|Out", pairs)
+
+    def test_bad_entries_are_refused(self):
+        self._post({"Mic A|Phones": self._entry(100, 1)})
+        before = self.pack_loader.load_config()
+        for bad in ("nope", [], {"": self._entry()}, {"x" * 201: self._entry()},
+                    {"k": "140"}, {"k": self._entry(ms=-5)}, {"k": self._entry(ms=805)},
+                    {"k": self._entry(ms=140.5)}, {"k": self._entry(ms="140")},
+                    {"k": self._entry(ms=True)}, {"k": self._entry(method="magic")},
+                    {"k": self._entry(at="today")}, {"k": {"latency_ms": 140, "method": "clicks"}},
+                    {"ok|ok": self._entry(), "k": self._entry(ms=900)}):
+            data = self._post(bad, status=400)
+            self.assertEqual(data["detail"], "That sync result could not be saved.")
+        self.assertEqual(self.pack_loader.load_config(), before)
+
+    def test_empty_payload_still_asks_for_a_folder(self):
+        res = self.client.post("/api/config", json={})
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["detail"], "Enter a folder path.")
+
+    def test_tunnel_request_is_refused(self):
+        self._post({"Mic A|Phones": self._entry()}, status=403, headers={"cf-ray": "abc123"})
+        self.assertNotIn("mic_sync", self.pack_loader.load_config())
+
+
 if __name__ == "__main__":
     unittest.main()

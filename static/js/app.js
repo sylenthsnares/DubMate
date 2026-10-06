@@ -8,6 +8,7 @@ import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
 import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
+import { MicSyncMethods } from './studio/mic_sync.js';
 import { PackMethods } from './studio/packs.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
@@ -1232,6 +1233,7 @@ class DubMateApp {
     captureHomeOriginParam();
     this.pointHomeLinksAtOwnEngine();
     await this.fetchPacks();
+    this.loadEngineMicSync();
 
     // First-run audio setup / remembered device routing. Deliberately not
     // awaited so a slow permissions query cannot stall the router.
@@ -1522,7 +1524,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, PackMethods, LobbyMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, MicSyncMethods, PackMethods, LobbyMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

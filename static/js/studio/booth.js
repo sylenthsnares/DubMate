@@ -1104,7 +1104,11 @@ export class BoothMethods {
   }
 
   async uploadTake(lineIndex, blob, recordedBuffer = null) {
-    const offsetMs = parseInt(this.sliderNudge.value, 10);
+    // A synced setup starts the take its measured delay earlier; otherwise it
+    // inherits the slider (the picked take's timing) as before.
+    await this.updateAudioDeviceList();
+    const latencyMs = this.currentLatencyMs();
+    const offsetMs = latencyMs !== null ? -latencyMs : parseInt(this.sliderNudge.value, 10);
     const pitch = parseFloat(this.sliderPitch.value);
     const reverb = parseFloat(this.sliderReverb.value) / 100.0;
     const gain = parseFloat(this.sliderGain.value);
@@ -1148,7 +1152,7 @@ export class BoothMethods {
           this.screeningBuffers.set(data.take.url, recordedBuffer);
         }
       }
-      this.showToast("Take saved");
+      this.showToast(this.takeSavedMessage());
       await this.loadBoothLine(lineIndex);
     } catch (err) {
       this.recordState = 'idle';

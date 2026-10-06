@@ -19,7 +19,7 @@ const METER_PEAK_DECAY_DB_PER_FRAME = 0.45;
 
 // localStorage/sessionStorage throw in some locked-down webviews and in
 // private-mode Safari, so every access goes through these guards.
-function safeStorageGet(store, key) {
+export function safeStorageGet(store, key) {
   try {
     return store ? store.getItem(key) : null;
   } catch (e) {
@@ -27,7 +27,7 @@ function safeStorageGet(store, key) {
   }
 }
 
-function safeStorageSet(store, key, value) {
+export function safeStorageSet(store, key, value) {
   try {
     if (store) store.setItem(key, value);
   } catch (e) { }
