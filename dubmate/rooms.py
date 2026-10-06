@@ -15,6 +15,7 @@ import uuid
 import random
 import shutil
 import asyncio
+import threading
 from typing import Dict, List, Optional, Set, Any
 
 from fastapi import WebSocket, HTTPException
@@ -75,6 +76,16 @@ class Room:
         # running background task. Renders are refused while anyone's refresh runs.
         self.cleanup_refreshing: Dict[str, int] = {}
         self.cleanup_refresh_task: Optional[asyncio.Task] = None
+        # Session details, saved with the room. last_active_at is the last change time;
+        # creator_id is the host_id the room was made with (host promotion never changes
+        # it); created_here says the room was made on the engine's own computer.
+        self.last_active_at: float = time.time()
+        self.creator_id: str = host_id
+        self.created_here: bool = True
+        # Set (under _save_lock) when the room's folder is deleted, so no later save,
+        # queued or mid-thread, can bring the folder back.
+        self.deleted: bool = False
+        self._save_lock = threading.Lock()
 
     def line_entry(self, line_id: str) -> Optional[Dict[str, Any]]:
         """The line's take history, or None if it has no takes."""
@@ -208,6 +219,7 @@ class Room:
         }
 
     def mark_dirty(self):
+        self.last_active_at = time.time()
         self._save_dirty = True
         if self._save_task is None or self._save_task.done():
             try:
@@ -230,6 +242,12 @@ class Room:
             print(f"[RoomPersistence] Error in debounced save: {ex}")
 
     def _sync_save_to_disk(self):
+        with self._save_lock:
+            if self.deleted:
+                return
+            self._write_state_file()
+
+    def _write_state_file(self):
         try:
             room_dir = audio_processor.get_room_cache_dir(self.room_id)
             state_file = os.path.join(room_dir, "room_state.json")
@@ -243,6 +261,10 @@ class Room:
                 "takes": self.takes,
                 "status": self.status,
                 "exported_video_path": self.exported_video_path,
+                "last_active_at": self.last_active_at,
+                "creator_id": self.creator_id,
+                "created_here": self.created_here,
+                "master_dialogue_presence_db": self.master_dialogue_presence_db,
             }
             if self.pending_v1_takes:
                 data["pending_v1_takes"] = self.pending_v1_takes
@@ -367,48 +389,83 @@ def prune_sessions(keep_room_id: Optional[str] = None):
         ROOMS.pop(r, None)
 
 
+def new_room_code() -> str:
+    """A room code that is neither loaded nor has a folder on disk, so a new room can
+    never mix its takes with a kept session's."""
+    rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
+    while True:
+        code = generate_room_code()
+        if code.upper() not in ROOMS and not os.path.exists(os.path.join(rooms_dir, code)):
+            return code
+
+
+def load_room_folder(room_id: str) -> Optional[Room]:
+    """Loads one room folder into ROOMS and returns the room, or None when its pack is
+    missing or its room_state.json can't be read. Fields older builds didn't save fall
+    back: last_active_at to the state file's time (read before any migration save),
+    creator_id to host_id, created_here to True, the presence level to 0. Every user is
+    marked offline, since nobody is connected yet."""
+    room_folder = os.path.join(audio_processor.CACHE_DIR, "rooms", room_id)
+    state_file = os.path.join(room_folder, "room_state.json")
+    if not os.path.isfile(state_file):
+        return None
+    try:
+        file_mtime = os.path.getmtime(state_file)
+        with open(state_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        pack = packs_cache.PACKS_CACHE.get(data.get("pack_id"))
+        if not pack:
+            return None
+        host_id = data.get("host_id", "host")
+        users = data.get("users", {})
+        host_user = users.get(host_id, {})
+        host_name = host_user.get("name", "Host")
+        host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
+        room = Room(room_id, pack, host_id, host_name, host_color)
+        room.users = data.get("users", room.users)
+        for user in room.users.values():
+            if isinstance(user, dict):
+                user["is_online"] = False
+        room.role_assignments = data.get("role_assignments", room.role_assignments)
+        raw_takes = data.get("takes") or {}
+        room.status = data.get("status", "lobby")
+        room.exported_video_path = data.get("exported_video_path")
+        last_active = data.get("last_active_at")
+        room.last_active_at = float(last_active) if isinstance(last_active, (int, float)) else file_mtime
+        room.creator_id = data.get("creator_id") or host_id
+        created_here = data.get("created_here")
+        room.created_here = created_here if isinstance(created_here, bool) else True
+        try:
+            presence = float(data.get("master_dialogue_presence_db") or 0.0)
+        except (TypeError, ValueError):
+            presence = 0.0
+        room.master_dialogue_presence_db = max(-12.0, min(12.0, presence))
+        if data.get("state_version") == STATE_VERSION:
+            room.takes = raw_takes
+            v1_takes = data.get("pending_v1_takes") or {}
+        else:
+            v1_takes = raw_takes
+        if isinstance(v1_takes, dict) and v1_takes:
+            _migrate_v1_takes(room, v1_takes)
+            room._sync_save_to_disk()
+        ROOMS[room_id.upper()] = room
+        return room
+    except Exception as ex:
+        print(f"[DubMate] Error restoring room {room_id}: {ex}")
+        return None
+
+
 def load_persisted_rooms():
     prune_sessions()
-    registry = packs_cache.PACKS_CACHE
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
         return
     for r_id in os.listdir(rooms_dir):
-        room_folder = os.path.join(rooms_dir, r_id)
-        if not os.path.isdir(room_folder):
+        if not os.path.isdir(os.path.join(rooms_dir, r_id)):
             continue
-
-        state_file = os.path.join(room_folder, "room_state.json")
-        if os.path.isfile(state_file):
-            try:
-                with open(state_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                pack_id = data.get("pack_id")
-                pack = registry.get(pack_id)
-                if pack:
-                    host_id = data.get("host_id", "host")
-                    users = data.get("users", {})
-                    host_user = users.get(host_id, {})
-                    host_name = host_user.get("name", "Host")
-                    host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
-                    room = Room(r_id, pack, host_id, host_name, host_color)
-                    room.users = data.get("users", room.users)
-                    room.role_assignments = data.get("role_assignments", room.role_assignments)
-                    raw_takes = data.get("takes") or {}
-                    room.status = data.get("status", "lobby")
-                    room.exported_video_path = data.get("exported_video_path")
-                    if data.get("state_version") == STATE_VERSION:
-                        room.takes = raw_takes
-                        v1_takes = data.get("pending_v1_takes") or {}
-                    else:
-                        v1_takes = raw_takes
-                    if isinstance(v1_takes, dict) and v1_takes:
-                        _migrate_v1_takes(room, v1_takes)
-                        room._sync_save_to_disk()
-                    ROOMS[r_id.upper()] = room
-                    print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
-            except Exception as ex:
-                print(f"[DubMate] Error restoring room {r_id}: {ex}")
+        room = load_room_folder(r_id)
+        if room:
+            print(f"[DubMate] Preserved last active session {r_id.upper()} with {len(room.takes)} takes from disk.")
 
 
 def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:

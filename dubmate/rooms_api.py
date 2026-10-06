@@ -30,7 +30,7 @@ _ROOM_CREATE_LOCK = asyncio.Lock()
 
 
 @router.post("/api/rooms")
-async def create_room(payload: Dict[str, Any]):
+async def create_room(payload: Dict[str, Any], request: Request):
     pack_id = payload.get("pack_id")
     host_name = payload.get("host_name", "Host").strip() or "Host"
     host_color = common.sanitize_color(payload.get("host_color"), "#7c5cff")
@@ -39,12 +39,14 @@ async def create_room(payload: Dict[str, Any]):
     pack = packs_cache.pack_or_404(pack_id, "Selected pack not found")
 
     async with _ROOM_CREATE_LOCK:
-        room_id = rooms.generate_room_code()
+        room_id = rooms.new_room_code()
         # Prune any previous session recordings from disk and RAM so only the new session is kept
         await asyncio.to_thread(rooms.prune_sessions, keep_room_id=room_id)
 
         host_id = str(uuid.uuid4())[:8]
         room = rooms.Room(room_id, pack, host_id, host_name, host_color)
+        room.created_here = common.is_own_computer(request)
+        room.creator_id = host_id
         rooms.ROOMS[room_id] = room
 
     # Queue the code for the public registry instead of gating on the tunnel already
