@@ -705,6 +705,48 @@ NOTE This is a test subtitle file
         self.assertEqual(container.get("position"), "relative")
         self.assertEqual(container.get("overflow"), "hidden")
 
+    def test_16_vocals_audio_route(self):
+        """The editor's voices-only preview gets the separated voice stem, and only that."""
+        folder = os.path.join(self.tmp_dir, "audio_sess")
+        os.makedirs(os.path.join(folder, "stems"))
+        create_dummy_wav(os.path.join(folder, "stems", "vocals.wav"), duration_sec=1.0)
+
+        session_id = "test_audio_sess"
+        session = {"session_id": session_id, "folder": folder, "voices_separated": True}
+        BUILDER_SESSIONS[session_id] = session
+        not_ready = "This audio isn't ready yet."
+        try:
+            res = self.client.get(f"/api/builder/{session_id}/audio/vocals")
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.headers["content-type"], "audio/wav")
+
+            res = self.client.get(f"/api/builder/{session_id}/audio/vocals",
+                                  headers={"Range": "bytes=0-99"})
+            self.assertEqual(res.status_code, 206)
+            self.assertEqual(len(res.content), 100)
+
+            res = self.client.get(f"/api/builder/{session_id}/audio/backing")
+            self.assertEqual(res.status_code, 404)
+            self.assertEqual(res.json()["detail"], not_ready)
+
+            res = self.client.get("/api/builder/no_such_session/audio/vocals")
+            self.assertEqual(res.status_code, 404)
+            self.assertEqual(res.json()["detail"], not_ready)
+
+            # The basic filter's vocals.wav is the full mix, never "voices only".
+            session["voices_separated"] = False
+            res = self.client.get(f"/api/builder/{session_id}/audio/vocals")
+            self.assertEqual(res.status_code, 404)
+            self.assertEqual(res.json()["detail"], not_ready)
+
+            session["voices_separated"] = True
+            os.remove(os.path.join(folder, "stems", "vocals.wav"))
+            res = self.client.get(f"/api/builder/{session_id}/audio/vocals")
+            self.assertEqual(res.status_code, 404)
+            self.assertEqual(res.json()["detail"], not_ready)
+        finally:
+            BUILDER_SESSIONS.pop(session_id, None)
+
 
 if __name__ == "__main__":
     unittest.main()

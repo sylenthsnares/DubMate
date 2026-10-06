@@ -262,6 +262,9 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
         session["vocals_path"] = stem_results["vocals"]
         session["backing_path"] = stem_results["backing"]
+        # The basic filter writes a copy of the full mix as vocals.wav, so only a
+        # real separation may be played back as "voices only".
+        session["voices_separated"] = not stem_results.get("used_fallback")
         # Say so when the neural model was unavailable. Silently substituting the
         # crude filter meant the user was promised AI isolation and never told they
         # did not get it.
@@ -625,6 +628,24 @@ async def builder_serve_video(session_id: str, request: Request):
         session["video_path"],
         request,
         media_type="video/mp4",
+        cache_control="no-cache"
+    )
+
+
+@router.get("/api/builder/{session_id}/audio/{track}")
+async def builder_serve_audio_track(session_id: str, track: str, request: Request):
+    """Streams the separated voice stem for voices-only preview in the editor."""
+    session = BUILDER_SESSIONS.get(session_id)
+    not_ready = HTTPException(status_code=404, detail="This audio isn't ready yet.")
+    if track != "vocals" or not session or not session.get("voices_separated"):
+        raise not_ready
+    path = common.safe_join(session["folder"], "stems", "vocals.wav")
+    if not os.path.isfile(path):
+        raise not_ready
+    return common.range_stream_file(
+        path,
+        request,
+        media_type="audio/wav",
         cache_control="no-cache"
     )
 

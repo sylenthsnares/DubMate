@@ -341,6 +341,7 @@
             <!-- Video Monitor Screen -->
             <div class="editor-video-container glass-card">
               <video id="editor-video" class="editor-video-player" playsinline preload="auto"></video>
+              <audio id="editor-stem-audio" preload="auto" hidden></audio>
             </div>
 
             <!-- Studio Video & Transport Deck (Recording Booth Style) -->
@@ -371,7 +372,7 @@
 
                 <!-- Track Audio Source Switch on Right -->
                 <div class="deck-audio-toggle">
-                  <button id="btn-toggle-audio-track" class="btn btn-secondary btn-xs btn-audio-source-toggle" data-tip="Switch the waveform between voices only and the full audio">
+                  <button id="btn-toggle-audio-track" class="btn btn-secondary btn-xs btn-audio-source-toggle" data-tip="Hear and see voices only, or the full audio">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                     <span id="label-active-track">Voices only</span>
                   </button>

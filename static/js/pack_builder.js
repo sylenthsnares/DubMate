@@ -155,6 +155,7 @@ export class PackBuilderApp {
 
     // Step 3: Editor elements
     this.editorVideo = document.getElementById('editor-video');
+    this.editorStemAudio = document.getElementById('editor-stem-audio');
     this.videoTimeDisplay = document.getElementById('video-time-display');
     this.btnToggleAudioTrack = document.getElementById('btn-toggle-audio-track');
     this.labelActiveTrack = document.getElementById('label-active-track');
@@ -292,16 +293,24 @@ export class PackBuilderApp {
     this.editorVideo.addEventListener('play', () => this.onVideoPlayState(true));
     this.editorVideo.addEventListener('pause', () => this.onVideoPlayState(false));
     this.editorVideo.addEventListener('ended', () => this.onVideoPlayState(false));
+    // The video is the clock; the voice track follows it.
+    this.editorVideo.addEventListener('seeking', () => {
+      this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+    });
+    this.editorVideo.addEventListener('ratechange', () => {
+      this.editorStemAudio.playbackRate = this.editorVideo.playbackRate;
+    });
+    this.editorVideo.addEventListener('pause', () => this.editorStemAudio.pause());
+    this.editorVideo.addEventListener('ended', () => this.editorStemAudio.pause());
+    this.editorStemAudio.addEventListener('error', () => this.fallbackToFullAudio());
     this.btnStepBackward.addEventListener('click', () => this.seekRelative(-1.0));
     this.btnStepForward.addEventListener('click', () => this.seekRelative(1.0));
 
     // 6. Audio track switch (vocals only vs full audio)
-    this.btnToggleAudioTrack.addEventListener('click', async () => {
-      this.activeAudioTrack = this.activeAudioTrack === 'vocals' ? 'full' : 'vocals';
-      this.labelActiveTrack.innerText = this.activeAudioTrack === 'vocals' ? 'Voices only' : 'Full audio';
-      await this.fetchWaveformPeaks(this.activeAudioTrack);
-      this.renderWaveformCanvas();
-      this.showToast(`Showing ${this.labelActiveTrack.innerText.toLowerCase()}`);
+    this.btnToggleAudioTrack.addEventListener('click', () => {
+      const next = this.activeAudioTrack === 'vocals' ? 'full' : 'vocals';
+      this.showToast(next === 'vocals' ? 'Playing voices only' : 'Playing full audio');
+      this.setAudioTrack(next);
     });
 
     // 7. Timeline In / Out / Add Cue Markers / Whisper Transcribe
@@ -802,6 +811,9 @@ export class PackBuilderApp {
   async setupEditorView() {
     this.editorVideo.src = `/api/builder/${this.sessionId}/video`;
     this.editorVideo.load();
+    this.editorStemAudio.src = `/api/builder/${this.sessionId}/audio/vocals`;
+    this.editorStemAudio.load();
+    this.editorVideo.muted = this.activeAudioTrack === 'vocals';
     this.editorVideo.addEventListener('loadeddata', () => {
       if (this.editorVideo.duration && !isNaN(this.editorVideo.duration) && this.editorVideo.duration > 0) {
         this.duration = this.editorVideo.duration;
@@ -841,6 +853,8 @@ export class PackBuilderApp {
       const res = await fetch(`/api/builder/${this.sessionId}/waveform?columns=1200&track=${track}`);
       if (res.ok) {
         const data = await res.json();
+        // A later switch of track wins over a slower earlier request.
+        if (track !== (this.activeAudioTrack || 'vocals')) return;
         this.waveformPeaks = data.peaks || [];
         if (data.duration > 0) {
           this.duration = data.duration;
@@ -1596,9 +1610,74 @@ export class PackBuilderApp {
 
   togglePlayPause() {
     if (this.editorVideo.paused) {
-      this.editorVideo.play();
+      this.playMedia();
     } else {
-      this.editorVideo.pause();
+      this.pauseMedia();
+    }
+  }
+
+  // Both elements start in the same call stack so the user's click still counts
+  // as the gesture that allows playback.
+  playMedia() {
+    if (this.activeAudioTrack === 'vocals') {
+      this.editorVideo.muted = true;
+      this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+      this.playStemAudio();
+    } else {
+      this.editorVideo.muted = false;
+      this.editorStemAudio.pause();
+    }
+    const played = this.editorVideo.play();
+    if (played && played.catch) played.catch(() => {});
+  }
+
+  pauseMedia() {
+    this.editorVideo.pause();
+    this.editorStemAudio.pause();
+  }
+
+  playStemAudio() {
+    const played = this.editorStemAudio.play();
+    if (played && played.catch) {
+      played.catch((err) => {
+        // AbortError only means a pause came before play started.
+        if (err && err.name === 'AbortError') return;
+        this.fallbackToFullAudio();
+      });
+    }
+  }
+
+  async setAudioTrack(track) {
+    this.activeAudioTrack = track;
+    this.labelActiveTrack.innerText = track === 'vocals' ? 'Voices only' : 'Full audio';
+    if (track === 'vocals') {
+      this.editorVideo.muted = true;
+      if (!this.editorVideo.paused) {
+        this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+        this.playStemAudio();
+      }
+    } else {
+      this.editorVideo.muted = false;
+      this.editorStemAudio.pause();
+    }
+    await this.fetchWaveformPeaks(track);
+    this.renderWaveformCanvas();
+  }
+
+  fallbackToFullAudio() {
+    if (this.activeAudioTrack !== 'vocals') return;
+    this.setAudioTrack('full');
+    // Tell the user once per session; later failures switch back quietly.
+    if (this.stemFallbackSessionId === this.sessionId) return;
+    this.stemFallbackSessionId = this.sessionId;
+    this.showToast("Voices-only playback isn't available, so you're hearing the full audio.");
+  }
+
+  syncStemAudio() {
+    if (this.activeAudioTrack !== 'vocals' || this.editorVideo.paused) return;
+    const audio = this.editorStemAudio;
+    if (Math.abs(audio.currentTime - this.editorVideo.currentTime) > 0.1) {
+      audio.currentTime = this.editorVideo.currentTime;
     }
   }
 
@@ -1623,6 +1702,7 @@ export class PackBuilderApp {
   startPlaybackLoop() {
     const loop = () => {
       this.updatePlayheadPosition();
+      this.syncStemAudio();
       this.animationFrameId = requestAnimationFrame(loop);
     };
     this.animationFrameId = requestAnimationFrame(loop);
@@ -1736,11 +1816,11 @@ export class PackBuilderApp {
     const seg = this.segments[idx];
     if (!seg) return;
     this.seekTo(seg.start);
-    this.editorVideo.play();
+    this.playMedia();
     const playDuration = (seg.end - seg.start) * 1000;
     setTimeout(() => {
       if (!this.editorVideo.paused && this.editorVideo.currentTime >= seg.end - 0.1) {
-        this.editorVideo.pause();
+        this.pauseMedia();
       }
     }, playDuration);
   }
@@ -1871,7 +1951,7 @@ export class PackBuilderApp {
     }
 
     this.setStep('compile');
-    this.editorVideo.pause();
+    this.pauseMedia();
 
     const savedUser = localStorage.getItem('dubmate_user_name') || '';
     this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.innerText.replace(/\.[^/.]+$/, '');
