@@ -80,6 +80,7 @@ if [ -d "$PROJECT_ROOT/static" ]; then
   rm -rf "$RESOURCE_DIR/static"
   cp -r "$PROJECT_ROOT/static" "$RESOURCE_DIR/static"
 fi
+rm -rf "$RESOURCE_DIR/dubmate" && cp -r "$PROJECT_ROOT/dubmate" "$RESOURCE_DIR/dubmate" && find "$RESOURCE_DIR/dubmate" -name __pycache__ -prune -exec rm -rf {} +
 
 echo "========================================================="
 echo "  ✅ macOS Sidecars & Resources Staged Successfully!"

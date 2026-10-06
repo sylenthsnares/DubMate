@@ -22,6 +22,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import pack_loader
 import app
+from dubmate import common, rooms
 
 
 class TestConfigPackPath(unittest.TestCase):
@@ -147,7 +148,7 @@ class TestConfigPackPath(unittest.TestCase):
         self.assertEqual(resp_room.status_code, 200)
         room_id = resp_room.json()["room_id"]
 
-        previous_exports_dir = app.EXPORTS_DIR
+        previous_exports_dir = common.exports_dir()
         new_exports_dir = tempfile.mkdtemp(prefix="dubmate_test_exports_")
         try:
             resp = self.client.post("/api/config", json={"exports_dir": new_exports_dir})
@@ -158,15 +159,15 @@ class TestConfigPackPath(unittest.TestCase):
             self.assertEqual(resp_get.status_code, 200)
             self.assertEqual(os.path.normpath(resp_get.json()["exports_dir"]), os.path.normpath(new_exports_dir))
 
-            out_path = app.ROOMS[room_id.upper()].export_out_path("16:9")
+            out_path = rooms.ROOMS[room_id.upper()].export_out_path("16:9")
             self.assertTrue(
                 os.path.normpath(out_path).startswith(os.path.normpath(new_exports_dir)),
                 f"{out_path} is not inside {new_exports_dir}",
             )
             print(f"[Test 5] New exports land in the configured folder: {out_path}")
         finally:
-            app.EXPORTS_DIR = previous_exports_dir
-            app.ROOMS.pop(room_id.upper(), None)
+            common._exports_dir = previous_exports_dir
+            rooms.ROOMS.pop(room_id.upper(), None)
             shutil.rmtree(new_exports_dir, ignore_errors=True)
 
 
