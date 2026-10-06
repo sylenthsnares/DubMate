@@ -181,6 +181,7 @@ class DubMateApp {
     this.castOnlineCount = document.getElementById('cast-online-count');
     this.btnStartSession = document.getElementById('btn-start-session');
     this.btnCopyInvite = document.getElementById('btn-copy-invite');
+    this.btnGetScene = document.getElementById('btn-get-scene');
 
     // Stage / Booth elements
     this.stageVideo = document.getElementById('stage-video');
@@ -626,6 +627,7 @@ class DubMateApp {
     });
 
     this.btnCopyInvite.addEventListener('click', () => this.copyRoomLink());
+    if (this.btnGetScene) this.btnGetScene.addEventListener('click', () => this.getThisScene());
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
     this.btnStartSession.addEventListener('click', () => {

@@ -1,7 +1,7 @@
 // studio/packs.js - Pack library on the home screen: listing, search, pack cards,
 // import, rescan and the packs folder setting.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { escapeHtml } from '../ui_common.js';
+import { escapeHtml, openDialog } from '../ui_common.js';
 
 export class PackMethods {
   /**
@@ -476,9 +476,9 @@ export class PackMethods {
               ${formatBadge}
               ${authorsHtml}
               <span class="pack-line-badge">${lineCount} lines</span>
-              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" data-tip="Download this pack" aria-label="Download ${escapeHtml(rawTitle)}" download>
+              <a href="${escapeHtml(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`)}" class="btn-pack-download-icon" data-tip="Save this scene as a file to send to a friend" aria-label="Share ${escapeHtml(rawTitle)}" download>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span>ZIP</span>
+                <span>Share</span>
               </a>
             </div>
           </div>
@@ -501,10 +501,11 @@ export class PackMethods {
             control: packZipLink,
             busyText: '…', // the button is a 10px icon; anything longer reflows the row
             startMessage: `Preparing "${rawTitle}"…`,
-            doneMessage: `Downloaded "${rawTitle}"`,
+            doneMessage: `Downloaded "${rawTitle}". Send the file to a friend.`,
             errorText: "Couldn't download that pack. Try again.",
             // packs_api writes the ZIP into the export folder's packs/ subfolder.
             exportSubfolder: 'packs',
+            onSaved: (res, dir) => this.openSharePack(res.headers.get('X-DubMate-File'), dir, packZipLink),
           });
         });
       }
@@ -517,5 +518,32 @@ export class PackMethods {
 
       this.packGrid.appendChild(card);
     });
+  }
+
+  /** Shows where the shared scene file was saved (engine's own computer only). */
+  openSharePack(fileName, dir, returnFocus) {
+    const overlay = document.getElementById('modal-share-pack');
+    const input = document.getElementById('share-pack-path');
+    if (!overlay || !input || !fileName || !dir) {
+      this.showToast('Saved in your export folder.');
+      return;
+    }
+    try { fileName = decodeURIComponent(fileName); } catch { /* sent as is */ }
+    const sep = dir.includes('\\') ? '\\' : '/';
+    input.value = `${dir}${sep}packs${sep}${fileName}`;
+    const close = openDialog(overlay, { returnFocus });
+    const copyBtn = document.getElementById('btn-share-pack-copy');
+    const doneBtn = document.getElementById('btn-share-pack-done');
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(input.value);
+        this.showToast('Copied.');
+      } catch {
+        // No clipboard access: select it so the user can copy it themselves.
+        input.focus();
+        input.select();
+      }
+    };
+    doneBtn.onclick = () => close();
   }
 }

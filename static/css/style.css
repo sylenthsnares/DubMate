@@ -4723,3 +4723,25 @@ svg {
   font-size: 11px;
   color: var(--foreground-muted);
 }
+
+.share-pack-card {
+  max-width: 520px;
+  text-align: left;
+}
+
+.share-pack-path {
+  width: 100%;
+  margin-top: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.share-pack-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+#btn-get-scene[hidden] {
+  display: none;
+}

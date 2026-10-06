@@ -546,3 +546,39 @@ class TestIsOwnComputer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPackShareFileName(SessionCase):
+    """Share names the saved scene file so the studio can show its full path."""
+
+    def test_export_names_the_saved_file(self):
+        import app
+        from starlette.testclient import TestClient
+        exports = os.path.join(self.cache, "exports")
+        patcher = mock.patch.object(common, "_exports_dir", exports)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.makedirs(exports)
+        res = TestClient(app.app).get(f"/api/packs/{self.PACK_ID}/export")
+        self.assertEqual(res.status_code, 200)
+        name = res.headers["X-DubMate-File"]
+        self.assertNotIn("/", name)
+        self.assertNotIn("\\", name)
+        self.assertEqual(os.listdir(os.path.join(exports, "packs")), [name])
+
+    def test_non_ascii_pack_id_is_percent_encoded(self):
+        import app
+        from urllib.parse import unquote
+        from starlette.testclient import TestClient
+        exports = os.path.join(self.cache, "exports")
+        patcher = mock.patch.object(common, "_exports_dir", exports)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.makedirs(exports)
+        pack = packs_cache.PACKS_CACHE[self.PACK_ID]
+        packs_cache.PACKS_CACHE["Szene_ü"] = pack
+        res = TestClient(app.app).get("/api/packs/Szene_%C3%BC/export")
+        self.assertEqual(res.status_code, 200)
+        name = unquote(res.headers["X-DubMate-File"])
+        self.assertTrue(name.endswith("_Szene_ü.zip"), name)
+        self.assertIn(name, os.listdir(os.path.join(exports, "packs")))

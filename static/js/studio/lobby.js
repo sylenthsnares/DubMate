@@ -451,6 +451,19 @@ export class LobbyMethods {
     }
   }
 
+  /** Downloads the room's scene so a member can add it with Import pack at home. */
+  getThisScene() {
+    const pack = this.roomState?.pack;
+    if (!pack) return Promise.resolve(false);
+    const title = pack.name || pack.id || 'Scene';
+    const safeName = (pack.name || pack.id || 'pack').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return this.saveRemoteFile(pack.export_url || `/api/packs/${encodeURIComponent(pack.id)}/export`, `${safeName}.zip`, {
+      control: this.btnGetScene,
+      doneMessage: `Downloaded "${title}". Add it with Import pack in your DubMate.`,
+      errorText: "Couldn't download that pack. Try again.",
+    });
+  }
+
   /** The line this user was on when they last left this room, or null. Line 0 counts
    * only if they were in the booth (it is also the default for someone who never was). */
   savedLineIndex() {
@@ -574,6 +587,11 @@ export class LobbyMethods {
 
     if (this.lobbyPackTitle) this.lobbyPackTitle.innerText = this.roomState.pack.name;
     if (this.lobbyLineCount) this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} lines`;
+    if (this.btnGetScene) {
+      // Members who came from their own DubMate can take the scene home with them.
+      const home = getHomeOrigin();
+      this.btnGetScene.hidden = !(home && home !== window.location.origin && !this.isHost());
+    }
 
     const users = Object.values(this.roomState.users || {});
     if (this.castOnlineCount) this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} online`;

@@ -351,6 +351,7 @@ export class ExportMethods {
       doneMessage = 'Download saved',
       errorText = "Couldn't download that file. Try again.",
       exportSubfolder = null,
+      onSaved = null, // (res, dir) => {}: replaces the "Saved to" toast when kept on the engine
     } = options;
     const keepOnEngine = exportSubfolder !== null && this.isEngineLocal();
 
@@ -388,7 +389,9 @@ export class ExportMethods {
         // The server finished writing the file before it started answering.
         try { await res.body?.cancel(); } catch { /* nothing left to read */ }
         const dir = await this.fetchExportsDir();
-        if (!dir) {
+        if (onSaved) {
+          onSaved(res, dir);
+        } else if (!dir) {
           this.showToast('Saved in your export folder.');
         } else {
           const sep = dir.includes('\\') ? '\\' : '/';
