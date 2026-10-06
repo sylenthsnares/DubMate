@@ -12,11 +12,14 @@ import time
 import uuid
 import asyncio
 import functools
+import re
+import math
 import threading
+from collections import deque
 from typing import Dict, Any, Iterable, Optional, Tuple
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 import audio_processor
 import pack_loader
@@ -349,6 +352,7 @@ async def upload_take(
         "recorded_at": time.time(),
     })
     wire = room.wire_take(line_id, take)
+    queue_preset_renders(room, line_id, take)
 
     room.invalidate_exports()
     await room.broadcast("take_recorded", {
@@ -591,6 +595,146 @@ async def set_room_voice(room_id: str, payload: Dict[str, Any]):
     rematch_later(room, affected)
     await room.broadcast("voice_updated", {"scope": scope, "character": character})
     return {"status": "ok", "voice": room.to_state_dict()["voice"]}
+
+
+# --- Voice chain renders (documentation/design/effects-rack.md, "API and WebSocket") ---
+_RENDER_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
+_RENDER_CACHE_CONTROL = "public, max-age=31536000, immutable"   # a render key never changes content
+EFFECTS_INSTALLING_MESSAGE = "Getting voice effects ready. This happens once."
+
+
+class _RenderEngine:
+    """Foreground render slots, supersede bookkeeping and the background preset queue
+    of the running event loop (one per engine process)."""
+
+    def __init__(self):
+        self.foreground = asyncio.Semaphore(2)
+        self.active = 0                      # foreground renders running
+        self.idle = asyncio.Event()          # set while no foreground render runs
+        self.idle.set()
+        self.seq = 0
+        self.latest: Dict[Tuple[str, str, str, str], int] = {}   # (client, room, line, take) -> newest request
+        self.presets: deque = deque()        # (wav_path, chain, render_dir, meta) still to render
+        self.queued: set = set()             # takes whose presets were queued this run
+        self.worker: Optional[asyncio.Task] = None
+
+
+_render_engine_state: Optional[Tuple[asyncio.AbstractEventLoop, _RenderEngine]] = None
+
+
+def _render_engine() -> _RenderEngine:
+    global _render_engine_state
+    loop = asyncio.get_running_loop()
+    if _render_engine_state is None or _render_engine_state[0] is not loop:
+        _render_engine_state = (loop, _RenderEngine())
+    return _render_engine_state[1]
+
+
+def queue_preset_renders(room, line_id: str, take: Dict[str, Any]) -> None:
+    """Renders the take through every preset in the background (once per take audio this
+    run), after any foreground render, so switching presets is instant."""
+    if not vocal_chain.available():
+        return
+    engine = _render_engine()
+    take_id = take["take_id"]
+    mark = (room.room_id, line_id, take_id, take.get("audio_version"))
+    if mark in engine.queued:
+        return
+    engine.queued.add(mark)
+    wav_path = audio_processor.take_wav_path(room.room_id, line_id, take_id)
+    render_dir = audio_processor.room_render_dir(room.room_id)
+    for preset in vocal_chain.PRESETS.values():
+        engine.presets.append((wav_path, preset["chain"], render_dir, {"line_id": line_id, "take_id": take_id}))
+    if engine.worker is None or engine.worker.done():
+        engine.worker = asyncio.create_task(_drain_preset_renders(engine))
+
+
+async def _drain_preset_renders(engine: _RenderEngine) -> None:
+    while engine.presets:
+        await engine.idle.wait()
+        wav_path, chain, render_dir, meta = engine.presets.popleft()
+        if not os.path.isfile(wav_path):
+            continue   # take or room deleted meanwhile
+        try:
+            await asyncio.to_thread(audio_processor.render_take_cached, wav_path, chain, render_dir, meta=meta)
+        except Exception as ex:
+            print(f"[Render] Could not render a preset for take {meta['take_id']} of line {meta['line_id']}: {ex}")
+
+
+@router.post("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/render")
+async def render_take(room_id: str, line_id: str, take_id: str, payload: Dict[str, Any]):
+    """The take through a chain, rendered by the engine (the one sound for preview and
+    export). A request still waiting for a render slot when a newer one arrives from the
+    same client for the same take returns 409 without rendering."""
+    room = rooms.room_or_404(room_id)
+    _, take = _take_or_404(room, line_id, take_id)
+    try:
+        chain = vocal_chain.normalize_chain(payload.get("chain"))
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    until_s = payload.get("until_s")
+    if until_s is not None:
+        try:
+            until_s = float(until_s)
+        except (TypeError, ValueError):
+            until_s = math.nan
+        if not math.isfinite(until_s) or until_s < 0:
+            raise HTTPException(status_code=400, detail="until_s must be a positive number of seconds.")
+
+    engine = _render_engine()
+    slot = (str(payload.get("client_id") or "")[:64], room.room_id, line_id, take_id)
+    engine.seq += 1
+    seq = engine.seq
+    engine.latest[slot] = seq
+    try:
+        async with engine.foreground:
+            if engine.latest.get(slot) != seq:
+                return JSONResponse(status_code=409, content={"superseded": True})
+            engine.active += 1
+            engine.idle.clear()
+            try:
+                path, info = await asyncio.to_thread(
+                    audio_processor.render_take_cached,
+                    audio_processor.take_wav_path(room.room_id, line_id, take_id), chain,
+                    audio_processor.room_render_dir(room.room_id), until_s=until_s,
+                    meta={"line_id": line_id, "take_id": take_id})
+            except audio_processor.EffectsUnavailable as ex:
+                installing = vocal_chain.install_status() == "installing"
+                return JSONResponse(status_code=503, content={
+                    "effects_unavailable": True,
+                    "message": EFFECTS_INSTALLING_MESSAGE if installing else str(ex)})
+            finally:
+                engine.active -= 1
+                if engine.active == 0:
+                    engine.idle.set()
+    finally:
+        if engine.latest.get(slot) == seq:
+            del engine.latest[slot]
+
+    queue_preset_renders(room, line_id, take)
+    key = os.path.basename(path)[:-4]
+    result = {"url": f"/api/rooms/{room.room_id}/renders/{key}.wav", "key": key,
+              "duration": info.get("duration")}
+    if "lufs" in info:
+        result["lufs"] = info["lufs"]
+    return result
+
+
+@router.get("/api/rooms/{room_id}/renders/{key}.wav")
+async def get_render(room_id: str, key: str, request: Request):
+    """A cached render, range-streamed. Keys are content hashes, so it is cached for good."""
+    room = rooms.room_or_404(room_id)
+    if not _RENDER_KEY_RE.match(key):
+        raise HTTPException(status_code=404, detail="Render not found")
+    render_dir = audio_processor.room_render_dir(room.room_id)
+    path = os.path.join(render_dir, f"{key}.wav")
+    try:
+        audio_processor._ensure_within_directory(path, render_dir)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Render not found")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Render not found")
+    return common.range_stream_file(path, request, media_type="audio/wav", cache_control=_RENDER_CACHE_CONTROL)
 
 
 @router.get("/api/rooms/{room_id}/lines/{line_id}/takes/{take_id}/peaks")

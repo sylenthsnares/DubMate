@@ -4,8 +4,9 @@ test_effects_rack.py
 Voice chains in the room (documentation/design/effects-rack.md, "Settings resolution",
 "Data shapes and on-disk layout", "Existing data", "API and WebSocket"): the room's
 "voice" and take "chain" on disk, the legacy migration, the loader's version check,
-resolution in the mix, the chain and voice routes, level re-matching, and the old
-Pitch / Reverb sliders reaching the chain.
+resolution in the mix, the chain and voice routes, level re-matching, the old
+Pitch / Reverb sliders reaching the chain, and the render routes (supersede, 503,
+range streaming, background preset renders).
 """
 
 import asyncio
@@ -421,6 +422,168 @@ class TestOldSliders(RackRoutesCase):
             self._until(ws, "levels_updated")
         self.assertEqual(take["chain"], vocal_chain.chain_from_legacy(0, 0.35))
         self.assertEqual(room.mix_takes()[0]["chain"], vocal_chain.chain_from_legacy(0, 0.35))
+
+
+class RenderRoutesCase(RackRoutesCase):
+    def _render(self, chain=None, client_id="tabA", **extra):
+        body = {"chain": chain if chain is not None else PRESET["warm"], "client_id": client_id, **extra}
+        return self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes/{self.take['take_id']}/render",
+                                json=body)
+
+    def _fake_render(self, calls):
+        """Patches render_take_cached with a fast fake that records (chain, until_s)."""
+        def render(wav_path, chain, render_dir, until_s=None, meta=None):
+            calls.append((vocal_chain.normalize_chain(chain), until_s))
+            return os.path.join(render_dir, "0123456789abcdef.wav"), {"duration": 2.0}
+        patcher = mock.patch.object(audio_processor, "render_take_cached", side_effect=render)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class TestRenderRoute(RenderRoutesCase):
+    def test_render_is_served_with_range_support(self):
+        self._rack_room()
+        res = self._render(PRESET["radio"])
+        self.assertEqual(res.status_code, 200, res.text)
+        body = res.json()
+        self.assertRegex(body["key"], r"^[0-9a-f]{16}$")
+        self.assertEqual(body["url"], f"/api/rooms/{self.ROOM}/renders/{body['key']}.wav")
+        self.assertIn("lufs", body)
+        self.assertAlmostEqual(body["duration"], self.take["duration"], places=2)
+        with open(os.path.join(audio_processor.room_render_dir(self.ROOM), body["key"] + ".wav"), "rb") as f:
+            data = f.read()
+
+        full = self.client.get(body["url"])
+        self.assertEqual(full.status_code, 200)
+        self.assertEqual(full.content, data)
+        self.assertIn("immutable", full.headers["cache-control"])
+        self.assertEqual(full.headers["accept-ranges"], "bytes")
+
+        part = self.client.get(body["url"], headers={"Range": "bytes=10-109"})
+        self.assertEqual(part.status_code, 206)
+        self.assertEqual(part.content, data[10:110])
+        self.assertEqual(part.headers["content-range"], f"bytes 10-109/{len(data)}")
+
+    def test_prefix_render_and_bad_bodies(self):
+        self._rack_room()
+        body = self._render(until_s=0.5).json()
+        self.assertNotIn("lufs", body)
+        self.assertAlmostEqual(body["duration"], 0.5, places=2)
+        self.assertEqual(self._render(until_s=-1).status_code, 400)
+        self.assertEqual(self._render(until_s="soon").status_code, 400)
+        self.assertEqual(self._render(chain="warm").status_code, 400)
+
+    def test_bad_keys_and_paths_are_refused(self):
+        self._rack_room()
+        key = self._render().json()["key"]
+        base = f"/api/rooms/{self.ROOM}/renders/"
+        for name in ("0123456789abcdef.wav", key.upper() + ".wav", key[:15] + ".wav", key + "0.wav",
+                     "..%2F..%2Froom_state.wav", "..%5C..%5Croom_state.wav", "%2E%2E.wav"):
+            self.assertIn(self.client.get(base + name).status_code, (400, 404), name)
+        self.assertEqual(self.client.get(f"/api/rooms/NOROOM/renders/{key}.wav").status_code, 404)
+        self.assertEqual(self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes/nope/render",
+                                          json={"chain": PRESET["warm"]}).status_code, 404)
+
+    def test_render_needs_no_permission(self):
+        room = self._rack_room()
+        self.assertEqual(room.role_assignments["Ana"], ["actorA"])
+        self.assertEqual(self._render(client_id="guest-tab").status_code, 200)
+
+    def test_effects_missing_returns_503_with_the_message(self):
+        self._rack_room()
+        with mock.patch.object(vocal_chain, "available", return_value=False):
+            res = self._render()
+            self.assertEqual(res.status_code, 503)
+            self.assertEqual(res.json(), {"effects_unavailable": True,
+                                          "message": audio_processor.EFFECTS_DOWNLOAD_MESSAGE})
+            with mock.patch.object(vocal_chain, "install_status", return_value="installing"):
+                res = self._render()
+            self.assertEqual(res.status_code, 503)
+            self.assertEqual(res.json(), {"effects_unavailable": True,
+                                          "message": "Getting voice effects ready. This happens once."})
+
+
+class TestSupersede(RenderRoutesCase):
+    def test_older_waiting_request_from_the_same_tab_is_superseded(self):
+        room = self._rack_room()
+        calls = []
+        self._fake_render(calls)
+        take_id = self.take["take_id"]
+
+        async def go():
+            engine = rooms_api._render_engine()
+            await engine.foreground.acquire()
+            await engine.foreground.acquire()   # both render slots busy
+
+            def request(client_id, chain):
+                return asyncio.create_task(rooms_api.render_take(
+                    self.ROOM, "t1000", take_id, {"chain": chain, "client_id": client_id}))
+
+            with mock.patch.object(rooms_api, "queue_preset_renders"):
+                older = request("tabA", PRESET["warm"])
+                await asyncio.sleep(0)
+                other = request("tabB", PRESET["clean"])
+                await asyncio.sleep(0)
+                newer = request("tabA", PRESET["radio"])
+                await asyncio.sleep(0)
+                self.assertEqual(calls, [])
+                engine.foreground.release()
+                engine.foreground.release()
+                results = await asyncio.gather(older, other, newer)
+            self.assertEqual(engine.latest, {})
+            self.assertTrue(engine.idle.is_set())
+            return results
+
+        older, other, newer = asyncio.run(go())
+        self.assertEqual(older.status_code, 409)
+        self.assertEqual(json.loads(older.body), {"superseded": True})
+        self.assertEqual(other["key"], "0123456789abcdef")
+        self.assertEqual(newer["url"], f"/api/rooms/{self.ROOM}/renders/0123456789abcdef.wav")
+        self.assertEqual(sorted(json.dumps(c, sort_keys=True) for c, _ in calls),
+                         sorted(json.dumps(PRESET[p], sort_keys=True) for p in ("clean", "radio")))
+        self.assertIsNotNone(room.find_take("t1000", take_id))
+
+
+class TestPresetQueue(RenderRoutesCase):
+    def test_each_take_is_rendered_through_every_preset_once(self):
+        room = self._rack_room()
+        take = room.find_take("t1000", self.take["take_id"])
+        calls = []
+        self._fake_render(calls)
+
+        async def go():
+            engine = rooms_api._render_engine()
+            engine.idle.clear()   # a foreground render is running: the queue waits
+            rooms_api.queue_preset_renders(room, "t1000", take)
+            rooms_api.queue_preset_renders(room, "t1000", take)
+            await asyncio.sleep(0.05)
+            self.assertEqual(calls, [])
+            engine.idle.set()
+            await engine.worker
+            rooms_api.queue_preset_renders(room, "t1000", take)   # already done this run
+            self.assertEqual(len(engine.presets), 0)
+            for _ in range(2):   # the render route doesn't queue them again either
+                result = await rooms_api.render_take(self.ROOM, "t1000", take["take_id"],
+                                                     {"chain": PRESET["radio"], "client_id": "tabA"})
+                self.assertEqual(result["key"], "0123456789abcdef")
+            self.assertEqual(len(engine.presets), 0)
+            take["audio_version"] = take["audio_version"] + 1    # new audio: rendered again
+            rooms_api.queue_preset_renders(room, "t1000", take)
+            await engine.worker
+
+        asyncio.run(go())
+        presets = [(p["chain"], None) for p in vocal_chain.PRESETS.values()]
+        self.assertEqual(len(presets), 4)
+        self.assertEqual(calls, presets + [(PRESET["radio"], None)] * 2 + presets)
+
+    def test_upload_queues_the_presets_after_its_render(self):
+        room = self._room()
+        queued = []
+        with mock.patch.object(rooms_api, "queue_preset_renders",
+                               side_effect=lambda r, line_id, take: queued.append((line_id, take["take_id"]))):
+            take = self._upload("t1000", speech_like(duration=1.0, lead=0.2))
+        self.assertEqual(queued, [("t1000", take["take_id"])])
+        self.assertIn("loudness_lufs", room.find_take("t1000", take["take_id"]))
 
 
 if __name__ == "__main__":
