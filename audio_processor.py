@@ -805,18 +805,97 @@ def align_take_timing(take: np.ndarray, reference: np.ndarray, start_offset_ms: 
             "stretch": stretch, "aligned": True}
 
 
+_GATE_NFFT = 2048
+_GATE_HOP = 512  # _GATE_NFFT / 4: the overlap-add below relies on exactly four frames per sample
+
+
+def _gate_stft(x: np.ndarray, win: np.ndarray) -> np.ndarray:
+    """Centred STFT (half a window of zeros on each side), one row per frame."""
+    n_frames = 1 + -(-len(x) // _GATE_HOP)
+    padded = np.zeros(_GATE_NFFT + _GATE_HOP * (n_frames - 1), dtype=np.float32)
+    padded[_GATE_NFFT // 2:_GATE_NFFT // 2 + len(x)] = x
+    frames = np.lib.stride_tricks.sliding_window_view(padded, _GATE_NFFT)[::_GATE_HOP]
+    return np.fft.rfft(frames * win, axis=1)
+
+
+def _triangular_smooth(a: np.ndarray, half: int, axis: int) -> np.ndarray:
+    """Weighted moving average along `axis` with triangular weights over +/-half cells;
+    the edges are renormalised so a constant stays constant."""
+    moved = np.moveaxis(a, axis, -1)
+    n = moved.shape[-1]
+    padded = np.pad(moved, [(0, 0)] * (moved.ndim - 1) + [(half, half)])
+    ones = np.pad(np.ones(n, dtype=np.float32), half)
+    out = np.zeros_like(moved)
+    norm = np.zeros(n, dtype=np.float32)
+    for i in range(2 * half + 1):
+        w = half + 1 - abs(i - half)
+        out += w * padded[..., i:i + n]
+        norm += w * ones[i:i + n]
+    return np.moveaxis(out / norm, -1, axis)
+
+
+def spectral_gate(audio: np.ndarray, profile_audio: np.ndarray, sr: int, reduction: float = 0.75) -> np.ndarray:
+    """Stationary spectral gate (numpy only): reduces every time-frequency cell that is not
+    clearly louder than the room tone in `profile_audio`. A cell passes when its level is above
+    the profile's mean + 1.5 std for that frequency; the pass mask is smoothed over +/-50 ms and
+    +/-500 Hz with triangular weights, and gain = mask * reduction + (1 - reduction), so cells of
+    pure room tone drop by about 12 dB. The frequency smoothing never lowers a cell below its
+    time-smoothed mask, so a steady tone keeps its level instead of being averaged away by the
+    quiet bins around it. Returns float32 of the input length."""
+    x = np.asarray(audio, dtype=np.float32)
+    n = len(x)
+    win = np.hanning(_GATE_NFFT + 1)[:-1].astype(np.float32)
+    prof_db = 20.0 * np.log10(np.abs(_gate_stft(np.asarray(profile_audio, dtype=np.float32), win)) + 1e-10)
+    threshold = prof_db.mean(axis=0) + 1.5 * prof_db.std(axis=0)
+    spec = _gate_stft(x, win)
+    mask = (20.0 * np.log10(np.abs(spec) + 1e-10) > threshold).astype(np.float32)
+    mask = _triangular_smooth(mask, max(1, round(0.05 * sr / _GATE_HOP)), axis=0)
+    mask = np.maximum(mask, _triangular_smooth(mask, max(1, round(500.0 * _GATE_NFFT / sr)), axis=1))
+    gain = mask * reduction + (1.0 - reduction)
+    frames = np.fft.irfft(spec * gain, n=_GATE_NFFT, axis=1).astype(np.float32) * win
+    # Windowed overlap-add: frame f covers hops f..f+3, so add each quarter of every frame
+    # into its hop, then divide by the summed squared window.
+    n_frames = frames.shape[0]
+    quarters = frames.reshape(n_frames, 4, _GATE_HOP)
+    win_sq = (win * win).reshape(4, _GATE_HOP)
+    out = np.zeros(_GATE_HOP * (n_frames + 3), dtype=np.float32)
+    win_sum = np.zeros_like(out)
+    for j in range(4):
+        out[j * _GATE_HOP:(j + n_frames) * _GATE_HOP] += quarters[:, j, :].reshape(-1)
+        win_sum[j * _GATE_HOP:(j + n_frames) * _GATE_HOP] += np.tile(win_sq[j], n_frames)
+    out /= np.maximum(win_sum, 1e-8)
+    start = _GATE_NFFT // 2
+    return out[start:start + n].astype(np.float32)
+
+
+def _cleanup_prefilter(settings: Dict[str, Any]) -> str:
+    """ffmpeg -af chain run before tuned cleanup: a 60 Hz high-pass plus a narrow notch per
+    hum or whine frequency the room check found (at most 4)."""
+    filters = ["highpass=f=60"]
+    filters += [f"bandreject=f={float(hz):g}:width_type=q:width=30" for hz in (settings.get("notches_hz") or [])[:4]]
+    return ",".join(filters)
+
+
 def apply_noise_reduction(
     input_wav: str,
     output_wav: str,
     noise_profile_wav: Optional[str] = None,
     reduction_db: float = NR_ATTENUATION_DB,
-    sr: int = SR
-) -> str:
+    sr: int = SR,
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """
-    Applies state-of-the-art DeepFilterNet 3 neural speech enhancement & vocal de-noising.
-    Preserves 100% of quiet dialogue, subtle mouth grit, breath, and natural dynamics
-    while removing heavy fan noise, AC hum, and preamp hiss with zero phase warble.
-    Falls back gracefully to highpass + adaptive spectral denoising if deep-filter binary is absent.
+    Cleans a take with DeepFilterNet 3 (deep-filter binary), else with an ffmpeg/numpy fallback.
+
+    settings None (standard cleanup): DeepFilterNet at `reduction_db`, else
+    highpass + afftdn. settings = noise_cleanup_settings(...) (tuned cleanup): the take first
+    goes through _cleanup_prefilter(settings); DeepFilterNet then runs at
+    settings["attenuation_db"], else spectral_gate() is driven by the stored profile WAV of
+    settings["profile_id"] (put through the same pre-filter).
+
+    Returns output_wav. Returns None WITHOUT writing output_wav when tuned cleanup needs the
+    fallback and the profile WAV is gone; the caller then cleans with standard settings.
+    If every denoiser fails, output_wav is an unprocessed copy of the input.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_wav)), exist_ok=True)
     df_bin = get_deep_filter_path()
@@ -834,10 +913,14 @@ def apply_noise_reduction(
             os.makedirs(df_out_dir, exist_ok=True)
 
             # Resample cleanly to 48kHz for DeepFilterNet native processing
-            _ffmpeg_to_mono_wav(input_wav, tmp_48k_in, 48000, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample to 48k")
+            _ffmpeg_to_mono_wav(input_wav, tmp_48k_in, 48000, SUBPROCESS_TIMEOUT_PROCESS, "DeepFilterNet resample to 48k",
+                                af=_cleanup_prefilter(settings) if settings is not None else None)
 
             # Run DeepFilterNet with delay compensation (-D)
-            atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else NR_ATTENUATION_DB
+            if settings is not None:
+                atten_lim = max(12.0, min(100.0, float(settings["attenuation_db"])))
+            else:
+                atten_lim = max(12.0, min(100.0, float(reduction_db))) if reduction_db is not None else NR_ATTENUATION_DB
             cmd_df = [
                 df_bin, "-D",
                 "-a", str(int(atten_lim)),
@@ -870,7 +953,32 @@ def apply_noise_reduction(
             if os.path.exists(tmp_dir):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # 2. Fallback Path: High-pass + Adaptive Spectral Denoising
+    # 2. Fallback Path, tuned: pre-filter + spectral gate driven by the stored room tone
+    if settings is not None:
+        profile_wav = noise_profile_wav_path(settings.get("profile_id"))
+        if not profile_wav:
+            print(f"[AudioProcessor] Room check {settings.get('profile_id')!r} is gone; {input_wav!r} not cleaned with it.")
+            return None
+        tmp_dir = tempfile.mkdtemp(prefix="dubmate_gate_")
+        try:
+            af = _cleanup_prefilter(settings)
+            take_tmp = os.path.join(tmp_dir, "take.wav")
+            profile_tmp = os.path.join(tmp_dir, "profile.wav")
+            _ffmpeg_to_mono_wav(input_wav, take_tmp, sr, SUBPROCESS_TIMEOUT_PROCESS, "tuned cleanup pre-filter", af=af)
+            _ffmpeg_to_mono_wav(profile_wav, profile_tmp, sr, SUBPROCESS_TIMEOUT_PROCESS, "room tone pre-filter", af=af)
+            cleaned = spectral_gate(read_wav_mono(take_tmp, sr), read_wav_mono(profile_tmp, sr), sr)
+            out_tmp = os.path.join(tmp_dir, "cleaned.wav")
+            write_wav_mono(out_tmp, cleaned, sr)
+            shutil.move(out_tmp, output_wav)
+            return output_wav
+        except Exception as ex:
+            print(f"[AudioProcessor] WARNING: noise reduction NOT applied for {input_wav!r} (tuned cleanup failed); returning unprocessed copy. Reason: {ex}")
+            shutil.copy2(input_wav, output_wav)
+            return output_wav
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 3. Fallback Path: High-pass + Adaptive Spectral Denoising
     tmp_out = None
     try:
         af_filters = [
