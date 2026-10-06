@@ -142,6 +142,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                         await asyncio.to_thread(
                             audio_processor.export_dub_video,
                             room.pack, takes, out_path,
+                            master_dialogue_presence_db=room.master_dialogue_presence_db,
                         )
                         room.exported_video_path = out_path
                         room.export_status["16:9"] = "ready"

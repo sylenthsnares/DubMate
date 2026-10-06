@@ -27,6 +27,7 @@
 - **Refresh Older Takes**: takes cleaned before your latest check can be cleaned again with it. Your original recordings are kept.
 - **Use Standard Cleanup**: forgets your room check. New takes get standard cleanup; takes already cleaned keep their sound until you refresh them.
 - **Guests' Room Checks**: a guest's room check lasts until the host restarts DubMate. After that the guest's row says "Not checked yet" and their earlier takes keep the cleanup they were made with.
+- **Stems**: the Stems button next to Project files saves the voices and the music and effects as separate WAV files, plus one per character, to finish the mix in another editor. They all start with the scene and have the same length. Played together they have the video's balance and loudness, without its peak limiting. While stems or a video are being made, Refresh older takes waits and says "An export is running. Refresh older takes when it's done."
 - **Continue Where You Left Off**: your last 5 sessions are kept. The landing page lists them with how many lines are recorded and when you last worked on them. Continue reopens a session with its takes, casting and dialogue level, back on the line you were recording.
 - **Remove a Session**: remove a session from that list. Its takes are deleted; videos you saved stay in your export folder.
 - **Keyboard Shortcuts**: press ? (or the ? button in the header) for a list of keyboard shortcuts, grouped by where they work.
@@ -64,6 +65,7 @@
 
 ### Fixed
 - **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.
+- **Premiere Dialogue Level**: the premiere's video now uses the room's Dialogue level, like every other export.
 - **Export Folder Cleanup**: creating a room no longer deletes earlier renders and ZIPs from your export folder.
 - **Outdated Link Importer**: when a link import fails because the downloader is out of date, Pack Builder says so and shows how to update it.
 - **Wrong Background Track in the Next Scene**: after recording one scene, the next scene could play the previous scene's backing track.

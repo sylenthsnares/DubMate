@@ -752,7 +752,7 @@ async def refresh_cleanup(room_id: str, payload: Dict[str, Any]):
     room = rooms.room_or_404(room_id)
     user_id = common.require_safe_identifier(str(payload.get("user_id") or ""), "user_id")
     if any(status == "processing" for status in room.export_status.values()):
-        raise HTTPException(status_code=409, detail="A video is rendering. Refresh older takes when it's done.")
+        raise HTTPException(status_code=409, detail="An export is running. Refresh older takes when it's done.")
     if user_id in room.cleanup_refreshing:
         return {"status": "ok", "refreshing": room.cleanup_refreshing[user_id]}
 
@@ -1044,6 +1044,70 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
             "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
         }
+    )
+
+
+class _FileResponseThen(FileResponse):
+    """Calls done() once the file is sent or the send broke off: Starlette's background= doesn't
+    run when sending raises, and the stems claim must outlive the send so the zip isn't rebuilt
+    under a running download."""
+
+    def __init__(self, *args, done, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._done = done
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._done()
+
+
+@router.get("/api/rooms/{room_id}/export/stems")
+async def download_room_stems(room_id: str):
+    """The scene's stems (dialogue, music & effects, one file per character) as a zip. One request
+    per room at a time; the claim in export_status also holds off Refresh older takes until the
+    file is sent."""
+    room = rooms.room_or_404(room_id)
+    _refuse_during_cleanup_refresh(room)
+    if room.export_status.get("stems") == "processing":
+        raise HTTPException(status_code=409, detail="Someone is already getting the stems. Try again in a moment.")
+    # Claimed before the first await, so a second request or a refresh can't slip in.
+    room.export_status["stems"] = "processing"
+    release = lambda: room.export_status.pop("stems", None)  # noqa: E731
+    zip_path = os.path.join(common.exports_dir(), f"DubMate_Stems_{room.pack.pack_id}_{room.room_id}.zip")
+    try:
+        takes = await mix_for_export(room)
+        await asyncio.to_thread(
+            functools.partial(
+                audio_processor.build_stems_zip,
+                pack=room.pack,
+                takes_dict=takes,
+                output_zip_path=zip_path,
+                presence_db=room.master_dialogue_presence_db,
+                room_id=room.room_id,
+            )
+        )
+    except BaseException as ex:
+        release()
+        if isinstance(ex, audio_processor.EffectsUnavailable):
+            raise HTTPException(status_code=503, detail=str(ex))
+        if isinstance(ex, Exception):
+            print(f"[StemsError] Error generating stems for {room_id}: {ex}")
+            raise HTTPException(status_code=500, detail="Couldn't get the stems. Try again.")
+        raise
+
+    download_filename = f"DubMate_Stems_{audio_processor.sanitize_filename(room.pack.name)}_{room.room_id}.zip"
+    return _FileResponseThen(
+        zip_path,
+        media_type="application/zip",
+        filename=download_filename,
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+        },
+        done=release,
     )
 
 

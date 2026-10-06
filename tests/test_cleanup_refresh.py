@@ -28,6 +28,7 @@ from test_recording_timing import UploadCase
 from test_room_check import white, SR
 
 REFRESHING = "Older takes are being refreshed. Try again in a moment."
+EXPORTING = "An export is running. Refresh older takes when it's done."
 
 
 class RefreshCase(UploadCase):
@@ -194,7 +195,15 @@ class TestCleanupRefresh(RefreshCase):
         take = self._take("t1000", "ka", "u1")
         self.room.export_status["16:9"] = "processing"
         body = self._refresh(status=409)
-        self.assertEqual(body["detail"], "A video is rendering. Refresh older takes when it's done.")
+        self.assertEqual(body["detail"], EXPORTING)
+        self.assertNotIn("nr_settings", take)
+        self.assertEqual(self.room.cleanup_refreshing, {})
+
+    def test_refused_while_stems_are_made_or_sent(self):
+        take = self._take("t1000", "ka", "u1")
+        self.room.export_status["stems"] = "processing"
+        body = self._refresh(status=409)
+        self.assertEqual(body["detail"], EXPORTING)
         self.assertNotIn("nr_settings", take)
         self.assertEqual(self.room.cleanup_refreshing, {})
 
@@ -217,7 +226,7 @@ class TestCleanupRefresh(RefreshCase):
                 self.assertTrue(rendering.wait(10))
                 self.assertEqual(self.room.export_status.get("16:9"), "processing")
                 body = self._refresh(status=409)
-                self.assertEqual(body["detail"], "A video is rendering. Refresh older takes when it's done.")
+                self.assertEqual(body["detail"], EXPORTING)
                 release.set()
                 self._until(ws, "warp_to_screening")
         self.assertEqual(self.room.export_status["16:9"], "ready")
@@ -332,6 +341,17 @@ class TestRefreshWhileRunning(RefreshCase):
                 self._until(ws, "warp_to_screening")
         self.assertEqual(seen, [{}])
         self.assertEqual(self.nr.call_count, 2)
+
+    def test_premiere_uses_the_dialogue_level(self):
+        self.room.host_id = "hostT"
+        self.room.master_dialogue_presence_db = 4.5
+        seen = []
+        with mock.patch.object(ap, "export_dub_video", side_effect=lambda *a, **k: seen.append(k)):
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+                ws.send_json({"type": "launch_premiere", "payload": {}})
+                self._until(ws, "warp_to_screening")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].get("master_dialogue_presence_db"), 4.5)
 
 
 if __name__ == "__main__":

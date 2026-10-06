@@ -131,11 +131,15 @@ let exportDownloadFails = false;
 let configHasExportsDir = true;
 let exportStatusReady = true;    // what /export/status reports for the host path
 let exportRefusal = null;        // a {detail} the render route answers 409 with
+let stemsGate = null;            // set to a promise to hold the stems response open
+let stemsFailure = null;         // a non-ok response the stems route answers with
 
+let bodiesCancelled = 0;
 function blobResponse() {
   return {
     ok: true,
     status: 200,
+    body: { cancel: () => { bodiesCancelled += 1; return Promise.resolve(); } },
     headers: { get: (name) => (String(name).toLowerCase() === "x-dubmate-file" ? "DubMate_Pack_Deku_vs_Todoroki.zip" : null) },
     blob: () => Promise.resolve(new dom.window.Blob(["dubmate-bytes"], { type: "application/octet-stream" })),
     arrayBuffer: () => Promise.resolve(new ArrayBuffer(16)),
@@ -172,6 +176,11 @@ dom.window.fetch = async (url, opts) => {
     return blobResponse();
   }
   if (u.startsWith("/api/rooms/TEST12/export/project_zip")) {
+    return blobResponse();
+  }
+  if (u.startsWith("/api/rooms/TEST12/export/stems")) {
+    if (stemsGate) await stemsGate;
+    if (stemsFailure) return stemsFailure;
     return blobResponse();
   }
   if (u.startsWith("/api/rooms/TEST12/export/status")) {
@@ -601,6 +610,133 @@ try {
     exportRefusal = null;
     if (!toasts.includes(REFRESHING)) fail("a refused render did not say why", toasts);
     pass("a render refused during a refresh shows the engine's reason");
+
+    // --- Stems ---------------------------------------------------------------
+    const STEMS_TIP = "Separate WAV files for the voices and for the music and effects, plus one per character, to finish the mix in another editor. They all start with the scene.";
+    const stemsButtons = ["btn-toolbar-stems", "btn-download-stems"].map((id) => {
+      const el = doc.getElementById(id);
+      if (!el) fail(`#${id} missing from the DOM`);
+      if (el.tagName !== "BUTTON") fail(`#${id} is not a button`, el.tagName);
+      if (el.querySelector("span")?.textContent.trim() !== "Stems") fail(`#${id} is not labelled Stems`);
+      if (el.getAttribute("data-tip") !== STEMS_TIP) fail(`#${id} has the wrong tooltip`, el.getAttribute("data-tip"));
+      return el;
+    });
+    if (doc.getElementById("btn-toolbar-project-zip").nextElementSibling !== stemsButtons[0] ||
+        doc.getElementById("btn-download-project-zip").nextElementSibling !== stemsButtons[1]) {
+      fail("the Stems buttons do not sit right after the Project files buttons");
+    }
+    pass("both Stems buttons exist after Project files, labelled Stems, with the tooltip");
+
+    const stemsFetches = (from) => fetchLog.slice(from).filter(u => u.includes("/export/stems"));
+
+    // A remote member gets a normal download.
+    app.isEngineLocal = () => false;
+    for (const el of stemsButtons) {
+      const savesBefore = savedFiles.length;
+      const fetchesBefore = fetchLog.length;
+      toasts.length = 0;
+      clickUi(el);
+      await settle();
+      const requested = stemsFetches(fetchesBefore);
+      if (requested.length !== 1 || !/^\/api\/rooms\/TEST12\/export\/stems\?v=\d+$/.test(requested[0])) {
+        fail(`#${el.id} did not fetch the stems route once`, requested);
+      }
+      if (savedFiles.length !== savesBefore + 1) fail(`#${el.id} did not hand the stems to the browser`);
+      const saved = savedFiles[savedFiles.length - 1];
+      if (!saved.href.startsWith("blob:") || saved.download !== "DubMate_Stems_Deku_vs_Todoroki_TEST12.zip") {
+        fail(`#${el.id} saved the stems under the wrong name`, saved);
+      }
+      if (toasts[0] !== "Preparing stems…" || toasts[toasts.length - 1] !== "Stems downloaded") {
+        fail(`#${el.id} did not toast start and completion`, toasts);
+      }
+      if (el.hasAttribute("aria-busy") || el.disabled) fail(`#${el.id} was left busy`);
+    }
+    pass("a remote member downloads the stems ZIP with start and done toasts");
+
+    // While the stems are made the label says so and a second click does nothing.
+    let releaseStems;
+    stemsGate = new Promise((resolve) => { releaseStems = resolve; });
+    const stemsBtn = stemsButtons[0];
+    const beforeBusy = fetchLog.length;
+    clickUi(stemsBtn);
+    await settle();
+    if (stemsBtn.querySelector("span").innerText !== "Preparing…") {
+      fail("the Stems button did not read Preparing… while the stems were made", stemsBtn.querySelector("span").innerText);
+    }
+    clickUi(stemsBtn);
+    await app.downloadStems(stemsBtn);
+    await settle();
+    if (stemsFetches(beforeBusy).length !== 1) fail("a second click fetched the stems again", stemsFetches(beforeBusy));
+    releaseStems();
+    stemsGate = null;
+    await settle();
+    // jsdom has no real innerText, so only check the busy text is gone.
+    if (stemsBtn.querySelector("span").innerText === "Preparing…" || stemsBtn.disabled) {
+      fail("the Stems button stayed busy after the stems arrived");
+    }
+    pass("a second click while the stems are made does nothing; the label reads Preparing…");
+
+    // Refusals and failures.
+    const BUSY = "Someone is already getting the stems. Try again in a moment.";
+    stemsFailure = { ok: false, status: 409, json: () => Promise.resolve({ detail: BUSY }) };
+    toasts.length = 0;
+    clickUi(stemsBtn);
+    await settle();
+    if (toasts[toasts.length - 1] !== BUSY) fail("a 409 did not show the engine's reason", toasts);
+    stemsFailure = { ok: false, status: 500, json: () => Promise.reject(new Error("not JSON")) };
+    toasts.length = 0;
+    const savesBeforeFail = savedFiles.length;
+    clickUi(stemsBtn);
+    await settle();
+    stemsFailure = null;
+    if (toasts[toasts.length - 1] !== "Couldn't get the stems. Try again.") fail("a 500 did not toast the stems error", toasts);
+    if (savedFiles.length !== savesBeforeFail) fail("a failed stems request still saved a file");
+
+    // A download the browser couldn't hold: the body read fails with the
+    // browser's own words, which must never reach the user.
+    const labelBeforeBlobFail = stemsBtn.querySelector("span").innerText;
+    stemsFailure = { ...blobResponse(), blob: () => Promise.reject(new dom.window.TypeError("network error")) };
+    toasts.length = 0;
+    const savesBeforeBlobFail = savedFiles.length;
+    const urlsBeforeBlobFail = objectUrls.created;
+    clickUi(stemsBtn);
+    await settle();
+    stemsFailure = null;
+    if (toasts[toasts.length - 1] !== "Couldn't get the stems. Try again.") fail("a failed body read did not toast the stems error", toasts);
+    if (toasts.some(t => /network error/i.test(t))) fail("the browser's own error text reached the user", toasts);
+    if (savedFiles.length !== savesBeforeBlobFail || objectUrls.created !== urlsBeforeBlobFail) {
+      fail("a failed body read still saved a file");
+    }
+    if (stemsBtn.disabled || stemsBtn.hasAttribute("aria-busy") || stemsBtn.dataset.downloading) {
+      fail("the Stems button stayed busy after a failed body read");
+    }
+    if (stemsBtn.querySelector("span").innerText !== labelBeforeBlobFail) {
+      fail("the Stems button did not get its label back after a failed body read", stemsBtn.querySelector("span").innerText);
+    }
+    pass("a busy refusal shows its reason and any other failure says Couldn't get the stems");
+    delete app.isEngineLocal;
+
+    // On the engine's computer the ZIP is already in the export folder.
+    for (const el of stemsButtons) {
+      const savesBefore = savedFiles.length;
+      const cancelledBefore = bodiesCancelled;
+      const fetchesBefore = fetchLog.length;
+      toasts.length = 0;
+      app.exportsDirCache = undefined;
+      clickUi(el);
+      await settle();
+      if (stemsFetches(fetchesBefore).length !== 1) fail(`#${el.id} did not ask the engine for the stems once`);
+      if (bodiesCancelled !== cancelledBefore + 1) fail(`#${el.id} did not cancel the body on the host`);
+      if (savedFiles.length !== savesBefore) fail(`#${el.id} saved a second copy of the stems on the host`);
+      if (toasts[toasts.length - 1] !== `Saved to ${EXPORTS_DIR}`) fail(`#${el.id} did not name the export folder`, toasts);
+    }
+    pass("on the engine's own computer, Stems names the export folder and saves no copy");
+
+    app.lockScreeningUI(true);
+    if (!stemsButtons[0].disabled) fail("locking the theater left the toolbar Stems button enabled");
+    app.lockScreeningUI(false);
+    if (stemsButtons[0].disabled) fail("unlocking the theater left the toolbar Stems button disabled");
+    pass("locking the theater disables the toolbar Stems button");
 
     console.log("ALL EXPORT & DOWNLOAD FEEDBACK TESTS PASSED!");
     process.exit(0);

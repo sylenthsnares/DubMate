@@ -567,14 +567,14 @@ async function upload(env) {
       fail(`refresh text with a check: ${text($(env, "room-check-refresh-text"))}`);
     }
     if (btn.getAttribute("data-tip") !== "Cleans them again with your latest room check. Your original recordings are kept.") fail("refresh tooltip");
-    env.refresh = { status: 409, body: { detail: "A video is rendering. Refresh older takes when it's done." } };
+    env.refresh = { status: 409, body: { detail: "An export is running. Refresh older takes when it's done." } };
     env.toasts.length = 0;
     const posts = env.calls.length;
     btn.click();
     await tick(20);
     const refused = env.calls.slice(posts).find((c) => /cleanup\/refresh$/.test(c.url));
     if (!refused || JSON.parse(refused.body).noise_profile_id !== NEW_ID) fail("refresh did not send the current check");
-    if (JSON.stringify(env.toasts) !== JSON.stringify(["A video is rendering. Refresh older takes when it's done."])) fail(`409 toasts: ${JSON.stringify(env.toasts)}`);
+    if (JSON.stringify(env.toasts) !== JSON.stringify(["An export is running. Refresh older takes when it's done."])) fail(`409 toasts: ${JSON.stringify(env.toasts)}`);
     if (btn.disabled || !shown(refresh) || text($(env, "room-check-refresh-text")) !== "2 of your takes were cleaned before this check.") fail("refused refresh left the row busy");
 
     // Not while the row asks for a new microphone's check.
