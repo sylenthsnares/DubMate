@@ -333,6 +333,17 @@ class TestRefreshWhileRunning(RefreshCase):
         self.assertEqual(seen, [{}])
         self.assertEqual(self.nr.call_count, 2)
 
+    def test_premiere_uses_the_dialogue_level(self):
+        self.room.host_id = "hostT"
+        self.room.master_dialogue_presence_db = 4.5
+        seen = []
+        with mock.patch.object(ap, "export_dub_video", side_effect=lambda *a, **k: seen.append(k)):
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
+                ws.send_json({"type": "launch_premiere", "payload": {}})
+                self._until(ws, "warp_to_screening")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].get("master_dialogue_presence_db"), 4.5)
+
 
 if __name__ == "__main__":
     unittest.main()
