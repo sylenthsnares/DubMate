@@ -152,6 +152,7 @@ export class PackBuilderApp {
     this.stageExtract = document.getElementById('stage-extract');
     this.stageStems = document.getElementById('stage-stems');
     this.stageWhisper = document.getElementById('stage-whisper');
+    this.stageSpeakers = document.getElementById('stage-speakers');
 
     // Step 3: Editor elements
     this.editorVideo = document.getElementById('editor-video');
@@ -760,6 +761,7 @@ export class PackBuilderApp {
         this.stageExtract.classList.toggle('active', status === 'extracting_audio');
         this.stageStems.classList.toggle('active', status === 'separating_stems');
         this.stageWhisper.classList.toggle('active', status === 'transcribing');
+        this.stageSpeakers.classList.toggle('active', status === 'detecting_speakers');
 
         if (status === 'transcribed') {
           sse.close();
@@ -791,6 +793,10 @@ export class PackBuilderApp {
         this.builderProgressFill.style.width = `${pct}%`;
         this.processPercentText.innerText = `${pct}%`;
         this.processStageText.innerText = data.message || 'Processing';
+        this.stageExtract.classList.toggle('active', data.status === 'extracting_audio');
+        this.stageStems.classList.toggle('active', data.status === 'separating_stems');
+        this.stageWhisper.classList.toggle('active', data.status === 'transcribing');
+        this.stageSpeakers.classList.toggle('active', data.status === 'detecting_speakers');
 
         if (data.status === 'transcribed') {
           clearInterval(interval);

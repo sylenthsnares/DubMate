@@ -1016,6 +1016,8 @@ SPEAKER_NOTICE_NOT_INSTALLED = "Speaker detection isn't installed, so speakers w
 SPEAKER_NOTICE_NO_DOWNLOAD = "Couldn't download speaker detection, so speakers were guessed from pauses. Check who says each line."
 SPEAKER_NOTICE_NO_VOICES = "Speaker detection couldn't tell the voices apart, so speakers were guessed from pauses. Check who says each line."
 SPEAKER_NOTICE_FAILED = "Speaker detection couldn't run, so speakers were guessed from pauses. Check who says each line."
+SPEAKER_DOWNLOAD_MESSAGE = "Downloading speaker detection (about 35 MB, first time only)"
+SPEAKER_DOWNLOAD_WITH_PACKAGE_MESSAGE = "Downloading speaker detection (about 55 MB, first time only)"
 
 _SPEAKER_LOCK = threading.Lock()
 
@@ -1144,14 +1146,19 @@ def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[Li
     """
     Finds who speaks when on the voice stem: ([(start, end, speaker_id), ...] by start, "").
     On any failure the turns are None and the notice says speakers were guessed from pauses.
-    on_progress(fraction) runs 0.88-0.90 while downloading (first time only) and 0.90-0.98
-    while detecting.
+    on_progress(fraction, message) runs 0.88-0.90 while downloading (first time only, with
+    the download message) and 0.90-0.98 while detecting (message "").
     """
+    download_message = SPEAKER_DOWNLOAD_MESSAGE
     try:
         try:
             import sherpa_onnx
         except ImportError:
             addon = _addon_dir()
+            if addon is not None:
+                download_message = SPEAKER_DOWNLOAD_WITH_PACKAGE_MESSAGE
+                if on_progress:
+                    on_progress(0.88, download_message)
             if addon is None or not _install_speaker_package(addon):
                 return None, SPEAKER_NOTICE_NOT_INSTALLED
             try:
@@ -1160,7 +1167,7 @@ def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[Li
                 print(f"[PackBuilder] Speaker detection still can't load after installing: {ex}")
                 return None, SPEAKER_NOTICE_NOT_INSTALLED
 
-        if not _ensure_speaker_models((lambda f: on_progress(0.88 + 0.02 * f)) if on_progress else None):
+        if not _ensure_speaker_models((lambda f: on_progress(0.88 + 0.02 * f, download_message)) if on_progress else None):
             return None, SPEAKER_NOTICE_NO_DOWNLOAD
 
         folder = _speaker_models_dir()
@@ -1185,9 +1192,9 @@ def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[Li
 
         if on_progress:
             def _callback(done: int, total: int) -> int:
-                on_progress(0.90 + 0.08 * min(1.0, done / max(1, total)))
+                on_progress(0.90 + 0.08 * min(1.0, done / max(1, total)), "")
                 return 0
-            on_progress(0.90)
+            on_progress(0.90, "")
             result = sd.process(samples, callback=_callback)
         else:
             result = sd.process(samples)

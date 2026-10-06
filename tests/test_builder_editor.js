@@ -44,8 +44,11 @@ process.on("unhandledRejection", (err) => fail(`unhandled rejection: ${err && er
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
-/** Boots builder.html, runs a fake upload + processing, and waits for the editor. */
-async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] }) {
+/**
+ * Boots builder.html, runs a fake upload + processing, and waits for the editor.
+ * beforeDone(w, send) runs before the final 'transcribed' message, to check stages.
+ */
+async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] }, beforeDone = null) {
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (err) => {
     if (!/not implemented/i.test(String(err && err.message))) console.error(err);
@@ -116,6 +119,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
   w.document.getElementById("btn-start-process").click();
   await tick(50);
   if (!sources.length) fail("processing never opened the progress stream");
+  if (beforeDone) beforeDone(w, (msg) => sources[0].onmessage({ data: JSON.stringify(msg) }));
   sources[0].onmessage({ data: JSON.stringify({ status: "transcribed", progress: 1, ...transcribed }) });
   await tick(700);
 
@@ -341,6 +345,23 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     const ed = await bootEditor({ warning: "", segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] });
     check(ed.doc.getElementById("editor-notice").hidden === true, "an empty warning keeps the notice hidden");
     check(ed.toasts().includes("Found 1 line"), "one line says 'Found 1 line'");
+    ed.w.close();
+  }
+
+  // (g) the speaker detection stage, and its notice after the separation notice.
+  {
+    const notice = "Speaker detection isn't installed, so speakers were guessed from pauses. Check who says each line.";
+    const ed = await bootEditor({ warning: "Basic separation. " + notice, segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] },
+      (w, send) => {
+        const stage = (id) => w.document.getElementById(id).classList.contains("active");
+        send({ status: "transcribing", progress: 0.7, message: "Writing out the dialogue" });
+        check(stage("stage-whisper") && !stage("stage-speakers"), "transcribing lights the transcription stage only");
+        send({ status: "detecting_speakers", progress: 0.88, message: "Detecting who speaks", stage: "speakers" });
+        check(stage("stage-speakers") && !stage("stage-whisper"), "'detecting_speakers' activates #stage-speakers");
+        const el = w.document.getElementById("process-stage-text");
+        check((typeof el.innerText === "string" ? el.innerText : el.textContent) === "Detecting who speaks", "the stage message shows while detecting");
+      });
+    check(ed.doc.getElementById("editor-notice").textContent === "Basic separation. " + notice, "the speaker notice shows in #editor-notice");
     ed.w.close();
   }
 

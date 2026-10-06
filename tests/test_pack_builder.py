@@ -780,13 +780,14 @@ NOTE This is a test subtitle file
         self.assertEqual(pack_builder.find_nonverbal_segments(flat, sr, []), [])
 
     def test_18_pipeline_order(self):
-        """Non-verbal lines are added after Whisper and before speakers, only on a real separation."""
+        """Non-verbal lines come after Whisper, then speaker detection, only when nothing named the speakers."""
         from dubmate import builder_api
         calls = []
         names = ("extract_audio_from_video", "separate_audio_stems", "transcribe_audio",
-                 "add_nonverbal_segments", "assign_speakers_to_segments")
+                 "add_nonverbal_segments", "detect_speaker_turns", "assign_speakers_to_segments")
         originals = {n: getattr(pack_builder, n) for n in names}
-        state = {"used_fallback": False}
+        state = {"used_fallback": False, "turns": [(0.5, 2.5, 7), (4.8, 6.0, 3)], "notice": ""}
+        statuses = []
         grunt = {"start": 5.0, "end": 5.6, "text": "", "character": "", "nonverbal": True}
 
         def fake_extract(video, out):
@@ -806,9 +807,17 @@ NOTE This is a test subtitle file
             calls.append("nonverbal")
             return segments + [dict(grunt)]
 
-        def fake_assign(segments):
-            calls.append(("assign", any(s.get("nonverbal") for s in segments)))
-            return originals["assign_speakers_to_segments"](segments)
+        def fake_detect(vocals_wav, on_progress=None):
+            calls.append(("detect", vocals_wav))
+            on_progress(0.88, "Downloading speaker detection (about 35 MB, first time only)")
+            statuses.append((progress_ref[0].status, progress_ref[0].message))
+            on_progress(0.94, "")
+            statuses.append((progress_ref[0].status, progress_ref[0].message))
+            return state["turns"], state["notice"]
+
+        def fake_assign(segments, turns=None):
+            calls.append(("assign", any(s.get("nonverbal") for s in segments), turns))
+            return originals["assign_speakers_to_segments"](segments, turns)
 
         session_id = "test_pipeline_order"
         try:
@@ -816,36 +825,57 @@ NOTE This is a test subtitle file
             pack_builder.separate_audio_stems = fake_separate
             pack_builder.transcribe_audio = fake_transcribe
             pack_builder.add_nonverbal_segments = fake_nonverbal
+            pack_builder.detect_speaker_turns = fake_detect
             pack_builder.assign_speakers_to_segments = fake_assign
+            progress_ref = [None]
 
             def run(**extra):
                 calls.clear()
+                statuses.clear()
                 session = {"session_id": session_id, "folder": self.tmp_dir, "duration": 10.0,
                            "progress": pack_builder.BuildProgress(session_id),
                            "video_path": os.path.join(self.tmp_dir, "clip.mp4")}
                 session.update(extra)
+                progress_ref[0] = session["progress"]
                 BUILDER_SESSIONS[session_id] = session
                 builder_api._run_builder_pipeline_sync(session_id)
                 return session["progress"]
 
+            vocals = os.path.join(self.tmp_dir, "stems", "vocals.wav")
             progress = run()
-            self.assertEqual(calls, ["extract", "separate", "transcribe", "nonverbal", ("assign", True)])
+            self.assertEqual(calls, ["extract", "separate", "transcribe", "nonverbal", ("detect", vocals),
+                                     ("assign", True, state["turns"])])
+            self.assertEqual(statuses, [
+                ("detecting_speakers", "Downloading speaker detection (about 35 MB, first time only)"),
+                ("detecting_speakers", "Detecting who speaks"),
+            ])
             self.assertEqual(progress.status, "transcribed")
             self.assertEqual(len(progress.segments), 2)
             self.assertTrue(progress.segments[1]["nonverbal"])
-            self.assertTrue(progress.segments[1]["character"].startswith("Speaker"))
+            # Turns, not pauses, pick the voice: speaker 7 is first heard, so "Speaker 1".
+            self.assertEqual([s["character"] for s in progress.segments], ["Speaker 1", "Speaker 2"])
             self.assertEqual(progress.message, "Found 2 lines, 1 without words")
+            self.assertFalse(progress.warning)
 
+            # A speaker notice follows the separation notice, one space apart.
             state["used_fallback"] = True
+            state["turns"], state["notice"] = None, "Speaker detection couldn't run."
             progress = run()
-            self.assertEqual(calls, ["extract", "separate", "transcribe", ("assign", False)])
+            self.assertEqual(calls, ["extract", "separate", "transcribe", ("detect", vocals), ("assign", False, None)])
             self.assertEqual(progress.status, "transcribed")
             self.assertEqual(progress.message, "Found 1 line")
+            self.assertEqual(progress.warning, "basic filter Speaker detection couldn't run.")
 
             state["used_fallback"] = False
+            progress = run()
+            self.assertEqual(progress.warning, "Speaker detection couldn't run.")
+
+            # Named subtitles: no detection, so no download.
             progress = run(subtitle_segments=[{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Levi"}])
-            self.assertEqual(calls, ["extract", "separate", ("assign", False)])
+            self.assertEqual(calls, ["extract", "separate", ("assign", False, None)])
+            self.assertEqual(statuses, [])
             self.assertEqual(progress.status, "transcribed")
+            self.assertFalse(progress.warning)
         finally:
             for n, fn in originals.items():
                 setattr(pack_builder, n, fn)
@@ -1065,9 +1095,12 @@ NOTE This is a test subtitle file
             self.assertEqual(os.listdir(folder), [])
 
             # Through detect_speaker_turns, a failed download is the download notice.
-            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"))
+            messages = []
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"),
+                                                              lambda f, m: messages.append(m))
             self.assertIsNone(turns)
             self.assertEqual(notice, pack_builder.SPEAKER_NOTICE_NO_DOWNLOAD)
+            self.assertEqual(messages, ["Downloading speaker detection (about 35 MB, first time only)"])
         finally:
             for p in reversed(patches):
                 p.stop()
@@ -1123,8 +1156,12 @@ NOTE This is a test subtitle file
             folder = self._touch_speaker_models()
             self.assertEqual(folder, os.path.join(addon, "dubmate-models", "speakers"))
             script["segments"] = [(3.0, 4.0, 1), (0.5, 2.0, 0)]
-            progress = []
-            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"), progress.append)
+            progress, messages = [], []
+
+            def on_progress(fraction, message):
+                progress.append(fraction)
+                messages.append(message)
+            turns, notice = pack_builder.detect_speaker_turns(os.path.join(self.tmp_dir, "vocals.wav"), on_progress)
 
             self.assertEqual(len(runs), 1)
             cmd, kwargs = runs[0]
@@ -1146,6 +1183,8 @@ NOTE This is a test subtitle file
             self.assertEqual(script["callbacks"], [0, 0])
             self.assertTrue(progress and all(0.88 <= f <= 0.98 for f in progress))
             self.assertAlmostEqual(progress[-1], 0.98)
+            self.assertEqual(messages[0], "Downloading speaker detection (about 55 MB, first time only)")
+            self.assertEqual(messages[-1], "")
 
             # A failed top-up is the "isn't installed" notice.
             runs.clear()

@@ -291,8 +291,20 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
         if from_whisper and session.get("voices_separated"):
             segments = pack_builder.add_nonverbal_segments(segments, session["vocals_path"], session.get("duration", 0))
 
-        # Step 4: Speaker Turn Heuristics (90% -> 100%)
-        if segments:
+        # Step 4: who speaks (88% -> 98%). Only when the subtitles named nobody, so
+        # named subtitles never trigger the first-time download.
+        named = any(s.get("character") and s.get("character") != "Actor" for s in segments or [])
+        if segments and not named:
+            progress.update("detecting_speakers", 0.88, "Detecting who speaks", stage="speakers")
+
+            def _on_speaker_progress(fraction: float, message: str = "") -> None:
+                progress.update("detecting_speakers", fraction, message or "Detecting who speaks", stage="speakers")
+
+            turns, notice = pack_builder.detect_speaker_turns(session["vocals_path"], on_progress=_on_speaker_progress)
+            if notice:
+                progress.warning = f"{progress.warning} {notice}" if progress.warning else notice
+            segments = pack_builder.assign_speakers_to_segments(segments, turns)
+        elif segments:
             segments = pack_builder.assign_speakers_to_segments(segments)
         else:
             # If no speech detected, create 1 initial default segment
