@@ -2,15 +2,15 @@
 
 Roadmap feature 2. Owner decisions: October 2026 interview (ROADMAP.md, Decisions; "Align takes in a fixed order: trim, then stretch, then offset"). Builds on the take model (`take-model.md`, PR #12). Branch `feat/recording-timing`.
 
-**Gate.** ROADMAP.md asks for a design review with the owner before any code. Step 1 does not start until the owner has signed off "Decided overnight, revisit" below. Two items there change settled roadmap lines (decisions 9 and 11) and need an explicit yes or no.
+**Status.** Implemented on `feat/recording-timing` (PR #14) in the eight steps listed at the end, as designed below. The calls listed under "Decided overnight, revisit" were made without the owner and shipped as written; the owner still has to confirm them. Two of them change settled roadmap lines (decisions 9 and 11) and need an explicit yes or no. If the owner says no to either, it is a follow-up change, not a blocker for the rest.
 
-Revised after a claim audit: offsets snap to the 5 ms slider step, the delay is also kept in the host's engine config, the guide voice turns alignment off, alignment has explicit "not measured" guards, and steps 2 and 4 of the first draft are each split in two.
+Revised after a claim audit, before any code: offsets snap to the 5 ms slider step, the delay is also kept in the host's engine config, the guide voice turns alignment off, alignment has explicit "not measured" guards, and steps 2 and 4 of the first draft are each split in two. Changed during the final review: timing scores run 0 to 1 (a take that wasn't lined up scores 0, not a negative correlation), the Takes panel hides negative scores from older takes and never highlights 0 %, and the delete fallback ranks zero or negative scores with unscored takes. After the final review, the booth takes the guide-voice flag from the checkbox as it was when recording started, not when the take is saved.
 
-## Where timing goes wrong today
+## Where timing went wrong before this PR
 
-`booth.startCountdownAndRecord` awaits `audio.startRecording()` (fresh `getUserMedia` + `MediaRecorder.start(100)`), then seeks and plays `stageVideo` and starts the backing track at `ctx.currentTime`. The actor hears the scene `outputLatency` late, and their voice reaches the recorder `inputLatency` later, plus the recorder's start gap. A take's audio at 0 s is mixed at `line.start + offset_ms`, so the voice inside it sits that round trip late. Users fix every take by hand with `[` and `]`. A new take inherits the slider value, which is the picked take's `offset_ms` (take model decision 4). That hides the problem after the first fix.
+`booth.startCountdownAndRecord` awaits `audio.startRecording()` (fresh `getUserMedia` + `MediaRecorder.start(100)`), then seeks and plays `stageVideo` and starts the backing track at `ctx.currentTime`. The actor hears the scene `outputLatency` late, and their voice reaches the recorder `inputLatency` later, plus the recorder's start gap. A take's audio at 0 s is mixed at `line.start + offset_ms`, so the voice inside it sits that round trip late. Users fixed every take by hand with `[` and `]`. A new take inherited the slider value, which is the picked take's `offset_ms` (take model decision 4). That hid the problem after the first fix. The recording path itself is unchanged by this PR; the delay is measured and compensated instead.
 
-## What changes for the user
+## What changed for the user
 
 | Behaviour | Where | Disclosure level |
 |---|---|---|
@@ -53,7 +53,7 @@ New optional fields on each take, set by the upload route:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `start_offset_ms` | int | The offset the take started with: the upload's `offset_ms` snapped to 5 ms. The client sends `-latency_ms` when the setup is synced, else the slider value (the picked take's offset) as today. Centre of the alignment search. |
+| `start_offset_ms` | int | The offset the take started with: the upload's `offset_ms` snapped to 5 ms. The client sends `-latency_ms` when the setup is synced, else the slider value (the picked take's offset) as before. Centre of the alignment search. |
 | `auto_offset_ms` | int | The automatic timing, a multiple of 5: the aligned offset when alignment was confident, else `start_offset_ms`. What **Auto** returns to. |
 | `aligned` | bool | Alignment was confident and applied. |
 | `stretch` | float | Speed factor baked into the active audio (`1.0` = none; 0.92 to 1.08). |
@@ -96,7 +96,7 @@ Flow (`MicSyncMethods` mixin, new `static/js/studio/mic_sync.js`): stop the inpu
 
 If the mic opened through the last fallback in `requestMicrophone` (`{audio: true}`, echo cancellation on), the browser may cancel the clicks. They are then not confidently found, and the flow moves to the clap test, which echo cancellation doesn't touch. The clap test stays because the owner brief asks for it.
 
-Applying it: `booth.uploadTake` sends `offset_ms = -latency_ms` when `currentLatencyMs()` is known for the active pair, otherwise the slider value as today, plus `guide_voice` from `checkGuideVoice`. The recording itself is untouched.
+Applying it: `booth.uploadTake` sends `offset_ms = -latency_ms` when `currentLatencyMs()` is known for the active pair, otherwise the slider value as before, plus `guide_voice`. The guide-voice flag is read from `checkGuideVoice` once, when recording starts (it also decides whether the guide plays), and passed through `finishRecording` to `uploadTake`, so toggling the checkbox before the take saves can't change it. The recording itself is untouched.
 
 ## API and WebSocket
 
@@ -109,7 +109,7 @@ Applying it: `booth.uploadTake` sends `offset_ms = -latency_ms` when `currentLat
 
 ## Existing data
 
-No layout change and no `state_version` bump. The fields are optional and every reader defaults them: `stretch` 1.0, `timing_score` none, `aligned` false, and no `auto_offset_ms`, so **Auto** resets to 0 as today and no caption shows. Older tabs keep working against the new engine; the server aligns whatever starting offset they send. Take-model state v2 takes load verbatim (`rooms.py`), so the fields survive save and reload. Nothing is rewritten on load.
+No layout change and no `state_version` bump. The fields are optional and every reader defaults them: `stretch` 1.0, `timing_score` none, `aligned` false, and no `auto_offset_ms`, so **Auto** resets to 0 as before and no caption shows. Older tabs keep working against the new engine; the server aligns whatever starting offset they send. Take-model state v2 takes load verbatim (`rooms.py`), so the fields survive save and reload. Nothing is rewritten on load.
 
 Tested in `tests/test_recording_timing.py`:
 - A PR #12-era `room_state.json` (literal dict without the new fields) loads; `mix_takes` and `render_dub_mix` use `offset_ms` unchanged; the noise-reduction toggle works with stretch defaulting to 1.0; delete falls back to the newest; a save leaves the old takes' fields untouched.
@@ -119,7 +119,7 @@ Tested in `tests/test_recording_timing.py`:
 
 No code change in `render_dub_mix`, `export_dub_video`, premiere or the screening: they read `offset_ms` and the active WAV, which already carries any stretch. `build_project_zip` renders `Raw_Takes/` from the active WAV, so those files are fitted too; the manifest line entry gains `stretch` so it says so. The booth stops reusing the locally recorded buffer for preview when the saved take has `stretch != 1.0`, so the first preview after recording plays the fitted audio from the engine.
 
-## Not in this PR
+## Not in this PR (still open)
 
 - Re-aligning takes recorded before this PR, or re-running alignment when the pack or noise reduction changes.
 - Moving existing takes when the user syncs or re-syncs (only new takes use the delay).
@@ -134,7 +134,7 @@ No code change in `render_dub_mix`, `export_dub_video`, premiere or the screenin
 
 ## Risks
 
-- **Actors follow the picture as well as the sound.** The video is seeked and played after the recorder starts, and its delay is not in the click measurement. On high-delay outputs (Bluetooth), an actor who follows the lips speaks earlier than the sound suggests, so `-latency_ms` can over-correct. Auto-align fixes it when confident; when it isn't (dubbing in another language), the starting timing sticks and the nudge fixes it, as today. Hands-on check below.
+- **Actors follow the picture as well as the sound.** The video is seeked and played after the recorder starts, and its delay is not in the click measurement. On high-delay outputs (Bluetooth), an actor who follows the lips speaks earlier than the sound suggests, so `-latency_ms` can over-correct. Auto-align fixes it when confident; when it isn't (dubbing in another language), the starting timing sticks and the nudge fixes it, as before. Hands-on check below.
 - **macOS device key.** WebView has no output routing and may list no outputs, so the key's output part is always `default`, and switching from speakers to AirPods reuses the old delay. Auto-align absorbs it when confident; **Sync again** fixes it. Hands-on check below.
 - **Guests lose their sync** when the host restarts DubMate (new tunnel origin). They get no toast, so nobody is asked again every session; auto-align still lines their takes up when confident.
 - **Recorder start gap varies take to take.** The sync measures its typical value (median of three runs) and auto-align absorbs the rest when it is confident. Real-device spread is unknown until hands-on testing.
@@ -146,7 +146,18 @@ No code change in `render_dub_mix`, `export_dub_video`, premiere or the screenin
 - **`atempo` quality** at up to 8 % is acceptable for speech; it is only applied when it clearly helps, and **Original speed** undoes it.
 - **Pre-existing:** right after recording with noise reduction on, the booth previews the local un-cleaned recording. Out of scope; noted for feature 4.
 
+## Hands-on checks
+
+Automated tests use synthetic signals and stubbed audio. These need real devices on the owner's build; none is recorded as done yet:
+
+- Bluetooth headphones: sync, record a few lines following the picture, and check whether takes land early.
+- macOS: sync on speakers, switch to AirPods, record, and check how far off the reused delay is before **Sync again**.
+- Sync three times on one setup and note the spread of the recorder start gap.
+- Record a clap after syncing and check the saved take places it where the sync says (decode mismatch).
+
 ## Decided overnight, revisit
+
+These were decided without the owner and are what shipped. The owner still has to confirm each one; 9 and 11 change roadmap lines and ROADMAP.md marks them as awaiting that answer.
 
 1. The delay is stored in the browser (`localStorage`, keyed by device labels) and, on the host's computer, also in the engine config, so a port change doesn't lose it. A guest's sync lasts until the host restarts DubMate (the tunnel address changes), so guests get no "please sync" toast. Owner to confirm this is acceptable for guests.
 2. Sync measures through the real recording path (fresh stream, `MediaRecorder`, sound scheduled right after the recorder starts), three click runs, median. It measures the sound's round trip, not the picture's.
@@ -164,7 +175,9 @@ No code change in `render_dub_mix`, `export_dub_video`, premiere or the screenin
 14. **Original speed** is guarded like pick and delete (`_require_line_actor`) and runs under `processing_lock`.
 15. Takes recorded with the guide voice on are not aligned or scored; the starting timing still applies.
 
-## Implementation steps
+## Implementation steps (landed)
+
+All eight landed on `feat/recording-timing`, one commit each (`feat(recording-timing): 1` to `7`, then the changelog and roadmap commit), followed by the final review fixes and the guide-voice flag fix.
 
 1. **Alignment math.** `audio_processor.align_take_timing` and envelope helpers, pure numpy, with all "not measured" guards; synthetic-signal tests in `tests/test_recording_timing.py`. No callers yet.
 2. **Auto-aligned offsets in the engine.** Upload aligns (no stretch yet) and stores the timing fields with 5 ms snapping; `guide_voice` form field and the booth sends it; reference read guard; delete falls back to the best-timed take; old-state compatibility test.
@@ -173,4 +186,4 @@ No code change in `render_dub_mix`, `export_dub_video`, premiere or the screenin
 5. **Mic sync storage and starting offset.** Engine config `mic_sync` (GET/POST `/api/config`); exported storage helpers; read/write of the delay in `mic_sync.js`; starting offset in `uploadTake`; the host-only toast; tests.
 6. **Mic sync in Audio settings.** Timing row and panel, the click and clap flow in `MicSyncMethods`; JSDOM tests with stubbed audio.
 7. **Timing in the booth.** "Lined up automatically" caption, **Original speed**, **Auto** reset, timing score in the Takes panel, no local-buffer reuse for fitted takes; JSDOM tests.
-8. **Changelog and roadmap.** CHANGELOG `[Unreleased]`, ROADMAP feature 2 marked done.
+8. **Changelog and roadmap.** CHANGELOG `[Unreleased]`, ROADMAP feature 2 marked done, with decisions 9 and 11 noted as awaiting the owner's confirmation.

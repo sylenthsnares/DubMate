@@ -1013,6 +1013,10 @@ export class BoothMethods {
 
     this.recordState = 'recording';
     this.updateRecordButtonUI();
+    // Fixed for this take: toggling the checkbox before it's saved mustn't change
+    // whether the engine treats it as a guide-voice take.
+    const guideVoice = !!this.checkGuideVoice?.checked;
+    this.recordingGuideVoice = guideVoice;
 
     await this.audio.startRecording();
     this.stageVideo.currentTime = Math.max(0, line.start);
@@ -1036,7 +1040,7 @@ export class BoothMethods {
     }
 
     // Guide reference voice if toggled
-    if (this.checkGuideVoice && this.checkGuideVoice.checked && this.origBuffer) {
+    if (guideVoice && this.origBuffer) {
       const guideSource = this.audio.ctx.createBufferSource();
       guideSource.buffer = this.origBuffer;
       const guideGain = this.audio.ctx.createGain();
@@ -1154,10 +1158,10 @@ export class BoothMethods {
     }
 
     const currentTakeBlob = res.blob;
-    await this.uploadTake(this.currentLineIndex, currentTakeBlob, res.audioBuffer);
+    await this.uploadTake(this.currentLineIndex, currentTakeBlob, res.audioBuffer, this.recordingGuideVoice);
   }
 
-  async uploadTake(lineIndex, blob, recordedBuffer = null) {
+  async uploadTake(lineIndex, blob, recordedBuffer = null, guideVoice = false) {
     // A synced setup starts the take its measured delay earlier; otherwise it
     // inherits the slider (the picked take's timing) as before.
     await this.updateAudioDeviceList();
@@ -1183,7 +1187,8 @@ export class BoothMethods {
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
     formData.append('auto_gain', autoGain ? 'true' : 'false');
     // The mic can pick up the guide voice, so the engine doesn't line those takes up.
-    formData.append('guide_voice', this.checkGuideVoice?.checked ? 'true' : 'false');
+    // `guideVoice` is the checkbox as it was when this take started recording.
+    formData.append('guide_voice', guideVoice ? 'true' : 'false');
 
     try {
       const lineId = this.roomState.pack.lines[lineIndex].line_id;

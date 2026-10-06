@@ -32,7 +32,7 @@ Dubious was the earlier design project. Its notes are archived at github.com/ImT
 - **Treat non-verbal performance as dialogue.** Grunts, efforts, screams and laughs are lines to record. Detect lines from activity on the vocal stem, not only from the transcript.
 - **Match subtitle text onto detected lines.** Subtitle timings never become line boundaries.
 - **Takes are unlimited and non-destructive, keyed by a stable line ID**, not by line index.
-- **Align takes in a fixed order:** trim, then stretch, then offset. Trim only chooses the part of the take that is measured; no audio is cut (`design/recording-timing.md`, decision 9).
+- **Align takes in a fixed order:** trim, then stretch, then offset. Trim only chooses the part of the take that is measured; no audio is cut (`design/recording-timing.md`, decision 9). Owner to confirm: this changes the original "trim" line.
 - **Resolve effect settings by replacement, not stacking:** character default → session → take.
 - **Fail loudly when yt-dlp is stale.** It is the one dependency that can't be pinned and left alone.
 - **Download FFmpeg pinned and checksummed.**
@@ -72,7 +72,7 @@ All of this goes into one PR.
 ## Features, in build order
 
 1. **Take model.** Stable line IDs, take history and picking a take. Most of what follows needs this. **M/L** (done).
-2. **Recording timing.** Latency auto-calibration, then auto-align takes. The best-timed take is highlighted in the Takes panel and picked when the picked take is deleted; a new take is still always picked (`design/recording-timing.md`, decision 11). **M + M** (done).
+2. **Recording timing.** Latency auto-calibration, then auto-align takes. The best-timed take is highlighted in the Takes panel and picked when the picked take is deleted; a new take is still always picked (`design/recording-timing.md`, decision 11). Owner to confirm: the original line said auto-align pre-selects the best-timed take; as built it only does so on the delete fallback. Trim being analysis-only (decision 9) also needs the owner's yes or no. **M + M** (done).
 3. **Effects rack.**
    - Built on pedalboard and fed by the take model.
    - Presets, a progressive rack, and optimistic preview.
