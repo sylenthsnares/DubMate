@@ -4,7 +4,9 @@ import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
-from app import app, read_version, get_packs_registry
+from app import app
+from dubmate.common import read_version
+from dubmate.packs_cache import get_packs_registry
 
 def test_health_endpoint():
     client = TestClient(app)

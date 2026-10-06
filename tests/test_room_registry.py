@@ -25,7 +25,9 @@ from fastapi.testclient import TestClient
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import app as dubmate
-from app import app, get_packs_registry, read_version
+from app import app
+from dubmate.common import read_version
+from dubmate.packs_cache import get_packs_registry
 
 STUB_SECRET = "test-registry-key"
 

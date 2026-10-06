@@ -5,7 +5,6 @@ FastAPI + WebSocket backend server for DubMate Multiplayer Studio.
 """
 
 import os
-import re
 import sys
 import json
 import time
@@ -34,6 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import pack_loader
 import audio_processor
 import pack_builder
+from dubmate import common, packs_cache
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,100 +56,11 @@ def find_static_dir() -> str:
     return os.path.join(BASE_DIR, "static")
 
 STATIC_DIR = find_static_dir()
-EXPORTS_DIR = pack_loader.get_exports_dir()
-try:
-    os.makedirs(EXPORTS_DIR, exist_ok=True)
-except Exception:
-    pass
 
 try:
     os.makedirs(STATIC_DIR, exist_ok=True)
 except Exception:
     pass
-
-# In-memory pack cache & room manager
-PACKS_CACHE: Dict[str, pack_loader.PackInfo] = {}
-
-# Serializes pack-folder scans. A scan builds a fresh dict that is then rebound to
-# PACKS_CACHE in one assignment, never mutated in place, so readers that grabbed a
-# reference keep a consistent registry while a rescan runs in a worker thread.
-_PACKS_RESCAN_LOCK = threading.Lock()
-
-# Cache-Control for immutable or versioned media (pack assets, fingerprinted takes).
-LONG_CACHE = "public, max-age=86400, stale-while-revalidate=604800"
-
-# Extension -> MIME for served pack/builder assets. Unknown extensions keep their
-# historical fallbacks (image/webp for images, audio/ogg for audio), so images and
-# audio use separate tables.
-IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-AUDIO_MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav"}
-
-
-def read_version() -> str:
-    version_path = os.path.join(BASE_DIR, "VERSION")
-    try:
-        with open(version_path, "r", encoding="utf-8") as f:
-            return f.read().strip().lstrip("\ufeff")
-    except Exception:
-        return "1.0.0"
-
-
-_UNSAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
-
-
-def sanitize_identifier(value: str, max_len: int = 64) -> str:
-    """
-    Reduces a client-supplied identifier to a token that is safe to embed in a
-    filename. Windows normalises '..' lexically, so an unsanitised id like
-    '../../x' escapes its directory even when glued behind a filename prefix.
-    """
-    return _UNSAFE_ID_RE.sub("_", (value or "").strip())[:max_len]
-
-
-_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-
-
-def sanitize_color(value: Any, fallback: str = "#7c5cff") -> str:
-    """
-    Constrains an actor colour to a hex literal. It is broadcast to every client
-    and interpolated into a style attribute, so an arbitrary string here is an
-    injection vector even though the frontend also escapes it.
-    """
-    if isinstance(value, str) and _HEX_COLOR_RE.match(value.strip()):
-        return value.strip()
-    return fallback
-
-
-def require_safe_identifier(value: str, field: str = "identifier") -> str:
-    """
-    Rejects a client-supplied id that is not a plain token. Rejecting rather than
-    rewriting matters: these ids are also compared against role assignments and
-    room.host_id, so silently transforming one would change authorization results.
-    """
-    if not value or _UNSAFE_ID_RE.search(value) or len(value) > 64:
-        raise HTTPException(status_code=400, detail=f"Invalid {field}")
-    return value
-
-
-def safe_join(base_dir: str, *user_parts: str) -> str:
-    """
-    Joins client-supplied path fragments under base_dir and verifies the result
-    cannot escape it, raising 400 rather than returning an outside path.
-
-    Containment is checked with realpath because component-level filtering is
-    not sufficient on Windows: a backslash is a path separator there but is
-    not a URL separator, so one URL segment can still traverse directories.
-    """
-    for part in user_parts:
-        if part is None or chr(0) in part:
-            raise HTTPException(status_code=400, detail="Invalid path")
-
-    candidate = os.path.join(base_dir, *user_parts)
-    base_real = os.path.realpath(base_dir)
-    cand_real = os.path.realpath(candidate)
-    if cand_real != base_real and not cand_real.startswith(base_real + os.sep):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    return cand_real
 
 
 def require_local_request(request: Request) -> None:
@@ -230,10 +141,10 @@ class Room:
         self.export_status = {k: v for k, v in self.export_status.items() if v == "processing"}
 
     def export_out_path(self, aspect_ratio: str) -> str:
-        """Where a render for this aspect goes. Reads EXPORTS_DIR at call time so a
+        """Where a render for this aspect goes. Reads common.exports_dir() at call time so a
         changed Render & Export Folder applies to the next export."""
         suffix = "_9_16" if aspect_ratio == "9:16" else ""
-        return os.path.join(EXPORTS_DIR, f"Dub_{self.pack.pack_id}_{self.room_id}{suffix}.mp4")
+        return os.path.join(common.exports_dir(), f"Dub_{self.pack.pack_id}_{self.room_id}{suffix}.mp4")
 
     def ready_export_path(self, aspect_ratio: str) -> Optional[str]:
         """The finished render for this aspect, or None if there is no usable file."""
@@ -428,16 +339,16 @@ def prune_sessions(keep_room_id: Optional[str] = None):
     for r in to_delete:
         ROOMS.pop(r, None)
 
-    # Prune old exports in EXPORTS_DIR
-    if os.path.isdir(EXPORTS_DIR):
-        for fname in os.listdir(EXPORTS_DIR):
+    # Prune old exports in the exports folder
+    if os.path.isdir(common.exports_dir()):
+        for fname in os.listdir(common.exports_dir()):
             if fname.endswith((".mp4", ".zip")):
                 if retained_id and retained_id in fname.upper():
                     continue
                 if any(a in fname.upper() for a in active_ids):
                     continue
                 try:
-                    os.remove(os.path.join(EXPORTS_DIR, fname))
+                    os.remove(os.path.join(common.exports_dir(), fname))
                     print(f"[DubMate Cache Pruner] Removed old export/zip: {fname}")
                 except Exception:
                     pass
@@ -445,7 +356,7 @@ def prune_sessions(keep_room_id: Optional[str] = None):
 
 def load_persisted_rooms():
     prune_sessions()
-    registry = PACKS_CACHE
+    registry = packs_cache.PACKS_CACHE
     rooms_dir = os.path.join(audio_processor.CACHE_DIR, "rooms")
     if not os.path.isdir(rooms_dir):
         return
@@ -466,7 +377,7 @@ def load_persisted_rooms():
                     users = data.get("users", {})
                     host_user = users.get(host_id, {})
                     host_name = host_user.get("name", "Host")
-                    host_color = sanitize_color(host_user.get("color"), "#8a6eff")
+                    host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
                     room = Room(r_id, pack, host_id, host_name, host_color)
                     room.users = data.get("users", room.users)
                     room.role_assignments = data.get("role_assignments", room.role_assignments)
@@ -484,8 +395,6 @@ def load_persisted_rooms():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global PACKS_CACHE
-
     # Probed in the background. It costs ~0.39s and only /api/system/encoder needs
     # the answer, so blocking startup on it just delayed the window opening. The
     # probe caches its own result, so the first real caller either finds it ready
@@ -498,9 +407,8 @@ async def lifespan(app: FastAPI):
 
     threading.Thread(target=_probe_encoder, name="encoder-probe", daemon=True).start()
 
-    with _PACKS_RESCAN_LOCK:
-        PACKS_CACHE = pack_loader.get_all_packs()
-    print(f"[DubMate] Loaded {len(PACKS_CACHE)} packs into studio registry.")
+    registry = packs_cache.refresh_packs()
+    print(f"[DubMate] Loaded {len(registry)} packs into studio registry.")
     load_persisted_rooms()
 
     # Keeps retrying room codes that could not be published on the first attempt,
@@ -531,24 +439,6 @@ app.add_middleware(
 )
 
 
-def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
-    """
-    RFC 9110 If-None-Match comparison: a comma-separated list, "*" matches anything,
-    and a weak validator (W/"...") compares equal to its strong form.
-    """
-    if not if_none_match:
-        return False
-    if if_none_match.strip() == "*":
-        return True
-
-    def normalize(value: str) -> str:
-        value = value.strip()
-        return value[2:] if value.startswith("W/") else value
-
-    target = normalize(etag)
-    return any(normalize(candidate) == target for candidate in if_none_match.split(","))
-
-
 @app.middleware("http")
 async def add_performance_cache_headers(request: Request, call_next):
     response = await call_next(request)
@@ -567,14 +457,14 @@ async def add_performance_cache_headers(request: Request, call_next):
             # every single load.
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         elif path.endswith((".svg", ".png", ".jpg", ".woff", ".woff2", ".ttf", ".ico", ".mp4", ".wav", ".mp3", ".ogg")):
-            response.headers["Cache-Control"] = LONG_CACHE
+            response.headers["Cache-Control"] = common.LONG_CACHE
 
     # Answer 304 when the client already holds this exact version. FileResponse
     # emits an ETag but Starlette never checks the request against it, so without
     # this the revalidation above would always come back as a full 200 body.
     if request.method in ("GET", "HEAD") and response.status_code == 200:
         etag = response.headers.get("etag")
-        if etag and _etag_matches(request.headers.get("if-none-match"), etag):
+        if etag and common._etag_matches(request.headers.get("if-none-match"), etag):
             not_modified = Response(status_code=304)
             for header in ("Cache-Control", "ETag", "Last-Modified", "Vary", "Expires", "Pragma"):
                 if header.lower() in response.headers:
@@ -589,7 +479,7 @@ async def health_check():
     """Liveness probe used by the desktop app launcher and orchestrators."""
     return {
         "status": "ok",
-        "version": read_version(),
+        "version": common.read_version(),
         "port": get_engine_port(),
         "timestamp": int(time.time()),
     }
@@ -605,27 +495,6 @@ async def get_system_encoder():
     }
 
 
-def get_packs_registry(force_rescan: bool = False) -> Dict[str, pack_loader.PackInfo]:
-    global PACKS_CACHE
-    if force_rescan or not PACKS_CACHE:
-        with _PACKS_RESCAN_LOCK:
-            fresh = pack_loader.get_all_packs(force_disk_scan=force_rescan)
-            PACKS_CACHE = fresh
-        return fresh
-    return PACKS_CACHE
-
-
-def _find_pack(pack_id: str) -> Optional[pack_loader.PackInfo]:
-    return PACKS_CACHE.get(pack_id) or get_packs_registry().get(pack_id)
-
-
-def _pack_or_404(pack_id: str, detail: str = "Pack not found") -> pack_loader.PackInfo:
-    pack = _find_pack(pack_id)
-    if not pack:
-        raise HTTPException(status_code=404, detail=detail)
-    return pack
-
-
 def _config_payload() -> Dict[str, Any]:
     """Configuration and pack list shared by GET and POST /api/config.
 
@@ -633,14 +502,14 @@ def _config_payload() -> Dict[str, Any]:
     """
     # get_current_packs_config scans too; holding the lock keeps it from racing a
     # rescan that is clearing pack_loader's object cache in another thread.
-    with _PACKS_RESCAN_LOCK:
+    with packs_cache._RESCAN_LOCK:
         config_info = pack_loader.get_current_packs_config()
-    registry = get_packs_registry()
+    registry = packs_cache.get_packs_registry()
     return {
         **config_info,
         # Storage locations are user-configurable so an install on one drive does
         # not scatter working files across the system drive.
-        "exports_dir": EXPORTS_DIR,
+        "exports_dir": common.exports_dir(),
         "cache_dir": pack_loader.CACHE_DIR,
         "install_root": pack_loader.get_install_root(),
         "packs": [p.to_dict() for p in registry.values()],
@@ -660,7 +529,6 @@ async def update_config(payload: Dict[str, Any], request: Request):
     one must be supplied. Previously packs_dir was mandatory, which made it
     impossible to change the export location on its own.
     """
-    global EXPORTS_DIR
     require_local_request(request)
 
     packs_dir = (payload.get("packs_dir") or "").strip()
@@ -681,20 +549,11 @@ async def update_config(payload: Dict[str, Any], request: Request):
         cfg["exports_dir"] = exports_dir
         if not pack_loader.save_config(cfg):
             raise HTTPException(status_code=500, detail="Could not persist export folder setting")
-        EXPORTS_DIR = pack_loader.get_exports_dir()
-        os.makedirs(EXPORTS_DIR, exist_ok=True)
-        messages.append(f"Export folder set to {EXPORTS_DIR}")
+        new_exports_dir = common.refresh_exports_dir()
+        messages.append(f"Export folder set to {new_exports_dir}")
 
     if packs_dir:
-        def _switch_packs_dir():
-            global PACKS_CACHE
-            with _PACKS_RESCAN_LOCK:
-                result = pack_loader.set_custom_packs_dir(packs_dir)
-                if result[0]:
-                    PACKS_CACHE = pack_loader.get_all_packs(force_disk_scan=True)
-            return result
-
-        success, message, count = await asyncio.to_thread(_switch_packs_dir)
+        success, message, count = await asyncio.to_thread(packs_cache.switch_packs_dir, packs_dir)
         if not success:
             raise HTTPException(status_code=400, detail=message)
         messages.append(message)
@@ -711,7 +570,7 @@ async def update_config(payload: Dict[str, Any], request: Request):
 @app.get("/api/packs")
 async def list_packs(rescan: bool = False):
     """Returns list of available dub packs, using fast memory registry or on-demand rescan."""
-    registry = await asyncio.to_thread(get_packs_registry, rescan)
+    registry = await asyncio.to_thread(packs_cache.get_packs_registry, rescan)
     return [p.to_dict() for p in registry.values()]
 
 
@@ -719,7 +578,7 @@ async def list_packs(rescan: bool = False):
 @app.get("/api/packs/rescan")
 async def rescan_packs():
     """Forces an immediate on-demand rescan of the packs directory."""
-    registry = await asyncio.to_thread(get_packs_registry, True)
+    registry = await asyncio.to_thread(packs_cache.get_packs_registry, True)
     scanned_folders = [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.exists(d)]
     return {
         "status": "ok",
@@ -732,7 +591,7 @@ async def rescan_packs():
 
 @app.get("/api/packs/{pack_id}")
 async def get_pack(pack_id: str):
-    return _pack_or_404(pack_id).to_dict()
+    return packs_cache.pack_or_404(pack_id).to_dict()
 
 
 @app.post("/api/packs/import")
@@ -772,7 +631,7 @@ async def import_pack_files(
             file_tuples.append((content, r_path or uf.filename or "unknown"))
 
         result = await asyncio.to_thread(pack_loader.import_pack_folder_tree, file_tuples)
-        await asyncio.to_thread(get_packs_registry, True)
+        await asyncio.to_thread(packs_cache.get_packs_registry, True)
         return result
 
     # 2. Check if all uploaded files are .zip archives
@@ -784,7 +643,7 @@ async def import_pack_files(
             content = await uf.read()
             file_tuples.append((content, uf.filename or "unknown"))
         result = await asyncio.to_thread(pack_loader.import_pack_folder_tree, file_tuples)
-        await asyncio.to_thread(get_packs_registry, True)
+        await asyncio.to_thread(packs_cache.get_packs_registry, True)
         return result
 
     # 3. Batch or single .zip import
@@ -799,7 +658,7 @@ async def import_pack_files(
             if not pack:
                 raise HTTPException(status_code=422, detail="Could not parse a valid scene dub pack from the uploaded archive.")
 
-            await asyncio.to_thread(get_packs_registry, True)
+            await asyncio.to_thread(packs_cache.get_packs_registry, True)
             return {
                 "status": "ok",
                 "message": f"Successfully verified and imported pack '{pack.name}'",
@@ -831,152 +690,80 @@ async def import_pack_files(
         raise HTTPException(status_code=400, detail="No valid .zip archives found in upload.")
 
     result = await asyncio.to_thread(pack_loader.import_multiple_pack_archives, archive_tuples)
-    await asyncio.to_thread(get_packs_registry, True)
+    await asyncio.to_thread(packs_cache.get_packs_registry, True)
     return result
 
 
 @app.get("/api/packs/{pack_id}/icon")
 async def get_pack_icon(pack_id: str):
     """Serves pack cover art / icon."""
-    pack = _find_pack(pack_id)
+    pack = packs_cache.find_pack(pack_id)
     if not pack or not pack.icon_path or not os.path.exists(pack.icon_path):
         raise HTTPException(status_code=404, detail="Icon not found")
     
     ext = os.path.splitext(pack.icon_path)[1].lower()
-    media_type = IMAGE_MEDIA_TYPES.get(ext, "image/webp")
+    media_type = common.IMAGE_MEDIA_TYPES.get(ext, "image/webp")
     return FileResponse(
         pack.icon_path,
         media_type=media_type,
-        headers={"Cache-Control": LONG_CACHE}
-    )
-
-
-def range_stream_file(
-    file_path: str,
-    request: Request,
-    media_type: str,
-    cache_control: str = LONG_CACHE
-) -> Any:
-    """
-    Streams a media file supporting HTTP 206 Partial Content for byte-range seeking.
-    Ensures seamless frame seeking on Cloudflare tunnels, Safari, and Chrome HTML5 video.
-    """
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-
-    file_size = os.path.getsize(file_path)
-    range_header = request.headers.get("range", "").strip()
-
-    base_headers = {
-        "Accept-Ranges": "bytes",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-        "Cache-Control": cache_control,
-    }
-
-    if not range_header or not range_header.startswith("bytes="):
-        def full_generator():
-            with open(file_path, "rb") as f:
-                while chunk := f.read(256 * 1024):
-                    yield chunk
-
-        headers = {
-            **base_headers,
-            "Content-Length": str(file_size),
-        }
-        return StreamingResponse(full_generator(), status_code=200, media_type=media_type, headers=headers)
-
-    range_spec = range_header.replace("bytes=", "").split("-")
-    try:
-        start = int(range_spec[0]) if range_spec[0] else 0
-        end = int(range_spec[1]) if len(range_spec) > 1 and range_spec[1] else file_size - 1
-    except ValueError:
-        start = 0
-        end = file_size - 1
-
-    start = max(0, min(start, file_size - 1))
-    end = max(start, min(end, file_size - 1))
-    content_length = end - start + 1
-
-    def range_generator(start_pos: int, bytes_to_read: int):
-        with open(file_path, "rb") as f:
-            f.seek(start_pos)
-            remaining = bytes_to_read
-            while remaining > 0:
-                chunk_size = min(256 * 1024, remaining)
-                data = f.read(chunk_size)
-                if not data:
-                    break
-                remaining -= len(data)
-                yield data
-
-    headers = {
-        **base_headers,
-        "Content-Range": f"bytes {start}-{end}/{file_size}",
-        "Content-Length": str(content_length),
-    }
-    return StreamingResponse(
-        range_generator(start, content_length),
-        status_code=206,
-        media_type=media_type,
-        headers=headers
+        headers={"Cache-Control": common.LONG_CACHE}
     )
 
 
 @app.get("/api/packs/{pack_id}/video")
 async def get_pack_video(pack_id: str, request: Request):
     """Streams pack video with full HTTP 206 Range support for frame seeking."""
-    pack = _find_pack(pack_id)
+    pack = packs_cache.find_pack(pack_id)
     if not pack or not pack.web_video_path or not os.path.exists(pack.web_video_path):
         raise HTTPException(status_code=404, detail="Video not found")
-    return range_stream_file(
+    return common.range_stream_file(
         pack.web_video_path,
         request,
         media_type="video/mp4",
-        cache_control=LONG_CACHE
+        cache_control=common.LONG_CACHE
     )
 
 
 @app.get("/api/packs/{pack_id}/backing")
 async def get_pack_backing(pack_id: str, request: Request):
-    pack = _find_pack(pack_id)
+    pack = packs_cache.find_pack(pack_id)
     if not pack or not pack.backing_track_path or not os.path.exists(pack.backing_track_path):
         raise HTTPException(status_code=404, detail="Backing track not found")
     ext = os.path.splitext(pack.backing_track_path)[1].lower()
-    media_type = AUDIO_MEDIA_TYPES.get(ext, "audio/ogg")
-    return range_stream_file(
+    media_type = common.AUDIO_MEDIA_TYPES.get(ext, "audio/ogg")
+    return common.range_stream_file(
         pack.backing_track_path,
         request,
         media_type=media_type,
-        cache_control=LONG_CACHE
+        cache_control=common.LONG_CACHE
     )
 
 
 @app.get("/api/packs/{pack_id}/audio/{filename}")
 async def get_pack_audio_line(pack_id: str, filename: str, request: Request):
-    pack = _pack_or_404(pack_id)
-    file_path = safe_join(pack.folder, filename)
+    pack = packs_cache.pack_or_404(pack_id)
+    file_path = common.safe_join(pack.folder, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
     ext = os.path.splitext(filename)[1].lower()
-    media_type = AUDIO_MEDIA_TYPES.get(ext, "audio/ogg")
-    return range_stream_file(
+    media_type = common.AUDIO_MEDIA_TYPES.get(ext, "audio/ogg")
+    return common.range_stream_file(
         file_path,
         request,
         media_type=media_type,
-        cache_control=LONG_CACHE
+        cache_control=common.LONG_CACHE
     )
 
 
 @app.get("/api/packs/{pack_id}/export")
 async def export_pack_zip(pack_id: str):
     """Packages and streams a scene pack as a downloadable .zip archive."""
-    pack = _find_pack(pack_id)
+    pack = packs_cache.find_pack(pack_id)
     pack_folder = pack.folder if pack else None
 
     if not pack_folder or not os.path.isdir(pack_folder):
         for base in pack_loader.PACKS_DIRS:
-            candidate = safe_join(base, pack_id)
+            candidate = common.safe_join(base, pack_id)
             if os.path.isdir(candidate):
                 pack_folder = candidate
                 break
@@ -987,7 +774,7 @@ async def export_pack_zip(pack_id: str):
     try:
         clean_name = pack_loader.safe_folder_name(pack.name if pack else pack_id, "scene_pack")
         zip_filename = f"{clean_name}.zip"
-        zip_dir = os.path.join(EXPORTS_DIR, "packs")
+        zip_dir = os.path.join(common.exports_dir(), "packs")
         os.makedirs(zip_dir, exist_ok=True)
         zip_path = os.path.join(zip_dir, f"DubMate_Pack_{clean_name}_{pack_id}.zip")
 
@@ -1330,10 +1117,10 @@ async def set_tunnel_endpoint(payload: Dict[str, Any]):
 async def create_room(payload: Dict[str, Any]):
     pack_id = payload.get("pack_id")
     host_name = payload.get("host_name", "Host").strip() or "Host"
-    host_color = sanitize_color(payload.get("host_color"), "#7c5cff")
-    app_version = read_version()
+    host_color = common.sanitize_color(payload.get("host_color"), "#7c5cff")
+    app_version = common.read_version()
 
-    pack = _pack_or_404(pack_id, "Selected pack not found")
+    pack = packs_cache.pack_or_404(pack_id, "Selected pack not found")
 
     async with _ROOM_CREATE_LOCK:
         room_id = generate_room_code()
@@ -1387,7 +1174,7 @@ async def upload_noise_profile(
     user_id: str = Form(...),
 ):
     """Calibrates and saves a 1-second room background noise profile for an actor."""
-    require_safe_identifier(user_id, "user_id")
+    common.require_safe_identifier(user_id, "user_id")
     room = _room_or_404(room_id)
     try:
         content = await file.read()
@@ -1416,7 +1203,7 @@ async def upload_take(
     gain_db: float = Form(0.0),
     noise_reduction: bool = Form(False),
 ):
-    require_safe_identifier(user_id, "user_id")
+    common.require_safe_identifier(user_id, "user_id")
     room = _room_or_404(room_id)
 
     if line_index < 0 or line_index >= len(room.pack.lines):
@@ -1552,8 +1339,8 @@ async def get_take_audio(room_id: str, line_index: int, request: Request):
     
     # If versioned query param (?v=...) is present, the audio file is uniquely fingerprinted
     # and safe to cache heavily by browsers and Cloudflare edge CDN.
-    cache_ctrl = LONG_CACHE if "v" in request.query_params else "no-cache, must-revalidate"
-    return range_stream_file(
+    cache_ctrl = common.LONG_CACHE if "v" in request.query_params else "no-cache, must-revalidate"
+    return common.range_stream_file(
         take["wav_path"],
         request,
         media_type="audio/wav",
@@ -1653,7 +1440,7 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
     if not target_path:
         raise HTTPException(status_code=404, detail="Exported video not found")
 
-    return range_stream_file(
+    return common.range_stream_file(
         target_path,
         request,
         media_type="video/mp4",
@@ -1709,7 +1496,7 @@ async def download_room_project_zip(room_id: str):
     room = _room_or_404(room_id)
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
-    zip_path = os.path.join(EXPORTS_DIR, zip_filename)
+    zip_path = os.path.join(common.exports_dir(), zip_filename)
 
     try:
         await asyncio.to_thread(
@@ -1775,7 +1562,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
 
             if msg_type == "join":
                 name = payload.get("name", "Actor").strip() or "Actor"
-                color = sanitize_color(payload.get("color"), "#25d3a4")
+                color = common.sanitize_color(payload.get("color"), "#25d3a4")
 
                 # Auto-promote user to host if previous host is dummy "host" or offline
                 active_host = room.users.get(room.host_id)
@@ -2509,7 +2296,7 @@ async def builder_serve_cover(session_id: str):
     if not session or not session.get("cover_path") or not os.path.isfile(session["cover_path"]):
         raise HTTPException(status_code=404, detail="Cover not found.")
     ext = os.path.splitext(session["cover_path"])[1].lower()
-    media_type = IMAGE_MEDIA_TYPES.get(ext, "image/webp")
+    media_type = common.IMAGE_MEDIA_TYPES.get(ext, "image/webp")
     return FileResponse(session["cover_path"], media_type=media_type)
 
 
@@ -2519,7 +2306,7 @@ async def builder_serve_video(session_id: str, request: Request):
     session = BUILDER_SESSIONS.get(session_id)
     if not session or not os.path.isfile(session.get("video_path", "")):
         raise HTTPException(status_code=404, detail="Video not found.")
-    return range_stream_file(
+    return common.range_stream_file(
         session["video_path"],
         request,
         media_type="video/mp4",
@@ -2533,7 +2320,6 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     Slices audio cues, packages all assets, generates compliance metadata,
     and installs the finished scene pack directly into DubMate's Packs directory.
     """
-    global PACKS_CACHE
     session = _builder_session_or_404(session_id)
 
     progress: pack_builder.BuildProgress = session["progress"]
@@ -2574,7 +2360,7 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     )
 
     # Step 3: Refresh server pack registry
-    new_registry = await asyncio.to_thread(get_packs_registry, True)
+    new_registry = await asyncio.to_thread(packs_cache.get_packs_registry, True)
     pack_id = os.path.basename(os.path.normpath(pack_folder))
     loaded_pack = new_registry.get(pack_id)
 
@@ -2583,7 +2369,7 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
         loaded_pack = await asyncio.to_thread(pack_loader.load_pack, pack_folder)
         if loaded_pack:
             # Rebind rather than insert: a worker thread may be iterating the old dict.
-            PACKS_CACHE = {**PACKS_CACHE, loaded_pack.pack_id: loaded_pack}
+            packs_cache.PACKS_CACHE = {**packs_cache.PACKS_CACHE, loaded_pack.pack_id: loaded_pack}
 
     progress.pack_info = loaded_pack.to_dict() if loaded_pack else {"id": pack_id, "name": pack_name}
     progress.update("done", 1.0, f"Successfully created and installed pack '{pack_name}'!", stage="done")
@@ -2620,7 +2406,7 @@ async def serve_builder_index():
 @app.get("/css/{file_path:path}")
 async def serve_static_css(file_path: str):
     static_dir = STATIC_DIR
-    full_path = safe_join(static_dir, "css", file_path)
+    full_path = common.safe_join(static_dir, "css", file_path)
     if os.path.isfile(full_path):
         return FileResponse(full_path, media_type="text/css")
     raise HTTPException(status_code=404, detail="CSS file not found")
@@ -2629,7 +2415,7 @@ async def serve_static_css(file_path: str):
 @app.get("/js/{file_path:path}")
 async def serve_static_js(file_path: str):
     static_dir = STATIC_DIR
-    full_path = safe_join(static_dir, "js", file_path)
+    full_path = common.safe_join(static_dir, "js", file_path)
     if os.path.isfile(full_path):
         return FileResponse(full_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail="JS file not found")

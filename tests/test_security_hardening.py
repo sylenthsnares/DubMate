@@ -20,7 +20,10 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import app as app_module
 import pack_loader
-from app import app, safe_join, require_safe_identifier, get_packs_registry
+from app import app
+from dubmate import common
+from dubmate.common import safe_join, require_safe_identifier
+from dubmate.packs_cache import get_packs_registry
 
 PROJECT_ROOT = _sys.path[0]
 
@@ -225,12 +228,12 @@ class TestConfigLocalOnly(unittest.TestCase):
         self.client = TestClient(app)
         self.target = tempfile.mkdtemp(prefix="dm_cfg_")
         self.orig_config = pack_loader.load_config()
-        self.orig_exports = app_module.EXPORTS_DIR
+        self.orig_exports = common.exports_dir()
 
     def tearDown(self):
         import shutil
         pack_loader.save_config(self.orig_config)
-        app_module.EXPORTS_DIR = self.orig_exports
+        common._exports_dir = self.orig_exports
         shutil.rmtree(self.target, ignore_errors=True)
 
     def test_tunnel_request_is_rejected_and_config_unchanged(self):
@@ -238,7 +241,7 @@ class TestConfigLocalOnly(unittest.TestCase):
             resp = self.client.post("/api/config", json={"exports_dir": self.target}, headers=header)
             self.assertEqual(resp.status_code, 403, header)
             self.assertEqual(pack_loader.load_config(), self.orig_config)
-            self.assertEqual(app_module.EXPORTS_DIR, self.orig_exports)
+            self.assertEqual(common.exports_dir(), self.orig_exports)
 
     def test_local_request_behaves_as_before(self):
         resp = self.client.post("/api/config", json={})

@@ -75,10 +75,12 @@ jobs:
             audio_processor.py \
             pack_loader.py \
             pack_builder.py \
+            dubmate/ \
             static/ \
             VERSION \
             requirements.txt \
-            requirements_builder.txt
+            requirements_builder.txt \
+            -x '*__pycache__*'
 
       - name: Extract release notes for this version
         run: |
