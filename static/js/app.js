@@ -719,14 +719,14 @@ class DubMateApp {
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
-      const take = this.roomState?.takes?.[this.currentLineIndex];
+      const take = this.takeForLine(this.currentLineIndex);
       if (take && take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, val);
       this.syncTakeParams();
     });
 
     if (this.btnAutoMatchGain) {
       this.btnAutoMatchGain.addEventListener('click', () => {
-        const take = this.roomState?.takes?.[this.currentLineIndex];
+        const take = this.takeForLine(this.currentLineIndex);
         if (take && take.auto_gain_db !== undefined) {
           const targetGain = parseFloat(take.auto_gain_db);
           this.sliderGain.value = targetGain;
@@ -923,11 +923,11 @@ class DubMateApp {
     this.socket.on('take_recorded', async (data) => {
       this.applyIncomingState(data);
       const lineIdx = data.payload?.line_index;
+      const take = this.takeForLine(lineIdx);
       // Invalidate old take buffer from audio engine cache immediately
-      this.audio.evictTakeCache(lineIdx);
+      this.audio.evictTakeCache(take);
 
       // Preload updated buffer for instant premiere playback
-      const take = this.roomState?.takes?.[lineIdx];
       if (take && take.url) {
         try {
           const freshBuf = await this.audio.loadAudioBuffer(take.url, true);
@@ -941,7 +941,7 @@ class DubMateApp {
       this.renderTimelineChips();
       this.renderCastActivityHUD();
 
-      const userName = data.payload?.user_name || this.roomState?.takes?.[lineIdx]?.user_name || 'Cast member';
+      const userName = data.payload?.user_name || take?.user_name || 'Cast member';
       if (data.payload?.user_id === this.user.id) {
         this.showToast("Take saved");
       } else {
@@ -950,9 +950,10 @@ class DubMateApp {
     });
 
     this.socket.on('take_cleared', (data) => {
-      this.applyIncomingState(data);
       const lineIdx = data.payload?.line_index;
-      this.audio.evictTakeCache(lineIdx);
+      // Look the take up before the new state drops it
+      this.audio.evictTakeCache(this.takeForLine(lineIdx));
+      this.applyIncomingState(data);
       if (lineIdx === this.currentLineIndex) {
         this.loadBoothLine(lineIdx);
       }

@@ -2,6 +2,7 @@
 // the cast activity HUD and ready states. Also the member's home-origin helpers.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { escapeHtml } from '../ui_common.js';
+import { takeCount } from './takes.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
 const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
@@ -499,7 +500,7 @@ export class LobbyMethods {
       // Calculate lines completed
       const assignedLineObjs = this.roomState.pack.lines.filter(l => assignedChars.includes(l.character));
       const totalAssigned = assignedLineObjs.length;
-      const completedTakes = assignedLineObjs.filter(l => !!this.roomState.takes[l.index]).length;
+      const completedTakes = assignedLineObjs.filter(l => takeCount(this.roomState.takes, l) > 0).length;
       const pct = totalAssigned > 0 ? Math.round((completedTakes / totalAssigned) * 100) : 0;
 
       if (u.is_ready) readyCount++;

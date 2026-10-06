@@ -492,6 +492,54 @@ try {
       process.exit(1);
     }
 
+    // Test 8c: take helpers (static/js/studio/takes.js) over index-keyed room state.
+    {
+      const src = fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "studio", "takes.js"), "utf8");
+      const T = new Function(src.replace(/^export\s+/gm, "")
+        + "\nreturn { pickedTake, lineTakes, takeCount, takeAudioKey, TAKE_STATE_VERSION };")();
+      const take0 = { url: "/api/rooms/R/takes/0/audio?v=7", user_name: "Ana" };
+      const takes = { 0: take0 };
+      const [l0, l1] = mockPacks[0].lines;
+      const checks = [
+        ["pickedTake finds the line's take", T.pickedTake(takes, l0) === take0],
+        ["pickedTake is empty for a line with no take", T.pickedTake(takes, l1) === undefined],
+        ["pickedTake tolerates missing state", T.pickedTake(undefined, l0) === undefined && T.pickedTake(takes, null) === undefined],
+        ["lineTakes lists the take", T.lineTakes(takes, l0).length === 1 && T.lineTakes(takes, l0)[0] === take0],
+        ["lineTakes is empty without a take", T.lineTakes(takes, l1).length === 0 && T.lineTakes(null, l0).length === 0],
+        ["takeCount counts", T.takeCount(takes, l0) === 1 && T.takeCount(takes, l1) === 0],
+        ["takeAudioKey drops ?v=", T.takeAudioKey(take0) === "/api/rooms/R/takes/0/audio"],
+        ["takeAudioKey without a url", T.takeAudioKey({}) === null && T.takeAudioKey(undefined) === null],
+        ["TAKE_STATE_VERSION is 2", T.TAKE_STATE_VERSION === 2],
+      ];
+      const failed = checks.filter(([, ok]) => !ok).map(([name]) => name);
+      if (failed.length) {
+        console.error("FAIL: take helpers:", failed);
+        process.exit(1);
+      }
+
+      // The studio reads the take through the same helper.
+      app.roomState = { room_id: "R", pack: mockPacks[0], takes, users: {} };
+      if (app.takeForLine(0) !== take0 || app.takeForLine(1) !== undefined || app.takeForLine(99) !== undefined) {
+        console.error("FAIL: takeForLine did not return the line's take");
+        process.exit(1);
+      }
+
+      // Evicting a take drops every cached version of its audio and nothing else.
+      const cache = app.audio.bufferCache;
+      cache.clear();
+      for (const k of ["/api/rooms/R/takes/0/audio?v=6", "/api/rooms/R/takes/0/audio?v=7",
+                       "/api/rooms/R/takes/1/audio?v=1", "/api/rooms/R/takes/10/audio?v=1"]) cache.set(k, {});
+      app.audio.evictTakeCache(take0);
+      app.audio.evictTakeCache(undefined);
+      const left = [...cache.keys()].sort().join(",");
+      cache.clear();
+      if (left !== "/api/rooms/R/takes/1/audio?v=1,/api/rooms/R/takes/10/audio?v=1") {
+        console.error("FAIL: evictTakeCache left the wrong buffers:", left);
+        process.exit(1);
+      }
+      console.log("PASS: take helpers read the picked take and evict only its audio!");
+    }
+
     // Test 8: Sample-Accurate Video Seek & Playback Stop helpers
     if (typeof app.syncVideoSeek === "function" && typeof app.stopBoothPlayback === "function") {
       app.stopBoothPlayback();
