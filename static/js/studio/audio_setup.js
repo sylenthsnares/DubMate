@@ -88,6 +88,8 @@ export class AudioSetupMethods {
       outputId: safeStorageGet(ls, AUDIO_OUTPUT_DEVICE_KEY) || '',
       devices: { inputs: [], outputs: [], labelled: false, supported: false },
       meterRaf: null,
+      // Bumped by every startInputMeter(), so a start that waited for the mic can tell it was superseded.
+      meterToken: 0,
       peakDb: -Infinity,
       peakHoldUntil: 0,
       // Guards against two overlapping openAudioSettings() calls landing their
@@ -572,30 +574,13 @@ export class AudioSetupMethods {
   // --- Live Input Level Meter (dBFS) ---
 
   async startInputMeter() {
+    const token = ++this.audioSetup.meterToken;
     this.stopInputMeter();
     if (!this.isAudioSettingsOpen()) return;
     if (this.isDocumentHidden()) return;
     if (typeof requestAnimationFrame !== 'function') return;
 
-    try {
-      const info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
-      if (info && info.didFallBack) {
-        this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
-      } else {
-        this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
-      }
-    } catch (err) {
-      const name = (err && err.name) || '';
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        this.audioSetup.permission = 'denied';
-        this.renderMicDenial(err);
-        this.showAudioSetupStep('denied');
-        return;
-      }
-      console.warn('[DubMate] Input meter could not open the microphone:', err?.name, err?.message, err);
-      this.setMeterHint(micErrorMessage(err), true);
-      return;
-    }
+    if (!(await this.openMeterStream(token))) return;
 
     // Between the await above and here the user may already have closed the panel.
     if (!this.isAudioSettingsOpen()) {
@@ -617,6 +602,51 @@ export class AudioSetupMethods {
       this.audioSetup.meterRaf = requestAnimationFrame(tick);
     };
     this.audioSetup.meterRaf = requestAnimationFrame(tick);
+  }
+
+  // Opens the meter's own mic stream and sets the hint. False when it failed or a newer
+  // start (or a test pausing the meter) superseded it.
+  async openMeterStream(token) {
+    let info;
+    try {
+      info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
+    } catch (err) {
+      if (token !== this.audioSetup.meterToken) return false;
+      const name = (err && err.name) || '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        this.stopInputMeter();
+        this.audioSetup.permission = 'denied';
+        this.renderMicDenial(err);
+        this.showAudioSetupStep('denied');
+        return false;
+      }
+      console.warn('[DubMate] Input meter could not open the microphone:', err?.name, err?.message, err);
+      this.setMeterHint(micErrorMessage(err), true);
+      return false;
+    }
+    if (token !== this.audioSetup.meterToken || !info) return false;
+    if (info.didFallBack) {
+      this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
+    } else {
+      this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
+    }
+    return true;
+  }
+
+  // Mic sync and the room checks record through a fresh stream of their own, so they close
+  // the meter's stream; the loop keeps running and shows their stream meanwhile.
+  pauseMeterStream() {
+    this.audio.stopInputMonitor();
+  }
+
+  // After a test ends, fails or is cancelled: reopens the meter's stream, keeping a running loop.
+  resumeInputMeter() {
+    if (!this.isAudioSettingsOpen() || this.audio.monitorAnalyser) return;
+    if (this.audioSetup.meterRaf === null || this.audioSetup.meterRaf === undefined) {
+      this.startInputMeter().catch(() => { });
+      return;
+    }
+    this.openMeterStream(++this.audioSetup.meterToken).catch(() => { });
   }
 
   stopInputMeter() {
@@ -660,7 +690,11 @@ export class AudioSetupMethods {
 
   renderInputMeterFrame() {
     const level = this.audio.readInputLevel();
-    if (!level) return;
+    // No stream open (between test passes): rest at the floor instead of freezing.
+    if (!level) {
+      this.resetInputMeterUI();
+      return;
+    }
 
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const rmsDb = level.rmsDb;

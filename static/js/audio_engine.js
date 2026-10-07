@@ -48,6 +48,12 @@ export class AudioEngine {
     this.monitorAnalyser = null;
     this.monitorFloatData = null;
     this.monitorByteData = null;
+    // Bumped by every start and stop, so a start still waiting for the mic can tell it was superseded.
+    this.monitorToken = 0;
+    // A level tap on the recording stream (never routed to the speakers): the meter reads it
+    // while a test records through its own stream.
+    this.recordSource = null;
+    this.recordAnalyser = null;
   }
 
   // --- dBFS helpers (shared with the settings level meter UI) ---
@@ -307,6 +313,7 @@ export class AudioEngine {
         const stream = await this._getUserMediaRetry(attempt.audio);
         this.stream = stream;
         this.activeInputDeviceId = attempt.id;
+        this._attachRecordAnalyser(stream);
         return this.stream;
       } catch (err) {
         lastErr = err;
@@ -321,13 +328,31 @@ export class AudioEngine {
     throw lastErr || new Error('Microphone unavailable');
   }
 
+  // Best effort: some browsers can't tap a stream whose rate differs from the context's,
+  // and recording must not fail because of the meter.
+  _attachRecordAnalyser(stream) {
+    const ctx = this.ctx;
+    if (!ctx || typeof ctx.createMediaStreamSource !== 'function' || typeof ctx.createAnalyser !== 'function') return;
+    try {
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.15;
+      source.connect(analyser);
+      this.recordSource = source;
+      this.recordAnalyser = analyser;
+    } catch (e) {}
+  }
+
   // --- 4b. Live Input Level Monitor (dBFS meter source) ---
   // Opens its own short-lived stream so it never collides with, or gets torn
   // down by, the recording stream that releaseMicrophone()/stopAllPlayback()
   // manage. The analyser is deliberately NOT connected to ctx.destination:
   // monitoring must not feed the mic back into the speakers.
+  // Resolves null when a newer start or a stop superseded it while it waited for the mic.
   async startInputMonitor(deviceId = undefined) {
     this.stopInputMonitor();
+    const token = ++this.monitorToken;
     this.initContext();
     if (!this.ctx) throw new Error("This browser can't play DubMate's audio.");
     if (typeof this.ctx.createMediaStreamSource !== 'function' || typeof this.ctx.createAnalyser !== 'function') {
@@ -344,8 +369,13 @@ export class AudioEngine {
       stream = await this._getUserMediaRetry(this._buildAudioConstraints(wanted));
     } catch (err) {
       if (!wanted || (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError'))) throw err;
+      if (token !== this.monitorToken) return null;
       stream = await this._getUserMediaRetry(this._buildAudioConstraints(null));
       didFallBack = true;
+    }
+    if (token !== this.monitorToken) {
+      try { stream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} }); } catch (e) {}
+      return null;
     }
 
     let source = null;
@@ -382,11 +412,16 @@ export class AudioEngine {
     return { deviceId: actualId, label: actualLabel, didFallBack };
   }
 
-  // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame,
-  // or null when no monitor is running.
+  // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame (the meter's
+  // own stream, else the recording stream), or null when neither is open.
   readInputLevel() {
-    const analyser = this.monitorAnalyser;
+    const analyser = this.monitorAnalyser || this.recordAnalyser;
     if (!analyser) return null;
+    const size = analyser.fftSize || 2048;
+    if (!this.monitorFloatData || this.monitorFloatData.length !== size) {
+      this.monitorFloatData = new Float32Array(size);
+      this.monitorByteData = new Uint8Array(size);
+    }
 
     let peak = 0;
     let sumSq = 0;
@@ -428,6 +463,7 @@ export class AudioEngine {
   }
 
   stopInputMonitor() {
+    this.monitorToken++;
     if (this.monitorSource) {
       try { this.monitorSource.disconnect(); } catch (e) {}
     }
@@ -476,6 +512,13 @@ export class AudioEngine {
   }
 
   releaseMicrophone() {
+    for (const node of [this.recordSource, this.recordAnalyser]) {
+      if (node) {
+        try { node.disconnect(); } catch (e) {}
+      }
+    }
+    this.recordSource = null;
+    this.recordAnalyser = null;
     if (this.stream) {
       try {
         this.stream.getTracks().forEach((track) => {

@@ -381,7 +381,7 @@ export class RoomCheckMethods {
     this.showRoomCheckPanel(null);
     if (wasBusy) {
       this.audio.cancelClip();
-      if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
+      this.resumeInputMeter();
     }
     if (wasOpen && this.isAudioSettingsOpen() && this.btnRoomCheck) this.btnRoomCheck.focus();
   }
@@ -392,7 +392,7 @@ export class RoomCheckMethods {
     if (this.roomCheckBusy || this.roomCheckRefused()) return;
     const run = ++this.roomCheckRun;
     this.roomCheckBusy = true;
-    this.stopInputMeter();
+    this.pauseMeterStream();
     this.showRoomCheckPanel('listening');
     try {
       await this.updateAudioDeviceList();
@@ -459,7 +459,7 @@ export class RoomCheckMethods {
         this.roomCheckBusy = false;
         this.renderRoomCheckRow();
         this.renderMicSyncRow();
-        if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
+        this.resumeInputMeter();
       }
     }
   }
@@ -503,7 +503,7 @@ export class RoomCheckMethods {
     if (this.roomCheckBusy || this.roomCheckRefused()) return;
     const run = ++this.roomCheckRun;
     this.roomCheckBusy = true;
-    this.stopInputMeter();
+    this.pauseMeterStream();
     this.setLoudLineListening(true);
     this.showLoudLineResult('Say your loudest line now.');
     this.renderRoomCheckRow();
@@ -533,7 +533,7 @@ export class RoomCheckMethods {
         this.setLoudLineListening(false);
         this.renderRoomCheckRow();
         this.renderMicSyncRow();
-        if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
+        this.resumeInputMeter();
       }
     }
   }

@@ -210,11 +210,11 @@ export class MicSyncMethods {
     return true;
   }
 
-  // Stops the meter (it holds its own mic stream) and starts a run that Cancel can end.
+  // Closes the meter's own mic stream (the meter shows the run's stream) and starts a run that Cancel can end.
   beginMicSyncRun(step) {
     this.micSyncRun++;
     this.micSyncBusy = true;
-    this.stopInputMeter();
+    this.pauseMeterStream();
     this.showMicSyncPanel(step);
     return this.micSyncRun;
   }
@@ -224,7 +224,7 @@ export class MicSyncMethods {
     this.micSyncBusy = false;
     this.renderMicSyncRow();
     this.renderRoomCheckRow();
-    if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
+    this.resumeInputMeter();
   }
 
   cancelMicSync() {
@@ -236,7 +236,7 @@ export class MicSyncMethods {
     if (wasBusy) {
       if (this.audio.isRecording) Promise.resolve(this.audio.stopRecording()).catch(() => { });
       this.audio.stopAllPlayback();
-      if (this.isAudioSettingsOpen()) this.startInputMeter().catch(() => { });
+      this.resumeInputMeter();
     }
     if (wasOpen && this.isAudioSettingsOpen() && this.btnMicSync) this.btnMicSync.focus();
   }
