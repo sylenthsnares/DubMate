@@ -90,6 +90,8 @@
 - **No Mic Prompt on a Host's Page in the Desktop App**: the desktop app no longer asks for the microphone again when you join a host's room. In a browser, the question comes before your first count-in, never during it.
 - **Sound on Your Chosen Headphones**: clicks, previews, the count-in and the backing track play on the headphones you chose, even after DubMate restarts.
 - **Fairer Clap Sync**: clap sync accepts normal human timing. If it can't use your claps, it says whether it couldn't hear them or they were uneven.
+- **Louder Sync Clicks**: Sync your mic plays loud, sharp clicks that small earbuds held to the mic can get through. It first asks you to take your earbuds or headphones out and hold them right next to the mic. If the clicks aren't heard, it says to turn your volume up and hold the earbuds closer, then try again, or clap instead.
+- **Clap Sync Ignores Room Noise**: clap sync only counts sharp claps on the beat. Room noise, typing or talking with nobody clapping is no longer saved as your mic's delay. DubMate says it heard other sounds and asks you to try somewhere quieter.
 - **Mic Problems Say What to Do**: when the microphone can't be opened, DubMate says why in plain words: not allowed, not plugged in, in use by another app, or no longer connected.
 - **Level Meter Keeps Moving**: the level meter in Audio settings keeps moving during Sync your mic, Check your room and Check your loudest line, and comes back after they finish, fail or are cancelled.
 

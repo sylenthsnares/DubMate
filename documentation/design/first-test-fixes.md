@@ -1,6 +1,6 @@
 # Design: fixes from the first hands-on test
 
-Status: Implemented on fix/first-test-findings, as designed. One addition from review: joining no longer reloads forever when a room code points back to the page it is on (it says the room wasn't found).
+Status: Implemented on fix/first-test-findings, as designed. One addition from review: joining no longer reloads forever when a room code points back to the page it is on (it says the room wasn't found). A second mic sync pass followed the owner's notes: louder clicks, a warning before them, and clap sync that refuses room noise (see "Mic sync, second pass").
 
 The owner and a co-builder tested main at `c9ca8c4` on real machines. This PR fixes what they hit: takes were hard to find, joining lost your name and audio setup, the settings screen showed the host's folders, clap sync failed, and the input meter stopped. Branch `fix/first-test-findings`. It builds on `take-model.md`, `recording-timing.md`, `calibrate-mic.md` and `sessions-and-sharing.md`. The run was unattended, so every choice the brief left open is under "Decided overnight, revisit".
 
@@ -47,6 +47,9 @@ This is the revised version, after a claim audit of the first draft. The changes
 | Clap sync accepts normal human timing. It saves when at least 4 claps land within 40 ms of their median. | Timing row | One click away |
 | Failures say what to do: "DubMate couldn't hear your claps. Clap closer to the mic, right on each click." or "Your claps were uneven. Try again, clapping right on each click." Microphone errors get one of the plain lines below. | Timing and Room rows (toast or panel), meter hint | Only when it happens |
 | The level meter keeps moving during Sync your mic, Check your room and Check your loudest line. It comes back after they end, fail or are cancelled. | Audio settings | Default |
+| Sync your mic first says "The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic." with **Play clicks** (tooltip: "On speakers? Turn them up and stay near the mic."). The clicks are short, sharp and near full level. | Timing row | One click away |
+| Unheard clicks: "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again." with **Try again** and **Clap instead**. Clap instead shows "Put your headphones back on, then clap on each beat you hear." and **Start clapping**. Microphone errors keep their toast. | Timing row | Only when it happens |
+| Clap sync only counts sharp claps on the beat. With nobody clapping it saves nothing: "DubMate couldn't hear your claps…" when the room is steady, or "DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each click." when other sharp sounds fall between the beats. | Timing row | Only when it happens |
 
 Microphone error lines, shared by mic sync, the room checks and the meter hint through `micErrorMessage(err)`:
 
@@ -142,6 +145,28 @@ The room check is **not** carried. Its profile lives on the member's own engine,
   - Browser guests: the join modal's name field is filled from `dubmate_user.name` on that origin. That is today's behaviour; a test now pins it.
 - **Mic before the count-in (b).** In `ensureMicReady()`, when setup is complete but the permission state isn't `granted`, it calls `audio.requestMicrophone()` before the count-in, then right away `audio.releaseMicrophone()`. The take still opens its own fresh stream. This shows the browser prompt (the desktop app shows none), then runs `resolveHandoffDevices()`. If it fails, the denied step opens with `renderMicDenial`.
 
+## Mic sync, second pass
+
+After the first round the owner asked for louder sync clicks ("otherwise small ear monitors or buds won't be picked up"), and the UI critique (ui-plan step 9c) found clap sync had saved 305 ms with nobody clapping.
+
+- **Clicks** (`timing.js`).
+  - `clickTrainSamples` now makes each click a 5 ms sweep from 400 Hz to 10 kHz (capped at 0.45 × the sample rate), with a 10 % Tukey taper. The pitch rises as t^1.25, which keeps every octave from 500 Hz to 8 kHz within about 3 dB of the others. The old click was a 4 ms 2 kHz Hann burst.
+  - The peak is `CLICK_PEAK` = -1 dBFS, applied in `clickTrainSamples`. `AudioEngine.playClickTrain(times, leadSec, level = 1)` no longer halves it, and still plays on `ctx.destination`, the chosen output.
+  - `findClickTrainLag` keeps its quadrature matched filter, now on the sweep and its 90° twin, so phase shifts from the earbud and mic don't matter. A test finds clicks through a band-limited (1 to 6 kHz), inverted path at -30 dB in noise.
+  - The clap beat is heard in the ears, so `runClapSync` plays it at `CLAP_BEAT_LEVEL` = 0.3 (about -11 dBFS).
+- **Panel** (`mic_sync.js`, `index.html`).
+  - The `ready` step's copy is the warning above. Start is now **Play clicks**.
+  - New step `clicksFailed` replaces `clap` after a failed click run. It is an error step with **Try again** (the click button) and a new `#btn-clap-instead`.
+  - `clap` is now the step before clapping. It records nothing until **Start clapping**, so the headphones can go back on first.
+- **Clap rejection** (`findClapLag`, new `judgeClaps`).
+  - The clap run starts its beat 0.8 s in (`CLAP_LEAD_SEC`, was 0.3 s). The floor is the median 1 ms energy of the quiet from 300 ms up to 150 ms before the first beat, or of the whole run after 300 ms, whichever is louder. The first 300 ms are skipped because they can hold the recorder's start click.
+  - An onset counts as a clap only when it is sharp: it starts 10 dB and peaks 15 dB over the floor, it peaks 10 dB above the 20 ms before it, and within 5 ms of starting it is within 3 dB of its peak over the next 30 ms. Talking, hum and slow swells fail this.
+  - `strays` counts the claps more than 150 ms from every beat at the median delay, the silent lead and tail included.
+  - `judgeClaps(found)` returns `quiet` (fewer than 4 hits), `noisy` (more than 3 strays), `uneven` (fewer than 4 within ±40 ms of the median) or `ok`. Only `ok` saves. The 4 within ±40 ms rule is unchanged.
+  - On synthetic recordings, the old rule took 17 of 400 noise-only runs (knocks and talking-like swells, 1 to 8 a second) for claps. The new rule passes none of 720 at 1 to 12 a second, and keeps 49 to 60 of 60 honest runs with a 15 to 25 ms human spread, room noise and stray knocks.
+  - A tick that lines up with every beat (a clock, or the beat leaking from speakers) is refused when it also falls between the beats. A sound only on the beat still passes, as a perfect clapper would.
+- **Headless check.** `scripts/headless_mic_check.py` also checks that the click loop (two ticks per beat) is refused, and adds a run with a room-noise WAV (hiss, knocks, swells) that must not pass. Result: all passed, and the noise run came back `noisy` (5 hits, 4 agreeing, 5 strays), so the old rule would have saved it.
+
 ## Desktop
 
 - New `tauri/src-tauri/src/mic_permission.rs`:
@@ -188,6 +213,8 @@ Unchanged. The handoff and the meter run in the browser only, and output routing
 - **The tester's real error is still unconfirmed.** The specific lines plus `err.name` in the console settle it at the next hands-on test.
 - **`webview2-com` API drift** when wry or Tauri is bumped. The crate is pinned to the lockfile versions, a compile break shows up in the local `cargo check` or the `build_only` run, and there is still no PR build.
 - **The looser clap rule** accepts a slightly less precise delay. Clapping is the fallback path, the result is snapped to 5 ms, and it can be nudged.
+- **Loud clicks in the ears.** Someone who skips the warning hears up to three runs of six -1 dBFS clicks at their system volume. Each click lasts 5 ms. The clap beat, which is meant to be heard in the ears, stays about 10 dB lower.
+- **Clap rejection can refuse honest claps** in a loud or busy room (claps less than 15 dB over the room, or more than 3 other sharp sounds). The message says to try somewhere quieter, and the click test is the main path.
 - **Tests that go red with the guard and the redaction.** These need `TestClient(app, base_url="http://127.0.0.1:8000")`:
   - `test_security_hardening.py` `test_local_request_behaves_as_before` (lines 245-249)
   - `test_config_pack_path.py` (lines 72, 77, 93, 132, 154)
@@ -209,6 +236,9 @@ Unchanged. The handoff and the meter run in the browser only, and output routing
 11. Clap sync accepts **4 claps within ±40 ms of their median**.
 12. Setup done on your own DubMate counts as done on the host's page. The browser prompt moves before the count-in.
 13. The headless Chromium check is a **dev script** (`scripts/headless_mic_check.py`), not a suite test.
+14. Sync clicks are a **5 ms 400 Hz to 10 kHz sweep at -1 dBFS**; the clap beat plays at 0.3 of that.
+15. Clap sync needs **sharp claps 15 dB over the room and at most 3 strays**, measured after a 0.8 s lead.
+16. After unheard clicks, **Try again** comes first and clapping is the second choice, behind a step that asks for the headphones back on.
 
 ## Implementation steps
 
@@ -221,3 +251,4 @@ Unchanged. The handoff and the meter run in the browser only, and output routing
 7. **Join handoff: devices and mic before the count-in.** `resolveHandoffDevices` through `applyInputDevice`/`applyOutputDevice`, `ensureMicReady` open then release; JSDOM.
 8. **Desktop mic permission.** `mic_permission.rs`, the Windows handler, `Info.plist`, `Entitlements.plist`; `cargo test` and `cargo check` locally.
 9. **CHANGELOG and ROADMAP.**
+10. **Mic sync, second pass.** Loud broadband clicks, the warning step and click-failure advice, clap noise rejection, headless noise run; unit and JSDOM.
