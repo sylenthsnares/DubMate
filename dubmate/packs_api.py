@@ -30,10 +30,13 @@ async def list_packs(rescan: bool = False):
 
 @router.post("/api/packs/rescan")
 @router.get("/api/packs/rescan")
-async def rescan_packs():
-    """Forces an immediate on-demand rescan of the packs directory."""
+async def rescan_packs(request: Request):
+    """Forces an immediate on-demand rescan of the packs directory. The scanned folders
+    are listed only for the engine's own computer."""
     registry = await asyncio.to_thread(packs_cache.get_packs_registry, True)
-    scanned_folders = [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.exists(d)]
+    scanned_folders = []
+    if common.is_own_computer(request):
+        scanned_folders = [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.exists(d)]
     return {
         "status": "ok",
         "count": len(registry),

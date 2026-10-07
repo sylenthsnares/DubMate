@@ -702,6 +702,8 @@ export class AudioSetupMethods {
     // Stay hidden unless the running backend actually reports the key; the
     // server-side half of this feature may ship after this UI does.
     this.audioExportsRow.style.display = 'none';
+    // The export folder is on the engine's computer; other computers never see it.
+    if (!this.isEngineLocal()) return;
     try {
       const data = await this.fetchConfig();
       if (!data || typeof data !== 'object') return;

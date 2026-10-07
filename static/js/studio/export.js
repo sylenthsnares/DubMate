@@ -552,6 +552,7 @@ export class ExportMethods {
    * saveExportsDir() refreshes the cache when the user changes it.
    */
   async fetchExportsDir() {
+    if (!this.isEngineLocal()) return null;
     if (typeof this.exportsDirCache === 'string') return this.exportsDirCache;
     try {
       const data = await this.fetchConfig();

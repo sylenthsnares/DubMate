@@ -35,7 +35,7 @@ class TestConfigPackPath(unittest.TestCase):
         pack_loader.init_pack_dirs()
         pack_loader.PACK_OBJECT_CACHE.clear()
 
-        cls.client = TestClient(app.app)
+        cls.client = TestClient(app.app, base_url="http://127.0.0.1:8000")
         cls.client.__enter__()
 
     def tearDown(self):
