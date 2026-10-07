@@ -56,7 +56,7 @@ Unchanged. This PR changes no audio, mix, render or file path. The export modal 
 - `updateToast(id, …)` (plan step 7): its first caller is the import toast in step 31 (U4), so it lands there.
 - Status-text classes (plan step 6a): their first user is Audio settings in step 40d (U5b), so they land there.
 - The booth's right column, takes UI, line chips as buttons, the rack and knob wheel (U2); the lobby right rail and guest self-casting (U3); scene choice, pack cards as a radio group, colour swatches as radios, the join and Packs folder modals through `openDialog` (U4); launcher, premiere, export, Audio settings and Pack Builder flows (U5). The focus ring added here applies to pack cards, swatches and chips as soon as those steps make them focusable.
-- Pack Builder timeline internals (`.ruler-tick`, `.segment-block-label` and the clip label beside it) stay under 11px until the Lines column is rebuilt in step 40h; they sit inside fixed timeline geometry.
+- Pack Builder timeline internals (`.ruler-tick`, `.segment-block-label` and the `.segment-inline-delete-btn` glyph) stay under 11px until the Lines column is rebuilt in step 40h; they sit inside fixed timeline geometry.
 - Emoji spinners and the hero gradient (U4), the `?` sheet's take and line keys (U2 step 15).
 - No `.impeccable/design.json` sidecar; DESIGN.md stays at `documentation/DESIGN.md`.
 - The plan's mockup and screenshot images stay outside the repo.
