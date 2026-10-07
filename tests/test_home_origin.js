@@ -145,7 +145,9 @@ function fakeRoom(app) {
     const { app, navigations } = await boot(`${HOME}/`, { "DUB-ZZ99": "https://h.trycloudflare.com" });
     await app.joinRoom("DUB-ZZ99");
     const expected = `https://h.trycloudflare.com/?room=DUB-ZZ99&home=${encodeURIComponent(HOME)}`;
-    if (navigations[0] !== expected) fail(`remote join URL: ${navigations[0]} (expected ${expected})`);
+    // The fragment (#dm=) carries the member's name and setup; see test_join_handoff.js.
+    const sent = String(navigations[0] || "").split("#")[0];
+    if (sent !== expected) fail(`remote join URL: ${navigations[0]} (expected ${expected})`);
     console.log("PASS: B2 a remote join carries ?home= with the member's own engine");
 
     navigations.length = 0;

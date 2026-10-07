@@ -6,7 +6,7 @@ import { micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.j
 import { CLAP_BEAT_SEC, CLICK_TIMES_SEC, combineRuns, devicePairKey, findClapLag, findClickTrainLag, snapMs } from './timing.js';
 
 // localStorage: {"<mic>|<output>": {latency_ms, method, measured_at}}.
-const MIC_SYNC_KEY = 'dubmate_mic_sync';
+export const MIC_SYNC_KEY = 'dubmate_mic_sync';
 // sessionStorage prefix: the "please sync" toast was shown for this pair in this tab.
 const MIC_SYNC_ASKED_KEY = 'dubmate_mic_sync_asked:';
 const MAX_LATENCY_MS = 800;
@@ -36,7 +36,7 @@ function webStorage(name) {
   }
 }
 
-function validEntry(entry) {
+export function validEntry(entry) {
   return !!entry && typeof entry === 'object' && Number.isFinite(entry.latency_ms)
     && entry.latency_ms >= 0 && entry.latency_ms <= MAX_LATENCY_MS;
 }
@@ -158,11 +158,14 @@ export class MicSyncMethods {
     if (ms === null) this.micSyncStatus.textContent = 'Not synced yet';
     else this.micSyncStatus.textContent = ms > 0 ? `Synced. New takes move ${ms} ms earlier.` : 'Synced.';
     // A guest's page lives on an address that changes whenever the host restarts DubMate.
+    // A member from their own DubMate brings that one's sync along when joining.
     if (this.isEngineLocal()) {
       this.micSyncStatus.removeAttribute('data-tip');
       this.micSyncStatus.removeAttribute('tabindex');
     } else {
-      this.micSyncStatus.setAttribute('data-tip', 'Your browser keeps this until the host restarts DubMate.');
+      this.micSyncStatus.setAttribute('data-tip', this.hasHomeEngine()
+        ? 'Sync on your own DubMate to keep it for every room.'
+        : 'Your browser keeps this until the host restarts DubMate.');
       this.micSyncStatus.setAttribute('tabindex', '0');
     }
     if (this.btnMicSync) {

@@ -14,11 +14,13 @@ import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
-import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
+import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
 class DubMateApp {
   constructor() {
+    // Before anything reads localStorage: a member's name and setup from their own DubMate.
+    this.joinHandoff = captureJoinHandoff();
     this.audio = new AudioEngine();
     this.initAudioSetupState();
     this.socket = new RoomSocket();
@@ -27,6 +29,8 @@ class DubMateApp {
 
     // App State
     this.user = this.loadUser();
+    // Keep the id this origin now uses, so a reload stays the same member.
+    if (this.joinHandoff) this.saveUser();
     this.packs = [];
     this.selectedPackId = null;
     this.packSearchQuery = '';
@@ -87,16 +91,17 @@ class DubMateApp {
   }
 
   loadUser() {
-    const saved = localStorage.getItem('dubmate_user');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { }
-    }
-    const randomId = 'u_' + Math.random().toString(36).substring(2, 9);
-    return {
-      id: randomId,
+    const user = {
+      id: 'u_' + Math.random().toString(36).substring(2, 9),
       name: 'Actor ' + Math.floor(Math.random() * 900 + 100),
       color: '#d97706',
     };
+    try {
+      // A join handoff can leave a name and colour without an id; the defaults fill the gaps.
+      const saved = JSON.parse(localStorage.getItem('dubmate_user') || 'null');
+      if (saved && typeof saved === 'object') return { ...user, ...saved };
+    } catch (e) { }
+    return user;
   }
 
   saveUser() {
@@ -1232,7 +1237,11 @@ class DubMateApp {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     const selectPackParam = params.get('select_pack');
-    if (roomParam) {
+    if (roomParam && this.joinHandoff) {
+      // Joined from the member's own DubMate, where they already gave their name.
+      this.warnOnVersionMismatch({ toast: true });
+      this.joinRoom(roomParam);
+    } else if (roomParam) {
       this.promptJoinRoom(roomParam);
     } else {
       this.showView('landing');
@@ -1510,6 +1519,11 @@ class DubMateApp {
    */
   isEngineLocal() {
     return isLoopbackOrigin(window.location.origin);
+  }
+
+  /** True when this member has a DubMate of their own (this page's engine or ?home=). */
+  hasHomeEngine() {
+    return !!getHomeOrigin();
   }
 }
 
