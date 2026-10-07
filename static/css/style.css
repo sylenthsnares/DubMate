@@ -2688,6 +2688,21 @@ body.resizing .resize-grip-pill {
   font-weight: 700;
 }
 
+/* A small chevron on the Takes button; it turns up while the history is open */
+.take-history-chevron {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+#btn-take-history[aria-expanded="true"] .take-history-chevron {
+  transform: translateY(1px) rotate(-135deg);
+}
+
 /* The open take history hangs over the cards below it */
 .record-btn-container.take-history-open {
   overflow: visible;

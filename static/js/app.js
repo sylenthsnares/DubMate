@@ -757,6 +757,13 @@ class DubMateApp {
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
     this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
+    // Escape inside the take history closes it and returns to the button, and nothing else.
+    this.btnTakeHistory.parentElement.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.takeHistoryOpen) return;
+      e.stopPropagation();
+      this.toggleTakeHistory();
+      this.btnTakeHistory.focus();
+    });
     this.btnOriginalSpeed?.addEventListener('click', () => this.playAtOriginalSpeed());
 
     // Studio Noise Reduction Synchronization Listeners

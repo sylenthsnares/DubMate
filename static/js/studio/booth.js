@@ -1189,7 +1189,7 @@ export class BoothMethods {
     this.renderTakeHistory();
   }
 
-  /** The "Takes (N)" button and its panel. Shown only with 2+ takes on a line you can record. */
+  /** The "Takes (N)" button and its panel. Shown from the first take on a line you can record. */
   renderTakeHistory() {
     if (!this.btnTakeHistory || !this.takeHistoryPanel) return;
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
@@ -1199,10 +1199,11 @@ export class BoothMethods {
       this.takeHistoryOpen = false;
     }
     const takes = line ? lineTakes(this.roomState.takes, line) : [];
-    const show = !!line && takes.length >= 2 && this.canRecordLine(line);
+    const show = !!line && takes.length >= 1 && this.canRecordLine(line);
     const open = show && !!this.takeHistoryOpen;
     this.btnTakeHistory.parentElement.style.display = show ? '' : 'none';
-    this.btnTakeHistory.innerText = `Takes (${takes.length})`;
+    const label = this.btnTakeHistory.querySelector('.take-history-count');
+    if (label) label.textContent = `Takes (${takes.length})`;
     this.btnTakeHistory.setAttribute('aria-expanded', String(open));
     this.takeHistoryPanel.style.display = open ? '' : 'none';
     this.takeHistoryPanel.closest('.record-btn-container')?.classList.toggle('take-history-open', open);
