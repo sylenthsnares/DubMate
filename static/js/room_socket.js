@@ -11,6 +11,9 @@ const PING_TIMEOUT_MS = PING_INTERVAL_MS * 2.5; // 50s of total silence => assum
 // reconnect storms against the server during an outage.
 const RECONNECT_BASE_DELAY_MS = 2000;
 const RECONNECT_MAX_DELAY_MS = 30000;
+// Five tries span 30 to 60 seconds of backoff. After that the room is treated as
+// unreachable until the user asks to try again.
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 export class RoomSocket {
   // Cap on messages held while the socket is opening or reconnecting, so a long
@@ -35,8 +38,15 @@ export class RoomSocket {
 
     // Publicly readable connection state so the UI layer (app.js) can
     // surface a persistent-disconnect condition if it chooses to.
-    // One of: 'disconnected' | 'connecting' | 'open' | 'reconnecting'
+    // One of: 'disconnected' | 'connecting' | 'open' | 'reconnecting' | 'failed'
     this.connectionState = 'disconnected';
+
+    // Set when the engine answers the connect with "Room not found": retrying
+    // can't help until the room is opened again, so the next close gives up.
+    this.roomGone = false;
+
+    // Set once the queue has dropped a message during this outage.
+    this.queueOverflowed = false;
 
     // Messages raised while the socket is still opening, or during a reconnect,
     // flushed once it is live. joinRoom() calls connect() and then broadcasts the
@@ -78,6 +88,10 @@ export class RoomSocket {
       this.send('join', { name: userName, color: userColor });
       this.flushPending();
       this.startPing();
+      if (this.queueOverflowed) {
+        this.queueOverflowed = false;
+        this.emit('queue_overflow', { type: 'queue_overflow', payload: { recovered: true } });
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -86,6 +100,9 @@ export class RoomSocket {
       this.lastMessageAt = Date.now();
       try {
         const data = JSON.parse(event.data);
+        // The connect-time "Room not found" is the only error without a payload;
+        // refusals of a single change always carry one.
+        if (data.type === 'error' && !data.payload) this.roomGone = true;
         this.emit(data.type, data);
         this.emit('*', data);
       } catch (err) {
@@ -100,6 +117,12 @@ export class RoomSocket {
         this.reconnectTimeout = null;
       }
       if (this.roomId && this.userId) {
+        if (this.roomGone || this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          // Give up: the queue is kept for retryNow(), and sends now report failure.
+          this._setConnectionState('failed', { attempt: this.reconnectAttempts });
+          console.warn('[Socket] Giving up on the room until asked to try again.');
+          return;
+        }
         const delay = this._nextReconnectDelay();
         this._setConnectionState('reconnecting', { retryInMs: delay, attempt: this.reconnectAttempts });
         console.warn(`[Socket] Connection closed unexpectedly. Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})...`);
@@ -131,11 +154,25 @@ export class RoomSocket {
     return delay;
   }
 
+  /** Tries the room again straight away, with a fresh set of attempts. */
+  retryNow() {
+    if (!this.roomId || !this.userId) return;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    this.reconnectAttempts = 0;
+    this.roomGone = false;
+    this.connect(this.roomId, this.userId, this.userName, this.userColor);
+  }
+
   disconnect() {
     this.roomId = null;
     this.userId = null;
     this.stopPing();
     this.reconnectAttempts = 0;
+    this.roomGone = false;
+    this.queueOverflowed = false;
     // Leaving deliberately: anything still queued belongs to a room we are no
     // longer in, and must not be replayed into the next one.
     this.pendingMessages = [];
@@ -236,6 +273,10 @@ export class RoomSocket {
       // status updates are the least worth replaying.
       if (this.pendingMessages.length >= RoomSocket.MAX_PENDING_MESSAGES) {
         this.pendingMessages.shift();
+        if (!this.queueOverflowed) {
+          this.queueOverflowed = true;
+          this.emit('queue_overflow', { type: 'queue_overflow', payload: {} });
+        }
       }
       this.pendingMessages.push({ type, payload });
       return true;

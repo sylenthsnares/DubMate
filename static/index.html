@@ -123,10 +123,15 @@
     </div>
 
     <!-- Connection state. Hidden while healthy; a dropped socket used to be
-         completely invisible, so the room looked fine while nothing was sent. -->
-    <div id="connection-banner" class="connection-banner" role="status" aria-live="polite" style="display: none;">
-      <span class="connection-dot"></span>
+         completely invisible, so the room looked fine while nothing was sent.
+         Not a live region: real changes are read out once through #sr-announcer.
+         Below 1280px the reconnecting sentence gives way to the short form. -->
+    <div id="connection-banner" class="connection-banner" style="display: none;">
+      <span class="connection-dot" aria-hidden="true"></span>
       <span id="connection-banner-text">Reconnecting…</span>
+      <span class="connection-banner-short"></span>
+      <button type="button" id="btn-connection-action" class="btn btn-ghost btn-xs" hidden>Retry now</button>
+      <button type="button" id="btn-connection-leave" class="btn btn-ghost btn-xs" hidden>Leave room</button>
     </div>
 
     <div class="header-status">

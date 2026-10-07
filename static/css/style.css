@@ -479,40 +479,81 @@ body::after {
   background: var(--secondary);
 }
 
-/* Connection loss banner. Deliberately loud: while it is up, anything the user
-   records or assigns will not reach the other people in the room. */
+/* Connection pill. Amber while it is connecting or trying to get the room back;
+   red only once it has given up (red means recording elsewhere, so it is kept
+   for the state that needs the user); green for "Back online". */
 .connection-banner {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 3px 4px 3px 12px;
+  min-height: 30px;
   margin-right: 10px;
   border-radius: var(--radius-md);
-  background: rgba(220, 38, 38, 0.12);
-  border: 1px solid var(--accent-red-glow);
-  color: var(--accent-red-soft);
-  font-size: 11px;
+  background: rgba(217, 119, 6, 0.1);
+  border: 1px solid var(--accent-amber-glow);
+  color: var(--primary-hover);
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
+.connection-banner.is-failed {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: var(--accent-red-glow);
+  color: var(--accent-red-soft);
+}
 .connection-banner.is-recovered {
   background: rgba(22, 163, 74, 0.12);
-  border-color: rgba(22, 163, 74, 0.4);
-  color: #86efac;
+  border-color: var(--accent-teal-glow);
+  color: var(--accent-green-light);
+}
+.connection-banner [hidden] {
+  display: none;
+}
+/* Pad the right side when there is no button to sit against it. */
+.connection-banner:not(:has(.btn:not([hidden]))) {
+  padding-right: 12px;
+}
+.connection-banner .btn {
+  color: inherit;
+}
+.connection-banner-short {
+  display: none;
 }
 .connection-dot {
+  flex-shrink: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: currentColor;
-  animation: connection-pulse 1.4s ease-in-out infinite;
+  animation: connection-pulse 2.4s ease-in-out infinite;
 }
+.connection-banner.is-failed .connection-dot,
 .connection-banner.is-recovered .connection-dot {
   animation: none;
 }
 @keyframes connection-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
+  50% { opacity: 0.45; }
+}
+/* Narrow windows: the short form ("Reconnecting…"), the full sentence in its tooltip.
+   Long sentences (gave up, dropped changes, reload) swap earlier so the header's
+   own Leave stays in the window. */
+@media (max-width: 1279px) {
+  .connection-banner.has-short #connection-banner-text {
+    display: none;
+  }
+  .connection-banner.has-short .connection-banner-short {
+    display: inline;
+  }
+}
+@media (max-width: 1439px) {
+  .connection-banner.has-short.is-long #connection-banner-text {
+    display: none;
+  }
+  .connection-banner.has-short.is-long .connection-banner-short {
+    display: inline;
+  }
 }
 
 /* The code exists locally but is not resolvable by guests yet -- usually the

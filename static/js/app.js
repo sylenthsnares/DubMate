@@ -17,6 +17,24 @@ import { SessionMethods } from './studio/sessions.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
+// What the connection pill says. Casting and ready changes wait in the socket's
+// queue; takes and voice changes go over HTTP and don't, hence the careful tip.
+const CONNECTION_COPY = {
+  lost: 'Lost the room. Reconnecting…',
+  connecting: 'Connecting…',
+  failed: "Can't reach the room. The host may have closed it.",
+  disconnected: "Disconnected. You're no longer in the room.",
+  overflow: "Some changes from the last minute didn't reach the room.",
+  back: 'Back online',
+  stale: 'DubMate was updated. Reload this page to keep going.',
+  // Narrow windows show these instead, with the sentence in a tooltip.
+  lostShort: 'Reconnecting…',
+  failedShort: "Can't reach the room.",
+  staleShort: 'DubMate was updated.',
+  lostTip: "Casting and ready changes are sent when it's back. Wait for it before you record.",
+  failedTip: 'Changes you made since it dropped are sent if Try again reconnects.',
+};
+
 class DubMateApp {
   constructor() {
     this.audio = new AudioEngine();
@@ -859,6 +877,24 @@ class DubMateApp {
       this.renderConnectionState(data.payload || {});
     });
 
+    // The offline queue had to drop a change. The pill says so while the room is
+    // away; once it is back, the same line stays as a toast until closed.
+    this.socket.on('queue_overflow', (data) => {
+      if (data?.payload?.recovered) {
+        this._connectionOverflowed = false;
+        this.showToast(CONNECTION_COPY.overflow, { tone: 'error' });
+        return;
+      }
+      this._connectionOverflowed = true;
+      this.renderConnectionState({ state: this.socket.connectionState });
+    });
+
+    document.getElementById('btn-connection-action')?.addEventListener('click', () => {
+      if (this.isStaleTab) window.location.reload();
+      else this.socket.retryNow();
+    });
+    document.getElementById('btn-connection-leave')?.addEventListener('click', () => this.confirmLeaveRoom());
+
     // A message that could not be sent is a change the user thinks they made and
     // nobody else will ever see. Say so rather than dropping it in silence.
     this.socket.on('send_failed', () => {
@@ -1145,8 +1181,18 @@ class DubMateApp {
     if (!banner || !text) return;
     clearTimeout(this._connectionBannerTimer);
     banner.classList.remove('is-recovered');
+    banner.classList.add('is-failed');
+    banner.removeAttribute('data-tip');
     banner.style.display = 'flex';
-    text.innerText = 'DubMate was updated. Reload this page to keep going.';
+    text.innerText = CONNECTION_COPY.stale;
+    this.setConnectionShortForm(CONNECTION_COPY.staleShort, CONNECTION_COPY.stale, { long: true });
+    const action = document.getElementById('btn-connection-action');
+    const leave = document.getElementById('btn-connection-leave');
+    if (action) {
+      action.textContent = 'Reload';
+      action.hidden = false;
+    }
+    if (leave) leave.hidden = true;
   }
 
   initVideoPrompterSplitter() {
@@ -1396,6 +1442,8 @@ class DubMateApp {
       connectionBanner.style.display = 'none';
       connectionBanner.classList.remove('is-recovered');
     }
+    this._connectionLost = '';
+    this._connectionOverflowed = false;
     const wasHost = this.isHost();
     this.resetRoomSession();
     this.selectedPackId = null;
@@ -1498,18 +1546,32 @@ class DubMateApp {
    * The socket already tracked this state and already reconnected with backoff --
    * it just never told anyone. To the user a dropped connection was a room that
    * had quietly stopped working.
+   *
+   * Amber while it is trying (with Retry now), red once it has given up (Try again,
+   * Leave room). Screen readers hear only the real changes: lost, back, gave up.
+   * this._connectionLost is '' while healthy, 'lost' while retrying, 'failed' after.
    */
-  renderConnectionState({ state, retryInMs } = {}) {
+  renderConnectionState({ state } = {}) {
     if (this.isStaleTab) return; // the reload notice stays up
     const banner = document.getElementById('connection-banner');
     const text = document.getElementById('connection-banner-text');
     if (!banner || !text) return;
+    const action = document.getElementById('btn-connection-action');
+    const leave = document.getElementById('btn-connection-leave');
+    const wasLost = this._connectionLost || '';
 
     if (state === 'open') {
-      // Only announce recovery if the user actually saw a problem.
+      this._connectionLost = '';
+      banner.classList.remove('is-failed');
+      banner.removeAttribute('data-tip');
+      this.setConnectionShortForm('');
+      if (action) action.hidden = true;
+      if (leave) leave.hidden = true;
+      if (wasLost) announce(CONNECTION_COPY.back);
+      // Only show recovery if the user actually saw a problem.
       if (banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
         banner.classList.add('is-recovered');
-        text.innerText = 'Back online';
+        text.innerText = CONNECTION_COPY.back;
         clearTimeout(this._connectionBannerTimer);
         this._connectionBannerTimer = setTimeout(() => {
           banner.style.display = 'none';
@@ -1525,14 +1587,59 @@ class DubMateApp {
     clearTimeout(this._connectionBannerTimer);
     banner.classList.remove('is-recovered');
     banner.style.display = 'flex';
-    if (state === 'reconnecting') {
-      const seconds = Math.max(1, Math.round((retryInMs || 2000) / 1000));
-      text.innerText = `Reconnecting in ${seconds}s. Changes aren't saved until then.`;
-    } else if (state === 'connecting') {
-      text.innerText = 'Connecting…';
-    } else {
-      text.innerText = "Disconnected. You're no longer in the room.";
+
+    if (state === 'failed' || state === 'disconnected') {
+      this._connectionLost = 'failed';
+      const line = state === 'failed' ? CONNECTION_COPY.failed : CONNECTION_COPY.disconnected;
+      banner.classList.add('is-failed');
+      banner.setAttribute('data-tip', CONNECTION_COPY.failedTip);
+      text.innerText = line;
+      this.setConnectionShortForm(state === 'failed' ? CONNECTION_COPY.failedShort : '', `${line} ${CONNECTION_COPY.failedTip}`, { long: true });
+      if (action) {
+        action.textContent = 'Try again';
+        action.hidden = false;
+      }
+      if (leave) leave.hidden = false;
+      if (wasLost !== 'failed') announce(line);
+      return;
     }
+
+    // 'reconnecting', or 'connecting' (the first handshake, or a retry mid-outage).
+    banner.classList.remove('is-failed');
+    if (leave) leave.hidden = true;
+    if (state === 'connecting' && !wasLost) {
+      banner.removeAttribute('data-tip');
+      text.innerText = CONNECTION_COPY.connecting;
+      this.setConnectionShortForm('');
+      if (action) action.hidden = true;
+      return;
+    }
+    this._connectionLost = 'lost';
+    const line = this._connectionOverflowed ? CONNECTION_COPY.overflow : CONNECTION_COPY.lost;
+    banner.setAttribute('data-tip', CONNECTION_COPY.lostTip);
+    text.innerText = line;
+    this.setConnectionShortForm(CONNECTION_COPY.lostShort, `${line} ${CONNECTION_COPY.lostTip}`, { long: this._connectionOverflowed });
+    if (action) {
+      action.textContent = 'Retry now';
+      action.hidden = false;
+    }
+    if (!wasLost) announce(CONNECTION_COPY.lost);
+  }
+
+  /**
+   * The pill's narrow-window wording ('' for none), with the full sentence in its tooltip.
+   * style.css swaps it in below 1280px, or below 1440px for a long sentence (long: true),
+   * which would otherwise push the header's own buttons out of the window.
+   */
+  setConnectionShortForm(shortText, tip = '', { long = false } = {}) {
+    const banner = document.getElementById('connection-banner');
+    const short = banner?.querySelector('.connection-banner-short');
+    if (!short) return;
+    banner.classList.toggle('has-short', !!shortText);
+    banner.classList.toggle('is-long', !!shortText && long);
+    short.textContent = shortText;
+    if (shortText && tip) short.setAttribute('data-tip', tip);
+    else short.removeAttribute('data-tip');
   }
 
   initModeDropdown() {
