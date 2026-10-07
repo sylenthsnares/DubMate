@@ -7,6 +7,10 @@
  *  - text meta (a class name containing meta, hint, caption, desc, path or legend)
  *    never uses --foreground-dim, which is about 3.3:1 on cards. --foreground-dim
  *    is for dividers, borders and decoration only.
+ *  - one keyboard focus style (2px solid --accent-brass outline, offset 2px),
+ *  - the looping pulses stop under prefers-reduced-motion,
+ *  - .btn:disabled looks disabled, and .btn-danger exists and is used by the
+ *    Remove Pack Builder confirm.
  *
  * Anything that stays small is named in EXEMPT with its reason.
  */
@@ -118,7 +122,91 @@ for (const name of ["index.html", "builder.html"]) {
   checkHtml(`static/${name}`, fs.readFileSync(path.join(STATIC, name), "utf8"));
 }
 
+// ---- Shared states (step 3): focus ring, reduced motion, disabled, danger ----
+
+const styleCss = fs.readFileSync(path.join(STATIC, "css", "style.css"), "utf8");
+const builderCss = fs.readFileSync(path.join(STATIC, "css", "builder.css"), "utf8");
+const styleBlocks = cssBlocks(styleCss);
+const builderBlocks = cssBlocks(builderCss);
+const selectorList = (b) => b.selector.split(",").map((s) => s.trim());
+
+// One focus style: every :focus-visible rule draws a 2px solid brass outline.
+// .btn-danger keeps that outline and only recolours it against its red fill.
+const FOCUS_REQUIRED = [".btn", ".btn-big-record", ".pack-card", ".color-option", ".chip-item"];
+const FOCUS_RECOLOURED = [".btn-danger:focus-visible"];
+let focusRules = 0;
+for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/css/builder.css", builderBlocks]]) {
+  for (const b of blocks) {
+    if (!b.selector.includes(":focus-visible")) continue;
+    focusRules += 1;
+    if (FOCUS_RECOLOURED.includes(b.selector)) {
+      if (!/outline-color\s*:/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: expected an outline-color`);
+      continue;
+    }
+    if (!/outline\s*:\s*2px solid var\(--accent-brass\)/.test(b.body) || !/outline-offset\s*:\s*2px/.test(b.body)) {
+      fail(`${file}:${b.line} ${b.selector}: focus must be outline: 2px solid var(--accent-brass) with outline-offset: 2px`);
+    }
+    if (/box-shadow\s*:[^;]*--ring/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: focus uses the --ring glow; use the brass outline`);
+  }
+}
+for (const sel of FOCUS_REQUIRED) {
+  const want = `${sel}:focus-visible`;
+  if (!styleBlocks.some((b) => selectorList(b).includes(want))) fail(`style.css has no ${want} rule`);
+}
+
+/** Selectors that set animation: none inside a prefers-reduced-motion block. */
+function reducedMotionSelectors(css) {
+  const text = stripComments(css);
+  const out = new Set();
+  for (const m of text.matchAll(/@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{/g)) {
+    let depth = 1, i = m.index + m[0].length;
+    const start = i;
+    while (depth && i < text.length) { if (text[i] === "{") depth += 1; else if (text[i] === "}") depth -= 1; i += 1; }
+    for (const b of cssBlocks(text.slice(start, i - 1))) {
+      if (/animation\s*:\s*none/.test(b.body)) selectorList(b).forEach((s) => out.add(s));
+    }
+  }
+  return out;
+}
+
+// Every rule that runs one of these looping keyframes must stop under reduced motion.
+function checkReducedMotion(file, blocks, css, names) {
+  const stopped = reducedMotionSelectors(css);
+  for (const name of names) {
+    const users = blocks.filter((b) => new RegExp(`animation\\s*:[^;]*\\b${name}\\b`).test(b.body));
+    if (!users.length) fail(`${file}: no rule runs @keyframes ${name}; update this list`);
+    for (const b of users) {
+      for (const sel of selectorList(b)) {
+        if (!stopped.has(sel)) fail(`${file}:${b.line} ${sel} runs ${name} but has no animation: none under prefers-reduced-motion`);
+      }
+    }
+  }
+}
+checkReducedMotion("static/css/style.css", styleBlocks, styleCss,
+  ["pulse-halo", "pulse-recording", "finishedPulse", "connection-pulse", "spinFilmReel", "pulseReelRing"]);
+checkReducedMotion("static/css/builder.css", builderBlocks, builderCss, ["pulse-halo"]);
+
+// Disabled buttons and the danger variant.
+const disabled = styleBlocks.find((b) => selectorList(b).includes(".btn:disabled"));
+if (!disabled) fail("style.css has no .btn:disabled rule");
+else {
+  for (const sel of [".btn:disabled:hover", '.btn[aria-disabled="true"]', '.btn[aria-disabled="true"]:hover']) {
+    if (!selectorList(disabled).includes(sel)) fail(`.btn:disabled rule should also cover ${sel}`);
+  }
+  for (const decl of [/cursor\s*:\s*not-allowed/, /box-shadow\s*:\s*none/, /transform\s*:\s*none/, /(^|[^-\w])color\s*:\s*var\(--foreground-dim\)/]) {
+    if (!decl.test(disabled.body)) fail(`.btn:disabled is missing ${decl}`);
+  }
+}
+const danger = styleBlocks.find((b) => b.selector === ".btn-danger");
+if (!danger || !/background\s*:\s*var\(--accent-red\)/.test(danger.body)) fail("style.css needs .btn-danger on var(--accent-red)");
+if (!styleBlocks.some((b) => b.selector === ".btn-danger:hover")) fail("style.css needs a .btn-danger:hover");
+
+const indexHtml = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
+const removeBtn = indexHtml.match(/<button[^>]*id="btn-confirm-remove-packbuilder"[^>]*>/);
+if (!removeBtn || !/class="[^"]*\bbtn-danger\b/.test(removeBtn[0])) fail("#btn-confirm-remove-packbuilder should be a .btn-danger");
+
 // The parser must actually be reading the files, and exemptions must not go stale.
+if (focusRules < 8) fail(`only ${focusRules} :focus-visible rules found; the CSS parser is probably broken`);
 if (checkedSizes < 150) fail(`only ${checkedSizes} px font sizes found; the CSS parser is probably broken`);
 for (const ex of EXEMPT) {
   if (!usedExemptions.has(ex.selector)) {
@@ -131,3 +219,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`PASS: ${checkedSizes} font sizes at or above ${FLOOR_PX}px (${EXEMPT.length} exempt), no text meta on --foreground-dim`);
+console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled`);

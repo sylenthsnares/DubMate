@@ -457,6 +457,13 @@ body:has(#view-step-editor.active) .builder-main-container {
   animation: pulse-halo 2s infinite ease-in-out;
 }
 
+/* Reduced motion: the radar glow stays, still. */
+@media (prefers-reduced-motion: reduce) {
+  .radar-pulse {
+    animation: none;
+  }
+}
+
 .radar-center {
   width: 54px;
   height: 54px;

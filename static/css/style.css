@@ -204,7 +204,8 @@ body::after {
   background: var(--secondary);
 }
 .logo:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 /* Mode Switcher Dropdown */
@@ -232,7 +233,8 @@ body::after {
 }
 
 .logo-with-dropdown:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .logo-chevron {
@@ -960,8 +962,15 @@ body::after {
 .btn:active {
   transform: scale(0.97);
 }
-.btn:focus-visible {
-  box-shadow: 0 0 0 2px var(--ring);
+/* One keyboard focus style for every control (decision 1 of ui-u1-floors):
+   a solid brass outline, 7.7:1 on cards. --ring stays for input glows only. */
+.btn:focus-visible,
+.btn-big-record:focus-visible,
+.pack-card:focus-visible,
+.color-option:focus-visible,
+.chip-item:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .btn-primary {
@@ -1017,6 +1026,38 @@ body::after {
   color: #fff8eb;
   border-color: var(--accent-brass);
   box-shadow: 0 0 16px var(--accent-amber-glow);
+}
+
+/* Destructive confirms (Remove Pack Builder). Red, a little brighter on hover,
+   with a light red focus ring so it reads against the red fill's own glow. */
+.btn-danger {
+  background: var(--accent-red);
+  color: var(--white);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow-sm), 0 1px 0 rgba(255, 255, 255, 0.15) inset;
+}
+.btn-danger:hover {
+  background: var(--accent-red-bright);
+  box-shadow: var(--shadow-glow-red);
+}
+.btn-danger:focus-visible {
+  outline-color: var(--accent-red-soft);
+}
+
+/* Disabled looks disabled: muted surface, dim text, no glow, no press. The
+   :hover forms outrank every .btn-variant:hover rule. */
+.btn:disabled,
+.btn:disabled:hover,
+.btn:disabled:active,
+.btn[aria-disabled="true"],
+.btn[aria-disabled="true"]:hover,
+.btn[aria-disabled="true"]:active {
+  background: var(--muted);
+  color: var(--foreground-dim);
+  border-color: var(--border);
+  box-shadow: none;
+  transform: none;
+  cursor: not-allowed;
 }
 
 .btn-xs {
@@ -2011,7 +2052,8 @@ body.resizing .video-container {
   background: rgba(217, 119, 6, 0.12);
 }
 .prompter-resize-handle:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .resize-grip-pill {
@@ -2943,7 +2985,8 @@ svg {
   touch-action: none;
 }
 .analog-dial-wrapper:focus-visible .dial-housing {
-  box-shadow: 0 0 0 2px var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
   border-radius: 50%;
 }
 .analog-dial-wrapper.dial-active {
@@ -3121,7 +3164,7 @@ svg {
   box-shadow: 0 0 5px var(--accent-amber-glow);
 }
 .switch-checkbox:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
 
@@ -3173,7 +3216,7 @@ svg {
   background: rgba(12, 10, 9, 0.88);
 }
 .btn-video-expand:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
 
@@ -4783,7 +4826,7 @@ svg {
   border-color: var(--accent-brass);
 }
 .voice-chip:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
 .voice-chip.is-active {
@@ -4868,4 +4911,21 @@ span.voice-chip {
 /* Under reduced motion the dot stays still (the media query below also stops it). */
 .voice-status-dot.is-still {
   animation: none;
+}
+
+/* Reduced motion: the looping pulses stop. What they signal stays visible
+   through colour, ring and text (the red record button, the halo, the Finish
+   glow, the connection dot, the export reel and its ring). */
+@media (prefers-reduced-motion: reduce) {
+  .record-halo-ring,
+  .btn-big-record.recording,
+  .btn-finished-pulse,
+  .connection-dot,
+  .reel-core,
+  .reel-pulse-ring {
+    animation: none;
+  }
+  .reel-pulse-ring {
+    opacity: 0.4;
+  }
 }
