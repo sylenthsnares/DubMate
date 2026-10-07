@@ -297,6 +297,7 @@ class DubMateApp {
     this.micSyncMessage = document.getElementById('mic-sync-message');
     this.btnStartMicSync = document.getElementById('btn-start-mic-sync');
     this.btnStartClapping = document.getElementById('btn-start-clapping');
+    this.btnClapInstead = document.getElementById('btn-clap-instead');
     this.btnCancelMicSync = document.getElementById('btn-cancel-mic-sync');
     this.roomCheckStatus = document.getElementById('room-check-status');
     this.btnRoomCheck = document.getElementById('btn-room-check');

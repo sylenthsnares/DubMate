@@ -19,16 +19,21 @@ const CLICK_RUNS = 3;
 const CLAP_BEAT_LEVEL = 0.3;
 const MAX_CLICK_SPREAD_MS = 20;
 
-const CLICKS_COPY = "Hold your headphones against the mic, or turn on your speakers. You'll hear a few clicks.";
-const CLAP_COPY = "DubMate couldn't hear the clicks. Clap along with the beat instead.";
+// The clicks play at full level, so they must not be in anyone's ears.
+const CLICKS_COPY = 'The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic.';
+const CLAP_COPY = 'Put your headphones back on, then clap on each beat you hear.';
 const PANEL_COPY = {
   ready: CLICKS_COPY,
   listening: CLICKS_COPY,
+  clicksFailed: "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again.",
   clap: CLAP_COPY,
   clapping: CLAP_COPY,
   failedQuiet: "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.",
-  failedUneven: "Your claps were uneven. Try again, clapping right on each click.",
+  failedUneven: 'Your claps were uneven. Try again, clapping right on each click.',
 };
+const ERROR_STEPS = new Set(['clicksFailed', 'failedQuiet', 'failedUneven']);
+const CLICK_STEPS = new Set(['ready', 'listening', 'clicksFailed']);
+const START_LABEL = { ready: 'Play clicks', listening: 'Listening…', clicksFailed: 'Try again' };
 
 function webStorage(name) {
   try {
@@ -151,6 +156,7 @@ export class MicSyncMethods {
     if (this.btnMicSync) this.btnMicSync.addEventListener('click', () => this.openMicSyncPanel());
     if (this.btnStartMicSync) this.btnStartMicSync.addEventListener('click', () => this.runMicSync());
     if (this.btnStartClapping) this.btnStartClapping.addEventListener('click', () => this.runClapSync());
+    if (this.btnClapInstead) this.btnClapInstead.addEventListener('click', () => this.openClapStep());
     if (this.btnCancelMicSync) this.btnCancelMicSync.addEventListener('click', () => this.cancelMicSync());
   }
 
@@ -176,19 +182,23 @@ export class MicSyncMethods {
     }
   }
 
-  /** step: 'ready' | 'listening' | 'clap' | 'clapping' | 'failedQuiet' | 'failedUneven', or null to hide the panel. */
+  /**
+   * step: 'ready' | 'listening' | 'clicksFailed' | 'clap' | 'clapping' | 'failedQuiet' | 'failedUneven',
+   * or null to hide the panel.
+   */
   showMicSyncPanel(step) {
     this.micSyncStep = step;
     if (!this.micSyncPanel) return;
     this.micSyncPanel.style.display = step ? 'block' : 'none';
-    this.micSyncPanel.classList.toggle('is-error', step === 'failedQuiet' || step === 'failedUneven');
+    this.micSyncPanel.classList.toggle('is-error', ERROR_STEPS.has(step));
     if (this.micSyncMessage) this.micSyncMessage.textContent = step ? PANEL_COPY[step] : '';
-    const clicks = step === 'ready' || step === 'listening';
+    const clicks = CLICK_STEPS.has(step);
     if (this.btnStartMicSync) {
       this.btnStartMicSync.style.display = clicks ? '' : 'none';
       this.btnStartMicSync.disabled = step === 'listening';
-      this.btnStartMicSync.textContent = step === 'listening' ? 'Listening…' : 'Start';
+      this.btnStartMicSync.textContent = START_LABEL[step] || START_LABEL.ready;
     }
+    if (this.btnClapInstead) this.btnClapInstead.style.display = step === 'clicksFailed' ? '' : 'none';
     if (this.btnStartClapping) {
       this.btnStartClapping.style.display = step && !clicks ? '' : 'none';
       this.btnStartClapping.disabled = step === 'clapping';
@@ -202,6 +212,13 @@ export class MicSyncMethods {
     if (this.micSyncBusy || this.micSyncRefused()) return;
     this.showMicSyncPanel('ready');
     if (this.btnStartMicSync) this.btnStartMicSync.focus();
+  }
+
+  // After unheard clicks: the clap test, once the headphones are back on.
+  openClapStep() {
+    if (this.micSyncBusy) return;
+    this.showMicSyncPanel('clap');
+    if (this.btnStartClapping) this.btnStartClapping.focus();
   }
 
   // Both record from the same microphone stream, so one waits for the other.
@@ -288,7 +305,7 @@ export class MicSyncMethods {
   }
 
   // Three click passes: all found, within 20 ms of each other and not below the browser's
-  // own estimate. Otherwise the user is offered the clap test.
+  // own estimate. Otherwise the user is told what to try, or can clap instead.
   async runMicSync() {
     if (this.micSyncBusy || this.micSyncRefused()) return;
     const run = this.beginMicSyncRun('listening');
@@ -310,8 +327,8 @@ export class MicSyncMethods {
         && medianMs >= estimateMs - 20 && medianMs <= MAX_LATENCY_MS) {
         await this.finishMicSync(run, snapMs(medianMs), 'clicks');
       } else if (run === this.micSyncRun) {
-        this.showMicSyncPanel('clap');
-        if (this.btnStartClapping) this.btnStartClapping.focus();
+        this.showMicSyncPanel('clicksFailed');
+        if (this.btnStartMicSync) this.btnStartMicSync.focus();
       }
     } catch (err) {
       this.micSyncError(run, err, 'ready');
