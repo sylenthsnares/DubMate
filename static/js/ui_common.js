@@ -25,6 +25,11 @@ export function escapeHtml(value) {
   }[c]));
 }
 
+/** A count with its word: "1 line", "2 lines", "0 lines". */
+export function plural(n, word) {
+  return `${n} ${n === 1 ? word : `${word}s`}`;
+}
+
 const MAX_TOASTS = 3;
 
 /**

@@ -186,6 +186,8 @@ class DubMateApp {
     this.lobbyCastList = document.getElementById('lobby-cast-list');
     this.castOnlineCount = document.getElementById('cast-online-count');
     this.btnStartSession = document.getElementById('btn-start-session');
+    this.btnBackToBooth = document.getElementById('btn-back-to-booth');
+    this.lobbyWaiting = document.getElementById('lobby-waiting');
     this.btnCopyInvite = document.getElementById('btn-copy-invite');
     this.btnGetScene = document.getElementById('btn-get-scene');
 
@@ -457,11 +459,6 @@ class DubMateApp {
       btnLeaveRoom.addEventListener('click', () => this.confirmLeaveRoom());
     }
 
-    const btnLeaveRoomLobby = document.getElementById('btn-leave-room-lobby');
-    if (btnLeaveRoomLobby) {
-      btnLeaveRoomLobby.addEventListener('click', () => this.confirmLeaveRoom());
-    }
-
     this.inputUserName.addEventListener('input', (e) => {
       this.user.name = e.target.value;
       this.saveUser();
@@ -631,6 +628,14 @@ class DubMateApp {
       this.showView('booth');
       this.loadBoothLine(this.findFirstAssignedLine());
     });
+
+    // A guest who stepped back to the lobby while recording is on: this only moves them.
+    if (this.btnBackToBooth) {
+      this.btnBackToBooth.addEventListener('click', () => {
+        this.showView('booth');
+        this.loadBoothLine(this.findFirstAssignedLine());
+      });
+    }
 
     // Studio Breadcrumbs Navigation
     if (this.navStepLobby) {

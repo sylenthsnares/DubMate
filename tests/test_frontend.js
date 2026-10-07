@@ -718,8 +718,10 @@ try {
       console.log("PASS: take history shows on your lines with 2+ takes, and Play, Use and delete work!");
     }
 
-    // Test 8f: the room refuses a guest's change. The refusal shows as an error toast and the
-    // page reloads the room's real state, so a casting change made on screen is undone.
+    // Test 8f: the room refuses a change. A page that still thinks you are the host (the host
+    // has changed since) draws your casting change at once; the refusal shows as an error
+    // toast and the page reloads the room's real state, so the change is undone and you,
+    // now a guest, see the casting as text.
     // An error without a payload (the connect-time "Room not found") toasts and fetches
     // nothing; your own take_recorded leaves "Take saved" to the booth.
     {
@@ -733,7 +735,7 @@ try {
         users: { [me]: { id: me, name: "Me", color: "#25d3a4", is_online: true },
                  mika: { id: "mika", name: "Mika", color: "#7c5cff", is_online: true } },
         role_assignments: { Deku: ["mika"], Todoroki: [] }, takes: {} };
-      app.roomState = JSON.parse(JSON.stringify(server));
+      app.roomState = { ...JSON.parse(JSON.stringify(server)), host_id: me };
       app.showView("lobby");
       const row = () => Array.from(doc.querySelectorAll("#casting-tbody tr")).find((tr) => tr.dataset.character === "Deku");
       if (!row()) fail("no casting row for Deku");
@@ -746,7 +748,7 @@ try {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(JSON.parse(JSON.stringify(server))) });
       };
 
-      // The guest casts themself as Deku: the page draws it at once.
+      // You cast yourself as Deku: the page draws it at once.
       const select = row().querySelector(".cast-select");
       select.value = me;
       select.dispatchEvent(new dom.window.Event("change"));
@@ -760,8 +762,9 @@ try {
       if (fetches.length !== 1 || fetches[0] !== "/api/rooms/R") fail("did not reload the room", fetches);
       if (JSON.stringify(app.roomState.role_assignments.Deku) !== '["mika"]') fail("the refused casting stayed", app.roomState.role_assignments);
       const dot = row().querySelector(".actor-color-dot");
-      if (row().querySelector(".cast-select").value !== "mika" || dot.title !== "Mika") {
-        fail("the casting row does not show the server's assignment", row().querySelector(".cast-select").value, dot.title);
+      const actor = row().querySelector(".cast-actor-name");
+      if (row().querySelector(".cast-select") || !actor || actor.textContent !== "Mika" || dot.title !== "Mika") {
+        fail("the casting row does not show the server's assignment as text", actor && actor.textContent, dot.title);
       }
 
       toasts.length = 0;

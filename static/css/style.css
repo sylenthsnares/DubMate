@@ -1711,7 +1711,8 @@ body::after {
   font-size: 12px;
   outline: none;
   cursor: pointer;
-  max-width: 220px;
+  width: 100%;
+  min-width: 0;
 }
 .cast-select:focus {
   border-color: var(--primary);
@@ -1719,10 +1720,71 @@ body::after {
 
 .actor-color-dot {
   display: inline-block;
+  flex-shrink: 0;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-right: 6px;
+}
+.actor-color-dot.unassigned {
+  box-shadow: inset 0 0 0 1px var(--foreground-dim);
+}
+
+/* Casting rows: the character, its line count, and who voices it. */
+.char-badge-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.char-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.your-role-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  background: rgba(204, 164, 88, 0.12);
+  color: var(--accent-brass);
+  border: 1px solid rgba(204, 164, 88, 0.3);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.char-line-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.cast-assign-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+.cast-actor-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.cast-actor-name.unassigned {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+.casting-table tr.assigned-to-me td {
+  background: rgba(204, 164, 88, 0.05);
+}
+
+/* Guests see who runs the room instead of its controls. */
+.lobby-action-group [hidden] {
+  display: none;
+}
+.lobby-waiting {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  max-width: 280px;
 }
 
 .lobby-sidebar {
@@ -1773,6 +1835,64 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.lobby-user-item {
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 12px 5px 5px;
+}
+.lobby-user-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.lobby-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-you-tag,
+.tag-host {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-wood);
+  background: var(--secondary);
+  color: var(--foreground-muted);
+}
+.tag-host {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.12);
+  color: var(--primary-hover);
+}
+.cast-status-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.cast-status-pill.online {
+  color: var(--foreground);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-online {
+  background: var(--accent-green-bright);
+}
+.dot-offline {
+  box-shadow: inset 0 0 0 1px var(--foreground-dim);
 }
 
 .badge-online {

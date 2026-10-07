@@ -1,7 +1,7 @@
 // studio/lobby.js - Rooms: invite/share status, creating and joining a room, casting,
 // the cast activity HUD and ready states. Also the member's home-origin helpers.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { escapeHtml } from '../ui_common.js';
+import { escapeHtml, plural } from '../ui_common.js';
 import { takeCount } from './takes.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
@@ -588,11 +588,24 @@ export class LobbyMethods {
     if (!this.roomState) return;
 
     if (this.lobbyPackTitle) this.lobbyPackTitle.innerText = this.roomState.pack.name;
-    if (this.lobbyLineCount) this.lobbyLineCount.innerText = `${this.roomState.pack.line_count} lines`;
+    if (this.lobbyLineCount) this.lobbyLineCount.textContent = plural(this.roomState.pack.line_count, 'line');
     if (this.btnGetScene) {
       // Members who came from their own DubMate can take the scene home with them.
       const home = getHomeOrigin();
       this.btnGetScene.hidden = !(home && home !== window.location.origin && !this.isHost());
+    }
+
+    // Only the host starts recording and casts. Guests wait for the host, or go back
+    // to the booth if recording has already started.
+    const runsRoom = this.isHost({ allowDummy: true });
+    const recording = this.roomState.status === 'recording';
+    if (this.btnStartSession) this.btnStartSession.hidden = !runsRoom;
+    if (this.btnBackToBooth) this.btnBackToBooth.hidden = runsRoom || !recording;
+    if (this.lobbyWaiting) {
+      const waiting = !runsRoom && this.roomState.status === 'lobby';
+      this.lobbyWaiting.hidden = !waiting;
+      const hostName = this.roomState.users?.[this.roomState.host_id]?.name || 'the host';
+      this.lobbyWaiting.textContent = waiting ? `Waiting for ${hostName} to start recording` : '';
     }
 
     const users = Object.values(this.roomState.users || {});
@@ -604,17 +617,17 @@ export class LobbyMethods {
       this._lastUserSummary = userSummary;
       if (this.lobbyCastList) {
         this.lobbyCastList.innerHTML = users.map(u => `
-          <div class="user-pill lobby-user-item" style="justify-content: space-between;">
-            <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="user-pill lobby-user-item">
+            <div class="lobby-user-who">
               <div class="user-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
-              <span class="lobby-user-name">${escapeHtml(u.name)} ${u.id === this.user.id ? '<span class="user-you-tag">(You)</span>' : ''} ${u.id === this.roomState.host_id ? '<span class="user-you-tag" style="color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.1);">Host</span>' : ''}</span>
+              <span class="lobby-user-name">${escapeHtml(u.name)}</span>
+              ${u.id === this.user.id ? '<span class="user-you-tag">You</span>' : ''}
+              ${u.id === this.roomState.host_id ? '<span class="tag-host">Host</span>' : ''}
             </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
-                <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
-                <span>${u.is_online ? 'Online' : 'Offline'}</span>
-              </span>
-            </div>
+            <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
+              <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
+              <span>${u.is_online ? 'Online' : 'Offline'}</span>
+            </span>
           </div>
         `).join('');
       }
@@ -626,16 +639,21 @@ export class LobbyMethods {
     this.roomState.pack.lines.forEach(l => {
       charCounts[l.character] = (charCounts[l.character] || 0) + 1;
     });
+    const characters = [...this.roomState.pack.characters]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    const actorName = (u) => (u ? `${u.name}${u.id === this.user.id ? ' (You)' : ''}` : 'Original voice');
 
-    const usersChanged = (this._lastUserOptionsSummary !== userSummary);
-    this._lastUserOptionsSummary = userSummary;
+    // Rebuild when the users change, or when this person gains or loses the selects.
+    const optionsSummary = `${runsRoom}|${userSummary}`;
+    const usersChanged = (this._lastUserOptionsSummary !== optionsSummary);
+    this._lastUserOptionsSummary = optionsSummary;
 
     // Check if table rows already exist for all characters
-    const existingRows = this.castingTbody.querySelectorAll('tr[data-character]');
-    if (existingRows.length === this.roomState.pack.characters.length && !usersChanged) {
+    const existingRows = Array.from(this.castingTbody.querySelectorAll('tr[data-character]'));
+    if (existingRows.length === characters.length && !usersChanged) {
       // IN-PLACE UPDATE: Do not recreate DOM elements to avoid closing active <select> dropdowns
-      this.roomState.pack.characters.forEach((char) => {
-        const tr = this.castingTbody.querySelector(`tr[data-character="${char}"]`);
+      characters.forEach((char) => {
+        const tr = existingRows.find(row => row.dataset.character === char);
         if (!tr) return;
 
         const assignedIds = this.roomState.role_assignments[char] || [];
@@ -650,7 +668,7 @@ export class LobbyMethods {
           if (badgeCell) {
             const span = document.createElement('span');
             span.className = 'your-role-badge';
-            span.innerText = 'YOUR ROLE';
+            span.textContent = 'Your role';
             badgeCell.appendChild(span);
           }
         } else if (!isAssignedToMe && roleBadge) {
@@ -661,7 +679,13 @@ export class LobbyMethods {
         if (dot) {
           dot.className = `actor-color-dot ${assignedUser ? 'active' : 'unassigned'}`;
           dot.style.backgroundColor = assignedUser ? assignedUser.color : 'transparent';
-          dot.title = assignedUser ? assignedUser.name : 'Unassigned';
+          dot.title = actorName(assignedUser);
+        }
+
+        const name = tr.querySelector('.cast-actor-name');
+        if (name) {
+          name.textContent = actorName(assignedUser);
+          name.classList.toggle('unassigned', !assignedUser);
         }
 
         const select = tr.querySelector('.cast-select');
@@ -674,7 +698,7 @@ export class LobbyMethods {
 
     // FULL REBUILD (Initial render or when user list changes)
     this.castingTbody.innerHTML = '';
-    this.roomState.pack.characters.forEach((char) => {
+    characters.forEach((char) => {
       const assignedIds = this.roomState.role_assignments[char] || [];
       const assignedUser = users.find(u => assignedIds.includes(u.id));
       const isAssignedToMe = assignedIds.includes(this.user.id);
@@ -686,45 +710,53 @@ export class LobbyMethods {
         tr.classList.add('assigned-to-me');
       }
 
+      const actor = runsRoom
+        ? `<select class="cast-select"
+                    id="cast-select-${escapeHtml(safeCharId)}"
+                    data-char="${escapeHtml(char)}"
+                    aria-label="Assign actor for ${escapeHtml(char)}">
+              <option value="">Original voice</option>
+              ${users.map(u => `
+                <option value="${escapeHtml(u.id)}" ${assignedIds.includes(u.id) ? 'selected' : ''}>
+                  ${escapeHtml(actorName(u))}
+                </option>
+              `).join('')}
+            </select>`
+        : `<span class="cast-actor-name${assignedUser ? '' : ' unassigned'}">${escapeHtml(actorName(assignedUser))}</span>`;
+
       tr.innerHTML = `
         <td>
           <div class="char-badge-cell">
             <span class="char-badge">${escapeHtml(char)}</span>
-            ${isAssignedToMe ? '<span class="your-role-badge">YOUR ROLE</span>' : ''}
+            ${isAssignedToMe ? '<span class="your-role-badge">Your role</span>' : ''}
           </div>
         </td>
-        <td><span class="char-line-count">${charCounts[char] || 0} lines</span></td>
+        <td><span class="char-line-count">${plural(charCounts[char] || 0, 'line')}</span></td>
         <td>
           <div class="cast-assign-cell">
-            <span class="actor-color-dot ${assignedUser ? 'active' : 'unassigned'}" 
-                  style="background-color: ${assignedUser ? escapeHtml(assignedUser.color) : 'transparent'};" 
-                  title="${assignedUser ? escapeHtml(assignedUser.name) : 'Unassigned'}" 
+            <span class="actor-color-dot ${assignedUser ? 'active' : 'unassigned'}"
+                  style="background-color: ${assignedUser ? escapeHtml(assignedUser.color) : 'transparent'};"
+                  title="${escapeHtml(actorName(assignedUser))}"
                   aria-hidden="true"></span>
-            <select class="cast-select" 
-                    id="cast-select-${escapeHtml(safeCharId)}" 
-                    data-char="${escapeHtml(char)}" 
-                    aria-label="Assign actor for ${escapeHtml(char)}">
-              <option value="">-- Unassigned (Original Voice) --</option>
-              ${users.map(u => `
-                <option value="${escapeHtml(u.id)}" ${assignedIds.includes(u.id) ? 'selected' : ''}>
-                  ${escapeHtml(u.name)} ${u.id === this.user.id ? '(You)' : ''}
-                </option>
-              `).join('')}
-            </select>
+            ${actor}
           </div>
         </td>
       `;
 
+      // Only the host casts, and only the host draws the change before the room answers.
+      // A refusal comes back as an error and the room's real state is reloaded.
       const select = tr.querySelector('.cast-select');
-      select.addEventListener('change', (e) => {
-        const val = e.target.value;
-        const newIds = val ? [val] : [];
-        if (this.roomState && this.roomState.role_assignments) {
-          this.roomState.role_assignments[char] = newIds;
-          this.renderCastActivityHUD();
-        }
-        this.socket.assignRole(char, newIds);
-      });
+      if (select) {
+        select.addEventListener('change', (e) => {
+          const val = e.target.value;
+          const newIds = val ? [val] : [];
+          if (this.roomState && this.roomState.role_assignments) {
+            this.roomState.role_assignments[char] = newIds;
+            this.renderCastActivityHUD();
+          }
+          this.socket.assignRole(char, newIds);
+        });
+      }
 
       this.castingTbody.appendChild(tr);
     });
