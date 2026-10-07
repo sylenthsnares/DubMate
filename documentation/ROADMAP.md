@@ -99,6 +99,15 @@ All of this goes into one PR.
      - Booth arrow keys to move between lines. They must skip events already handled and slider, radio and tab targets, because knobs use the arrow keys.
      - Engine-to-engine "Add to my scenes", where the member's own DubMate fetches and imports the host's scene directly.
      - Tighten `POST /api/config`, `POST /api/rooms` and pack import against LAN callers.
+7. **UI pass.** Refine the existing look (`style.css` is the source of truth), not a redesign. The plan, with the owner's decisions, is `design/ui-plan.md`.
+   - U1: readability and accessibility floors (done, `design/ui-u1-floors.md`). Text floors, focus ring, reduced motion, disabled and danger buttons, toasts, refused changes, guests in the lobby, the cast strip, the reconnecting pill and the `?` sheet by screen.
+   - U2: the booth's right column.
+   - U3: the lobby.
+   - U4: the landing page and joining.
+   - U5: polish.
+     - U5a: the launcher.
+     - U5b: premiere, export and Audio settings, including the host-only guards on dialogue presence and export, and clap noise rejection for mic sync.
+     - U5c: Pack Builder.
 
 ## Later
 - **Host hand-off, done properly.** Move takes, casting and the pack to the new host's engine, re-register the room code, and redirect everyone. **L**

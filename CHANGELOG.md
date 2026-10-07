@@ -54,6 +54,16 @@
 - **Updates Bring What They Need**: when an update needs new parts, the desktop app downloads them while it installs the update, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
 - **Voice Effects on Older Desktop Installs**: a desktop app installed before this release updates without voice effects. Recording still works; the Voice panel and export ask you to download and install the latest DubMate.
 - **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
+- **Easier to Read**: no text in the studio or Pack Builder is smaller than 11px, and sentences and hints are at least 12px. Line details and hints are in a lighter colour that stands out from the cards.
+- **See Where You Are With the Keyboard**: buttons, the record button, scene cards, colour swatches and line chips show a clear outline when you reach them with Tab.
+- **Reduced Motion**: if your computer is set to reduce motion, pulsing and spinning animations stop. Recording and connection states still show through colour and text.
+- **Disabled Buttons Look Disabled**: buttons you can't use yet are dimmed. In Pack Builder, "Process video" no longer looks ready before you choose a video. Remove in the Remove Pack Builder confirmation is red.
+- **Calmer Notifications**: notifications appear at the bottom of the screen, three at most. Errors stay until you close them, and screen readers read each notification on its own.
+- **Only the Host Starts Recording**: guests see who voices each character instead of the casting dropdowns, and "Waiting for the host to start recording" instead of the Start button. If recording has already started, "Back to the booth" takes them there.
+- **Casting Table**: characters are listed in natural order (Guy 2 before Guy 10), counts read "1 line" or "2 lines", and an uncast character reads "Original voice".
+- **Calmer Cast Strip**: in the lobby the cast strip shows who is here and their roles. Someone with several characters shows "2 roles", with the names in a tooltip. Screen readers hear each join, leave and "is ready" once.
+- **Reconnecting**: when the connection drops, the header says "Lost the room. Reconnecting…" with Retry now. If the room can't be reached after about a minute, or the host has closed it, it stops trying and offers Try again or Leave room. Changes that couldn't be sent are reported instead of lost silently.
+- **Shortcut Sheet by Screen**: the ? sheet shows the keys for the screen you're on first, then the ones that work everywhere, with the other screens' keys one click away.
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
@@ -78,6 +88,10 @@
 - **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old dialogue lines or the old cover behind, and stuck FFmpeg steps now time out with a clear error.
 - **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
+- **"Take Saved" Twice**: saving your own take no longer shows "Take saved" twice.
+- **Refused Changes Say Why**: when the room refuses a change, such as a guest changing the casting, a message says why and the page shows the room as it really is, instead of a change that didn't happen.
+- **Guests Starting Recording**: a guest can no longer start recording for the room from an old page; only the host can.
+- **Updated Notice**: the "DubMate was updated" notice has a Reload button.
 - **Record Button Pulse**: the record button pulses while recording again.
 - **Bigger Timing Nudge on More Keyboards**: Shift with [ or ] nudges a take by 100 ms on keyboard layouts where Shift turns those keys into { and }.
 - **Stale State in Room Events**: room events are applied before they are handled, so a new take shows up right away; joining another room no longer carries over the previous room's line, takes or audio; and a render finishing mid-take no longer cuts the microphone.
