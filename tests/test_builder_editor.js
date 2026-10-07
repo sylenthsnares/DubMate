@@ -113,6 +113,17 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
   if (w.document.readyState === "loading") {
     await new Promise((r) => w.document.addEventListener("DOMContentLoaded", r));
   }
+  // Every toast as it is added, so the cap of 3 on screen can't hide one that was shown.
+  // The app writes innerText, which older jsdom keeps as a plain property.
+  const text = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent);
+  const shown = [];
+  new w.MutationObserver((records) => {
+    for (const r of records) {
+      for (const node of r.addedNodes) {
+        if (node.classList && node.classList.contains("toast")) shown.push(text(node));
+      }
+    }
+  }).observe(w.document.getElementById("toast-container"), { childList: true });
   w.eval(bundle);
   w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
 
@@ -130,9 +141,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
   const video = doc.getElementById("editor-video");
   const audio = doc.getElementById("editor-stem-audio");
   if (!audio) fail("#editor-stem-audio is missing from builder.html");
-  // The app writes innerText, which older jsdom keeps as a plain property.
-  const text = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent);
-  const toasts = () => Array.from(doc.querySelectorAll("#toast-container .toast")).map(text);
+  const toasts = () => shown.slice();
   return {
     w, doc, video, audio, media, toasts, captures, app: w.__builderApp,
     play: () => doc.getElementById("btn-play-pause").click(),

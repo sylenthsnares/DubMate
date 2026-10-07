@@ -859,7 +859,35 @@ class DubMateApp {
     this.socket.on('send_failed', () => {
       if (this._sendFailureToastAt && Date.now() - this._sendFailureToastAt < 5000) return;
       this._sendFailureToastAt = Date.now();
-      this.showToast("You're offline. That change wasn't saved.");
+      this.showToast("You're offline. That change wasn't saved.", { tone: 'error' });
+    });
+
+    // The room refused something this page asked for (a guest's casting change, or a
+    // guest starting recording from an old page). Say why, then show the room as it
+    // really is, since this page may already have drawn the change. The connect-time
+    // "Room not found" has no payload and is room_socket.js's to handle.
+    this.socket.on('error', async (data) => {
+      const message = data?.payload?.message;
+      if (!message) return;
+      this.showToast(message, { tone: 'error' });
+      const roomId = this.roomState?.room_id;
+      if (!roomId) return;
+      try {
+        const res = await fetch(`/api/rooms/${roomId}`);
+        if (!res.ok) return;
+        if (!this.applyIncomingState({ state: await res.json() })) return;
+      } catch (e) {
+        return;
+      }
+      if (this.currentView === 'lobby') {
+        this.renderLobbyState();
+      }
+      if (this.currentView === 'booth') {
+        this.renderTimelineChips();
+        this.renderTakeHistory();
+      }
+      this.renderCastActivityHUD();
+      this.updateScreeningControls();
     });
 
     // Socket events
@@ -912,10 +940,9 @@ class DubMateApp {
       this.renderTimelineChips();
       this.renderCastActivityHUD();
 
-      const userName = data.payload?.user_name || take?.user_name || 'Cast member';
-      if (data.payload?.user_id === this.user.id) {
-        this.showToast("Take saved");
-      } else {
+      // Your own take was already announced when its upload finished (booth.js).
+      if (data.payload?.user_id !== this.user.id) {
+        const userName = data.payload?.user_name || take?.user_name || 'Cast member';
         this.showToast(`${userName} recorded line ${(lineIdx !== undefined ? lineIdx + 1 : '')}`);
       }
     });
@@ -1427,7 +1454,7 @@ class DubMateApp {
     return isTechnical ? fallback : raw;
   }
 
-  showToast(message) { showToast(message); }
+  showToast(message, options) { showToast(message, options); }
 
   /**
    * Shows the connection banner while the room is not live.

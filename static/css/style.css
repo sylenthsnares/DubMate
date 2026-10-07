@@ -3447,20 +3447,25 @@ svg {
   font-weight: 700;
 }
 
-/* Toast Notifications (Top-Left below DubMate Header Logo) */
+/* Toasts: bottom centre, newest at the bottom, at most 3 (ui_common.js showToast).
+   The container lets clicks through; only the toasts themselves take them. */
 #toast-container {
   position: fixed;
-  top: 68px;
-  left: 24px;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
   z-index: 1200;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   pointer-events: none;
 }
 
 .toast {
+  max-width: 100%;
   padding: 10px 16px;
   background: var(--secondary);
   border: 1px solid var(--border-wood);
@@ -3469,9 +3474,38 @@ svg {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.4;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
   backdrop-filter: blur(8px);
+  animation: toast-in 180ms var(--ease-out);
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.toast.is-leaving {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* Something went wrong: stays until closed. */
+.toast-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-left: 3px solid var(--accent-red);
+}
+.toast-error .toast-close {
+  flex-shrink: 0;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+@keyframes toast-fade-in {
+  from { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation-name: toast-fade-in; }
+  .toast.is-leaving { transform: none; }
 }
 
 /* Join Room Actor Name & Mic Setup Modal */

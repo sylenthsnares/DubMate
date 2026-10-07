@@ -718,6 +718,79 @@ try {
       console.log("PASS: take history shows on your lines with 2+ takes, and Play, Use and delete work!");
     }
 
+    // Test 8f: the room refuses a guest's change. The refusal shows as an error toast and the
+    // page reloads the room's real state, so a casting change made on screen is undone.
+    // An error without a payload (the connect-time "Room not found") toasts and fetches
+    // nothing; your own take_recorded leaves "Take saved" to the booth.
+    {
+      const doc = dom.window.document;
+      const realFetch = dom.window.fetch;
+      const realToast = app.showToast;
+      const fail = (msg, ...rest) => { console.error("FAIL: refused change:", msg, ...rest); process.exit(1); };
+      const me = app.user.id;
+      const server = { state_version: 3, room_id: "R", host_id: "mika", status: "lobby",
+        pack: { ...mockPacks[0], line_count: 2 },
+        users: { [me]: { id: me, name: "Me", color: "#25d3a4", is_online: true },
+                 mika: { id: "mika", name: "Mika", color: "#7c5cff", is_online: true } },
+        role_assignments: { Deku: ["mika"], Todoroki: [] }, takes: {} };
+      app.roomState = JSON.parse(JSON.stringify(server));
+      app.showView("lobby");
+      const row = () => Array.from(doc.querySelectorAll("#casting-tbody tr")).find((tr) => tr.dataset.character === "Deku");
+      if (!row()) fail("no casting row for Deku");
+
+      const toasts = [];
+      app.showToast = (m, o) => toasts.push({ m, tone: o && o.tone });
+      const fetches = [];
+      dom.window.fetch = (url) => {
+        fetches.push(String(url));
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(JSON.parse(JSON.stringify(server))) });
+      };
+
+      // The guest casts themself as Deku: the page draws it at once.
+      const select = row().querySelector(".cast-select");
+      select.value = me;
+      select.dispatchEvent(new dom.window.Event("change"));
+      if (app.roomState.role_assignments.Deku[0] !== me) fail("the change was not drawn on screen first");
+
+      app.socket.emit("error", { type: "error", payload: { message: "Only the host can assign roles." } });
+      await new Promise((r) => setTimeout(r, 20));
+      if (toasts.length !== 1 || toasts[0].m !== "Only the host can assign roles." || toasts[0].tone !== "error") {
+        fail("no error toast with the server's message", toasts);
+      }
+      if (fetches.length !== 1 || fetches[0] !== "/api/rooms/R") fail("did not reload the room", fetches);
+      if (JSON.stringify(app.roomState.role_assignments.Deku) !== '["mika"]') fail("the refused casting stayed", app.roomState.role_assignments);
+      const dot = row().querySelector(".actor-color-dot");
+      if (row().querySelector(".cast-select").value !== "mika" || dot.title !== "Mika") {
+        fail("the casting row does not show the server's assignment", row().querySelector(".cast-select").value, dot.title);
+      }
+
+      toasts.length = 0;
+      fetches.length = 0;
+      app.socket.emit("error", { type: "error", message: "Room not found" });
+      await new Promise((r) => setTimeout(r, 20));
+      if (toasts.length || fetches.length) fail("an error without a payload toasted or fetched", toasts, fetches);
+
+      // Your own take: no "Take saved" from the socket echo; someone else's still says so.
+      app.currentView = "lobby";
+      const realLoad = app.audio.loadAudioBuffer;
+      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
+      const takeMsg = (userId, userName) => ({ type: "take_recorded",
+        payload: { line_index: 1, line_id: "t5000", take_id: "k1", user_id: userId, user_name: userName },
+        state: { ...JSON.parse(JSON.stringify(server)), takes: {} } });
+      app.socket.emit("take_recorded", takeMsg(me, "Me"));
+      await new Promise((r) => setTimeout(r, 20));
+      if (toasts.some((t) => /take saved/i.test(t.m))) fail("your own take echoed 'Take saved'", toasts);
+      app.socket.emit("take_recorded", takeMsg("mika", "Mika"));
+      await new Promise((r) => setTimeout(r, 20));
+      if (!toasts.some((t) => t.m === "Mika recorded line 2")) fail("someone else's take was not announced", toasts);
+
+      dom.window.fetch = realFetch;
+      app.showToast = realToast;
+      app.audio.loadAudioBuffer = realLoad;
+      app.leaveRoom();
+      console.log("PASS: a refused change says why and shows the room as it is; your own take isn't echoed!");
+    }
+
     // Test 8: Sample-Accurate Video Seek & Playback Stop helpers
     if (typeof app.syncVideoSeek === "function" && typeof app.stopBoothPlayback === "function") {
       app.stopBoothPlayback();
