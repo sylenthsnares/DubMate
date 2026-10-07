@@ -3,7 +3,7 @@
 // Audio settings that measures it (a click pattern heard back through the mic, or claps).
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.js';
-import { CLAP_BEAT_SEC, CLICK_TIMES_SEC, combineRuns, devicePairKey, findClapLag, findClickTrainLag, snapMs } from './timing.js';
+import { CLAP_BEAT_SEC, CLICK_TIMES_SEC, combineRuns, devicePairKey, findClapLag, findClickTrainLag, judgeClaps, snapMs } from './timing.js';
 
 // localStorage: {"<mic>|<output>": {latency_ms, method, measured_at}}.
 export const MIC_SYNC_KEY = 'dubmate_mic_sync';
@@ -13,6 +13,8 @@ const MAX_LATENCY_MS = 800;
 
 // The sound starts this long after the recorder, so even a zero delay lands inside the recording.
 const LEAD_SEC = 0.3;
+// The clap beat starts later, so the quiet before it shows how loud the room is.
+const CLAP_LEAD_SEC = 0.8;
 const TAIL_SEC = 0.5;
 const CLICK_RUNS = 3;
 // The clap beat plays in the ears, so about 10 dB below the full-level sync clicks.
@@ -30,8 +32,10 @@ const PANEL_COPY = {
   clapping: CLAP_COPY,
   failedQuiet: "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.",
   failedUneven: 'Your claps were uneven. Try again, clapping right on each click.',
+  failedNoisy: 'DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each click.',
 };
-const ERROR_STEPS = new Set(['clicksFailed', 'failedQuiet', 'failedUneven']);
+const ERROR_STEPS = new Set(['clicksFailed', 'failedQuiet', 'failedUneven', 'failedNoisy']);
+const CLAP_FAILED_STEP = { quiet: 'failedQuiet', noisy: 'failedNoisy', uneven: 'failedUneven' };
 const CLICK_STEPS = new Set(['ready', 'listening', 'clicksFailed']);
 const START_LABEL = { ready: 'Play clicks', listening: 'Listening…', clicksFailed: 'Try again' };
 
@@ -183,8 +187,8 @@ export class MicSyncMethods {
   }
 
   /**
-   * step: 'ready' | 'listening' | 'clicksFailed' | 'clap' | 'clapping' | 'failedQuiet' | 'failedUneven',
-   * or null to hide the panel.
+   * step: 'ready' | 'listening' | 'clicksFailed' | 'clap' | 'clapping' | 'failedQuiet' | 'failedUneven'
+   * | 'failedNoisy', or null to hide the panel.
    */
   showMicSyncPanel(step) {
     this.micSyncStep = step;
@@ -276,14 +280,14 @@ export class MicSyncMethods {
 
   // Records one pass the way a take is recorded (fresh stream, recorder, then the sound)
   // and returns its decoded first channel, or null when the run was cancelled meanwhile.
-  async recordMicSyncPass(times, run, level = 1) {
+  async recordMicSyncPass(times, run, level = 1, leadSec = LEAD_SEC) {
     await this.audio.startRecording();
     if (run !== this.micSyncRun) {
       if (!this.micSyncBusy) Promise.resolve(this.audio.stopRecording()).catch(() => { });
       return null;
     }
     const estimateMs = this.browserLatencyEstimateMs();
-    const end = this.audio.playClickTrain(times, LEAD_SEC, level);
+    const end = this.audio.playClickTrain(times, leadSec, level);
     const now = (this.audio.ctx && this.audio.ctx.currentTime) || 0;
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, (end - now) * 1000) + TAIL_SEC * 1000));
     if (run !== this.micSyncRun) return null;
@@ -337,19 +341,21 @@ export class MicSyncMethods {
     }
   }
 
-  // Eight steady clicks; the actor claps on each. Saved when 4 claps land within 40 ms of their median.
+  // Eight steady clicks; the actor claps on each. Saved when 4 claps land within 40 ms of
+  // their median and few sharp sounds fall between the beats (judgeClaps).
   async runClapSync() {
     if (this.micSyncBusy || this.micSyncRefused()) return;
     const run = this.beginMicSyncRun('clapping');
     try {
-      const rec = await this.recordMicSyncPass(CLAP_BEAT_SEC, run, CLAP_BEAT_LEVEL);
+      const rec = await this.recordMicSyncPass(CLAP_BEAT_SEC, run, CLAP_BEAT_LEVEL, CLAP_LEAD_SEC);
       if (!rec) return;
-      const beats = CLAP_BEAT_SEC.map((t) => t + LEAD_SEC);
+      const beats = CLAP_BEAT_SEC.map((t) => t + CLAP_LEAD_SEC);
       const found = rec.samples ? findClapLag(rec.samples, rec.sampleRate, beats) : null;
-      if (found && found.inWindow >= 4 && found.lagMs <= MAX_LATENCY_MS) {
+      const verdict = judgeClaps(found);
+      if (verdict === 'ok' && found.lagMs <= MAX_LATENCY_MS) {
         await this.finishMicSync(run, snapMs(Math.max(found.lagMs, rec.estimateMs)), 'claps');
       } else if (run === this.micSyncRun) {
-        this.showMicSyncPanel(found ? 'failedUneven' : 'failedQuiet');
+        this.showMicSyncPanel(CLAP_FAILED_STEP[verdict] || 'failedUneven');
         if (this.btnStartClapping) this.btnStartClapping.focus();
       }
     } catch (err) {

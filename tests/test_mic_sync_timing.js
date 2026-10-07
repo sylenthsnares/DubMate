@@ -223,6 +223,104 @@ function check(name, fn) {
     assert.ok(r.inWindow < 4, `inWindow ${r.inWindow}`);
   });
 
+  // Clap runs as mic_sync.js records them: the beat starts 0.8 s in, after a quiet pre-roll.
+  const CLAP_LEAD = 0.8;
+  const leadBeats = t.CLAP_BEAT_SEC.map((b) => b + CLAP_LEAD);
+  const CLAP_RUN_SEC = CLAP_LEAD + 4.2 + 0.5;
+
+  function clapSound(seed, rms) {
+    const b = noise(0.03, rms, seed);
+    for (let i = 0; i < b.length; i++) b[i] *= Math.exp(-i / (0.006 * SR));
+    return b;
+  }
+
+  // Random sharp knocks (keyboard, mouse, desk): 2-10 ms decaying bursts.
+  function knocks(rec, rate, seed, rms = 0.1) {
+    const r = rng(seed);
+    const len = rec.length / SR;
+    for (let k = 0; k < Math.round(rate * len); k++) {
+      const at = (r() + 0.5) * len;
+      const b = noise(0.02, rms * (1 + r()), seed * 31 + k);
+      const tau = 0.002 + (r() + 0.5) * 0.008;
+      for (let i = 0; i < b.length; i++) b[i] *= Math.exp(-i / (tau * SR));
+      addAt(rec, b, at, 1);
+    }
+    return rec;
+  }
+
+  // Talking-like swells: 30-60 ms to rise, 100-250 ms long.
+  function swells(rec, rate, seed, rms = 0.1) {
+    const r = rng(seed);
+    const len = rec.length / SR;
+    for (let k = 0; k < Math.round(rate * len); k++) {
+      const at = (r() + 0.5) * len;
+      const dur = 0.1 + (r() + 0.5) * 0.15;
+      const rise = 0.03 + (r() + 0.5) * 0.03;
+      const b = noise(dur, rms * (1 + r()), seed * 17 + k);
+      for (let i = 0; i < b.length; i++) {
+        const x = i / SR;
+        b[i] *= x < rise ? 0.5 - 0.5 * Math.cos((Math.PI * x) / rise) : Math.exp(-(x - rise) / 0.08);
+      }
+      addAt(rec, b, at, 1);
+    }
+    return rec;
+  }
+
+  const verdict = (rec) => t.judgeClaps(t.findClapLag(rec, SR, leadBeats));
+
+  check("clap-along: steady room noise alone is not claps", () => {
+    const rec = noise(CLAP_RUN_SEC, 0.01, 51);
+    assert.strictEqual(t.findClapLag(rec, SR, leadBeats), null);
+    assert.strictEqual(verdict(rec), "quiet");
+  });
+
+  check("clap-along: talking-like noise the old rule took for claps is refused", () => {
+    for (const seed of [6, 14, 29, 35]) {
+      assert.strictEqual(verdict(swells(noise(CLAP_RUN_SEC, 0.002, seed), 5, seed * 7 + 5)), "quiet", `seed ${seed}`);
+    }
+  });
+
+  check("clap-along: random knocks the old rule took for claps are refused as noise", () => {
+    for (const [rate, seed] of [[5, 7], [8, 2], [8, 7], [8, 19]]) {
+      assert.strictEqual(verdict(knocks(noise(CLAP_RUN_SEC, 0.002, seed), rate, seed * 7 + rate)), "noisy", `rate ${rate} seed ${seed}`);
+    }
+  });
+
+  check("clap-along: 120 noise-only runs never pass", () => {
+    for (const rate of [1, 2, 3, 5, 8]) {
+      for (let seed = 1; seed <= 12; seed++) {
+        for (const make of [knocks, swells]) {
+          const v = verdict(make(noise(CLAP_RUN_SEC, 0.002, seed), rate, seed * 7 + rate));
+          assert.notStrictEqual(v, "ok", `${make.name} rate ${rate} seed ${seed}`);
+        }
+      }
+    }
+  });
+
+  check("clap-along: claps over room noise, with a knock and an extra clap, are kept", () => {
+    const r = rng(61);
+    const rec = noise(CLAP_RUN_SEC, 0.005, 61);
+    leadBeats.forEach((b, i) => addAt(rec, clapSound(600 + i, 0.15 + (r() + 0.5) * 0.1), b + 0.21 + r() * 0.03, 1));
+    addAt(rec, clapSound(700, 0.2), leadBeats[7] + 0.6 + 0.21, 1);
+    knocks(rec, 0.3, 62, 0.05);
+    const found = t.findClapLag(rec, SR, leadBeats);
+    assert.strictEqual(t.judgeClaps(found), "ok", JSON.stringify(found));
+    assert.ok(Math.abs(found.lagMs - 210) <= 10, `lag ${found.lagMs}`);
+  });
+
+  check("clap-along: claps barely above a loud room are not claps", () => {
+    const rec = noise(CLAP_RUN_SEC, 0.05, 71);
+    leadBeats.forEach((b, i) => addAt(rec, clapSound(800 + i, 0.06), b + 0.2, 1));
+    assert.strictEqual(verdict(rec), "quiet");
+  });
+
+  check("judgeClaps: quiet, noisy, uneven or ok", () => {
+    assert.strictEqual(t.judgeClaps(null), "quiet");
+    assert.strictEqual(t.judgeClaps({ inWindow: 6, strays: 4 }), "noisy");
+    assert.strictEqual(t.judgeClaps({ inWindow: 3, strays: 0 }), "uneven");
+    assert.strictEqual(t.judgeClaps({ inWindow: 4, strays: 3 }), "ok");
+  });
+
   check("combineRuns gives median and spread", () => {
     assert.deepStrictEqual(t.combineRuns([140, 120, 150]), { medianMs: 140, spreadMs: 30 });
     assert.deepStrictEqual(t.combineRuns([100, 110]), { medianMs: 105, spreadMs: 10 });

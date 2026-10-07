@@ -24,11 +24,14 @@ const GUEST = "https://abc.trycloudflare.com/";
 const PAIR = "Microphone (Yeti X)|Headphones (Realtek)";
 const SR = 16000;
 const LEAD_SEC = 0.3;
+// The clap run starts its beat later, after a quiet pre-roll that measures the room.
+const CLAP_LEAD_SEC = 0.8;
 const CLICKS_COPY = "The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic.";
 const CLICKS_FAILED_COPY = "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again.";
 const CLAP_COPY = "Put your headphones back on, then clap on each beat you hear.";
 const UNEVEN_COPY = "Your claps were uneven. Try again, clapping right on each click.";
 const QUIET_COPY = "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.";
+const NOISY_COPY = "DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each click.";
 const GUEST_TIP = "Your browser keeps this until the host restarts DubMate.";
 
 function fail(msg) {
@@ -74,14 +77,26 @@ function heardClicks(timing, times, delayMs) {
   return out;
 }
 
-// Claps (15 ms noise bursts) on each beat, `delayMs` late plus a per-beat jitter.
+// Claps (15 ms noise bursts) on each beat, `delayMs` late plus a per-beat jitter, over a quiet room.
 function heardClaps(beats, delayMs, jitterMs) {
-  const out = new Float32Array(Math.round((LEAD_SEC + beats[beats.length - 1] + 1.5) * SR));
+  const out = noise(Math.round((CLAP_LEAD_SEC + beats[beats.length - 1] + 1.5) * SR), 0.002, 9);
   beats.forEach((beat, i) => {
-    const at = Math.round((LEAD_SEC + beat + (delayMs + jitterMs[i % jitterMs.length]) / 1000) * SR);
+    const at = Math.round((CLAP_LEAD_SEC + beat + (delayMs + jitterMs[i % jitterMs.length]) / 1000) * SR);
     const burst = noise(Math.round(0.015 * SR), 0.8, 11 + i);
     for (let k = 0; k < burst.length && at + k < out.length; k++) out[at + k] = burst[k];
   });
+  return out;
+}
+
+// Nobody clapping: a quiet room with a sharp tick every 300 ms (a clock, a fan), which
+// lines up with every beat at the same delay, so the old rule saved it.
+function heardKnocks(seconds) {
+  const out = noise(Math.round(seconds * SR), 0.002, 13);
+  for (let at = 0.4, i = 0; at < seconds - 0.02; at += 0.3, i++) {
+    const burst = noise(Math.round(0.004 * SR), 0.5, 40 + i);
+    const start = Math.round(at * SR);
+    for (let k = 0; k < burst.length; k++) out[start + k] += burst[k];
+  }
   return out;
 }
 
@@ -156,7 +171,8 @@ async function boot(url, { stored = null } = {}) {
     audio.stream = { getAudioTracks: () => [{ getSettings: () => ({ latency: 0.01 }) }] };
   };
   audio.playClickTrain = (times, lead, level) => {
-    if (lead !== LEAD_SEC) fail(`click lead ${lead}`);
+    const wantLead = times.length === timing.CLICK_TIMES_SEC.length ? LEAD_SEC : CLAP_LEAD_SEC;
+    if (lead !== wantLead) fail(`click lead ${lead} for ${times.length} clicks`);
     lastTimes = times;
     log.played.push(times.length);
     log.levels.push(level);
@@ -171,7 +187,9 @@ async function boot(url, { stored = null } = {}) {
       samples = env.hear.clicks === "delayed" ? heardClicks(timing, timing.CLICK_TIMES_SEC, 140) : noise(3 * SR, 0.05, 3);
     } else {
       const jitter = env.hear.claps === "steady" ? [0, 6, -4, 8, -6, 2, 4, -2] : [0, 90, -60, 120, -80, 40, 100, -50];
-      samples = env.hear.claps === "none" ? noise(6 * SR, 0.002, 5) : heardClaps(timing.CLAP_BEAT_SEC, 150, jitter);
+      if (env.hear.claps === "none") samples = noise(6 * SR, 0.002, 5);
+      else if (env.hear.claps === "knocks") samples = heardKnocks(6);
+      else samples = heardClaps(timing.CLAP_BEAT_SEC, 150, jitter);
     }
     return { blob: new w.Blob(["x"]), audioBuffer: { sampleRate: SR, getChannelData: () => samples } };
   };
@@ -320,6 +338,17 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot clap again after a quiet run");
     if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("a quiet clap run changed the stored syncs");
     console.log("PASS: claps that weren't heard say so and save nothing");
+
+    // Nobody clapping, only room noise with knocks: refused with a plain line, nothing saved.
+    env.hear.claps = "knocks";
+    $(env, "btn-start-clapping").click();
+    await until(() => !env.app.micSyncBusy, "the knocks run");
+    if (text($(env, "mic-sync-message")) !== NOISY_COPY) fail(`noisy copy: ${text($(env, "mic-sync-message"))}`);
+    if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("noisy failure not styled as an error");
+    if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot clap again after a noisy run");
+    if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("room noise was saved as a clap sync");
+    if (env.calls.some((c) => c.url === "/api/config" && c.method === "POST")) fail("room noise wrote the engine config");
+    console.log("PASS: room noise with nobody clapping is refused and saves nothing");
   }
 
   // 3b. Microphone errors from getUserMedia get one plain line each.
