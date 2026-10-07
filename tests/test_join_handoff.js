@@ -322,6 +322,31 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
     console.log("PASS: the mic sync tooltip points members to their own DubMate");
   }
 
+  // 12. The host no longer has the room but the registry still points at this
+  // page: show "not found" and go back to the member's own DubMate instead of
+  // reloading the same page forever.
+  {
+    const GONE = "WXYZ";
+    const url = `${TUNNEL}/?room=${GONE}&home=${encodeURIComponent(HOME)}#dm=${encode({ v: 1, user: { name: "Ana" } })}`;
+    const { w, app, navigations, toasts } = await boot(url, { remoteRooms: { [GONE]: TUNNEL } });
+    await app.joinRoom(GONE);
+    if (navigations.some((n) => new URL(n).origin === TUNNEL)) fail(`jumped back to the same page: ${navigations}`);
+    if (JSON.stringify(navigations) !== JSON.stringify([`${HOME}/`])) fail(`member not sent home: ${navigations}`);
+    if (!toasts().some((t) => t.includes(`Room ${GONE} wasn't found`))) fail(`no "not found" toast: ${JSON.stringify(toasts())}`);
+    if (new URL(w.location.href).searchParams.has("room")) fail(`room code left in the address bar: ${w.location.href}`);
+    console.log("PASS: a registry entry pointing back at this page shows 'not found' and goes home instead of looping");
+  }
+  {
+    // Same case for a browser guest (no home): no jump at all, back to the home screen.
+    const GONE = "WXYZ";
+    const { app, navigations, toasts } = await boot(GUEST_URL, { remoteRooms: { [GONE]: TUNNEL } });
+    await app.joinRoom(GONE);
+    if (navigations.length) fail(`guest jumped back to the same page: ${navigations}`);
+    if (!toasts().some((t) => t.includes(`Room ${GONE} wasn't found`))) fail(`no "not found" toast for a guest: ${JSON.stringify(toasts())}`);
+    if (app.currentView !== "landing") fail(`guest not on the home screen: ${app.currentView}`);
+    console.log("PASS: a browser guest gets 'not found' instead of a reload of the same page");
+  }
+
   console.log("ALL JOIN HANDOFF TESTS PASSED");
   process.exit(0);
 })().catch((e) => {

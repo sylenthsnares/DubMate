@@ -523,10 +523,12 @@ export class LobbyMethods {
           });
           if (resolveResp.ok) {
             const data = await resolveResp.json();
-            if (data && data.tunnel_url) {
+            const target = data && data.tunnel_url ? new URL(data.tunnel_url) : null;
+            // A registry entry pointing back at this page means the host no longer
+            // has the room; jumping would reload this page forever.
+            if (target && target.origin !== window.location.origin) {
               // Navigate to host's tunnel room session, carrying the member's own
               // engine along so leaving the room can come back to it.
-              const target = new URL(data.tunnel_url);
               target.searchParams.set('room', cleanCode);
               const home = getHomeOrigin();
               if (home) {
