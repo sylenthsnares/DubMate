@@ -95,13 +95,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
 
             elif msg_type == "set_status":
                 new_status = payload.get("status", "lobby")
-                if user_id != room.host_id and room.host_id != "host":
-                    await websocket.send_json({
-                        "type": "error",
-                        "payload": {"message": "Only the host can start recording." if new_status == "recording"
-                                    else "Only the host can do that."},
-                    })
-                    continue
                 if new_status in ("lobby", "recording", "screening"):
                     room.status = new_status
                     await room.broadcast("status_changed", {"status": new_status})

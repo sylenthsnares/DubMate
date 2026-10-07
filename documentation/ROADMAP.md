@@ -106,8 +106,9 @@ All of this goes into one PR.
    - U4: the landing page and joining.
    - U5: polish.
      - U5a: the launcher.
-     - U5b: premiere, export and Audio settings, including the host-only guards on dialogue presence and export, and clap noise rejection for mic sync.
+     - U5b: premiere, export and Audio settings.
      - U5c: Pack Builder.
+   - The host-only guards (starting recording, dialogue presence, export) and clap noise rejection for mic sync are not UI work. They are in the bug-fix PR `fix/first-test-findings`.
 
 ## Later
 - **Host hand-off, done properly.** Move takes, casting and the pack to the new host's engine, re-register the room code, and redirect everyone. **L**

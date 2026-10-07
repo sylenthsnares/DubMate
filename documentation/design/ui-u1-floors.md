@@ -2,15 +2,11 @@
 
 Phase U1 ("guards and floors") of the owner's UI pass. The full plan has per-surface verdicts, 59 steps and the owner's decisions of 2026-10-07. It lives outside the repo at `C:/Users/tanis/AppData/Local/Temp/dubmate_ui/ui-plan.md`, and step 1 copies it into the repo as `design/ui-plan.md`. This doc turns its U1 steps (1 to 9b, as amended "(added from full critique)") into commits. It does not redesign anything. Branch `ui/u1-floors`, based on `main` at `c9ca8c4`.
 
-This revision follows a claim audit of the first draft. It corrects what the bug-fix PR contains, lists all 13 unstyled lobby classes, makes "Room not found" end the retries, and splits the two steps that were too big.
+This revision follows a claim audit of the first draft. It lists all 13 unstyled lobby classes, makes "Room not found" end the retries, and splits the two steps that were too big.
 
 **Owner decisions that bind this PR** (plan section 6): `style.css` is the source of truth for the look. DESIGN.md is rewritten from it, and the 8 and 9px mono sizes go. Every surface is an Operate surface, so this is refinement. The palette, fonts, wood and brass, and layouts all stay the same.
 
-**What is and isn't in the bug-fix PR.** The plan assumed that `fix/first-test-findings` hardens `set_status` and adds clap noise rejection. It does neither. Its steps 1 to 9 are: takes from the first take, config privacy, output routing, the clap rule and mic error lines, the live meter, a mic check script, the join handoff, desktop mic permission, and the changelog. Its diff doesn't touch `dubmate/room_ws.py` or `dubmate/rooms_api.py`. So:
-
-- **The `set_status` host check (plan step 2, first half) comes into U1, as step 4.** U1 hides "Start recording" from guests. Without the server check, that would only be a guard on screen.
-- **The `set_dialogue_presence` and export guards (step 2, second half) move to U5b**, with steps 40 and 40a. Today guests can drag the premiere's presence slider and use the export modal. A server refusal before those controls are hidden would turn guest clicks into error toasts. Also, `POST /export` carries no user id. `/export/stems` and `/export/project_zip` are `GET` downloads, not `POST`.
-- **Clap noise rejection (step 9c) moves to U5b**, with step 40d. It needs BF-3 merged first, and the brief keeps U1 out of the mic-sync logic.
+**What the bug-fix PR does instead.** The owner's routing (plan section 6) puts every host-only server guard (`set_status`, `set_dialogue_presence`, `POST /export`, `/export/stems`, `/export/project_zip`) and clap noise rejection (step 9c) in the bug-fix PR `fix/first-test-findings`. U1 does none of them and doesn't touch `dubmate/room_ws.py` or `dubmate/rooms_api.py`. U1 hides "Start recording" from guests on screen; the server refusal for a guest's `set_status` comes with that PR.
 
 U1 still keeps away from the takes button, the Audio settings mic-sync and room-check logic, and the join handoff. Those surfaces only change here through shared classes.
 
@@ -25,7 +21,7 @@ U1 still keeps away from the takes button, the Audio settings mic-sync and room-
 | "Remove" in the Remove Pack Builder confirm row is red, not amber. | Audio settings (desktop app) | One click away (inside the confirm row) |
 | Toasts appear at the bottom centre, at most 420px wide, with at most 3 at once (the oldest goes). Error toasts stay until closed, have a Close button and are announced at once. Each toast is read out alone. | Everywhere | Only when it happens |
 | Your own take no longer says "Take saved" twice. Other people's takes still show "Mika recorded line 2". | Booth | Only when it happens |
-| When the room refuses something (a guest's casting change, or a guest trying to start recording from an old page), a toast says why. The page then reloads the room's real state instead of showing a change that didn't happen. | Lobby, booth | Only when it happens |
+| When the room refuses something (for example a guest's casting change), a toast says why. The page then reloads the room's real state instead of showing a change that didn't happen. | Lobby, booth | Only when it happens |
 | Guests no longer see "Start recording". In the lobby they see "Waiting for Tani to start recording". If recording has already started, they see "Back to the booth", which only moves them. | Lobby | Default (guests) |
 | Guests see who voices each character as text (colour dot and name) instead of a dropdown. Only the host gets the dropdowns. | Lobby | Default |
 | The casting table lists characters in natural order (Black Guy 2 before Black Guy 10). Counts read "1 line" / "2 lines", and the empty choice reads "Original voice". The dropdown fills its column. | Lobby | Default |
@@ -42,7 +38,6 @@ Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new 
 - **Lobby:** "Waiting for {host} to start recording" ("the host" when the name is unknown), "Back to the booth", "Original voice", "Your role", "{n} roles".
 - **Connection:** "Lost the room. Reconnecting…", "Reconnecting…", "Retry now", "Can't reach the room. The host may have closed it.", "Try again", "Leave room", "Some changes from the last minute didn't reach the room.", "Reload", "Close".
 - **Announcements:** "{name} joined", "{name} left", "{name} is ready".
-- **Server refusals:** "Only the host can start recording." and "Only the host can do that."
 - **`?` sheet:** "On other screens", "These work once your video is in the editor.", and the sheet labels above.
 - **Tooltips:**
   - Amber pill: "Casting and ready changes are sent when it's back. Wait for it before you record."
@@ -51,10 +46,7 @@ Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new 
 ## Data shapes, on-disk layout, API and WebSocket
 
 - **No on-disk change.** No config, room state, take, pack or localStorage key is added or changed.
-- **No new route and no new socket message type.** There is one server change:
-  - `set_status` in `dubmate/room_ws.py` refuses non-hosts the way `assign_role` already does (`user_id != room.host_id and room.host_id != "host"`).
-  - A refused guest gets `{"type": "error", "payload": {"message": …}}`, and `room.status` doesn't change.
-  - That makes two senders of this shape. `assign_role` stays the other.
+- **No server change, no new route and no new socket message type.** Today `assign_role` is the one sender of a refusal; the bug-fix PR's `set_status` guard will be a second.
 - **The client starts handling two shapes the server already sends:**
   - **Refused message:** `{"type": "error", "payload": {"message": …}}`. The handler toasts the message with the error tone, then reads `GET /api/rooms/{room_id}`, which returns the state object on its own (`rooms_api.py:79-82`). It wraps the result as `{ state }` for `applyIncomingState` and re-renders, the same way the `'*'` handler does after a broadcast.
   - **Connect-time error:** `{"type": "error", "message": "Room not found"}`, with a top-level `message` and no `payload`. The server sends it only when the room id isn't in `ROOMS`, then closes. It gets no toast and no GET. `room_socket.js` marks the room as gone, so `onclose` goes straight to `'failed'` instead of retrying. It matches on the missing `payload`, not on the text.
@@ -69,9 +61,7 @@ Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new 
     - Each group gets a `view` field (`landing`, `lobby`, `booth`, `screening`, `editor`, `any`) **alongside** the existing `page` field, which `test_shortcut_sheet.js` filters on.
     - `initShortcutSheet` takes `getView()`, and the sheet's content is rebuilt each time it opens.
 - **Who counts as host on the client.** Casting dropdowns and "Start recording" use `isHost({ allowDummy: true })`, which matches the server's `host_id == "host"` rule.
-- **Mixed versions:**
-  - **Old page, new engine:** a guest who presses Start recording moves only themself, and the room stays put. The old page ignores the error.
-  - **New page, old engine:** guests don't see the button, so nothing changes.
+- **Mixed versions:** an old page still shows guests "Start recording". Until the bug-fix PR's `set_status` guard lands, pressing it there moves the room as it does today.
 
 ## Migration of existing data
 
@@ -93,9 +83,9 @@ Unchanged. This PR changes no audio, mix, render, file path or export route. The
 
 ## Not in this PR
 
-- **Moved to U5b:**
-  - Host-only `set_dialogue_presence`, `POST /export`, and any guard on the stems and project downloads. They go with 40 and 40a, which hide those controls from guests.
-  - Clap noise rejection (9c). It goes with 40d, after BF-3 merges.
+- **In the bug-fix PR `fix/first-test-findings`** (owner routing, plan section 6):
+  - The host-only guards on `set_status`, `set_dialogue_presence`, `POST /export`, `/export/stems` and `/export/project_zip` (plan step 2).
+  - Clap noise rejection (step 9c).
 - **Left to their first callers:**
   - `updateToast(id, …)` (plan step 7). Its first caller is the import toast in step 31 (U4).
   - The status-text classes (plan step 6a). Their first user is Audio settings in step 40d (U5b).
@@ -119,7 +109,7 @@ Unchanged. This PR changes no audio, mix, render, file path or export route. The
   - The edits are in different functions:
     - **This PR:** socket handlers, `renderConnectionState`, `renderLobbyState`, `renderCastActivityHUD`, `showToast`.
     - **The bug-fix PR:** `initRouter`, `joinRoom`, `renderTakeHistory`, the Audio settings rows.
-  - The bug-fix PR doesn't touch `room_ws.py`.
+  - This PR doesn't touch `room_ws.py`, where the bug-fix PR adds the host-only guards.
   - Whichever PR merges second rebases.
 - **Bigger text in the booth's right column.** That column already clips at 1280x720 (plan problem 2, fixed in U2), and raising its 8.5px labels to 11px can push it further. Each visual step lists which booth controls are reachable before and after, at 1280x720 and 960x680. If a control that was reachable no longer is, tighten that card's padding instead of keeping the text small.
 - **Test suites that count toasts.** `tests/test_builder_editor.js` counts `.toast` nodes in the DOM and expects `FALLBACK_TOAST` to appear exactly once, and twice across sessions. The cap of 3 can evict it. Step 4 changes that file's `toasts()` helper to record every toast as it is added (a `MutationObserver` on `#toast-container`). The assertions keep their meaning: what was shown, not what is still on screen.
@@ -146,9 +136,9 @@ Unchanged. This PR changes no audio, mix, render, file path or export route. The
 13. **The HUD in the lobby** hides only the progress and the ready summary. The location badge stays.
 14. **"YOUR ROLE"** becomes "Your role" in the markup, styled as a badge.
 15. **ROADMAP.** No branch has a "UI pass" line, so step 9 adds one with U1 done and U2 to U5 listed.
-16. **The plan copy** is verbatim, with a short note on top. The note gives the source path, says the mockup PNGs aren't copied, and corrects the plan's two wrong assumptions about the bug-fix PR.
-17. **Server guards.** U1 takes only the `set_status` check, because no other PR has it and U1's guest view depends on it. `set_dialogue_presence` and the export guards wait for U5b, which hides those controls from guests first.
-18. **Clap noise rejection (9c)** goes to U5b with 40d, after BF-3 merges.
+16. **The plan copy** is verbatim, with a short note on top. The note gives the source path, says the mockup PNGs aren't copied, and restates the owner's routing of the server guards and step 9c to the bug-fix PR.
+17. **Server guards.** None in U1. All of them, `set_status` included, are in the bug-fix PR `fix/first-test-findings`, as the owner routed them.
+18. **Clap noise rejection (9c)** is in the bug-fix PR `fix/first-test-findings`, as the owner routed it.
 19. **Guests in the lobby while recording is on** get "Back to the booth". Hiding "Start recording" would otherwise strand a guest who stepped back to the lobby.
 20. **Queued changes in the red state** are kept for Try again and dropped on Leave, as `disconnect()` does today.
 21. **`aria-atomic` comes off `#toast-container`**, so each toast is read on its own.
@@ -162,7 +152,7 @@ Visual steps take before and after headless screenshots at 1440x900, 1280x720 an
 1. **The plan and DESIGN.md.** Copy the plan in as `design/ui-plan.md`, with a note on top. Rewrite DESIGN.md from the `style.css` tokens. Add `tests/test_design_tokens.js`.
 2. **Type and contrast floor** (plan step 6, first half). Covers `style.css`, `builder.css`, and the inline sizes in `index.html`. Add `tests/test_css_floors.js` with its exemption list.
 3. **Shared states** (plan steps 6 second half, and 6a). The focus ring, reduced motion, `.btn:disabled` and `.btn-danger`. Extend `test_css_floors.js`.
-4. **Toasts and refused changes** (plan steps 2 first half, 3 first half, 7 and 8). `showToast` tones and cap, the own-take echo, the `set_status` host check, and the socket error handler with refetch. Add `tests/test_room_host_only.py` and `tests/test_toasts.js`, a `test_frontend.js` case, and the `test_builder_editor.js` helper change.
+4. **Toasts and refused changes** (plan steps 3 first half, 7 and 8). `showToast` tones and cap, the own-take echo, and the socket error handler with refetch. Add `tests/test_toasts.js`, a `test_frontend.js` case, and the `test_builder_editor.js` helper change.
 5. **Guests in the lobby** (plan steps 3 second half, 4 and 5). Waiting line and Back to the booth, read-only casting, natural sort, plurals, "Original voice", the 13 missing classes plus `.tag-host`, and no LOBBY badge or second Leave. Add `tests/test_lobby_guest.js`.
 6. **Cast strip and the live region** (plan step 9). Add `tests/test_cast_hud.js`, and update the HUD case in `test_frontend.js`.
 7. **Reconnecting pill** (plan step 9a). `room_socket.js` gets the failed state, Retry now, overflow, and the room-gone handling. Also `renderConnectionState` and the Reload button. Extend `tests/test_room_socket.js` and add `tests/test_connection_banner.js`.

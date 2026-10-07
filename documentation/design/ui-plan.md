@@ -1,7 +1,7 @@
 Copied from the owner's reviewed UI plan on 2026-10-07.
 Mockup and screenshot images it names are not in the repo.
 
-Correction: the bug-fix PR `fix/first-test-findings` has no `set_status` hardening and no noise rejection. The `set_status` check lands in U1 (see `ui-u1-floors.md`). The `set_dialogue_presence` and export guards and step 9c move to U5b.
+Routing (owner decision, section 6): the host-only guards (`set_status`, `set_dialogue_presence` and the export routes) and clap noise rejection (step 9c) are done in the bug-fix PR `fix/first-test-findings`, not in the UI PRs. When this copy was made, that PR had not landed them yet. The UI PRs only check that they are there.
 
 ---
 

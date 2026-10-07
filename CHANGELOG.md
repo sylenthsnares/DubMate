@@ -54,7 +54,7 @@
 - **Updates Bring What They Need**: when an update needs new parts, the desktop app downloads them while it installs the update, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
 - **Voice Effects on Older Desktop Installs**: a desktop app installed before this release updates without voice effects. Recording still works; the Voice panel and export ask you to download and install the latest DubMate.
 - **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
-- **Easier to Read**: no text in the studio or Pack Builder is smaller than 11px, and sentences and hints are at least 12px. Line details and hints are in a lighter colour that stands out from the cards.
+- **Easier to Read**: outside the Pack Builder timeline, no words in the studio or Pack Builder are smaller than 11px, and sentences and hints are at least 12px. Line details and hints are in a lighter colour that stands out from the cards.
 - **See Where You Are With the Keyboard**: buttons, the record button, scene cards, colour swatches and line chips show a clear outline when you reach them with Tab.
 - **Reduced Motion**: if your computer is set to reduce motion, pulsing and spinning animations stop. Recording and connection states still show through colour and text.
 - **Disabled Buttons Look Disabled**: buttons you can't use yet are dimmed. In Pack Builder, "Process video" no longer looks ready before you choose a video. Remove in the Remove Pack Builder confirmation is red.
@@ -90,7 +90,6 @@
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
 - **"Take Saved" Twice**: saving your own take no longer shows "Take saved" twice.
 - **Refused Changes Say Why**: when the room refuses a change, such as a guest changing the casting, a message says why and the page shows the room as it really is, instead of a change that didn't happen.
-- **Guests Starting Recording**: a guest can no longer start recording for the room from an old page; only the host can.
 - **Updated Notice**: the "DubMate was updated" notice has a Reload button.
 - **Record Button Pulse**: the record button pulses while recording again.
 - **Bigger Timing Nudge on More Keyboards**: Shift with [ or ] nudges a take by 100 ms on keyboard layouts where Shift turns those keys into { and }.
