@@ -59,13 +59,62 @@ function check(name, fn) {
     assert.strictEqual(t.CLAP_BEAT_SEC.length, 8);
   });
 
-  check("click train: 4 ms bursts, peak near 1", () => {
+  check("click train: 5 ms clicks at about -1 dBFS peak", () => {
     assert.ok(train instanceof Float32Array);
     const one = t.clickTrainSamples(SR, [0]);
-    assert.strictEqual(one.length, Math.round(0.004 * SR));
+    assert.strictEqual(one.length, Math.round(0.005 * SR));
     const peak = one.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
-    assert.ok(peak > 0.9 && peak <= 1.0, `peak ${peak}`);
+    const peakDb = 20 * Math.log10(peak);
+    assert.ok(peakDb > -1.3 && peakDb <= -0.7, `peak ${peakDb.toFixed(2)} dBFS`);
+    assert.ok(Math.abs(t.CLICK_PEAK - Math.pow(10, -1 / 20)) < 1e-9, `CLICK_PEAK ${t.CLICK_PEAK}`);
     assert.ok(Math.abs(one[0]) < 1e-6 && Math.abs(one[one.length - 1]) < 1e-6, "windowed ends");
+  });
+
+  // Mean power over an octave around `fc`, from a direct DFT of `x` at 24 points.
+  function octavePower(x, sr, fc) {
+    let sum = 0;
+    const points = 24;
+    for (let k = 0; k < points; k++) {
+      const f = fc * Math.pow(2, -0.5 + k / (points - 1));
+      let re = 0, im = 0;
+      for (let i = 0; i < x.length; i++) {
+        re += x[i] * Math.cos((2 * Math.PI * f * i) / sr);
+        im -= x[i] * Math.sin((2 * Math.PI * f * i) / sr);
+      }
+      sum += re * re + im * im;
+    }
+    return sum / points;
+  }
+
+  check("click spectrum: every octave from 500 Hz to 8 kHz within 6 dB of the loudest", () => {
+    const one = t.clickTrainSamples(SR, [0]);
+    const bands = [500, 1000, 2000, 4000, 8000].map((fc) => [fc, 10 * Math.log10(octavePower(one, SR, fc))]);
+    const top = Math.max(...bands.map((b) => b[1]));
+    for (const [fc, db] of bands) assert.ok(db >= top - 6, `${fc} Hz octave is ${(db - top).toFixed(1)} dB down`);
+  });
+
+  // Small earbuds held to a mic: little below 1 kHz or above 6 kHz, and maybe inverted.
+  function earbudPath(x, sr) {
+    const hp = Math.exp((-2 * Math.PI * 1000) / sr);
+    const lp = Math.exp((-2 * Math.PI * 6000) / sr);
+    const out = new Float32Array(x.length);
+    let hpPrevIn = 0, hpPrevOut = 0, lpPrev = 0;
+    for (let i = 0; i < x.length; i++) {
+      const h = hp * (hpPrevOut + x[i] - hpPrevIn);
+      hpPrevIn = x[i];
+      hpPrevOut = h;
+      lpPrev = (1 - lp) * h + lp * lpPrev;
+      out[i] = -lpPrev;
+    }
+    return out;
+  }
+
+  check("clicks through small inverted earbuds at -30 dB in noise are found within 2 ms", () => {
+    const rec = noise(2.0, 0.002, 5);
+    addAt(rec, earbudPath(train, SR), 0.211, minus30dB);
+    const r = t.findClickTrainLag(rec, SR, t.CLICK_TIMES_SEC, 600);
+    assert.ok(Math.abs(r.lagMs - 211) <= 2, `lag ${r.lagMs}`);
+    assert.strictEqual(r.confident, true);
   });
 
   check("click train delayed 137 ms at -30 dB in noise is found within 2 ms", () => {
@@ -223,10 +272,18 @@ function check(name, fn) {
     started.forEach((s, i) => {
       assert.ok(Math.abs(s.when - (10 + 0.3 + t.CLICK_TIMES_SEC[i])) < 1e-9, `click ${i} at ${s.when}`);
       assert.strictEqual(s.node.target, destination);
-      assert.ok(s.node.buffer && s.node.buffer.length === Math.round(0.004 * SR));
+      assert.ok(s.node.buffer && s.node.buffer.length === Math.round(0.005 * SR));
     });
     assert.strictEqual(engine.currentPlayingNodes.length, t.CLICK_TIMES_SEC.length);
-    assert.ok(Math.abs(end - (10 + 0.3 + 1.2 + 0.004)) < 1e-6, `end ${end}`);
+    assert.ok(Math.abs(end - (10 + 0.3 + 1.2 + 0.005)) < 1e-6, `end ${end}`);
+    const peakOf = (buf) => buf.getChannelData(0).reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    assert.ok(Math.abs(peakOf(started[0].node.buffer) - t.CLICK_PEAK) < 1e-3, "sync clicks play at full level");
+
+    // The clap beat is heard in the ears, so it plays softer when asked.
+    started.length = 0;
+    engine.playClickTrain(t.CLAP_BEAT_SEC, 0.8, 0.3);
+    assert.strictEqual(started.length, 8);
+    assert.ok(Math.abs(peakOf(started[0].node.buffer) - 0.3 * t.CLICK_PEAK) < 1e-3, "level scales the clicks");
   });
 
   console.log(`ALL ${passed} MIC SYNC TIMING CHECKS PASSED`);

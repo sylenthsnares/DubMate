@@ -119,14 +119,15 @@ export class AudioEngine {
   }
 
   // Mic sync: schedules one short click per time at ctx.currentTime + leadSec + t
-  // on the chosen output. Returns the context time the last click ends.
-  playClickTrain(times, leadSec) {
+  // on the chosen output. The clicks peak at -1 dBFS (CLICK_PEAK) times `level`.
+  // Returns the context time the last click ends.
+  playClickTrain(times, leadSec, level = 1) {
     this.initContext();
     const ctx = this.ctx;
     const data = clickTrainSamples(ctx.sampleRate, [0]);
     const click = ctx.createBuffer(1, data.length, ctx.sampleRate);
     const channel = click.getChannelData(0);
-    for (let i = 0; i < data.length; i++) channel[i] = data[i] * 0.5;
+    for (let i = 0; i < data.length; i++) channel[i] = data[i] * level;
     const start = ctx.currentTime + leadSec;
     for (const t of times) {
       const source = ctx.createBufferSource();

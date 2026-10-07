@@ -15,6 +15,8 @@ const MAX_LATENCY_MS = 800;
 const LEAD_SEC = 0.3;
 const TAIL_SEC = 0.5;
 const CLICK_RUNS = 3;
+// The clap beat plays in the ears, so about 10 dB below the full-level sync clicks.
+const CLAP_BEAT_LEVEL = 0.3;
 const MAX_CLICK_SPREAD_MS = 20;
 
 const CLICKS_COPY = "Hold your headphones against the mic, or turn on your speakers. You'll hear a few clicks.";
@@ -257,14 +259,14 @@ export class MicSyncMethods {
 
   // Records one pass the way a take is recorded (fresh stream, recorder, then the sound)
   // and returns its decoded first channel, or null when the run was cancelled meanwhile.
-  async recordMicSyncPass(times, run) {
+  async recordMicSyncPass(times, run, level = 1) {
     await this.audio.startRecording();
     if (run !== this.micSyncRun) {
       if (!this.micSyncBusy) Promise.resolve(this.audio.stopRecording()).catch(() => { });
       return null;
     }
     const estimateMs = this.browserLatencyEstimateMs();
-    const end = this.audio.playClickTrain(times, LEAD_SEC);
+    const end = this.audio.playClickTrain(times, LEAD_SEC, level);
     const now = (this.audio.ctx && this.audio.ctx.currentTime) || 0;
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, (end - now) * 1000) + TAIL_SEC * 1000));
     if (run !== this.micSyncRun) return null;
@@ -323,7 +325,7 @@ export class MicSyncMethods {
     if (this.micSyncBusy || this.micSyncRefused()) return;
     const run = this.beginMicSyncRun('clapping');
     try {
-      const rec = await this.recordMicSyncPass(CLAP_BEAT_SEC, run);
+      const rec = await this.recordMicSyncPass(CLAP_BEAT_SEC, run, CLAP_BEAT_LEVEL);
       if (!rec) return;
       const beats = CLAP_BEAT_SEC.map((t) => t + LEAD_SEC);
       const found = rec.samples ? findClapLag(rec.samples, rec.sampleRate, beats) : null;

@@ -11,30 +11,54 @@ export const CLICK_TIMES_SEC = [0, 0.17, 0.42, 0.61, 0.93, 1.2];
 // Clap-along fallback: 8 steady beats, 0.6 s apart (100 BPM).
 export const CLAP_BEAT_SEC = [0, 0.6, 1.2, 1.8, 2.4, 3.0, 3.6, 4.2];
 
-const CLICK_FREQ_HZ = 2000;
-const CLICK_LEN_SEC = 0.004;
+// Each click is a 5 ms sweep from 400 Hz to 10 kHz at -1 dBFS peak: loud and broad,
+// so small earbuds held to the mic still get through whatever band they play best.
+export const CLICK_PEAK = Math.pow(10, -1 / 20);
+const CLICK_LEN_SEC = 0.005;
+const CLICK_LOW_HZ = 400;
+const CLICK_HIGH_HZ = 10000;
+// The pitch rises as time to this power: a touch slower at the low end than a straight
+// sweep, which keeps every octave from 500 Hz to 8 kHz within a few dB of the others.
+const CLICK_SWEEP_POWER = 1.25;
+// Share of the click at each end that fades in or out (Tukey window).
+const CLICK_TAPER = 0.1;
 
+// The sweep and its quadrature twin, each with peak 1. The matched filter uses both,
+// so the speaker's and mic's phase shifts don't matter.
 function clickBurst(sampleRate) {
   const n = Math.max(2, Math.round(CLICK_LEN_SEC * sampleRate));
+  const high = Math.min(CLICK_HIGH_HZ, 0.45 * sampleRate);
+  const len = n / sampleRate;
+  const edge = CLICK_TAPER * (n - 1) / 2;
   const sin = new Float32Array(n);
   const cos = new Float32Array(n);
+  let peak = 0;
   for (let i = 0; i < n; i++) {
-    const hann = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1));
-    const phase = (2 * Math.PI * CLICK_FREQ_HZ * i) / sampleRate;
-    sin[i] = hann * Math.sin(phase);
-    cos[i] = hann * Math.cos(phase);
+    const t = i / sampleRate;
+    const sweep = ((high - CLICK_LOW_HZ) * len * Math.pow(t / len, CLICK_SWEEP_POWER + 1)) / (CLICK_SWEEP_POWER + 1);
+    const phase = 2 * Math.PI * (CLICK_LOW_HZ * t + sweep);
+    const fromEnd = Math.min(i, n - 1 - i);
+    const taper = fromEnd >= edge ? 1 : 0.5 - 0.5 * Math.cos((Math.PI * fromEnd) / edge);
+    sin[i] = taper * Math.sin(phase);
+    cos[i] = taper * Math.cos(phase);
+    peak = Math.max(peak, Math.abs(sin[i]));
+  }
+  for (let i = 0; i < n; i++) {
+    sin[i] /= peak;
+    cos[i] /= peak;
   }
   return { sin, cos };
 }
 
-// 4 ms Hann-windowed 2 kHz bursts at `times` (seconds), peak 1.0.
+// One click at each of `times` (seconds), peak CLICK_PEAK.
 export function clickTrainSamples(sampleRate, times) {
   const { sin } = clickBurst(sampleRate);
+  const click = sin.map((v) => v * CLICK_PEAK);
   const last = times.length ? Math.max(...times) : 0;
-  const out = new Float32Array(Math.round(last * sampleRate) + sin.length);
+  const out = new Float32Array(Math.round(last * sampleRate) + click.length);
   for (const t of times) {
     const start = Math.round(t * sampleRate);
-    out.set(sin, start);
+    out.set(click, start);
   }
   return out;
 }

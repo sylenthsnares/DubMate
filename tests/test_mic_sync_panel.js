@@ -138,7 +138,7 @@ async function boot(url, { stored = null } = {}) {
 
   // Stubbed engine: what each recording "hears" is chosen by the test.
   const audio = app.audio;
-  const log = { started: 0, stopped: 0, played: [], stopAll: 0, meterOn: 0, meterOff: 0 };
+  const log = { started: 0, stopped: 0, played: [], levels: [], stopAll: 0, meterOn: 0, meterOff: 0 };
   const env = { w, app, calls, toasts, errors, log, timing, hear: { clicks: "delayed", claps: "steady" } };
   let lastTimes = null;
   audio.ctx = { sampleRate: SR, currentTime: 0, outputLatency: 0.01, baseLatency: 0.005 };
@@ -154,10 +154,11 @@ async function boot(url, { stored = null } = {}) {
     audio.isRecording = true;
     audio.stream = { getAudioTracks: () => [{ getSettings: () => ({ latency: 0.01 }) }] };
   };
-  audio.playClickTrain = (times, lead) => {
+  audio.playClickTrain = (times, lead, level) => {
     if (lead !== LEAD_SEC) fail(`click lead ${lead}`);
     lastTimes = times;
     log.played.push(times.length);
+    log.levels.push(level);
     return audio.ctx.currentTime;
   };
   audio.stopRecording = async () => {
@@ -212,6 +213,7 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     await until(() => !env.app.micSyncBusy, "the click run");
     if (env.log.started !== 3 || env.log.stopped !== 3) fail(`click passes: ${env.log.started} started, ${env.log.stopped} stopped`);
     if (env.log.played.join() !== "6,6,6") fail(`played: ${env.log.played.join()}`);
+    if (env.log.levels.some((l) => l !== 1)) fail(`sync clicks not at full level: ${env.log.levels.join()}`);
     const entry = stored(env)[PAIR];
     if (!entry || entry.latency_ms !== 140 || entry.method !== "clicks") fail(`saved: ${JSON.stringify(stored(env))}`);
     if (text(status) !== "Synced. New takes move 140 ms earlier.") fail(`status after sync: ${text(status)}`);
@@ -255,6 +257,8 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     if (!$(env, "btn-start-clapping").disabled) fail("Start clapping stays enabled while listening");
     await until(() => !env.app.micSyncBusy, "the clap run");
     if (env.log.played[env.log.played.length - 1] !== 8) fail(`clap run played ${env.log.played.join()}`);
+    const beatLevel = env.log.levels[env.log.levels.length - 1];
+    if (!(beatLevel > 0 && beatLevel <= 0.35)) fail(`clap beat (heard in the ears) at level ${beatLevel}`);
     const entry = stored(env)[PAIR];
     if (!entry || entry.method !== "claps" || entry.latency_ms !== 150) fail(`clap sync saved ${JSON.stringify(stored(env))}`);
     if (text($(env, "mic-sync-status")) !== "Synced. New takes move 150 ms earlier.") fail(`status: ${text($(env, "mic-sync-status"))}`);
