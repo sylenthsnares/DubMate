@@ -18,3 +18,9 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
 zip = "2"
+
+# Microphone permission on room pages (src/mic_permission.rs). Same versions as
+# tauri/wry use; MIT OR Apache-2.0.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
