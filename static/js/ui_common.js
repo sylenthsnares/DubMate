@@ -285,7 +285,7 @@ export function isDialogOpen() {
   return openDialogCount > 0;
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), '
+const FOCUSABLE = 'a[href], summary, button:not([disabled]), input:not([disabled]), select:not([disabled]), '
   + 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**

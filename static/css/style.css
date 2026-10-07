@@ -4881,18 +4881,35 @@ svg {
 }
 
 .shortcut-sheet-card {
-  max-width: 560px;
+  max-width: 440px;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
   text-align: left;
   padding: 28px 28px 24px;
 }
 
-.shortcut-sheet-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+/* One grid for every row, so the labels line up from group to group. The
+   sections, lists and rows step aside (display: contents) for it. */
+.shortcut-sheet-groups,
+.shortcut-more-groups {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 8px;
+  align-items: center;
   margin-top: 14px;
+}
+
+.shortcut-group,
+.shortcut-list,
+.shortcut-row {
+  display: contents;
+}
+
+.shortcut-group-title,
+.shortcut-note,
+.shortcut-more {
+  grid-column: 1 / -1;
 }
 
 .shortcut-group-title {
@@ -4901,21 +4918,18 @@ svg {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--foreground-muted);
-  margin: 0 0 8px;
+  margin: 14px 0 2px;
 }
 
-.shortcut-list {
+.shortcut-sheet-groups > .shortcut-group:first-child > .shortcut-group-title,
+.shortcut-more-groups > .shortcut-group:first-child > .shortcut-group-title {
+  margin-top: 0;
+}
+
+.shortcut-note {
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.shortcut-row {
-  display: grid;
-  grid-template-columns: minmax(0, 200px) 1fr;
-  align-items: center;
-  gap: 12px;
+  font-size: 14px;
+  color: var(--foreground-muted);
 }
 
 .shortcut-keys {
@@ -4923,12 +4937,21 @@ svg {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
+  /* Long "A or B" combos wrap between combos rather than squeeze the labels. */
+  max-width: 150px;
   margin: 0;
+}
+
+.shortcut-combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .shortcut-label {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--foreground);
 }
 
@@ -4936,22 +4959,52 @@ svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 22px;
-  min-width: 22px;
-  padding: 0 6px;
+  box-sizing: border-box;
+  height: 25px;
+  min-width: 25px;
+  padding: 0 7px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--foreground);
   background: var(--secondary);
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
+  border: 1px solid var(--border-wood);
+  border-bottom: 2px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
 .shortcut-plus,
 .shortcut-or {
   font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+/* "On other screens": closed by default, and quieter than this screen's keys. */
+.shortcut-more {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.shortcut-more-title {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  border-radius: var(--radius-sm);
+}
+
+.shortcut-more-title:hover {
+  color: var(--foreground);
+}
+
+.shortcut-more-title:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+.shortcut-more .shortcut-label,
+.shortcut-more .shortcut-keys kbd {
   color: var(--foreground-muted);
 }
 

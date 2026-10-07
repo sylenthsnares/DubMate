@@ -469,6 +469,7 @@ class DubMateApp {
     initShortcutSheet({
       opener: document.getElementById('btn-shortcuts'),
       isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
+      getView: () => this.currentView,
     });
     this.initJoinModal();
 

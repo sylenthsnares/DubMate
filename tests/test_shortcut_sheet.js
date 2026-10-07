@@ -6,8 +6,9 @@
  * and stays in, Escape / a backdrop click close it and focus goes back, and
  * Space can't record behind it. Every SHORTCUT_GROUPS item must have an entry
  * in VERIFY below that presses its keys and checks they do what the sheet says,
- * so the list can't drift from the code. Also: the builder's step-button
- * tooltips no longer claim the arrow keys.
+ * so the list can't drift from the code. The sheet lists the current screen's
+ * keys first, then Everywhere, then the rest in a closed "On other screens".
+ * Also: the builder's step-button tooltips no longer claim the arrow keys.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -189,7 +190,8 @@ const VERIFY = {
     press(env, eventInit(combo));
     return calls.length === 1;
   },
-  "rec-nudge": (env, combo, i) => nudgeBy(env, combo, i === 0 ? -25 : 25),
+  "rec-nudge": (env, combo) => nudgeBy(env, combo, -25),
+  "rec-nudge-later": (env, combo) => nudgeBy(env, combo, 25),
   "rec-nudge-big": (env, combo, i) => nudgeBy(env, combo, i === 0 ? -100 : 100),
   "watch-play": (env, combo) => {
     showView(env, "screening");
@@ -284,9 +286,9 @@ async function testStudio() {
   check(el.getAttribute("role") === "dialog" && el.getAttribute("aria-modal") === "true", "the sheet is a modal dialog");
   const title = doc.getElementById(el.getAttribute("aria-labelledby"));
   check(!!title && title.textContent === "Keyboard shortcuts", "the sheet is labelled 'Keyboard shortcuts'");
-  const titles = [...el.querySelectorAll(".shortcut-group-title")].map((h) => h.textContent);
-  check(JSON.stringify(titles) === JSON.stringify(["Scenes", "Recording", "Watching together", "Everywhere"]),
-    "the studio sheet shows Scenes, Recording, Watching together and Everywhere");
+  const titles = [...el.querySelectorAll(".shortcut-group-title")].map((h) => h.textContent).sort();
+  check(JSON.stringify(titles) === JSON.stringify(["Booth", "Choose a scene", "Everywhere", "Premiere"]),
+    "the studio sheet has Choose a scene, Booth, Premiere and Everywhere");
   const kbdCount = SHORTCUT_GROUPS.filter((g) => g.page !== "builder")
     .reduce((n, g) => n + g.items.reduce((m, it) => m + it.keys.reduce((a, c) => a + c.length, 0), 0), 0);
   check(el.querySelectorAll("kbd").length === kbdCount, "every key has its own <kbd>");
@@ -307,7 +309,7 @@ async function testStudio() {
   press(env, { key: "Tab", code: "Tab" });
   check(doc.activeElement === closeBtn, "Tab stays inside the sheet");
   press(env, { key: "Tab", code: "Tab", shiftKey: true });
-  check(doc.activeElement === closeBtn, "Shift+Tab stays inside the sheet");
+  check(doc.activeElement === el.querySelector("summary"), "Shift+Tab wraps to On other screens, inside the sheet");
 
   // Space behind the sheet does not record.
   showView(env, "booth");
@@ -369,6 +371,7 @@ async function testStudio() {
     "close() hides it, returns focus, and is safe to call twice");
 
   await verifyItems(env, SHORTCUT_GROUPS.filter((g) => g.page !== "builder"));
+  testSheetByView(env, SHORTCUT_GROUPS);
   check(env.errors.length === 0, `no console errors in the studio (${env.errors.join(" | ")})`);
   return SHORTCUT_GROUPS;
 }
@@ -379,8 +382,20 @@ async function testBuilder() {
   const { SHORTCUT_GROUPS } = w.__mods["static/js/shortcuts.js"];
   const opener = doc.getElementById("btn-shortcuts");
   check(!!opener && opener.getAttribute("data-tip") === "Keyboard shortcuts (?)", "the Pack Builder header has the ? button");
-  const titles = [...sheet(env).querySelectorAll(".shortcut-group-title")].map((h) => h.textContent);
-  check(JSON.stringify(titles) === JSON.stringify(["Pack Builder", "Everywhere"]), "the builder sheet shows Pack Builder and Everywhere");
+  // Before the editor step: a muted line in place of the editor keys.
+  env.app.currentStep = "upload";
+  opener.click();
+  let layout = sheetLayout(env);
+  check(layout.note === "These work once your video is in the editor." && layout.noteFirst && JSON.stringify(layout.top) === JSON.stringify(["Everywhere"])
+    && JSON.stringify(layout.more) === JSON.stringify(["In the editor"]) && layout.moreOpen === false,
+    "before the editor, the builder sheet says when its keys start working");
+  press(env, { key: "Escape", code: "Escape" });
+  env.app.currentStep = "editor";
+  opener.click();
+  layout = sheetLayout(env);
+  check(layout.note === null && JSON.stringify(layout.top) === JSON.stringify(["In the editor", "Everywhere"])
+    && layout.more.length === 0, "in the editor, the builder sheet lists In the editor, then Everywhere");
+  press(env, { key: "Escape", code: "Escape" });
 
   // Space in the editor doesn't play behind the sheet.
   env.app.currentStep = "editor";
@@ -398,6 +413,65 @@ async function testBuilder() {
   check(doc.getElementById("btn-step-backward").getAttribute("data-tip") === "Back 1 second"
     && doc.getElementById("btn-step-forward").getAttribute("data-tip") === "Forward 1 second", "step buttons say Back / Forward 1 second");
   check(env.errors.length === 0, `no console errors in the Pack Builder (${env.errors.join(" | ")})`);
+}
+
+/** The sheet's group titles: the top level, the ones inside "On other screens", and the note. */
+function sheetLayout(env) {
+  const el = sheet(env);
+  const more = el.querySelector("details.shortcut-more");
+  const titles = (root, inside) => [...root.querySelectorAll(".shortcut-group-title")]
+    .filter((h) => !!h.closest("details") === inside).map((h) => h.textContent);
+  const note = el.querySelector(".shortcut-note");
+  const top = titles(el, false);
+  return {
+    top,
+    more: more ? titles(more, true) : [],
+    moreOpen: more ? more.open : null,
+    moreTitle: more ? more.querySelector("summary").textContent : null,
+    note: note ? note.textContent : null,
+    noteFirst: !!note && el.querySelector(".shortcut-sheet-groups").firstElementChild === note,
+  };
+}
+
+function testSheetByView(env, groups) {
+  const { app, doc } = env;
+  check(groups.every((g) => ["landing", "booth", "screening", "editor", "any"].includes(g.view)), "every group names its screen");
+
+  // Group titles are the screens' own names in index.html.
+  const landing = doc.getElementById("view-landing").getAttribute("aria-label");
+  const crumb = (id) => doc.querySelector(`#${id} .crumb-text`).textContent.trim();
+  const byView = Object.fromEntries(groups.map((g) => [g.view, g.title]));
+  check(byView.landing === landing && byView.booth === crumb("nav-step-booth") && byView.screening === crumb("nav-step-screening"),
+    "group titles match the screen names (Choose a scene, Booth, Premiere)");
+
+  const nudges = Object.fromEntries(groups.flatMap((g) => g.items).map((i) => [i.id, [i.keys, i.label]]));
+  check(JSON.stringify(nudges["rec-nudge"]) === JSON.stringify([[["["]], "Move my take 25 ms earlier"])
+    && JSON.stringify(nudges["rec-nudge-later"]) === JSON.stringify([[["]"]], "Move my take 25 ms later"])
+    && nudges["rec-nudge-big"][1] === "Same, by 100 ms", "the nudge rows say which way the take moves");
+
+  const opener = doc.getElementById("btn-shortcuts");
+  app.currentView = "booth";
+  opener.click();
+  let layout = sheetLayout(env);
+  check(JSON.stringify(layout.top) === JSON.stringify(["Booth", "Everywhere"])
+    && JSON.stringify(layout.more) === JSON.stringify(["Choose a scene", "Premiere"])
+    && layout.moreOpen === false && layout.moreTitle === "On other screens",
+    "in the booth: Booth, then Everywhere, then the rest in a closed On other screens");
+  press(env, { key: "Escape", code: "Escape" });
+
+  app.currentView = "screening";
+  opener.click();
+  layout = sheetLayout(env);
+  check(JSON.stringify(layout.top) === JSON.stringify(["Premiere", "Everywhere"])
+    && JSON.stringify(layout.more) === JSON.stringify(["Choose a scene", "Booth"]), "reopening in the premiere puts Premiere first");
+  press(env, { key: "Escape", code: "Escape" });
+
+  app.currentView = "lobby";
+  opener.click();
+  layout = sheetLayout(env);
+  check(JSON.stringify(layout.top) === JSON.stringify(["Everywhere"]) && layout.more.length === 3 && layout.note === null,
+    "the lobby shows Everywhere and the other screens");
+  press(env, { key: "Escape", code: "Escape" });
 }
 
 (async () => {
