@@ -9,6 +9,8 @@ const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
 const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
 const AUDIO_OUTPUT_DEVICE_KEY = 'dubmate_audio_output_device';
 const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
+// Device labels a member brought from their own DubMate (join handoff), waiting for labelled devices.
+const AUDIO_HANDOFF_KEY = 'dubmate_audio_handoff';
 
 // Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale).
 const METER_FLOOR_DB = -60;
@@ -225,6 +227,7 @@ export class AudioSetupMethods {
       this.audioSetup.setupComplete = true;
       safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
       this.updateAudioSettingsAffordance();
+      await this.refreshAudioDevices();
       return;
     }
     if (state === 'denied') {
@@ -443,8 +446,39 @@ export class AudioSetupMethods {
     }
     this.renderMicSyncRow();
     this.renderRoomCheckRow();
+    await this.resolveHandoffDevices();
 
     return devices;
+  }
+
+  // Picks the microphone and headphones a member chose on their own DubMate. Device ids differ
+  // per origin, so the handoff carries labels; they only match once the browser shows labels.
+  async resolveHandoffDevices() {
+    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+    const raw = safeStorageGet(ls, AUDIO_HANDOFF_KEY);
+    const devices = this.audioSetup.devices || {};
+    if (!raw || !devices.labelled) return;
+    safeStorageRemove(ls, AUDIO_HANDOFF_KEY);
+    let wanted = null;
+    try {
+      wanted = JSON.parse(raw);
+    } catch (e) { }
+    if (!wanted || typeof wanted !== 'object') return;
+    const find = (list, label) => {
+      if (typeof label !== 'string' || !label) return null;
+      const match = (Array.isArray(list) ? list : []).find((d) => d && d.label === label && d.deviceId);
+      return match ? match.deviceId : null;
+    };
+    const inputId = find(devices.inputs, wanted.input_label);
+    const outputId = find(devices.outputs, wanted.output_label);
+    if (inputId) {
+      await this.applyInputDevice(inputId);
+      if (this.selectAudioInput) this.selectAudioInput.value = inputId;
+    }
+    if (outputId) {
+      await this.applyOutputDevice(outputId);
+      if (this.selectAudioOutput) this.selectAudioOutput.value = outputId;
+    }
   }
 
   // Builds options with createElement/textContent so attacker-influenceable
@@ -914,12 +948,37 @@ export class AudioSetupMethods {
   // Guard used by the record path so the browser permission
   // prompt is never the first thing a user sees.
   async ensureMicReady() {
-    if (this.audioSetup.permission === 'granted' || this.audioSetup.setupComplete) return true;
+    if (this.audioSetup.permission === 'granted') return true;
 
     let state = 'unknown';
     try {
       state = await this.audio.getMicPermissionState();
     } catch (e) { }
+
+    if (state !== 'granted' && this.audioSetup.setupComplete) {
+      // Set up elsewhere (a member on a host's page): ask for the mic now, before the count-in,
+      // then hand it back so the take opens its own fresh stream.
+      try {
+        await this.audio.requestMicrophone();
+        this.audio.releaseMicrophone();
+      } catch (err) {
+        const name = (err && err.name) || '';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          this.audioSetup.permission = 'denied';
+          await this.openAudioSettings();
+          this.renderMicDenial(err);
+          this.showAudioSetupStep('denied');
+        } else {
+          this.showToast(micErrorMessage(err));
+        }
+        this.updateAudioSettingsAffordance();
+        return false;
+      }
+      this.audioSetup.permission = 'granted';
+      this.updateAudioSettingsAffordance();
+      await this.refreshAudioDevices();
+      return true;
+    }
 
     if (state === 'granted') {
       const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
