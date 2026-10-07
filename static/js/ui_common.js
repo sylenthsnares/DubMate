@@ -30,6 +30,18 @@ export function plural(n, word) {
   return `${n} ${n === 1 ? word : `${word}s`}`;
 }
 
+/**
+ * Reads text out to screen readers through the hidden #sr-announcer live region.
+ * The region is emptied first and filled on the next tick, so the same words said
+ * twice in a row are read twice.
+ */
+export function announce(text) {
+  const region = document.getElementById('sr-announcer');
+  if (!region) return;
+  region.textContent = '';
+  setTimeout(() => { region.textContent = text; }, 0);
+}
+
 const MAX_TOASTS = 3;
 
 /**

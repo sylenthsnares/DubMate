@@ -715,6 +715,19 @@ body::after {
   border: 1px solid rgba(217, 119, 6, 0.3);
 }
 
+/* Read by screen readers, never shown (the #sr-announcer live region). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ------------------------------------------------------------- */
 /* MAIN CONTAINER & VIEWS                                        */
 /* ------------------------------------------------------------- */
@@ -968,7 +981,8 @@ body::after {
 .btn-big-record:focus-visible,
 .pack-card:focus-visible,
 .color-option:focus-visible,
-.chip-item:focus-visible {
+.chip-item:focus-visible,
+.actor-hud-char:focus-visible {
   outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }

@@ -418,7 +418,7 @@ try {
       process.exit(1);
     }
 
-    // Test 7: Cast HUD Micro-Pills & Character Truncation
+    // Test 7: Cast HUD: several characters read "4 roles", the names in a tooltip
     app.roomState = {
       room_id: "TEST01",
       host_id: "host1",
@@ -441,10 +441,11 @@ try {
       process.exit(1);
     }
     const hudChar = hudChip.querySelector(".actor-hud-char");
-    if (hudChar && hudChar.textContent.includes("+2")) {
-      console.log("PASS: Cast HUD correctly truncates long multi-character lists with +N badge!");
+    if (hudChar && hudChar.textContent.trim() === "4 roles"
+        && hudChar.getAttribute("data-tip") === "Deku, Todoroki, Extra1, Extra2" && hudChar.tabIndex === 0) {
+      console.log("PASS: Cast HUD shows '4 roles' with the names in a focusable tooltip!");
     } else {
-      console.error("FAIL: Cast HUD character truncation did not work as expected:", hudChar?.textContent);
+      console.error("FAIL: Cast HUD roles summary did not work as expected:", hudChar?.textContent, hudChar?.getAttribute("data-tip"));
       process.exit(1);
     }
 

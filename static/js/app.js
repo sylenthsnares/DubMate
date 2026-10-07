@@ -3,7 +3,7 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-import { showToast, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
+import { showToast, announce, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
 import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
@@ -917,12 +917,24 @@ class DubMateApp {
     });
 
     this.socket.on('user_status_updated', (data) => {
+      const before = this.roomState?.users;
       if (!this.applyIncomingState(data)) return;
       if (this.roomState && data.payload?.user) {
         this.roomState.users[data.payload.user_id] = data.payload.user;
+        this.announceCastChange(data.type, before, data.payload.user);
         this.renderCastActivityHUD();
       }
     });
+
+    // Joins and leaves are read out once each (the cast strip itself is not a live region).
+    // user_connected covers someone coming back: their join then finds them online already.
+    for (const type of ['user_joined', 'user_connected', 'user_disconnected']) {
+      this.socket.on(type, (data) => {
+        const before = this.roomState?.users;
+        if (!this.applyIncomingState(data)) return;
+        this.announceCastChange(type, before, this.roomState.users?.[data.payload?.user_id]);
+      });
+    }
 
     this.socket.on('take_recorded', async (data) => {
       if (!this.applyIncomingState(data)) return;
@@ -1066,6 +1078,23 @@ class DubMateApp {
    * Returns false, and changes nothing, when the state comes from a different
    * DubMate version than this page (a tab left open across an update).
    */
+  /**
+   * Reads out a change to someone else in the room, once: "{name} joined", "{name} left",
+   * "{name} is ready". before is the users map from before the message was merged; with
+   * none (this page's own first state) nothing is read.
+   */
+  announceCastChange(type, before, user) {
+    if (!before || !user || user.id === this.user?.id) return;
+    const was = before[user.id];
+    if (type === 'user_joined' || type === 'user_connected') {
+      if (user.is_online && !was?.is_online) announce(`${user.name} joined`);
+    } else if (type === 'user_disconnected') {
+      if (was?.is_online && !user.is_online) announce(`${user.name} left`);
+    } else if (type === 'user_status_updated') {
+      if (user.is_ready && !was?.is_ready) announce(`${user.name} is ready`);
+    }
+  }
+
   applyIncomingState(data) {
     if (!data || !data.state) return false;
     const incoming = data.state;
@@ -1301,6 +1330,8 @@ class DubMateApp {
     // Toggle HUD & Breadcrumbs visibility
     if (this.castActivityBar) {
       this.castActivityBar.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';
+      // The strip shows progress and ready counts everywhere but the lobby.
+      if (this.roomState) this.renderCastActivityHUD();
     }
     if (this.studioBreadcrumbs) {
       this.studioBreadcrumbs.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';

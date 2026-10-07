@@ -520,11 +520,11 @@ export class LobbyMethods {
     if (!this.roomState || !this.castActivityList) return;
     const users = Object.values(this.roomState.users || {}).filter(u => u.is_online);
     const isHost = this.isHost();
+    // The lobby is for casting: who is here and their roles, without progress or ready counts.
+    const inLobby = this.currentView === 'lobby';
 
     let readyCount = 0;
-    this.castActivityList.innerHTML = '';
-
-    users.forEach((u) => {
+    const chips = users.map((u) => {
       // Find assigned characters
       const assignedChars = Object.keys(this.roomState.role_assignments || {}).filter((char) => {
         return (this.roomState.role_assignments[char] || []).includes(u.id);
@@ -538,37 +538,35 @@ export class LobbyMethods {
 
       if (u.is_ready) readyCount++;
 
-      const chip = document.createElement('div');
-      chip.className = `actor-hud-chip ${u.is_ready ? 'ready' : ''}`;
-
-      let charDisplayText = 'Unassigned';
-      let charFullTooltip = 'Unassigned';
-      if (assignedChars.length > 0) {
-        charFullTooltip = assignedChars.join(', ');
-        if (assignedChars.length <= 2) {
-          charDisplayText = assignedChars.join(', ');
-        } else {
-          charDisplayText = `${assignedChars[0]}, ${assignedChars[1]} +${assignedChars.length - 2}`;
-        }
-      }
+      // One role shows its name; several show "2 roles", with the names in a tooltip
+      // that also opens on keyboard focus.
+      const charText = assignedChars.length === 0 ? 'Unassigned'
+        : (assignedChars.length === 1 ? assignedChars[0] : plural(assignedChars.length, 'role'));
+      const charTip = assignedChars.length > 1
+        ? `tabindex="0" data-tip="${escapeHtml(assignedChars.join(', '))}"`
+        : `title="${escapeHtml(charText)}"`;
 
       const loc = u.location === 'screening' ? 'Premiere' : (u.location === 'lobby' ? 'Lobby' : `Line ${(u.current_line || 0) + 1}`);
 
-      chip.innerHTML = `
+      return `<div class="actor-hud-chip ${u.is_ready ? 'ready' : ''}">
         <div class="actor-hud-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
         <span class="actor-hud-name" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}${u.id === this.user.id ? ' (You)' : ''}</span>
-        <span class="actor-hud-char" title="${escapeHtml(charFullTooltip)}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(charDisplayText)}</span>
-        <span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>
+        <span class="actor-hud-char" ${charTip}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(charText)}</span>
+        ${inLobby ? '' : `<span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>`}
         <span class="actor-hud-status-badge ${u.is_ready ? 'badge-ready' : (u.location === 'screening' ? 'badge-screening' : 'badge-recording')}">
           ${u.is_ready ? '✓ Ready' : loc}
         </span>
-      `;
-
-      this.castActivityList.appendChild(chip);
-    });
+      </div>`;
+    }).join('');
+    // Redraw only on a real change, so a focused roles tooltip survives other updates.
+    if (chips !== this._lastCastHudHtml) {
+      this._lastCastHudHtml = chips;
+      this.castActivityList.innerHTML = chips;
+    }
 
     if (this.premiereStatusSummary) {
-      this.premiereStatusSummary.innerText = `${readyCount}/${users.length} ready`;
+      this.premiereStatusSummary.textContent = `${readyCount}/${users.length} ready`;
+      this.premiereStatusSummary.hidden = inLobby;
     }
 
     // Host Premiere Button Visibility
