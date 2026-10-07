@@ -2,7 +2,7 @@
 // remembered per pair and used as a new take's starting timing, and the Timing row in
 // Audio settings that measures it (a click pattern heard back through the mic, or claps).
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { safeStorageGet, safeStorageSet } from './audio_setup.js';
+import { micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.js';
 import { CLAP_BEAT_SEC, CLICK_TIMES_SEC, combineRuns, devicePairKey, findClapLag, findClickTrainLag, snapMs } from './timing.js';
 
 // localStorage: {"<mic>|<output>": {latency_ms, method, measured_at}}.
@@ -16,7 +16,6 @@ const LEAD_SEC = 0.3;
 const TAIL_SEC = 0.5;
 const CLICK_RUNS = 3;
 const MAX_CLICK_SPREAD_MS = 20;
-const MAX_CLAP_SPREAD_MS = 40;
 
 const CLICKS_COPY = "Hold your headphones against the mic, or turn on your speakers. You'll hear a few clicks.";
 const CLAP_COPY = "DubMate couldn't hear the clicks. Clap along with the beat instead.";
@@ -25,7 +24,8 @@ const PANEL_COPY = {
   listening: CLICKS_COPY,
   clap: CLAP_COPY,
   clapping: CLAP_COPY,
-  failed: "That didn't line up. Try again, clapping right on each click.",
+  failedQuiet: "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.",
+  failedUneven: "Your claps were uneven. Try again, clapping right on each click.",
 };
 
 function webStorage(name) {
@@ -171,12 +171,12 @@ export class MicSyncMethods {
     }
   }
 
-  /** step: 'ready' | 'listening' | 'clap' | 'clapping' | 'failed', or null to hide the panel. */
+  /** step: 'ready' | 'listening' | 'clap' | 'clapping' | 'failedQuiet' | 'failedUneven', or null to hide the panel. */
   showMicSyncPanel(step) {
     this.micSyncStep = step;
     if (!this.micSyncPanel) return;
     this.micSyncPanel.style.display = step ? 'block' : 'none';
-    this.micSyncPanel.classList.toggle('is-error', step === 'failed');
+    this.micSyncPanel.classList.toggle('is-error', step === 'failedQuiet' || step === 'failedUneven');
     if (this.micSyncMessage) this.micSyncMessage.textContent = step ? PANEL_COPY[step] : '';
     const clicks = step === 'ready' || step === 'listening';
     if (this.btnStartMicSync) {
@@ -315,7 +315,7 @@ export class MicSyncMethods {
     }
   }
 
-  // Eight steady clicks; the actor claps on each. Saved only when the claps agree within 40 ms.
+  // Eight steady clicks; the actor claps on each. Saved when 4 claps land within 40 ms of their median.
   async runClapSync() {
     if (this.micSyncBusy || this.micSyncRefused()) return;
     const run = this.beginMicSyncRun('clapping');
@@ -324,10 +324,10 @@ export class MicSyncMethods {
       if (!rec) return;
       const beats = CLAP_BEAT_SEC.map((t) => t + LEAD_SEC);
       const found = rec.samples ? findClapLag(rec.samples, rec.sampleRate, beats) : null;
-      if (found && found.spreadMs <= MAX_CLAP_SPREAD_MS && found.lagMs <= MAX_LATENCY_MS) {
+      if (found && found.inWindow >= 4 && found.lagMs <= MAX_LATENCY_MS) {
         await this.finishMicSync(run, snapMs(Math.max(found.lagMs, rec.estimateMs)), 'claps');
       } else if (run === this.micSyncRun) {
-        this.showMicSyncPanel('failed');
+        this.showMicSyncPanel(found ? 'failedUneven' : 'failedQuiet');
         if (this.btnStartClapping) this.btnStartClapping.focus();
       }
     } catch (err) {
@@ -338,11 +338,11 @@ export class MicSyncMethods {
   }
 
   micSyncError(run, err, step) {
-    console.warn('[DubMate] Mic sync did not finish:', err);
+    console.warn('[DubMate] Mic sync did not finish:', err?.name, err?.message, err);
     if (run !== this.micSyncRun) return;
     if (this.audio.isRecording) Promise.resolve(this.audio.stopRecording()).catch(() => { });
     this.audio.stopAllPlayback();
     this.showMicSyncPanel(step);
-    this.showToast("Can't read this microphone. Try another one or press Rescan.");
+    this.showToast(micErrorMessage(err));
   }
 }

@@ -76,6 +76,10 @@ export class AudioEngine {
             this.ctx = new AudioCtx({ sampleRate: 44100 });
           } catch (e2) {}
         }
+        // Clicks, previews and the backing track go to the chosen output from the start.
+        if (this.ctx && this.preferredOutputId && typeof this.ctx.setSinkId === 'function') {
+          this.ctx.setSinkId(this.preferredOutputId).catch(() => {});
+        }
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
@@ -257,6 +261,18 @@ export class AudioEngine {
     return constraints;
   }
 
+  // A device another stream just released can still be closing (Windows reports
+  // NotReadableError or AbortError), so that one case is tried again once after 300 ms.
+  async _getUserMediaRetry(audio) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio });
+    } catch (err) {
+      if (!err || (err.name !== 'NotReadableError' && err.name !== 'AbortError')) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return navigator.mediaDevices.getUserMedia({ audio });
+    }
+  }
+
   _streamIsLive(stream) {
     if (!stream) return false;
     if (typeof stream.getAudioTracks !== 'function') return true;
@@ -288,7 +304,7 @@ export class AudioEngine {
     let lastErr = null;
     for (const attempt of attempts) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: attempt.audio });
+        const stream = await this._getUserMediaRetry(attempt.audio);
         this.stream = stream;
         this.activeInputDeviceId = attempt.id;
         return this.stream;
@@ -325,10 +341,10 @@ export class AudioEngine {
     let stream = null;
     let didFallBack = false;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: this._buildAudioConstraints(wanted) });
+      stream = await this._getUserMediaRetry(this._buildAudioConstraints(wanted));
     } catch (err) {
       if (!wanted || (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError'))) throw err;
-      stream = await navigator.mediaDevices.getUserMedia({ audio: this._buildAudioConstraints(null) });
+      stream = await this._getUserMediaRetry(this._buildAudioConstraints(null));
       didFallBack = true;
     }
 

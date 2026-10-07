@@ -78,6 +78,8 @@ export function findClickTrainLag(samples, sampleRate, times, maxLagMs) {
   };
 }
 
+const CLAP_WINDOW_MS = 40;
+
 function median(values) {
   const v = [...values].sort((a, b) => a - b);
   if (!v.length) return NaN;
@@ -87,6 +89,7 @@ function median(values) {
 
 // Clap-along: onsets from a 1 ms energy envelope; for beats 3 to 8, the onset
 // nearest each beat within -150..+400 ms. Needs 4 hits, otherwise null.
+// `inWindow` counts the hits within CLAP_WINDOW_MS of their median.
 export function findClapLag(samples, sampleRate, beatTimes) {
   const frame = Math.max(1, Math.round(sampleRate / 1000));
   const frames = Math.floor(samples.length / frame);
@@ -124,10 +127,15 @@ export function findClapLag(samples, sampleRate, beatTimes) {
     if (nearest !== null) lags.push(nearest);
   }
   if (lags.length < 4) return null;
+  // Human claps wander; the lag is the median of the hits within 40 ms of the overall median.
+  const center = median(lags);
+  const near = lags.filter(lag => Math.abs(lag - center) <= CLAP_WINDOW_MS);
   return {
-    lagMs: median(lags),
+    lagMs: median(near),
     spreadMs: Math.max(...lags) - Math.min(...lags),
     hits: lags.length,
+    lags,
+    inWindow: near.length,
   };
 }
 

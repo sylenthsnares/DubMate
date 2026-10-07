@@ -142,6 +142,38 @@ function check(name, fn) {
     assert.strictEqual(t.findClapLag(noise(5.0, 0.002, 11), SR, t.CLAP_BEAT_SEC), null);
   });
 
+  // Claps on beats 3 to 8 at exact per-beat lags (ms); null skips that beat.
+  function clapsAt(lagsMs, seed) {
+    const rec = noise(5.0, 0.002, seed);
+    t.CLAP_BEAT_SEC.slice(2).forEach((b, i) => {
+      if (lagsMs[i] === null || lagsMs[i] === undefined) return;
+      const burst = noise(0.03, 0.2, seed + i + 1);
+      for (let k = 0; k < burst.length; k++) burst[k] *= Math.exp(-k / (0.006 * SR));
+      addAt(rec, burst, b + lagsMs[i] / 1000, 1);
+    });
+    return rec;
+  }
+
+  check("clap-along: human spread plus one outlier is kept, lag is the in-window median", () => {
+    const r = t.findClapLag(clapsAt([180, 195, 170, 188, 176, 330], 21), SR, t.CLAP_BEAT_SEC);
+    assert.ok(r, "expected a result");
+    assert.strictEqual(r.lags.length, 6);
+    assert.ok(r.inWindow >= 4, `inWindow ${r.inWindow}`);
+    assert.strictEqual(r.inWindow, 5);
+    assert.ok(Math.abs(r.lagMs - 180) <= 3, `lag ${r.lagMs}`);
+  });
+
+  check("clap-along: 3 hits returns null", () => {
+    assert.strictEqual(t.findClapLag(clapsAt([180, null, 190, null, 175, null], 31), SR, t.CLAP_BEAT_SEC), null);
+  });
+
+  check("clap-along: scattered hits leave fewer than 4 in the window", () => {
+    const r = t.findClapLag(clapsAt([0, 300, -100, 200, 100, 50], 41), SR, t.CLAP_BEAT_SEC);
+    assert.ok(r, "expected a result");
+    assert.strictEqual(r.lags.length, 6);
+    assert.ok(r.inWindow < 4, `inWindow ${r.inWindow}`);
+  });
+
   check("combineRuns gives median and spread", () => {
     assert.deepStrictEqual(t.combineRuns([140, 120, 150]), { medianMs: 140, spreadMs: 30 });
     assert.deepStrictEqual(t.combineRuns([100, 110]), { medianMs: 105, spreadMs: 10 });

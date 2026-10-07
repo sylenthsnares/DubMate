@@ -39,6 +39,24 @@ export function safeStorageRemove(store, key) {
   } catch (e) { }
 }
 
+// One plain line per getUserMedia / MediaRecorder failure, shared by the meter, mic sync and room checks.
+export function micErrorMessage(err) {
+  switch (err && err.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return "DubMate isn't allowed to use your microphone. Allow it, then try again.";
+    case 'NotFoundError':
+      return 'No microphone was found. Plug one in and press Rescan.';
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'Another app is using your microphone. Close it and try again.';
+    case 'OverconstrainedError':
+      return "Your saved microphone isn't connected. Choose another one.";
+    default:
+      return "Can't read this microphone. Try another one or press Rescan.";
+  }
+}
+
 function formatDbFS(db) {
   if (typeof db !== 'number' || !isFinite(db)) return '-∞';
   if (db <= METER_FLOOR_DB) return '-∞';
@@ -574,7 +592,8 @@ export class AudioSetupMethods {
         this.showAudioSetupStep('denied');
         return;
       }
-      this.setMeterHint("Can't read this microphone. Try another one or press Rescan.", true);
+      console.warn('[DubMate] Input meter could not open the microphone:', err?.name, err?.message, err);
+      this.setMeterHint(micErrorMessage(err), true);
       return;
     }
 

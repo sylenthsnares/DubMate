@@ -26,7 +26,8 @@ const SR = 16000;
 const LEAD_SEC = 0.3;
 const CLICKS_COPY = "Hold your headphones against the mic, or turn on your speakers. You'll hear a few clicks.";
 const CLAP_COPY = "DubMate couldn't hear the clicks. Clap along with the beat instead.";
-const FAIL_COPY = "That didn't line up. Try again, clapping right on each click.";
+const UNEVEN_COPY = "Your claps were uneven. Try again, clapping right on each click.";
+const QUIET_COPY = "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.";
 const GUEST_TIP = "Your browser keeps this until the host restarts DubMate.";
 
 function fail(msg) {
@@ -168,7 +169,7 @@ async function boot(url, { stored = null } = {}) {
       samples = env.hear.clicks === "delayed" ? heardClicks(timing, timing.CLICK_TIMES_SEC, 140) : noise(3 * SR, 0.05, 3);
     } else {
       const jitter = env.hear.claps === "steady" ? [0, 6, -4, 8, -6, 2, 4, -2] : [0, 90, -60, 120, -80, 40, 100, -50];
-      samples = heardClaps(timing.CLAP_BEAT_SEC, 150, jitter);
+      samples = env.hear.claps === "none" ? noise(6 * SR, 0.002, 5) : heardClaps(timing.CLAP_BEAT_SEC, 150, jitter);
     }
     return { blob: new w.Blob(["x"]), audioBuffer: { sampleRate: SR, getChannelData: () => samples } };
   };
@@ -272,13 +273,47 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     await until(() => !env.app.micSyncBusy, "the click run");
     $(env, "btn-start-clapping").click();
     await until(() => !env.app.micSyncBusy, "the clap run");
-    if (text($(env, "mic-sync-message")) !== FAIL_COPY) fail(`failure copy: ${text($(env, "mic-sync-message"))}`);
+    if (text($(env, "mic-sync-message")) !== UNEVEN_COPY) fail(`failure copy: ${text($(env, "mic-sync-message"))}`);
     if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("failure not styled as an error");
     if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot try clapping again");
     if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("a failed clap run changed the stored syncs");
     if (env.calls.some((c) => c.url === "/api/config" && c.method === "POST")) fail("a failed run wrote the engine config");
     if (text($(env, "mic-sync-status")) !== "Not synced yet") fail("status changed after a failed run");
     console.log("PASS: claps that don't line up show the failure copy and save nothing");
+
+    // Claps that weren't heard at all: the "couldn't hear" line, still an error step.
+    env.hear.claps = "none";
+    $(env, "btn-start-clapping").click();
+    await until(() => !env.app.micSyncBusy, "the quiet clap run");
+    if (text($(env, "mic-sync-message")) !== QUIET_COPY) fail(`quiet copy: ${text($(env, "mic-sync-message"))}`);
+    if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("quiet failure not styled as an error");
+    if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot clap again after a quiet run");
+    if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("a quiet clap run changed the stored syncs");
+    console.log("PASS: claps that weren't heard say so and save nothing");
+  }
+
+  // 3b. Microphone errors from getUserMedia get one plain line each.
+  {
+    const lines = {
+      NotAllowedError: "DubMate isn't allowed to use your microphone. Allow it, then try again.",
+      NotReadableError: "Another app is using your microphone. Close it and try again.",
+      OverconstrainedError: "Your saved microphone isn't connected. Choose another one.",
+    };
+    for (const [name, line] of Object.entries(lines)) {
+      const env = await boot(HOST);
+      const audio = env.app.audio;
+      env.w.navigator.mediaDevices.getUserMedia = async () => {
+        throw Object.assign(new Error(`${name} from the test`), { name });
+      };
+      audio.startRecording = () => audio.requestMicrophone();
+      env.toasts.length = 0;
+      $(env, "btn-mic-sync").click();
+      $(env, "btn-start-mic-sync").click();
+      await until(() => !env.app.micSyncBusy, `the ${name} run`);
+      if (env.toasts[env.toasts.length - 1] !== line) fail(`${name} toast: ${JSON.stringify(env.toasts)}`);
+      if (env.w.localStorage.getItem("dubmate_mic_sync") !== null) fail(`${name} saved something`);
+    }
+    console.log("PASS: microphone errors show the matching plain line");
   }
 
   // 4. Cancel mid-run stops recording and playback, restores the meter and saves nothing.

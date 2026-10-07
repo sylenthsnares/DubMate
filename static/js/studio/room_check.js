@@ -2,7 +2,7 @@
 // noise cleanup can be tuned to the room, and the Room row in Audio settings that runs it
 // and shows the report card. The pure functions below are exported for the node tests.
 // RoomCheckMethods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { safeStorageGet, safeStorageSet, safeStorageRemove } from './audio_setup.js';
+import { micErrorMessage, safeStorageGet, safeStorageSet, safeStorageRemove } from './audio_setup.js';
 import { chosenDevice, deviceLabel } from './mic_sync.js';
 
 // localStorage: one entry {profile_id, verdict, device_label, device_id, measured_at}.
@@ -31,7 +31,6 @@ const ROOM_PANEL_COPY = {
 const ROOM_NOT_CHECKED = 'Not checked yet';
 const ROOM_NEW_MIC = 'New microphone. Check your room so cleanup fits it.';
 const ROOM_SAVE_FAILED = "DubMate couldn't finish the check. Try again.";
-const ROOM_MIC_FAILED = "Can't read this microphone. Try another one or press Rescan.";
 const ROOM_REFRESH_FAILED = "DubMate couldn't refresh your older takes. Try again.";
 
 // The loudest-line check, in dB of peak: a shout should peak around -10 to -6, so Good is
@@ -407,9 +406,9 @@ export class RoomCheckMethods {
         });
       } catch (err) {
         if (run !== this.roomCheckRun) return;
-        console.warn('[DubMate] Room check could not record:', err);
+        console.warn('[DubMate] Room check could not record:', err?.name, err?.message, err);
         this.showRoomCheckPanel('ready');
-        this.showToast(ROOM_MIC_FAILED);
+        this.showToast(micErrorMessage(err));
         return;
       }
       if (run !== this.roomCheckRun) return;
@@ -521,9 +520,9 @@ export class RoomCheckMethods {
         levels = clipLevels(buffer.getChannelData(0).subarray(Math.round(rate * ROOM_CLICK_SEC)), rate);
       } catch (err) {
         if (run !== this.roomCheckRun) return;
-        console.warn('[DubMate] Loudest line check could not record:', err);
+        console.warn('[DubMate] Loudest line check could not record:', err?.name, err?.message, err);
         this.showLoudLineResult('');
-        this.showToast(ROOM_MIC_FAILED);
+        this.showToast(micErrorMessage(err));
         return;
       }
       const advice = loudLineAdvice(levels.peakDb, levels.voiceDb, this.roomCheckFloorDb);
