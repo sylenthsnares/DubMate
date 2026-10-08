@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-packbuilder-install"
+description = "Enables the start_packbuilder_install command without any pre-configured scope."
+commands.allow = ["start_packbuilder_install"]
+
+[[permission]]
+identifier = "deny-start-packbuilder-install"
+description = "Denies the start_packbuilder_install command without any pre-configured scope."
+commands.deny = ["start_packbuilder_install"]

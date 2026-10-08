@@ -609,6 +609,101 @@ body::after {
   }
 }
 
+/* Pack Builder installing in the background (studio/packbuilder_install.js). Quiet by
+   design: a brass bar, not an amber call to action, since nothing is asked of the user
+   until it is done. Red only for the failed line. */
+.pb-install-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.pb-install-chip[hidden],
+.pb-install-chip [hidden] {
+  display: none;
+}
+.pb-install-running,
+.pb-install-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  background: var(--card);
+  border: 1px solid var(--border-wood);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.pb-install-failed {
+  gap: 4px;
+  padding-right: 3px;
+}
+.pb-install-failed .pb-install-label {
+  color: var(--accent-red-soft);
+}
+.pb-install-running:focus-visible,
+.pb-install-failed .pb-install-label:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.pb-install-bar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--border-wood);
+  overflow: hidden;
+}
+.pb-install-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-brass);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+.pb-install-percent {
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+/* "DubMate restarts, so anyone in your room is disconnected." under the chip. */
+.pb-install-confirm {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1100;
+  width: 280px;
+  padding: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.pb-install-confirm p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+.pb-install-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+@media (max-width: 1279px) {
+  .pb-install-name {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pb-install-fill {
+    transition: none;
+  }
+}
+
 /* The code exists locally but is not resolvable by guests yet -- usually the
    public tunnel is still coming up. Hovering explains it. */
 .room-badge.room-badge-unpublished {
@@ -1165,6 +1260,36 @@ body::after {
   box-shadow: none;
   transform: none;
   cursor: not-allowed;
+}
+
+/* Status lines: muted for "not yet", green with a check for done, amber when it
+   needs attention, red for errors. Audio settings' rows, notes and mic pill. */
+.status-text {
+  font-size: 12px;
+  font-weight: 500;
+}
+.status-text.is-pending {
+  color: var(--foreground-muted);
+}
+.status-text.is-done {
+  color: var(--accent-green-light);
+}
+.status-text.is-done::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.status-text.is-attention {
+  color: var(--primary-hover);
+}
+.status-text.is-error {
+  color: var(--accent-red-soft);
 }
 
 .btn-xs {
@@ -4205,6 +4330,29 @@ svg {
   letter-spacing: 0.05em;
 }
 
+/* The mic pill beside Audio settings' title: a status line in the label style. */
+.audio-setup-pill.status-text {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-wood);
+  background: rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+
+.audio-setup-pill.status-text.is-done::before {
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  vertical-align: 0;
+}
+
 .badge-render-live.ready {
   color: var(--accent-green-bright);
   background: rgba(34, 197, 94, 0.16);
@@ -4487,16 +4635,47 @@ svg {
   50% { opacity: 0.45; transform: scale(0.82); }
 }
 
+/* The bottom padding sits on the steps, not the scrolling card: a sticky footer
+   would otherwise stop that far above the card's edge. The scroll padding keeps a
+   focused control scrolled into view clear of that footer (about 72px tall). */
 .audio-setup-card {
   max-width: 620px;
   text-align: left;
-  padding: 30px 28px 26px;
+  padding: 30px 28px 0;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
+  scroll-padding-bottom: 84px;
 }
 
 .audio-setup-step {
   display: none;
+  padding-bottom: 26px;
+}
+
+#audio-setup-step-devices {
+  padding-bottom: 0;
+}
+
+.audio-setup-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-right: 40px;
+}
+
+/* Done stays at the bottom of the scrolling card, over the card's own background,
+   and runs edge to edge (the negative margins cancel the card's side padding). */
+.audio-settings-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 20px -28px 0;
+  padding: 14px 28px 22px;
+  background: #13100d; /* the bottom of .studio-modal-card's gradient */
+  border-top: 1px solid var(--border);
 }
 
 /* --- Step 1: First-run explainer --- */
@@ -4561,8 +4740,9 @@ svg {
 
 .audio-fact-icon {
   flex-shrink: 0;
-  font-size: 13px;
-  line-height: 1.4;
+  display: inline-flex;
+  padding-top: 2px;
+  color: var(--accent-brass);
 }
 
 /* --- Step 2: Denial & recovery --- */
@@ -4589,18 +4769,44 @@ svg {
   color: var(--foreground-muted);
 }
 
-.audio-recovery-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+.audio-recovery {
   margin-top: 14px;
-}
-
-.audio-recovery-card {
   padding: 14px;
   border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border-wood);
+}
+
+/* The steps for this computer read in full ivory; the folded ones stay muted. */
+.audio-recovery > .audio-recovery-list {
+  color: var(--foreground);
+}
+
+.audio-recovery-open {
+  display: flex;
+  margin-top: 6px;
+}
+
+.audio-recovery-more {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.audio-recovery-more summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+}
+
+.audio-recovery-more summary:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+.audio-recovery-other {
+  margin-top: 10px;
 }
 
 .audio-recovery-head {
@@ -4672,19 +4878,12 @@ svg {
   color: var(--popover-foreground);
 }
 
+/* Help lines under a row; status lines add .status-text and a state. */
 .audio-device-note {
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--accent-brass);
-}
-
-.audio-device-note.is-warning {
-  color: #fbbf24;
-}
-
-.audio-device-note.is-error {
-  color: var(--accent-red-soft);
+  color: var(--foreground-muted);
 }
 
 .audio-unsupported-box {
@@ -4763,58 +4962,45 @@ svg {
   box-shadow: 0 0 10px var(--accent-red-glow);
 }
 
-.level-meter-readouts {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.level-meter-readout {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--foreground);
-  min-width: 74px;
-  text-align: right;
-}
-
-.level-meter-readout-peak {
-  min-width: 62px;
-  color: var(--accent-brass);
-}
-
-.level-meter-readout-peak.is-clipping {
-  color: var(--accent-red-soft);
-}
-
 .level-meter-track {
   position: relative;
   height: 18px;
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--input-border);
-  /* Static zone gradient: green up to -12 dBFS (80%), amber to -3 (95%), red above */
-  background-image: linear-gradient(90deg,
-      var(--accent-green-deep) 0%,
-      var(--accent-teal) 62%,
-      var(--accent-green-bright) 78%,
-      var(--primary) 80.5%,
-      var(--primary-hover) 93%,
-      var(--accent-red) 95%,
-      var(--accent-red-bright) 100%);
+  /* The target band behind the bar (studio/level_target.js): too quiet below -10 dB
+     (83.33%), good from -10 to -6 dB (90%), too loud above. */
+  background: var(--input) linear-gradient(90deg,
+      rgba(115, 104, 94, 0.14) 0%,
+      rgba(115, 104, 94, 0.14) 83.33%,
+      rgba(34, 197, 94, 0.26) 83.33%,
+      rgba(34, 197, 94, 0.26) 90%,
+      rgba(220, 38, 38, 0.26) 90%,
+      rgba(220, 38, 38, 0.26) 100%);
 }
 
-/* Right-hand shutter hiding the gradient above the current level; its width is
-   100 - level%. Cheaper than repainting a gradient on every animation frame. */
-.level-meter-mask {
+.level-meter-track:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+/* The bar, in the colour of the zone it reaches. */
+.level-meter-fill {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
-  width: 100%;
-  background: linear-gradient(180deg, #16120f 0%, #0d0b09 100%);
-  box-shadow: inset 1px 0 3px rgba(0, 0, 0, 0.8);
+  width: 0;
+  background: var(--accent-brass);
   transition: width 60ms linear;
+}
+
+.level-meter-track.is-good .level-meter-fill {
+  background: var(--accent-green-bright);
+}
+
+.level-meter-track.is-loud .level-meter-fill {
+  background: var(--accent-red);
 }
 
 .level-meter-gridline {
@@ -4889,19 +5075,15 @@ svg {
   display: inline-block;
 }
 
-.zone-green { background: var(--accent-green-bright); }
-.zone-amber { background: var(--accent-amber); }
-.zone-red { background: var(--accent-red); }
+.zone-quiet { background: var(--foreground-dim); }
+.zone-good { background: var(--accent-green-bright); }
+.zone-loud { background: var(--accent-red); }
 
+/* Coloured by the status-text classes. */
 .level-meter-hint {
   margin-top: 8px;
-  font-size: 12px;
   line-height: 1.45;
   color: var(--foreground-muted);
-}
-
-.level-meter-hint.is-error {
-  color: var(--accent-red-soft);
 }
 
 /* --- Export folder path field --- */
@@ -5004,10 +5186,6 @@ svg {
 }
 
 @media (max-width: 640px) {
-  .audio-recovery-grid {
-    grid-template-columns: 1fr;
-  }
-
   .audio-settings-btn-text {
     display: none;
   }

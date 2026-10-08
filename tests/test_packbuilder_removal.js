@@ -136,11 +136,16 @@ async function openSettings(app) {
     if (!statusCall || !statusCall.args || statusCall.args.withSize !== true) {
       fail("the status was not asked for with its size", calls);
     }
-    const note = byId(w, "packbuilder-size-note").innerText;
+    const noteEl = byId(w, "packbuilder-size-note");
+    const note = noteEl.textContent;
     if (note !== "Removing it frees 2.0 GB.") fail(`the size note reads "${note}"`);
+    if (!noteEl.classList.contains("status-text") || !noteEl.classList.contains("is-pending")) fail(`the size note is styled ${noteEl.className}`);
     if (isShown(w, "packbuilder-remove-confirm")) fail("the confirm step showed before any click");
+    // Removing it can't be undone from the studio, so it is a danger button.
+    const removeBtn = byId(w, "btn-remove-packbuilder");
+    if (!removeBtn.classList.contains("btn-danger")) fail(`Remove Pack Builder is ${removeBtn.className}`);
   }
-  pass("P40 the desktop app shows Remove Pack Builder and the space it frees");
+  pass("P40 the desktop app shows Remove Pack Builder, as a danger button, and the space it frees");
 
   // 3. Desktop app without Pack Builder: hidden.
   {

@@ -127,9 +127,32 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         self.assertIn("startup-progress", js)
         self.assertIn("server-error", js)
         self.assertIn("server-ready", js)
-        self.assertIn("showError(", js)
+        self.assertIn("showFailure(", js)
         self.assertIn("btnRetry", js)
-        self.assertIn("maxAttempts = 120", js)
+        # Timing is elapsed time, not a poll count (U5b 39a); the red card waits 3 minutes.
+        self.assertNotIn("maxAttempts", js)
+        self.assertIn("NO_ANSWER_AFTER_MS = 3 * 60 * 1000", js)
+        # The launcher's half of the Rust contract (U5b 39a, 39b).
+        for name in ("update-status", "update-progress", "update-stage", "update-complete"):
+            self.assertIn(f'"{name}"', js, name)
+        for cmd in ("cancel_update", "start_packbuilder_install", "get_packbuilder_status",
+                    "open_studio_in_browser", "trigger_start_sidecars", "apply_update"):
+            self.assertIn(f'"{cmd}"', js, cmd)
+        self.assertIn("eta_secs", js)
+        self.assertIn("first_download", js)
+        # Pack Builder installs in the background: no launcher card, no blocking install.
+        self.assertNotIn("packbuilder-progress", js)
+        self.assertNotIn("renderBuilderProgress", js)
+        self.assertNotIn('"install_packbuilder"', js)
+        self.assertNotIn('id="builder-stages"', html)
+        self.assertNotIn('id="tech-log"', html)
+        # Open in browser goes through Rust, never window.open.
+        self.assertNotIn("window.open(", js)
+        # Accessibility hooks.
+        self.assertIn('role="status"', html)
+        self.assertIn('aria-live="polite"', html)
+        self.assertIn('role="progressbar"', html)
+        self.assertIn('role="alert"', html)
 
         with open(tauri_conf_path, "r", encoding="utf-8") as f:
             conf = json.load(f)
@@ -171,6 +194,113 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         resp_js = client.get("/js/app.js")
         self.assertEqual(resp_js.status_code, 200)
 
+
+
+class TestHonestLauncherRust(unittest.TestCase):
+    """UI pass U5b (39a, 39b): Rust owns the startup text, reports real failures as a
+    struct, and Pack Builder installs in the background."""
+
+    TAURI_DIR = os.path.join(BASE_DIR, "tauri", "src-tauri")
+
+    def _read(self, *parts):
+        with open(os.path.join(self.TAURI_DIR, *parts), "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_startup_stages_come_from_rust(self):
+        rs = _rust_source()
+        self.assertIn('"Starting the engine"', rs)
+        self.assertIn('"Loading your scenes"', rs)
+        self.assertIn("Waiting for application startup", rs)
+        # The stderr "Error"/"Traceback" guess is gone, and so is the generic stage.
+        self.assertNotIn('"Still starting"', rs)
+        self.assertNotIn('"Starting DubMate"', rs)
+
+    def test_engine_failures_are_a_struct_with_known_kinds(self):
+        rs = _rust_source()
+        self.assertIn("struct EngineFailure", rs)
+        self.assertIn("fn classify_engine_failure", rs)
+        for kind in ("missing_files", "no_runtime", "port_in_use", "damaged", "crashed", "timeout"):
+            self.assertIn(f'"{kind}"', rs, kind)
+        # 3 minutes before a real "didn't start", not 30 seconds.
+        self.assertIn("ENGINE_START_TIMEOUT_SECS: u64 = 180", rs)
+
+    def test_commands_are_registered_and_allowed(self):
+        new = ["start_packbuilder_install", "get_packbuilder_install", "cancel_update",
+               "open_mic_settings", "open_studio_in_browser"]
+        build = self._read("build.rs")
+        main = self._read("src", "main.rs")
+        for cmd in new:
+            self.assertIn(f'"{cmd}"', build, cmd)
+            self.assertIn(cmd, main, cmd)
+        self.assertNotIn('"install_packbuilder"', build)
+        self.assertNotIn("fn install_packbuilder", _rust_source())
+
+        default = json.loads(self._read("capabilities", "default.json"))["permissions"]
+        for perm in ("allow-start-packbuilder-install", "allow-get-packbuilder-install",
+                     "allow-cancel-update", "allow-open-mic-settings",
+                     "allow-open-studio-in-browser"):
+            self.assertIn(perm, default)
+        self.assertNotIn("allow-install-packbuilder", default)
+
+        studio = json.loads(self._read("capabilities", "studio.json"))
+        for perm in ("allow-open-mic-settings", "allow-start-packbuilder-install",
+                     "allow-get-packbuilder-install", "allow-trigger-start-sidecars"):
+            self.assertIn(perm, studio["permissions"])
+        # The studio page never gets the browser opener or the updater.
+        self.assertNotIn("allow-open-studio-in-browser", studio["permissions"])
+        self.assertNotIn("allow-cancel-update", studio["permissions"])
+        self.assertNotIn("allow-apply-update", studio["permissions"])
+
+
+class TestLauncherLook(unittest.TestCase):
+    """UI pass U5b (39): the launcher is the studio's front door, in the studio's
+    colours and fonts, even before the engine or the internet is up."""
+
+    LAUNCHER_DIR = os.path.join(BASE_DIR, "tauri", "src")
+
+    def _launcher_html(self):
+        with open(os.path.join(self.LAUNCHER_DIR, "index.html"), encoding="utf-8") as f:
+            return f.read()
+
+    @staticmethod
+    def _tokens(css):
+        import re
+        root = css[css.index(":root {"):]
+        root = root[:root.index("}")]
+        return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", root))
+
+    def test_tokens_are_the_studios_by_name(self):
+        with open(STYLE_CSS, encoding="utf-8") as f:
+            studio = self._tokens(f.read())
+        launcher = self._tokens(self._launcher_html())
+        for name in ("--background", "--card", "--border", "--border-wood", "--foreground",
+                     "--foreground-muted", "--foreground-dim", "--primary", "--primary-hover",
+                     "--accent-brass", "--accent-red-soft"):
+            self.assertEqual(launcher.get(name), studio[name], name)
+
+    def test_window_is_the_studios_colour(self):
+        with open(os.path.join(BASE_DIR, "tauri", "src-tauri", "tauri.conf.json"), encoding="utf-8") as f:
+            conf = json.load(f)
+        self.assertEqual(conf["app"]["windows"][0]["backgroundColor"], "#12100e")
+
+    def test_fonts_are_bundled_with_their_licences(self):
+        html = self._launcher_html()
+        fonts = os.path.join(self.LAUNCHER_DIR, "fonts")
+        for woff2 in ("PlusJakartaSans-latin.woff2", "JetBrainsMono-latin.woff2"):
+            with open(os.path.join(fonts, woff2), "rb") as f:
+                self.assertEqual(f.read(4), b"wOF2", woff2)
+            self.assertIn(f'url("fonts/{woff2}")', html)
+        for licence in ("OFL-PlusJakartaSans.txt", "OFL-JetBrainsMono.txt"):
+            with open(os.path.join(fonts, licence), encoding="utf-8") as f:
+                self.assertIn("SIL Open Font License", f.read(), licence)
+        # Nothing comes from the internet.
+        self.assertNotIn("fonts.googleapis.com", html)
+        self.assertNotIn("fonts.gstatic.com", html)
+
+    def test_no_emoji_and_reduced_motion(self):
+        html = self._launcher_html()
+        self.assertNotIn("⚠", html)
+        self.assertIn("prefers-reduced-motion", html)
 
 
 class TestEnginePortIsDynamic(unittest.TestCase):

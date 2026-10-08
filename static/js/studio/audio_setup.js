@@ -3,6 +3,7 @@
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { AudioEngine } from '../audio_engine.js';
 import { escapeHtml } from '../ui_common.js';
+import { levelHint, levelZone } from './level_target.js';
 
 // --- Audio Device Setup persistence keys & meter constants ---
 const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
@@ -12,12 +13,77 @@ const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
 // Device labels a member brought from their own DubMate (join handoff), waiting for labelled devices.
 const AUDIO_HANDOFF_KEY = 'dubmate_audio_handoff';
 
-// Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale).
+// Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale). It shows peak.
 const METER_FLOOR_DB = -60;
-const METER_AMBER_DB = -12; // Hot but usable
-const METER_RED_DB = -3;    // Near clipping
 const METER_PEAK_HOLD_MS = 1100;
 const METER_PEAK_DECAY_DB_PER_FRAME = 0.45;
+// The hint judges the loudest peak of this long, then goes back to neutral by itself.
+const METER_HINT_WINDOW_MS = 2500;
+// The meter's numbers (tooltip, screen readers) change at most 4 times a second.
+const METER_READOUT_INTERVAL_MS = 250;
+const METER_FALLBACK_HINT = "Your saved microphone isn't connected. Showing the system default.";
+const METER_SYNC_HINT = "Syncing. The clicks and claps read loud here, and that's fine.";
+
+const STATUS_STATES = ['pending', 'done', 'attention', 'error'];
+
+// What to do when the microphone is blocked, for each kind of computer. The denied step
+// shows the one that fits and folds the others under "Using something else?".
+const RECOVERY_STEPS = {
+  'desktop-windows': {
+    title: 'DubMate app on Windows',
+    steps: [
+      // The path, not the button's words: it stays useful when the button can't open it.
+      'Open Windows Settings → Privacy & security → Microphone.',
+      'Turn on Microphone access and Let desktop apps access your microphone.',
+      "Come back and press Try again. If it still doesn't work, restart DubMate.",
+    ],
+    settingsButton: 'Open Windows microphone settings',
+  },
+  'desktop-mac': {
+    title: 'DubMate app on a Mac',
+    steps: ['Open System Settings → Privacy & Security → Microphone.', 'Turn on DubMate.', 'Restart DubMate.'],
+    settingsButton: 'Open macOS microphone settings',
+  },
+  browser: {
+    title: 'In a browser',
+    steps: ['Click the icon at the left of the address bar.', 'Set Microphone to Allow.', 'Press Try again, or reload the page.'],
+  },
+};
+// After the browser steps, the computer's own switch.
+const STILL_BLOCKED = {
+  windows: 'Still blocked? In Windows Settings → Privacy & security → Microphone, turn on Let desktop apps access your microphone.',
+  mac: 'Still blocked? In System Settings → Privacy & Security → Microphone, turn on your browser.',
+};
+// Errors these steps can fix; '' is a permission the browser already reports as denied.
+const PERMISSION_ERRORS = ['', 'NotAllowedError', 'SecurityError'];
+
+/** 'windows' | 'mac' | 'other', from what the browser says about this computer. */
+export function detectOs(nav) {
+  const platform = (nav && ((nav.userAgentData && nav.userAgentData.platform) || nav.platform || nav.userAgent)) || '';
+  if (/\bwin/i.test(platform)) return 'windows';
+  if (/mac/i.test(platform)) return 'mac';
+  return 'other';
+}
+
+/** The RECOVERY_STEPS entry for this computer: the desktop app on Windows or a Mac, else a browser. */
+export function recoveryCase(isDesktopApp, os) {
+  return isDesktopApp && (os === 'windows' || os === 'mac') ? `desktop-${os}` : 'browser';
+}
+
+function recoveryItems(steps) {
+  return steps.map((step) => {
+    const li = document.createElement('li');
+    li.textContent = step;
+    return li;
+  });
+}
+
+/** Puts a .status-text line in one state: 'pending' | 'done' | 'attention' | 'error'. */
+export function setStatusState(el, state) {
+  if (!el) return;
+  el.classList.add('status-text');
+  STATUS_STATES.forEach((s) => el.classList.toggle(`is-${s}`, s === state));
+}
 
 // localStorage/sessionStorage throw in some locked-down webviews and in
 // private-mode Safari, so every access goes through these guards.
@@ -59,10 +125,12 @@ export function micErrorMessage(err) {
   }
 }
 
-function formatDbFS(db) {
-  if (typeof db !== 'number' || !isFinite(db)) return '-∞';
-  if (db <= METER_FLOOR_DB) return '-∞';
-  return (db > 0 ? '+' : '') + db.toFixed(1);
+// The meter's numbers, for its tooltip and screen readers.
+function meterReadout(db) {
+  if (typeof db !== 'number' || !isFinite(db) || db <= METER_FLOOR_DB) return 'No sound';
+  const rounded = Math.round(db);
+  // Above full scale it is clipping; the sign keeps it from reading like a quiet level.
+  return `Peak ${rounded > 0 ? '+' : ''}${rounded} dB`;
 }
 
 // "2.1 GB" or "340 MB"; empty when the size is unknown.
@@ -94,6 +162,13 @@ export class AudioSetupMethods {
       meterToken: 0,
       peakDb: -Infinity,
       peakHoldUntil: 0,
+      // The bar's level: the peak with a fast attack and a slow fall.
+      barDb: -Infinity,
+      // Recent peaks {t, db} for the hint, and when the meter's numbers last changed.
+      levelWindow: [],
+      readoutAt: -Infinity,
+      // A mic error or fallback line holds the hint until the meter's stream reopens.
+      hintLocked: false,
       // Guards against two overlapping openAudioSettings() calls landing their
       // post-await UI updates out of order.
       openToken: 0,
@@ -259,25 +334,27 @@ export class AudioSetupMethods {
     });
 
     if (this.audioSetupStatusPill) {
-      if (step === 'devices') {
-        this.audioSetupStatusPill.innerText = 'MIC READY';
-      } else if (step === 'denied') {
-        this.audioSetupStatusPill.innerText = 'MIC BLOCKED';
-      } else {
-        this.audioSetupStatusPill.innerText = 'NO MIC';
-      }
+      const [text, state] = { devices: ['Mic ready', 'done'], denied: ['Mic blocked', 'error'] }[step] || ['No mic yet', 'pending'];
+      this.audioSetupStatusPill.textContent = text;
+      setStatusState(this.audioSetupStatusPill, state);
     }
-    if (this.audioSetupSubtitle) {
-      if (step === 'devices') {
-        this.audioSetupSubtitle.innerText =
-          'Choose your microphone and headphones.';
-      } else if (step === 'denied') {
-        this.audioSetupSubtitle.innerText =
-          'Recording is off until DubMate can use your microphone.';
-      } else {
-        this.audioSetupSubtitle.innerText =
-          'Set up your microphone before you record.';
-      }
+    if (this.audioSetupTitle) {
+      this.audioSetupTitle.textContent = this.audioSetup.firstRunMode ? 'Set up your mic' : 'Audio settings';
+    }
+    // The denied and first-run steps say it in their own words.
+    if (this.audioSetupSubtitle) this.audioSetupSubtitle.style.display = step === 'devices' ? '' : 'none';
+    if (step === 'intro') this.renderAudioIntro();
+  }
+
+  // First run: the privacy line only where it is true, and who asks for permission.
+  renderAudioIntro() {
+    if (this.audioIntroPrivacy) {
+      this.audioIntroPrivacy.textContent = this.isEngineLocal()
+        ? 'Audio stays on this computer.'
+        : "Your takes are saved on the host's computer.";
+    }
+    if (this.audioIntroAsker) {
+      this.audioIntroAsker.textContent = window.__TAURI__ ? 'Your computer may ask' : 'Your browser will ask';
     }
   }
 
@@ -408,8 +485,61 @@ export class AudioSetupMethods {
       detail = 'Recording is off until the microphone works. Check that it is plugged in and allowed, then press Try again.';
     }
 
-    if (this.audioDeniedHeading) this.audioDeniedHeading.innerText = heading;
-    if (this.audioDeniedDetail) this.audioDeniedDetail.innerText = detail;
+    if (this.audioDeniedHeading) this.audioDeniedHeading.textContent = heading;
+    if (this.audioDeniedDetail) this.audioDeniedDetail.textContent = detail;
+    this.renderMicRecovery(name);
+  }
+
+  // The steps for this computer, the others behind "Using something else?". Nothing for
+  // errors that aren't about permission: no padlock helps when there is no microphone.
+  renderMicRecovery(errorName) {
+    if (!this.audioRecovery) return;
+    const show = PERMISSION_ERRORS.includes(errorName);
+    this.audioRecovery.style.display = show ? '' : 'none';
+    if (!show) return;
+
+    const os = detectOs(typeof navigator !== 'undefined' ? navigator : null);
+    const key = recoveryCase(!!window.__TAURI__, os);
+    const entry = RECOVERY_STEPS[key];
+    const items = recoveryItems(entry.steps);
+    // In the desktop app on this computer, step 1 opens the settings page itself.
+    const invoke = entry.settingsButton ? this.desktopInvoke() : null;
+    if (invoke) {
+      const btn = document.createElement('button');
+      btn.id = 'btn-open-mic-settings';
+      btn.type = 'button';
+      btn.className = 'btn btn-secondary btn-sm audio-recovery-open';
+      btn.textContent = entry.settingsButton;
+      btn.addEventListener('click', () => {
+        Promise.resolve().then(() => invoke('open_mic_settings')).catch((err) => {
+          // An older desktop app, or the page didn't open: the written step stays.
+          console.warn('[DubMate] Could not open the microphone settings:', err);
+          btn.style.display = 'none';
+        });
+      });
+      items[0].appendChild(btn);
+    }
+    if (this.audioRecoverySteps) this.audioRecoverySteps.replaceChildren(...items);
+    if (this.audioRecoveryOs) {
+      const line = (key === 'browser' && STILL_BLOCKED[os]) || '';
+      this.audioRecoveryOs.textContent = line;
+      this.audioRecoveryOs.style.display = line ? '' : 'none';
+    }
+    if (this.audioRecoveryOthers) {
+      this.audioRecoveryOthers.replaceChildren(...Object.keys(RECOVERY_STEPS).filter((k) => k !== key).map((k) => {
+        const block = document.createElement('div');
+        block.className = 'audio-recovery-other';
+        const head = document.createElement('p');
+        head.className = 'audio-recovery-head';
+        head.textContent = RECOVERY_STEPS[k].title;
+        const list = document.createElement('ol');
+        list.className = 'audio-recovery-list';
+        list.replaceChildren(...recoveryItems(RECOVERY_STEPS[k].steps));
+        block.append(head, list);
+        return block;
+      }));
+    }
+    if (this.audioRecoveryMore) this.audioRecoveryMore.open = false;
   }
 
   async rescanAudioDevices() {
@@ -519,23 +649,21 @@ export class AudioSetupMethods {
 
   renderDeviceNote(noteEl, result, devices, kindLabel) {
     if (!noteEl) return;
-    noteEl.className = 'audio-device-note';
-
     if (!devices.supported) {
       noteEl.style.display = 'block';
-      noteEl.classList.add('is-error');
-      noteEl.innerText = "This browser can't list audio devices.";
+      setStatusState(noteEl, 'error');
+      noteEl.textContent = "This browser can't list audio devices.";
       return;
     }
     if (result.count === 0) {
       noteEl.style.display = 'block';
-      noteEl.classList.add('is-warning');
-      noteEl.innerText = `No ${kindLabel} was detected. Plug one in and press Rescan.`;
+      setStatusState(noteEl, 'attention');
+      noteEl.textContent = `No ${kindLabel} was detected. Plug one in and press Rescan.`;
       return;
     }
     if (result.missing) {
       noteEl.style.display = 'block';
-      noteEl.classList.add('is-warning');
+      setStatusState(noteEl, 'attention');
       // escapeHtml() because the remembered label is device-supplied text.
       noteEl.innerHTML =
         `Your saved ${escapeHtml(kindLabel)} isn’t connected. Using the system default.`;
@@ -543,11 +671,12 @@ export class AudioSetupMethods {
     }
     if (!devices.labelled) {
       noteEl.style.display = 'block';
-      noteEl.innerText = 'Device names show after you allow microphone access.';
+      setStatusState(noteEl, 'pending');
+      noteEl.textContent = 'Device names show after you allow microphone access.';
       return;
     }
     noteEl.style.display = 'none';
-    noteEl.innerText = '';
+    noteEl.textContent = '';
   }
 
   async applyInputDevice(deviceId) {
@@ -588,18 +717,16 @@ export class AudioSetupMethods {
     }
 
     if (this.audioOutputNote) {
-      this.audioOutputNote.className = 'audio-device-note';
       if (routed.ok) {
         this.audioOutputNote.style.display = 'block';
-        this.audioOutputNote.innerText = next
-          ? '✓ Using this output.'
-          : '✓ Using the system default.';
+        setStatusState(this.audioOutputNote, 'done');
+        this.audioOutputNote.textContent = next ? 'Using this output.' : 'Using the system default.';
       } else if (routed.reason === 'unsupported') {
         this.audioOutputNote.style.display = 'none';
       } else {
         this.audioOutputNote.style.display = 'block';
-        this.audioOutputNote.classList.add('is-error');
-        this.audioOutputNote.innerText =
+        setStatusState(this.audioOutputNote, 'error');
+        this.audioOutputNote.textContent =
           "Couldn't switch to that device. Using the system default.";
       }
     }
@@ -625,6 +752,7 @@ export class AudioSetupMethods {
     if (this.levelMeterLamp) this.levelMeterLamp.classList.add('is-live');
     this.audioSetup.peakDb = -Infinity;
     this.audioSetup.peakHoldUntil = 0;
+    this.audioSetup.barDb = -Infinity;
 
     const tick = () => {
       // Hard stop: the loop must not outlive the visible panel.
@@ -655,14 +783,19 @@ export class AudioSetupMethods {
         return false;
       }
       console.warn('[DubMate] Input meter could not open the microphone:', err?.name, err?.message, err);
-      this.setMeterHint(micErrorMessage(err), true);
+      this.setMeterHint(micErrorMessage(err), 'error');
+      this.audioSetup.hintLocked = true;
       return false;
     }
     if (token !== this.audioSetup.meterToken || !info) return false;
+    this.audioSetup.levelWindow = [];
     if (info.didFallBack) {
-      this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
+      this.setMeterHint(METER_FALLBACK_HINT, 'attention');
+      this.audioSetup.hintLocked = true;
     } else {
-      this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
+      const hint = levelHint(-Infinity);
+      this.setMeterHint(hint.text, hint.tone);
+      this.audioSetup.hintLocked = false;
     }
     return true;
   }
@@ -695,31 +828,45 @@ export class AudioSetupMethods {
   }
 
   resetInputMeterUI() {
-    if (this.levelMeterMask) this.levelMeterMask.style.width = '100%';
+    if (this.levelMeterFill) this.levelMeterFill.style.width = '0%';
     if (this.levelMeterPeakTick) {
       this.levelMeterPeakTick.style.display = 'none';
       this.levelMeterPeakTick.classList.remove('is-clipping');
     }
-    if (this.levelMeterRms) this.levelMeterRms.innerText = '-∞ dB';
-    if (this.levelMeterPeakReadout) {
-      this.levelMeterPeakReadout.innerText = 'PK -∞';
-      this.levelMeterPeakReadout.classList.remove('is-clipping');
-    }
     if (this.levelMeterLamp) this.levelMeterLamp.classList.remove('is-live', 'is-clipping');
-    if (this.levelMeterTrack) {
-      this.levelMeterTrack.setAttribute('aria-valuenow', String(METER_FLOOR_DB));
-      this.levelMeterTrack.setAttribute('aria-valuetext', '-infinity dBFS');
-    }
+    this.setMeterZone('quiet');
+    this.setMeterReadout(-Infinity);
     if (this.audioSetup) {
       this.audioSetup.peakDb = -Infinity;
       this.audioSetup.peakHoldUntil = 0;
+      this.audioSetup.barDb = -Infinity;
+      this.audioSetup.readoutAt = -Infinity;
     }
   }
 
-  setMeterHint(message, isError) {
+  /** tone: 'neutral' | 'attention' | 'done' | 'error', as levelHint gives it. */
+  setMeterHint(message, tone) {
     if (!this.levelMeterHint) return;
-    this.levelMeterHint.className = isError ? 'level-meter-hint is-error' : 'level-meter-hint';
-    this.levelMeterHint.innerText = message;
+    const state = tone === 'neutral' ? 'pending' : tone;
+    if (this.levelMeterHint.textContent === message && this.levelMeterHint.classList.contains(`is-${state}`)) return;
+    setStatusState(this.levelMeterHint, state);
+    this.levelMeterHint.textContent = message;
+  }
+
+  setMeterZone(zone) {
+    if (!this.levelMeterTrack) return;
+    ['quiet', 'good', 'loud'].forEach((z) => this.levelMeterTrack.classList.toggle(`is-${z}`, z === zone));
+  }
+
+  // The numbers sit in the meter's tooltip and aria-valuetext, not on its face.
+  setMeterReadout(db) {
+    if (!this.levelMeterTrack) return;
+    const text = meterReadout(db);
+    if (this.levelMeterTrack.getAttribute('data-tip') === text) return;
+    const shown = Math.max(METER_FLOOR_DB, Math.min(0, isFinite(db) ? db : METER_FLOOR_DB));
+    this.levelMeterTrack.setAttribute('aria-valuenow', shown.toFixed(1));
+    this.levelMeterTrack.setAttribute('aria-valuetext', text);
+    this.levelMeterTrack.setAttribute('data-tip', text);
   }
 
   renderInputMeterFrame() {
@@ -731,24 +878,26 @@ export class AudioSetupMethods {
     }
 
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const rmsDb = level.rmsDb;
+    const meter = this.audioSetup;
     const peakDb = level.peakDb;
 
-    // Peak hold, then a slow ballistic decay (classic PPM behaviour).
-    if (!(this.audioSetup.peakDb > peakDb)) {
-      this.audioSetup.peakDb = peakDb;
-      this.audioSetup.peakHoldUntil = now + METER_PEAK_HOLD_MS;
-    } else if (now > this.audioSetup.peakHoldUntil) {
-      this.audioSetup.peakDb = Math.max(peakDb, this.audioSetup.peakDb - METER_PEAK_DECAY_DB_PER_FRAME);
+    // The bar is the peak with a fast attack and a slow fall.
+    const falling = meter.barDb - METER_PEAK_DECAY_DB_PER_FRAME;
+    meter.barDb = falling > peakDb ? falling : peakDb;
+    // The tick holds the peak, then falls the same way (classic PPM behaviour).
+    if (!(meter.peakDb > peakDb)) {
+      meter.peakDb = peakDb;
+      meter.peakHoldUntil = now + METER_PEAK_HOLD_MS;
+    } else if (now > meter.peakHoldUntil) {
+      meter.peakDb = Math.max(peakDb, meter.peakDb - METER_PEAK_DECAY_DB_PER_FRAME);
     }
 
-    const rmsPct = AudioEngine.dbToMeterPercent(rmsDb, METER_FLOOR_DB);
-    const peakPct = AudioEngine.dbToMeterPercent(this.audioSetup.peakDb, METER_FLOOR_DB);
-    const isClipping = this.audioSetup.peakDb >= METER_RED_DB;
-
-    if (this.levelMeterMask) {
-      this.levelMeterMask.style.width = `${(100 - rmsPct).toFixed(1)}%`;
+    const zone = levelZone(meter.barDb);
+    const peakPct = AudioEngine.dbToMeterPercent(meter.peakDb, METER_FLOOR_DB);
+    if (this.levelMeterFill) {
+      this.levelMeterFill.style.width = `${AudioEngine.dbToMeterPercent(meter.barDb, METER_FLOOR_DB).toFixed(1)}%`;
     }
+    this.setMeterZone(zone);
     if (this.levelMeterPeakTick) {
       if (peakPct > 0.1) {
         this.levelMeterPeakTick.style.display = 'block';
@@ -756,29 +905,29 @@ export class AudioSetupMethods {
       } else {
         this.levelMeterPeakTick.style.display = 'none';
       }
-      this.levelMeterPeakTick.classList.toggle('is-clipping', isClipping);
-    }
-    if (this.levelMeterRms) {
-      this.levelMeterRms.innerText = `${formatDbFS(rmsDb)} dB`;
-    }
-    if (this.levelMeterPeakReadout) {
-      this.levelMeterPeakReadout.innerText = `PK ${formatDbFS(this.audioSetup.peakDb)}`;
-      this.levelMeterPeakReadout.classList.toggle('is-clipping', isClipping);
+      this.levelMeterPeakTick.classList.toggle('is-clipping', levelZone(meter.peakDb) === 'loud');
     }
     if (this.levelMeterLamp) {
-      this.levelMeterLamp.classList.toggle('is-clipping', isClipping);
-      this.levelMeterLamp.classList.toggle('is-live', !isClipping);
+      this.levelMeterLamp.classList.toggle('is-clipping', zone === 'loud');
+      this.levelMeterLamp.classList.toggle('is-live', zone !== 'loud');
     }
-    if (this.levelMeterTrack) {
-      const shown = Math.max(METER_FLOOR_DB, Math.min(0, isFinite(rmsDb) ? rmsDb : METER_FLOOR_DB));
-      this.levelMeterTrack.setAttribute('aria-valuenow', shown.toFixed(1));
-      this.levelMeterTrack.setAttribute('aria-valuetext', `${formatDbFS(rmsDb)} dBFS`);
+    if (now - meter.readoutAt >= METER_READOUT_INTERVAL_MS) {
+      meter.readoutAt = now;
+      this.setMeterReadout(meter.peakDb);
     }
 
-    if (isClipping) {
-      this.setMeterHint('Too loud. Move back from the mic or turn down its input level.', true);
-    } else if (this.audioSetup.peakDb > METER_AMBER_DB) {
-      this.setMeterHint('Good level.', false);
+    // The hint follows the loudest peak of the last 2.5 s, unless a mic error or fallback line holds it.
+    // Mic sync's clicks and claps peak near full scale on purpose, so they don't count.
+    if (this.micSyncBusy) {
+      meter.levelWindow = [];
+      if (!meter.hintLocked) this.setMeterHint(METER_SYNC_HINT, 'neutral');
+    } else {
+      meter.levelWindow.push({ t: now, db: peakDb });
+      while (meter.levelWindow[0].t < now - METER_HINT_WINDOW_MS) meter.levelWindow.shift();
+      if (!meter.hintLocked) {
+        const hint = levelHint(Math.max(...meter.levelWindow.map((p) => p.db)));
+        this.setMeterHint(hint.text, hint.tone);
+      }
     }
   }
 
@@ -895,7 +1044,7 @@ export class AudioSetupMethods {
 
     if (this.packBuilderSizeNote) {
       const size = formatDiskSize(status.size_bytes);
-      this.packBuilderSizeNote.innerText = size ? `Removing it frees ${size}.` : '';
+      this.packBuilderSizeNote.textContent = size ? `Removing it frees ${size}.` : '';
     }
     this.packBuilderRow.style.display = 'block';
   }
