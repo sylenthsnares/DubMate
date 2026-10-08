@@ -1811,8 +1811,10 @@ body.resizing-timeline * {
     box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.builder-line-row:hover {
-  background-color: var(--secondary);
+/* Hover lifts the row and lights its Play in brass, so the one control on it is easy to find. */
+.builder-line-row:not(.selected):hover {
+  background-color: var(--secondary-hover);
+  border-bottom-color: var(--border-wood);
 }
 
 .cue-dot {
@@ -1849,7 +1851,7 @@ body.resizing-timeline * {
   min-width: 0;
 }
 
-/* One line of text that fades at the right edge. */
+/* One line of text that fades at the right edge; a line with no text yet says so, muted. */
 .cue-text {
   flex: 1;
   min-width: 0;
@@ -1862,10 +1864,22 @@ body.resizing-timeline * {
   mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 
+.cue-text:empty::before {
+  content: 'Line text';
+  color: var(--foreground-muted);
+}
+
+.cue-nonverbal-badge:not([hidden]) + .cue-text:empty::before {
+  content: none;
+}
+
+/* Start times line up down the list, past ten minutes too (M:SS.cc and MM:SS.cc). */
 .cue-timecode-badge {
+  min-width: 8ch;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
+  text-align: right;
   white-space: nowrap;
   color: var(--foreground-muted);
 }
@@ -1879,9 +1893,18 @@ body.resizing-timeline * {
   visibility: hidden;
 }
 
+.line-action svg {
+  width: 13px;
+  height: 13px;
+}
+
 .builder-line-row:hover .line-action,
 .builder-line-row:focus-within .line-action {
   visibility: visible;
+}
+
+.builder-line-row:not(.selected):hover .line-action {
+  color: var(--accent-brass);
 }
 
 /* Touch screens have no hover: Play always shows. */
@@ -1957,6 +1980,7 @@ body.resizing-timeline * {
 }
 
 .cue-card-head .cue-timecode-badge {
+  flex-shrink: 0;
   margin-left: auto;
   color: var(--accent-brass);
 }
@@ -2077,6 +2101,7 @@ body.resizing-timeline * {
   }
 
   .btn-delete-cue {
+    position: relative;
     width: 32px;
     padding: 0;
   }

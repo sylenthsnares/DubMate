@@ -1151,12 +1151,13 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
   // are text and Play only, and the selected line opens into a card with its controls labelled.
   {
     let answerTranscribe = null;
+    let transcribeRequests = 0;
     const ed = await bootEditor({ segments: [
       { start: 1, end: 2, text: "A", character: "Speaker 1" },
       { start: 3, end: 4, text: "B", character: "Speaker 2" },
       { start: 5, end: 6, text: "C", character: "Speaker 1" },
     ] }, null, { fetch: (u) => (u.includes("/transcribe_segment")
-      ? new Promise((r) => { answerTranscribe = () => r({ ok: true, status: 200, json: () => Promise.resolve({ text: "Later" }) }); })
+      ? new Promise((r) => { transcribeRequests++; answerTranscribe = () => r({ ok: true, status: 200, json: () => Promise.resolve({ text: "Later" }) }); })
       : null) });
     const { w, doc, app, video, media } = ed;
     const textOf = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent).trim();
@@ -1185,6 +1186,24 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     video.currentTime = 0;
     action(2, "play").click();
     check(media.calls.includes("play:editor-video") && video.currentTime === 5 && app.stopAt === 6, "the card's Play plays the line again");
+
+    // Focus stays on the card's Play after it plays: Space pauses and resumes where the
+    // line is (the browser doesn't press Play again), and Up and Down still move the selection.
+    const space = (el) => el.dispatchEvent(new w.KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    media.clock(video, 5.4);
+    const kept = space(action(2, "play"));
+    check(video.paused && video.currentTime === 5.4 && !kept, "Space on the card's Play pauses the line where it is, not pressing Play");
+    check(!space(action(2, "play")) && !video.paused && video.currentTime === 5.4, "Space again plays on from there");
+    app.pauseMedia();
+    key(action(2, "play"), "ArrowUp");
+    check(app.selectedSegmentIndex === 1 && doc.activeElement === row(1), "ArrowUp on the card's Play opens the line above and focuses its row");
+    action(1, "set-start").focus();
+    key(doc.activeElement, "ArrowDown");
+    check(app.selectedSegmentIndex === 2 && doc.activeElement === row(2), "ArrowDown on a card's button opens the next line and focuses its row");
+    row(2).querySelector(".cue-text-input").focus();
+    key(doc.activeElement, "ArrowUp");
+    check(app.selectedSegmentIndex === 2, "Up and Down in the card's text box move the caret, not the selection");
+    row(2).focus();
     app.pauseMedia();
 
     // Rows at rest hold no form fields; their only control is Play.
@@ -1285,9 +1304,27 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     tbtn.click();
     check(!!tbtn.querySelector(".spinning") && textOf(tbtn) === "Transcribe", "Transcribe shows the spinner and keeps its label");
     row(2).querySelector(".cue-text").click();
+    // Back on the line while it runs: the new card's Transcribe is still busy, and a second press sends nothing.
+    row(1).querySelector(".cue-text").click();
+    const again = action(1, "transcribe");
+    check(again !== tbtn && again.disabled && !!again.querySelector(".spinning") && textOf(again) === "Transcribe",
+      "a line opened again while its Transcribe runs shows it busy");
+    again.click();
+    app.transcribeSelectedSegment();
+    check(transcribeRequests === 1, "a Transcribe already running isn't sent again");
+    depth = app.undoStack.length;
+    row(2).querySelector(".cue-text").click();
     answerTranscribe();
     await tick();
     check(app.segments[1].text === "Later" && textOf(row(1).querySelector(".cue-text")) === "Later", "a Transcribe that finishes after the selection moved updates its row");
+    check(app.undoStack.length === depth + 1, "one Transcribe is one undo step");
+    row(1).querySelector(".cue-text").click();
+    check(!action(1, "transcribe").disabled && !action(1, "transcribe").querySelector(".spinning"), "once it's done the line's Transcribe is ready again");
+    action(1, "transcribe").click();
+    check(transcribeRequests === 2, "and it sends a new request");
+    answerTranscribe();
+    await tick();
+    row(2).querySelector(".cue-text").click();
 
     // Without transcription the card has no Transcribe.
     app.applyCapabilities({ ...app.capabilities, transcription: false });

@@ -43,9 +43,9 @@ Sizes in px. Row text is 12.5px, numbers and times 11px, the select 12px. There 
 ```
 
 - A row is plain text plus one button. It has no form fields: the character is a name, the text is one line that fades at the right edge.
-- Grid: dot (8px), number (mono 11px), character name (140px; 112px in a narrow column; 12px 700, ellipsis), text (13px, one line), start time (mono 11px), Play (28px icon button, `aria-label` "Play line 12").
+- Grid: dot (8px), number (mono 11px), character name (140px; 112px in a narrow column; 12px 700, ellipsis), text (13px, one line; a line with no text yet shows a muted "Line text", as the old text box's placeholder did), start time (mono 11px, at least 8 characters wide and right-aligned, so `M:SS.cc` and `MM:SS.cc` line up down the list), Play (28px icon button with a 13px icon, `aria-label` "Play line 12").
 - Play is the last column, so it sits at the right edge in both states. It shows on row hover, when the row has focus, and always where there is no hover (`@media (hover: none)`). Its place is kept at rest, so nothing shifts on hover.
-- At least 40px tall (6px padding), 1px dividers as now. Hover fills the row with `--secondary` (#25201a) and shows Play. The pointer cursor stays.
+- At least 40px tall (6px padding), 1px dividers as now. Hover fills the row with `--secondary-hover` (#302922), darkens its divider to `--border-wood` and shows Play in brass, so the row's one control is easy to find. The pointer cursor stays.
 - A click anywhere on the row except Play selects the line and seeks to its start (as now).
 - **Play on a row selects the line and plays it, on the first click.** Pressing it changes nothing until the click: `focusin` on a button never selects. The click selects, plays the line from its start to its end, and leaves focus on the card's Play (the same place on screen, see 3).
 - The "No words" badge stays in place of empty text.
@@ -74,15 +74,17 @@ Sizes in px. Row text is 12.5px, numbers and times 11px, the select 12px. There 
 
 - Only two rows change: the old card becomes a row and the new row becomes a card (`row.innerHTML` from `lineRowHtml` and `lineCardHtml`). The row elements, their ids (`cue-card-N`) and `data-idx` stay. No list or timeline render, as PR #23 and #27 require.
 - The card's select is filled with the whole cast when the card is built (one select, a handful of options). The lazy fill on focus goes.
-- **The clicked row stays under the pointer.** When the old card was above the new one, collapsing it would pull the new one up by about 100px. The list sets `overflow-anchor: none` and corrects `scrollTop` itself: the target's top is read before the swap (free on a click, layout is clean), and the next frame moves the list by however far it moved. Then the card is scrolled fully into view (`block: 'nearest'`; `'start'` if the card is taller than the list), with the smooth behaviour that follows reduced motion.
+- **The clicked row stays under the pointer, as far as the list can scroll.** When the old card was above the new one, collapsing it would pull the new one up by about 100px. The list sets `overflow-anchor: none` and corrects `scrollTop` itself: the target's top is read before the swap (free on a click, layout is clean), and the next frame moves the list by however far it moved. Then the card is scrolled fully into view (`block: 'nearest'`; `'start'` if the card is taller than the list), with the smooth behaviour that follows reduced motion. Near the top of the list there is no room for the correction: with line 1 open and the list at the top, clicking line 2 moves it up by the closed card's height (y 311 to 211 at 1440x900). With room it holds (311 to 317 at 1440x900, 311 to 295 at 1280x720). Holding Down faster than frames skips the earlier corrections (each key cancels the last frame's), so the list jumps while keys repeat and the last key's scroll brings the card into view.
 - **Focus** follows the swap: if focus was inside a row that is rebuilt, it goes to the same control in the new markup by `data-action` (Play to Play), or to the row. It never drops to `<body>`.
 - Results that arrive after the selection moved (Transcribe, Romaji) write the line's text and refresh whichever form its row has now (`refreshRowText(idx)`), instead of a field that may be gone.
+- A Transcribe or Romaji still running is remembered per line (`lineBusy`), not on the button: a card opened again for that line draws the button with the spinner and disabled, a second press (or the toolbar's Transcribe) sends nothing, and when it finishes the button in whichever card is open gets its icon back.
 
 ### 4. Keyboard and screen readers
 
 - The list stays `role="list"`, rows `role="listitem"` with the roving `tabindex` and `aria-current` of U5c.
-- Up and Down on a row or the card select the previous or next line, move focus to it and seek to its start. Enter on the card focuses its text; Esc in the text returns to the card. Enter on an unselected focused row (before any selection) selects it first.
-- Tab from the card goes through the select, text, Play, Set start, Set end, Transcribe, Romaji and Delete. Rows at rest are not Tab stops, and neither is their Play (`tabindex="-1"`): the keyboard plays a line with the card's Play.
+- Up and Down on a row, the card or any of the card's buttons (Play, Set start, Set end, Transcribe, Romaji, Delete) select the previous or next line, move focus to its row and seek to its start. The select and the text box keep their own arrows. Enter on the card focuses its text; Esc in the text returns to the card. Enter on an unselected focused row (before any selection) selects it first.
+- After Play, focus is on the card's Play. Space there pauses and resumes the video where it is, as Space does everywhere in the editor; it doesn't press Play again (which would restart the line).
+- Tab from the card goes through the select, Play, text, Set start, Set end, Transcribe, Romaji and Delete (the header's order, then the text, then the footer). Rows at rest are not Tab stops, and neither is their Play (`tabindex="-1"`): the keyboard plays a line with the card's Play.
 - The card shows the brass `:focus-visible` ring (2px, 2px offset; the list's 4px padding keeps it inside the scroller).
 - Row labels stay "Line 4, Detective Mori, 0:12.40". The card's Play reads "Play line 4".
 
@@ -127,6 +129,8 @@ Dev checks (not committed): `pbl_before.js` (shots, fit, the real-mouse Play cli
 - **Speed**: a selection now writes two rows' markup and builds one textarea (field-sizing measures it). That is less than the old 40 rows of fields cost to render, but the click handler is on the hot path. Measure with `pbfix_perf.js`.
 - **The scroll correction** reads layout once per selection. On a click the layout is clean, so the read is free; holding Down could force one layout per key. Measure key repeat; if it costs more than a frame, read the target's top in the frame instead.
 - **Container queries** need Chromium 105+ and Safari 16+. WebView2 and current macOS WKWebView have them. Without them the select stays 160px and the footer wraps. The list is a width container only: a size container (for a `cqh` text cap) made every editor frame's layout about 5x slower (see Measured).
+- **The text cap follows the window, not the list.** If the timeline is dragged taller than its default, a long line's card can be taller than the list; it then scrolls into view from its top, and Set start and Delete are below the fold until the list scrolls.
+- **A focused character select takes arrow keys** (pre-existing, from main): on Windows, Down on a closed select changes the character, one undo step. Tab into the card lands on the select first, so a keyboard user moving between lines should use Up and Down on the row or a button.
 - **Parallel PRs**: #26 and #28 change `style.css` and studio files, not `builder.css` or `pack_builder.js`. No overlap expected.
 
 ## Measured
@@ -187,11 +191,32 @@ Within the before medians plus 20%: the next frame after a select (+6%), keystro
 
 Each key's handler is under one frame and the layout read before the swap costs nothing measurable, so the read stays in the handler (the Risks fallback, reading it in the frame, isn't needed).
 
+### Review fixes (2026-10-09)
+
+Paired runs on three fixture engines in the same session: main (`f851fa9`), this branch before the review fixes (`3b91c31`) and after. `pbfix_perf.js`, 40 lines, 1440x900, median of 5; `pbl_c_keys.js`, 5 rounds of 10 Downs. Outputs in `dm_pblfix/perf_{before,head,after}.json`.
+
+| | Main | Branch, before fixes | After fixes |
+|---|---:|---:|---:|
+| Select: click handler, ms | 2.1 | 3.0 | 3.4 |
+| Select: click to next frame, ms | 29.7 | 25.9 | 25.8 |
+| Select: long tasks, ms | 0 | 0 | 0 |
+| Keystroke `input`, ms | 0.2 | 0.3 | 0.2 |
+| Text commit `change`, ms | 2.3 | 1.9 | 1.7 |
+| Drag `pointermove` median / max, ms | 0.1 / 0.2 | 0 / 0.2 | 0 / 0.2 |
+| Drop `pointerup`, ms | 23.9 | 16.0 | 17.8 |
+| Holding Down: `keydown` median / max, ms | 1.4 / 3.1 | 2.7 / 4.1 | 2.5 / 4.4 |
+| Holding Down: key to next frame median / 90th, ms | 20.7 / 31.6 | 19.9 / 33.1 | 19.3 / 27.6 |
+| Console errors | 0 | 0 | 0 |
+
+The fixes add nothing measurable to a select (3.0 and 3.4 ms are within run-to-run noise). The select click handler and the `keydown` handler are still over main's median plus 20% (by about 1 ms, the card's markup); the next frame after a click or key is as fast as main or faster, and there are no long tasks.
+
+Real mouse and keyboard at 1440x900, 1280x720 and 960x680 (`dm_pblfix/scripts/fix.js`): Play on line 5 plays it; Space pauses it where it is (7.71 s stays 7.71 s), Space again resumes; Down from the card's Play opens line 6 and focuses its row; Up from Set end opens line 5; Down in the text box moves nothing. Transcribe, then line 3, then line 5 again: the reopened card's Transcribe is disabled with the spinner, one request; when it answers the button is ready. Row start times line up (one right edge for every row, `12:34.56` as wide as `0:05.60`); an empty line shows "Line text". No console errors. Screenshots `fix-hover-*` and `fix-lines-*`.
+
 ## Decided without the owner
 
 1. **Rows at rest have no form fields.** A row is text plus Play, and selecting it opens the card. Clicking a row's text no longer puts a caret in it: the first click opens the card, and the text field is right there. This is what makes every control honest; the old rows held 40 fields that only selected on first use.
 2. **Play sits at the right edge of a row and of the card's header**, so it stays under the pointer when the row opens.
-3. **The card's Play restarts the line** each time. There is no Stop: Space pauses, as everywhere in the editor.
+3. **The card's Play restarts the line** each time it is clicked. There is no Stop: Space pauses, as everywhere in the editor, also with focus on the card's Play right after playing.
 4. **Set start and Set end** are the card's start and end controls, reusing the deck's "to the playhead" behaviour and keys. There are no new ±25 ms nudge buttons in this PR; the timeline handles fine trims. The deck's Start and End stay.
 5. **No height animation.** The layout snaps and only the card's colour and contents fade in (140ms). An animated height would move rows under the pointer and make the scroll target land late.
 6. **Clicking the card's empty space does nothing**, so editing never moves the video by accident.

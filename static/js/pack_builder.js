@@ -166,6 +166,7 @@ export class PackBuilderApp {
     this.compileFilled = false;
     this.editorWarning = '';
     this.textBefore = null; // a line's text when its field took focus, for undo
+    this.lineBusy = new WeakMap(); // a line's Transcribe or Romaji still running: line -> Set of actions
     this.leaving = false;
 
     this.initDOM();
@@ -2269,11 +2270,13 @@ export class PackBuilderApp {
   /**
    * The selected line: an editor card with its character, its whole text, its times and
    * labelled buttons. Each button's icon and label are separate spans, so a spinner
-   * replaces the icon only.
+   * replaces the icon only; a Transcribe or Romaji still running is drawn busy.
    */
   lineCardHtml(seg, idx, canTranscribe) {
-    const button = (cls, act, icon, label, extra = '') =>
-      `<button type="button" class="btn btn-sm ${cls}" data-action="${act}"${extra}><span class="btn-icon">${icon}</span><span class="btn-label">${label}</span></button>`;
+    const busy = this.lineBusy.get(seg);
+    const button = (cls, act, icon, label, extra = '') => (busy?.has(act)
+      ? `<button type="button" class="btn btn-sm ${cls}" data-action="${act}"${extra} disabled><span class="btn-icon">${ICON_SPINNER}</span><span class="btn-label">${label}</span></button>`
+      : `<button type="button" class="btn btn-sm ${cls}" data-action="${act}"${extra}><span class="btn-icon">${icon}</span><span class="btn-label">${label}</span></button>`);
     return '<div class="cue-card-head">'
       + `<span class="cue-dot" style="background: ${this.getCharacterColor(seg.character)};"></span>`
       + `<span class="cue-number" aria-hidden="true">${idx + 1}</span>`
@@ -2385,8 +2388,8 @@ export class PackBuilderApp {
           this.previewSegmentAudio(idx);
         } else if (action === 'set-start') this.markInAtPlayhead();
         else if (action === 'set-end') this.markOutAtPlayhead();
-        else if (action === 'transcribe') this.transcribeSingleSegment(idx, btn);
-        else if (action === 'romaji') this.romanizeSingleSegment(idx, btn);
+        else if (action === 'transcribe') this.transcribeSingleSegment(idx);
+        else if (action === 'romaji') this.romanizeSingleSegment(idx);
         else if (action === 'delete') this.deleteSegment(idx);
         return;
       }
@@ -2442,7 +2445,13 @@ export class PackBuilderApp {
       const row = rowOf(e.target);
       if (!row) return;
       const idx = idxOf(row);
-      if (e.target === row && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      // The card's buttons move between lines like the row does; its select and text box keep their arrows.
+      const onRowOrButton = e.target === row || e.target.tagName === 'BUTTON';
+      if (e.code === 'Space' && e.target.dataset.action === 'play') {
+        // Focus stays on Play after it plays: Space pauses and resumes, as everywhere in the editor.
+        e.preventDefault();
+        this.togglePlayPause();
+      } else if (onRowOrButton && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
         e.preventDefault();
         // A focused row that isn't selected yet (before any selection) selects itself first.
         const next = this.selectedSegmentIndex !== idx ? idx : idx + (e.key === 'ArrowDown' ? 1 : -1);
@@ -3454,22 +3463,34 @@ export class PackBuilderApp {
     this.syncSegmentsToServer();
   }
 
-  /** While a line's Transcribe or Romaji runs, its button shows the spinner in place of its icon. */
-  busyButton(btnEl) {
-    const icon = btnEl ? btnEl.querySelector('.btn-icon') : null;
-    const original = icon ? icon.innerHTML : '';
-    if (icon) icon.innerHTML = ICON_SPINNER;
-    if (btnEl) btnEl.disabled = true;
+  /**
+   * While a line's Transcribe or Romaji runs, its card's button shows the spinner in place of
+   * its icon and can't be pressed, in whichever card is open for the line when it finishes.
+   * Returns done(), or null when it's already running.
+   */
+  busyLine(seg, action) {
+    const running = this.lineBusy.get(seg) || new Set();
+    if (running.has(action)) return null;
+    running.add(action);
+    this.lineBusy.set(seg, running);
+    const paint = (busy) => {
+      const btn = document.getElementById(`cue-card-${this.segments.indexOf(seg)}`)?.querySelector(`[data-action="${action}"]`);
+      if (!btn) return;
+      btn.querySelector('.btn-icon').innerHTML = busy ? ICON_SPINNER : (action === 'transcribe' ? ICON_MIC : ICON_GLOBE);
+      btn.disabled = busy;
+    };
+    paint(true);
     return () => {
-      if (icon) icon.innerHTML = original;
-      if (btnEl) btnEl.disabled = false;
+      running.delete(action);
+      paint(false);
     };
   }
 
-  async transcribeSingleSegment(idx, btnEl) {
+  async transcribeSingleSegment(idx) {
     if (!this.sessionId || idx < 0 || idx >= this.segments.length) return;
     const seg = this.segments[idx];
-    const done = this.busyButton(btnEl);
+    const done = this.busyLine(seg, 'transcribe');
+    if (!done) return;
 
     const lang = this.selectTranscribeLang ? this.selectTranscribeLang.value : 'auto';
     const isRomaji = lang === 'ja_romaji';
@@ -3509,7 +3530,7 @@ export class PackBuilderApp {
     }
   }
 
-  async romanizeSingleSegment(idx, btnEl) {
+  async romanizeSingleSegment(idx) {
     if (!this.sessionId || idx < 0 || idx >= this.segments.length) return;
     const seg = this.segments[idx];
     if (!seg.text || !seg.text.trim()) {
@@ -3517,7 +3538,8 @@ export class PackBuilderApp {
       return;
     }
 
-    const done = this.busyButton(btnEl);
+    const done = this.busyLine(seg, 'romaji');
+    if (!done) return;
 
     try {
       const res = await fetch(`/api/builder/${this.sessionId}/romanize`, {
@@ -3552,9 +3574,7 @@ export class PackBuilderApp {
       this.showToast('Select a line first');
       return;
     }
-    const idx = this.selectedSegmentIndex;
-    const card = document.getElementById(`cue-card-${idx}`);
-    this.transcribeSingleSegment(idx, card ? card.querySelector('.btn-whisper-cue') : null);
+    this.transcribeSingleSegment(this.selectedSegmentIndex);
   }
 
   // --- STEP 4: Compile & Launch ---
