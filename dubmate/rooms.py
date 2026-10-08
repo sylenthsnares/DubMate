@@ -31,6 +31,8 @@ STATE_VERSION = 2
 # Room state sent to the studio (to_state_dict). 3: the booth edits voice chains, so a
 # tab from before that stops applying state and asks for a reload (takes.js TAKE_STATE_VERSION).
 CLIENT_STATE_VERSION = 3
+# The video formats a room exports.
+EXPORT_ASPECTS = ("16:9", "9:16")
 
 
 def generate_room_code() -> str:
@@ -79,6 +81,12 @@ class Room:
         # The premiere's Mix slider: 0 = more music, 50 = even, 100 = more voice.
         self.master_mix_balance: float = 50.0
         self.export_status: Dict[str, str] = {}
+        # The running video render per aspect (rooms_api.start_export_render), kept here so it
+        # outlives the request or socket that started it. export_generation goes up whenever
+        # the takes or the mix change; a render that ends on an older generation starts over.
+        self.export_tasks: Dict[str, asyncio.Task] = {}
+        self.export_generation: int = 0
+        self._invalidated_task: Optional[asyncio.Task] = None
         self.sockets: Set[WebSocket] = set()
         self._save_dirty: bool = False
         self._save_task: Optional[asyncio.Task] = None
@@ -206,11 +214,43 @@ class Room:
         """Drops renders made from takes or mix settings that just changed.
 
         An in-flight render keeps its "processing" entry so a second ffmpeg cannot
-        start writing the same output file underneath it.
+        start writing the same output file underneath it; the generation bump makes it
+        render again once its pass ends. When a finished video or a running render was
+        dropped, the clients are told (export_invalidated), on the running loop since this
+        stays sync; with no loop running there is no one to tell.
         """
+        dropped = any(self.ready_export_path(aspect) or self.export_status.get(aspect) == "processing"
+                      for aspect in EXPORT_ASPECTS)
+        self.export_generation += 1
         self.exported_video_path = None
         self.exported_video_9_16_path = None
         self.export_status = {k: v for k, v in self.export_status.items() if v == "processing"}
+        if dropped:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            self._invalidated_task = loop.create_task(self.broadcast("export_invalidated", {}))
+
+    def cancel_export_renders(self) -> List[asyncio.Task]:
+        """Cancels the running video renders of a room being removed; returns them. Safe from
+        a worker thread too (prune_sessions runs in one)."""
+        tasks = [t for t in self.export_tasks.values() if not t.done()]
+        for task in tasks:
+            try:
+                task.get_loop().call_soon_threadsafe(task.cancel)
+            except RuntimeError:   # its loop is closed; nothing left to stop
+                pass
+        return tasks
+
+    def export_state(self, aspect_ratio: str) -> str:
+        """"ready", "processing", "failed" or "idle": what the studio's Save shows for this aspect."""
+        if self.ready_export_path(aspect_ratio):
+            return "ready"
+        status = self.export_status.get(aspect_ratio, "")
+        if status == "processing":
+            return "processing"
+        return "failed" if status.startswith("failed") else "idle"
 
     def export_out_path(self, aspect_ratio: str) -> str:
         """Where a render for this aspect goes. Reads common.exports_dir() at call time so a
@@ -327,6 +367,8 @@ class Room:
             "cleanup_refreshing": sorted(self.cleanup_refreshing),
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
             "master_mix_balance": self.master_mix_balance,
+            # Each video format's export state, so a reload or a late joiner shows Saving… or Saved.
+            "exports": {aspect: self.export_state(aspect) for aspect in EXPORT_ASPECTS},
             "has_export": has_export,
             "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,
             "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9" if has_export else None,
@@ -496,6 +538,7 @@ def _forget_room(room_id: str) -> None:
     room = ROOMS.pop(room_id, None)
     UNLOADABLE_ROOMS.discard(room_id.upper())
     if room is not None and isinstance(room, Room):
+        room.cancel_export_renders()
         with room._save_lock:
             room.deleted = True
 
