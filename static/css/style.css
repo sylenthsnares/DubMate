@@ -600,6 +600,101 @@ body::after {
   }
 }
 
+/* Pack Builder installing in the background (studio/packbuilder_install.js). Quiet by
+   design: a brass bar, not an amber call to action, since nothing is asked of the user
+   until it is done. Red only for the failed line. */
+.pb-install-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.pb-install-chip[hidden],
+.pb-install-chip [hidden] {
+  display: none;
+}
+.pb-install-running,
+.pb-install-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  background: var(--card);
+  border: 1px solid var(--border-wood);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.pb-install-failed {
+  gap: 4px;
+  padding-right: 3px;
+}
+.pb-install-failed .pb-install-label {
+  color: var(--accent-red-soft);
+}
+.pb-install-running:focus-visible,
+.pb-install-failed .pb-install-label:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.pb-install-bar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--border-wood);
+  overflow: hidden;
+}
+.pb-install-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-brass);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+.pb-install-percent {
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+/* "DubMate restarts, so anyone in your room is disconnected." under the chip. */
+.pb-install-confirm {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1100;
+  width: 280px;
+  padding: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.pb-install-confirm p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+.pb-install-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+@media (max-width: 1279px) {
+  .pb-install-name {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pb-install-fill {
+    transition: none;
+  }
+}
+
 /* The code exists locally but is not resolvable by guests yet -- usually the
    public tunnel is still coming up. Hovering explains it. */
 .room-badge.room-badge-unpublished {

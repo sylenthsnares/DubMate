@@ -14,6 +14,7 @@ import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
+import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
@@ -1423,6 +1424,8 @@ class DubMateApp {
   async initRouter() {
     captureHomeOriginParam();
     this.pointHomeLinksAtOwnEngine();
+    // Pack Builder installing in the background (desktop app only). Not awaited.
+    this.initPackBuilderInstall();
     await this.fetchPacks();
     this.loadEngineMicSync();
 
@@ -1795,7 +1798,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {
