@@ -239,6 +239,7 @@ These were answered overnight while you slept. They follow the critique's recomm
 - **Short windows (800 px tall or less) keep 8 px column gaps** and an 8 px vertical deck padding, as U2 did. Both are on the scale; the 12 px gutter (L1) is the same at every height.
 - **The booth fills the window below the header.** Its height no longer subtracts the cast strip, which the booth no longer shows. The booth's page padding is 8 / 16 / 12 (top, sides, bottom), so the picture starts at y = 114.
 - **The longest real caption** (92 characters, a pack in `~/Documents/DubMate/Packs`) wraps to two centred lines at 1280x720. The prompter is then 75 px tall and the picture 22.7% of the screen: below the 25% target, but well above today's 14.7%.
+- **The who's-here popover** lists several roles by name ("2 roles: Carol, Dave"). Someone with no role reads "No role yet", with no progress line, and one line reads "0 of 1 line recorded". Hover and focus open it; a click keeps it open until a second click, Esc or focus leaving. While the stack is inert (recording), Esc is left to the booth. `presence.js` also exports `avatarHtml` and `avatarEl(user, size)` (28 px by default) for the take rows.
 
 ## Hands-on checks (owner, in the morning)
 

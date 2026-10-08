@@ -2044,6 +2044,9 @@ body::after {
   min-height: 44px;
   gap: var(--space-3);
   flex-shrink: 0;
+  /* The who's-here popover hangs below the bar, over the picture */
+  overflow: visible;
+  z-index: 5;
 }
 
 /* Line 1 of 4, the line chips, My lines. The chips scroll sideways, so a long scene
@@ -2090,6 +2093,136 @@ body::after {
 /* The who's-here slot takes no room until the presence stack fills it */
 .booth-presence:empty {
   display: none;
+}
+
+/* WHO'S HERE (presence.js): one avatar per person online, the stack button and its
+   popover. Shared by the booth bar and the lobby title row. */
+.avatar {
+  width: var(--avatar-size, 28px);
+  height: var(--avatar-size, 28px);
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: var(--font-sans);
+  font-size: max(11px, calc(var(--avatar-size, 28px) * 0.43));
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+
+.presence {
+  position: relative;
+  display: flex;
+}
+
+.presence-stack {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.presence-stack:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+/* Overlapping discs, each ringed in the bar's walnut so the edges read */
+.presence-stack .avatar {
+  box-shadow: 0 0 0 2px var(--card), inset 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+.presence-stack .avatar + .avatar {
+  margin-left: calc(-1 * var(--space-2));
+}
+.presence-stack .presence-more {
+  background: var(--secondary);
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.presence-pop {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 60;
+  width: 280px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-3);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  animation: presence-pop-in var(--duration-fast) var(--ease-out);
+}
+.presence-pop[hidden] {
+  display: none;
+}
+@keyframes presence-pop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+.presence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.presence-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.presence-row + .presence-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.presence-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.presence-name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.presence-meta {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Green: done (the Signal Lamp Rule) */
+.presence-ready {
+  align-self: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--radius-full);
+  background: rgba(22, 163, 74, 0.18);
+  color: var(--accent-green-light);
+  border: 1px solid var(--accent-teal-glow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presence-pop {
+    animation: none;
+  }
 }
 
 /* Redesigned Mark Ready Toggle Button */

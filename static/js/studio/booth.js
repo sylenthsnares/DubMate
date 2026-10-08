@@ -6,6 +6,7 @@ import { openDialog, plural, announce } from '../ui_common.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
 import { micErrorMessage } from './audio_setup.js';
+import { renderPresenceStack } from './presence.js';
 
 const LOCK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 const SAVING_ICON = '<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>';
@@ -1378,6 +1379,10 @@ export class BoothMethods {
     const screening = this.roomState.status === 'screening';
     const { recorded, total } = this.myLineProgress();
     const allRecorded = total > 0 && recorded === total;
+
+    // Who's here, with each person's line and progress in its popover.
+    renderPresenceStack(document.getElementById('booth-presence'),
+      { users: this.roomState.users, roomState: this.roomState, selfId: this.user.id });
 
     if (this.btnLaunchPremiere) {
       this.btnLaunchPremiere.style.display = isHost ? 'inline-flex' : 'none';
