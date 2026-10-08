@@ -52,6 +52,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **In This Dub**: the premiere lists every line with who voices it and the take in the dub, or "Original voice". Click a line and playback jumps there for everyone. Change take opens the line in the booth.
 - **Mix Presets**: the premiere's Mix has Balanced, Voices forward and Music forward, with the music and dialogue sliders under Fine-tune. Friends see the host's mix and hear what the video will sound like.
 - **Open Download Page**: when DubMate is missing voice effects or the stronger noise cleanup, Open download page takes you to the DubMate download page. In a browser it's a link. A desktop app older than 2.0 can't open it, so there the button is Copy download link: it copies the link for you to paste into your browser.
+- **About DubMate, Privacy and Licence Notices**: About DubMate, in the logo menu and the ? sheet, shows your version and links to the source code, the licence, the third-party notices, the privacy notice and how to report a security problem. On your own computer it lists the folders where DubMate keeps your work, with Open folder; in someone else's room it shows none of the host's folders. PRIVACY.md says what goes online, where your files are and how to delete them; THIRD_PARTY_NOTICES.md lists the projects DubMate is built on, with their licences.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -106,6 +107,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **Keep Going While a Take Saves**: saving a take no longer blocks the booth. Go to the next line and record it while the last take saves; only the line that is saving waits, and its chip says "saving". "Take saved" shows only for a line you've moved away from.
 - **Takes Kept When the Upload Fails**: a take that couldn't upload stays in its Takes list as "waiting to upload" with Retry, and uploads by itself when you're back online. Closing the page asks first while a take is waiting or saving.
 - **Done on Your Last Line**: Done marks you ready, or asks first when some of your lines have no take. The host's one main button is "Start premiere" with how many people are ready; a guest whose lines all have takes gets "All recorded · Mark ready".
+- **Audio Settings Says Where Your Takes Go**: on your own computer it says your takes are saved on this computer. In someone else's room it says your takes are sent to the host's computer, and the host can export and share them.
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
