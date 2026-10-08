@@ -194,6 +194,58 @@ Measure first, then fix the costs the numbers show, without a rewrite. Expected 
 - **Builder video and voice routes:** compare `no-cache` with `private, max-age=3600`. Switch
   only if seeks get measurably faster. Session files don't change during a session.
 
+### Snappiness (3), measured
+
+Headless Chromium at 1440x900, 40 lines (every fifth overlaps), median of 5 runs, each on a fresh
+page. "main" is origin/main (44d68d0); "after" is this branch with group D. Small is the 640x360
+fixture; 1080p is the 12 Mb/s, GOP 250 fixture. Times run from the input event's `timeStamp`
+to the media event or the end of the handler. The script is `dm_pw/pbfix_perf.js` (not committed).
+
+| Metric (ms, median of 5) | main small | after small | main 1080p | after 1080p |
+|---|---:|---:|---:|---:|
+| Play at start: video `playing` | 9.7 | 8.0 | 9.9 | 9.2 |
+| Play at start: voice `playing` | 17.0 | 7.7 | 15.6 | 9.0 |
+| Play after a seek: voice `playing` | 8.0 | 3.5 | 6.9 | 4.6 |
+| Timeline click: video `seeked` (new spot) | 61.4 | 71.1 | 108.7 | 135.5 |
+| Timeline click: video `seeked` (spot already played) | 61.5 | 55.1 | 85.0 | 89.4 |
+| Select a line: click handler | 5.6 | 1.2 | 6.1 | 1.4 |
+| Select a line: click to next frame | 18.2 | 10.0 | 19.6 | 11.8 |
+| Keystroke in a line: `input` handler | 0.1 | 0.1 | 0.1 | 0.1 |
+| Text commit (blur): `change` handler | 3.3 | 0.6 | 3.4 | 0.6 |
+| Drag 1 s: `pointermove` handler, median | 3.1 | 0.0 | 2.8 | 0.0 |
+| Drag 1 s: `pointermove` handler, max | 5.6 | 0.1 | 4.4 | 0.2 |
+| Drag 1 s: animation frame work, max | 0.3 | 0.8 | 0.3 | 0.9 |
+| Drag 1 s: frames over 16.7 ms | 2 | 1 | 0 | 0 |
+| Drop: `pointerup` handler | 16.4 | 13.7 | 11.9 | 15.1 |
+| Editor open: first line blocks drawn | 176 | 39 | 127 | 46 |
+| Editor open: waveform drawn | 254 | 69 | 280 | 80 |
+| Switch to Full audio: waveform drawn | 188 | 19 | 152 | 23 |
+| Switch back to Voices only: waveform drawn | 171 | 3.4 | 150 | 4.6 |
+| Long tasks during select and drag | 0 | 0 | 0 | 0 |
+
+What the numbers say:
+
+- **Waveform waits were the biggest cost.** On main the editor drew its lines only after the
+  video's `loadeddata` or the `/waveform` reply, and every open and audio switch recomputed the
+  peaks from the WAV (about 150 to 250 ms). Now the lines draw in the same call as the open, the
+  engine keeps the peaks per file, width and modification time, and the editor keeps them per
+  track. The first open of a session still computes them once (first run: about 0.36 s to the
+  waveform, the lines at 0.12 s).
+- **Selection, text commits and drags** no longer rebuild every block. A drag moves the time at
+  once and the block once per frame; the drop packs the tracks and rebuilds the timeline once, and
+  rebuilds the line list only when the line changed places in it.
+- **Play:** the voice now starts with the video (group C removed the extra seek on Play).
+- **Seeks** didn't change and vary a lot from run to run (1080p new spot: 65 to 224 ms). The time
+  is Chromium fetching and decoding from the last keyframe, not the editor.
+- **Cache-Control:** `private, max-age=3600` on the builder video and voice routes made seeks
+  neither consistently faster nor slower. Medians, new spot then played spot, `no-cache` vs
+  `max-age`: small 71 vs 54 and 55 vs 41 ms; a second small round 46 vs 84 and 47 vs 38 ms;
+  1080p 136 vs 162 and 89 vs 106 ms. That is within the run-to-run spread, so the routes keep
+  `no-cache`.
+- **Keystrokes** were already cheap (0.1 ms); nothing changed there.
+
+Raw numbers: `dm_shots/pack-builder-editor-fixes/after-D-perf.json`.
+
 ## Implementation groups (build order)
 
 **A. Automatic tracks and vertical timeline scroll** (items 1 and 4).
@@ -273,6 +325,10 @@ Every group runs `python tests/run_all_tests.py`. `test_css_floors.js` applies t
   and the geometry and wheel checks.
 - `pbfix_play.js <port> <label> [Mbps]` writes the play, seek and `currentTime` event log
   (`playwright-core` from `dm_pw/node_modules`; full Chromium for real audio timing).
+- `pbfix_perf.js <port> <label> <out.json> [runs]` measures the group D metrics.
+  `dm_pbfix/startD.sh <repo> <small|big> <port> [cache-control]` starts a fixture engine with its
+  own `DUBMATE_CACHE_DIR`. Without that, two engines from one checkout share `<repo>/data/builder`
+  and both serve whichever video was copied last.
 
 ## Risks
 

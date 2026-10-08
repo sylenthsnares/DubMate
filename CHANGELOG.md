@@ -46,6 +46,7 @@
 - **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
 - **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
 - **Pack Builder Tracks Follow Overlapping Lines**: lines that play at the same time, like a collective gasp or people talking over each other, get their own track automatically, up to 5. Add track, Delete track and track names are gone. When the tracks don't fit, the timeline scrolls up and down: use the wheel over the track numbers, drag empty timeline, or the scrollbar.
+- **Faster Pack Builder Editor**: the editor responds faster. Lines show as soon as it opens, with the waveform following. Selecting, typing in and dragging a line no longer redraws the whole timeline, and switching between Voices only and Full audio is instant after the first time.
 - **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 - **Invites After a Restart**: after DubMate restarts, the room code of a continued session no longer works, so Copy invite gives a direct link instead.
 - **What You Preview Is What You Export**: takes now sound exactly the same in the booth, the premiere and the exported video, including low cut and compress, which used to change only the preview.
@@ -90,6 +91,8 @@
 - **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old dialogue lines or the old cover behind, and stuck FFmpeg steps now time out with a clear error.
 - **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
+- **Pack Builder Cast Row Scrolls**: with many characters, the Cast row scrolls with the mouse wheel, a trackpad, by dragging, or with the arrow keys. A fade shows which side has more.
+- **Pack Builder Play**: Play no longer repeats the start of a line. The voices wait for the video, and a line's Play stops at the end of the line.
 - **"Take Saved" Twice**: saving your own take no longer shows "Take saved" twice.
 - **Refused Changes Say Why**: when the room refuses a change, such as a guest changing the casting, a message says why and the page shows the room as it really is, instead of a change that didn't happen.
 - **Updated Notice**: the "DubMate was updated" notice has a Reload button.
