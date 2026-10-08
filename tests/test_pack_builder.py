@@ -14,6 +14,7 @@ import io
 import json
 import shutil
 import tempfile
+import time
 import unittest
 import wave
 import struct
@@ -848,7 +849,7 @@ NOTE This is a test subtitle file
             calls.append("nonverbal")
             return segments + [dict(grunt)]
 
-        def fake_detect(vocals_wav, on_progress=None):
+        def fake_detect(vocals_wav, on_progress=None, cancel=None):
             calls.append(("detect", vocals_wav))
             on_progress(0.88, "Downloading speaker detection (about 35 MB, first time only)")
             statuses.append((progress_ref[0].status, progress_ref[0].message))
@@ -1357,6 +1358,15 @@ NOTE This is a test subtitle file
             self.assertTrue(plan["proc"].killed.is_set())
             self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
 
+            # Cancelling processing stops a running child at once.
+            cancel = threading.Event()
+            threading.Timer(0.1, cancel.set).start()
+            plan.clear()
+            plan.update(lines=["DUBMATE_SPEAKER_PROGRESS 0.1"], code=0, hang=True)
+            with self.assertRaises(pack_builder.BuildCancelled):
+                pack_builder.detect_speaker_turns(wav, cancel=cancel)
+            self.assertTrue(plan["proc"].killed.is_set())
+
             # The child can't even start.
             (turns, notice), _ = run([], 0, **{"raise": True})
             self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
@@ -1445,6 +1455,320 @@ NOTE This is a test subtitle file
                  {"start": 5.5, "end": 6.5, "text": "2", "character": "Actor"}]
         self.assertEqual([s["character"] for s in pack_builder.assign_speakers_to_segments(guess, [])],
                          ["Speaker 1", "Speaker 2"])
+
+
+SRT_THREE = ("1\n00:00:01,000 --> 00:00:02,000\n[Levi] Move.\n\n"
+             "2\n00:00:02,500 --> 00:00:03,500\n[Kenny] Not yet.\n\n"
+             "3\n00:00:04,000 --> 00:00:05,000\nSomeone shouts.\n")
+
+
+class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
+    """What is installed, subtitles, retries, cancel, skipped stages and session expiry."""
+
+    def setUp(self):
+        from dubmate import builder_api
+        self.api = builder_api
+        self.tmp_dir = tempfile.mkdtemp(prefix="dubmate_test_builder_runs_")
+        self.session_ids = []
+        builder_api._GPU_STATE.update(value=None, started=False)
+
+    def tearDown(self):
+        for sid in self.session_ids:
+            BUILDER_SESSIONS.pop(sid, None)
+        self.api._GPU_STATE.update(value=None, started=False)
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def _session(self, sid, **extra):
+        folder = os.path.join(self.tmp_dir, sid)
+        os.makedirs(folder, exist_ok=True)
+        session = {"session_id": sid, "folder": folder, "duration": 10.0,
+                   "progress": pack_builder.BuildProgress(sid),
+                   "video_path": os.path.join(folder, "clip.mp4"), "created_at": time.time(),
+                   "vocals_path": None, "backing_path": None, "full_audio_path": None}
+        session.update(extra)
+        BUILDER_SESSIONS[sid] = session
+        self.session_ids.append(sid)
+        return session
+
+    def _fake_pipeline(self, calls, transcribe=None, gate=None):
+        """Patches the slow stages. Separation writes real files, so a retry can reuse them."""
+        from unittest import mock
+
+        def extract(video, out):
+            calls.append("extract")
+            if gate is not None:
+                gate.wait(5)
+            with open(out, "wb") as f:
+                f.write(b"RIFF")
+            return out
+
+        def separate(wav, out_dir):
+            calls.append("separate")
+            os.makedirs(out_dir, exist_ok=True)
+            paths = {k: os.path.join(out_dir, f"{k}.wav") for k in ("vocals", "backing")}
+            for p in paths.values():
+                with open(p, "wb") as f:
+                    f.write(b"RIFF")
+            return dict(paths, used_fallback=False)
+
+        def fake_transcribe(wav, **kwargs):
+            calls.append("transcribe")
+            if transcribe:
+                return transcribe()
+            return [{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Actor"}]
+
+        def detect(vocals_wav, on_progress=None, **kwargs):
+            calls.append("detect")
+            return None, ""
+
+        patches = [
+            mock.patch.object(pack_builder, "extract_audio_from_video", extract),
+            mock.patch.object(pack_builder, "separate_audio_stems", separate),
+            mock.patch.object(pack_builder, "transcribe_audio", fake_transcribe),
+            mock.patch.object(pack_builder, "add_nonverbal_segments", lambda segs, *a: segs),
+            mock.patch.object(pack_builder, "detect_speaker_turns", detect),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _wait_for(self, client, sid, statuses, timeout=5.0):
+        deadline = time.time() + timeout
+        state = None
+        while time.time() < deadline:
+            state = client.get(f"/api/builder/{sid}/status").json()
+            if state["status"] in statuses:
+                return state
+            time.sleep(0.02)
+        self.fail(f"status never reached {statuses}: {state}")
+
+    def test_25_capabilities_follow_find_spec(self):
+        """Each flag is an installed module; torch is never imported when it is missing."""
+        from unittest import mock
+        present = set()
+        detect_calls = []
+
+        def find_spec(name, *args, **kwargs):
+            return object() if name in present else None
+
+        def detect():
+            detect_calls.append(1)
+            return True, True, "cuda"
+
+        with mock.patch.object(self.api.importlib.util, "find_spec", find_spec), \
+                mock.patch.object(pack_builder, "detect_torch_and_cuda", detect):
+            client = TestClient(app)
+            present.update({"whisper", "yt_dlp", "pykakasi"})
+            caps = client.get("/api/builder/capabilities").json()
+            self.assertEqual(caps, {"separation": False, "transcription": True, "link_import": True,
+                                    "speakers": False, "romaji": True, "gpu": False})
+            self.assertEqual(detect_calls, [], "torch is missing, so the GPU probe never imports it")
+
+            present.clear()
+            present.update({"torch", "demucs", "sherpa_onnx"})
+            caps = client.get("/api/builder/capabilities").json()
+            self.assertEqual({k: caps[k] for k in ("separation", "transcription", "link_import", "speakers", "romaji")},
+                             {"separation": True, "transcription": False, "link_import": False,
+                              "speakers": True, "romaji": False})
+            # demucs alone isn't separation without torch.
+            present.discard("torch")
+            self.assertFalse(client.get("/api/builder/capabilities").json()["separation"])
+
+    def test_26_capabilities_gpu_from_null_to_bool(self):
+        """The GPU probe runs once in the background: null until it is known, then cached."""
+        import threading
+        from unittest import mock
+        release = threading.Event()
+        detect_calls = []
+
+        def detect():
+            detect_calls.append(1)
+            release.wait(5)
+            return True, True, "cuda"
+
+        with mock.patch.object(self.api.importlib.util, "find_spec", lambda name, *a, **k: object()), \
+                mock.patch.object(pack_builder, "detect_torch_and_cuda", detect):
+            client = TestClient(app)
+            self.assertIsNone(client.get("/api/builder/capabilities").json()["gpu"])
+            self.assertIsNone(client.get("/api/builder/capabilities").json()["gpu"])
+            release.set()
+            deadline = time.time() + 3
+            gpu = None
+            while gpu is None and time.time() < deadline:
+                gpu = client.get("/api/builder/capabilities").json()["gpu"]
+                time.sleep(0.02)
+            self.assertIs(gpu, True)
+            self.assertEqual(len(detect_calls), 1, "the probe runs once per process")
+
+    def test_27_subtitles_check(self):
+        """A dropped file is checked without a session: its lines and named speakers, or a clear 400."""
+        client = TestClient(app)
+        res = client.post("/api/builder/subtitles/check",
+                          files={"file": ("scene.srt", io.BytesIO(SRT_THREE.encode("utf-8")), "text/plain")})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"count": 3, "characters": ["Actor", "Kenny", "Levi"]})
+
+        vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n"
+        res = client.post("/api/builder/subtitles/check", files={"file": ("a.vtt", io.BytesIO(vtt.encode()), "text/vtt")})
+        self.assertEqual(res.json(), {"count": 1, "characters": ["Actor"]})
+
+        res = client.post("/api/builder/subtitles/check",
+                          files={"file": ("notes.srt", io.BytesIO(b"just some text"), "text/plain")})
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["detail"], "No timed lines in this file. Use an SRT or VTT file.")
+
+    def test_28_subtitles_live_in_the_session(self):
+        """Imported subtitles skip transcription; DELETE clears them and the next run transcribes."""
+        calls = []
+        self._fake_pipeline(calls)
+        sid = "t28"
+        session = self._session(sid)
+        client = TestClient(app)
+        res = client.post(f"/api/builder/{sid}/import_subtitles",
+                          files={"file": ("scene.srt", io.BytesIO(SRT_THREE.encode("utf-8")), "text/plain")})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(session["subtitle_segments"]), 3)
+
+        self.api._run_builder_pipeline_sync(sid)
+        progress = session["progress"]
+        self.assertEqual(progress.status, "transcribed")
+        self.assertNotIn("transcribe", calls)
+        self.assertNotIn("detect", calls, "the subtitles named the speakers")
+        self.assertEqual(progress.to_dict()["skipped"], ["transcription", "speakers"])
+        self.assertEqual([s["character"] for s in session["subtitle_segments"]], ["Levi", "Kenny", "Actor"],
+                         "the run doesn't change the stored subtitles")
+
+        res = client.delete(f"/api/builder/{sid}/subtitles")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(session["subtitle_segments"], [])
+        # The last run's lines are in progress.segments; they are not subtitles.
+        self.assertTrue(progress.segments)
+        calls.clear()
+        self.api._run_builder_pipeline_sync(sid)
+        self.assertIn("transcribe", calls)
+        self.assertEqual(progress.to_dict()["skipped"], [])
+        self.assertEqual(client.delete("/api/builder/nope/subtitles").status_code, 404)
+
+    def test_29_process_without_transcription(self):
+        """transcribe:false finishes with no lines: no transcription, no speaker detection, no placeholder."""
+        calls = []
+        self._fake_pipeline(calls)
+        session = self._session("t29")
+        self.api._run_builder_pipeline_sync("t29", None, "base", {"transcribe": False})
+        progress = session["progress"]
+        self.assertEqual(progress.status, "transcribed")
+        self.assertEqual(progress.segments, [])
+        self.assertEqual(calls, ["extract", "separate"])
+        self.assertEqual(progress.to_dict()["skipped"], ["transcription", "speakers"])
+
+    def test_29b_no_lines_heard_no_placeholder(self):
+        """Transcription hearing nothing doesn't invent a "Dialogue line 1"."""
+        calls = []
+        self._fake_pipeline(calls, transcribe=lambda: [])
+        session = self._session("t29b")
+        self.api._run_builder_pipeline_sync("t29b")
+        self.assertEqual(session["progress"].status, "transcribed")
+        self.assertEqual(session["progress"].segments, [])
+        self.assertEqual(session["progress"].to_dict()["skipped"], ["speakers"])
+
+    def test_30_retry_reuses_audio_and_separation(self):
+        """A failed transcription keeps its stage; the retry skips reading the audio and separating."""
+        calls = []
+        failing = {"on": True}
+
+        def transcribe():
+            if failing["on"]:
+                raise RuntimeError("Couldn't write out the lines.")
+            return [{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Actor"}]
+
+        self._fake_pipeline(calls, transcribe=transcribe)
+        session = self._session("t30")
+        self.api._run_builder_pipeline_sync("t30")
+        state = session["progress"].to_dict()
+        self.assertEqual((state["status"], state["stage"], state["error"]),
+                         ("error", "transcription", "Couldn't write out the lines."))
+        self.assertEqual(calls, ["extract", "separate", "transcribe"])
+
+        failing["on"] = False
+        calls.clear()
+        self.api._run_builder_pipeline_sync("t30")
+        state = session["progress"].to_dict()
+        self.assertEqual(state["status"], "transcribed")
+        self.assertEqual(calls, ["transcribe", "detect"])
+        self.assertIsNone(state["error"])
+        self.assertIsNone(state["error_code"])
+        self.assertIs(state["voices_separated"], True)
+
+    def test_31_cancel_and_the_run_lock(self):
+        """Cancel stops at the next stage boundary; a new run waits for the last one to exit."""
+        import threading
+        calls = []
+        gate = threading.Event()
+        self._fake_pipeline(calls, gate=gate)
+        sid = "t31"
+        session = self._session(sid)
+        with TestClient(app) as client:
+            self.assertEqual(client.post(f"/api/builder/{sid}/process", json={}).status_code, 200)
+            self._wait_for(client, sid, {"extracting_audio"})
+            self.assertEqual(client.post(f"/api/builder/{sid}/cancel").status_code, 200)
+            gate.set()
+            state = self._wait_for(client, sid, {"cancelled", "transcribed", "error"})
+            self.assertEqual(state["status"], "cancelled")
+            self.assertEqual(calls, ["extract"], "nothing runs after the cancel")
+
+            # Cancel, then process again while the cancelled run is still in its stage.
+            gate.clear()
+            calls.clear()
+            os.remove(session["full_audio_path"])
+            client.post(f"/api/builder/{sid}/process", json={})
+            self._wait_for(client, sid, {"extracting_audio"})
+            client.post(f"/api/builder/{sid}/cancel")
+            client.post(f"/api/builder/{sid}/process", json={})
+            time.sleep(0.2)
+            state = client.get(f"/api/builder/{sid}/status").json()
+            self.assertEqual((state["status"], state["message"]), ("queued", "Finishing the last run"))
+            gate.set()
+            state = self._wait_for(client, sid, {"transcribed", "error"})
+            self.assertEqual(state["status"], "transcribed")
+            self.assertEqual(calls, ["extract", "extract", "separate", "transcribe", "detect"])
+            self.assertEqual(client.post("/api/builder/nope/cancel").status_code, 404)
+
+    def test_32_error_keeps_the_failed_stage(self):
+        """Separation failing reports stage stem_separation, not a reset stage."""
+        from unittest import mock
+        calls = []
+        self._fake_pipeline(calls)
+
+        def broken(wav, out_dir):
+            raise RuntimeError("Couldn't separate the voices.")
+
+        session = self._session("t32")
+        with mock.patch.object(pack_builder, "separate_audio_stems", broken):
+            self.api._run_builder_pipeline_sync("t32")
+        state = session["progress"].to_dict()
+        self.assertEqual((state["status"], state["stage"]), ("error", "stem_separation"))
+        self.assertEqual(state["error_code"], "processing_failed")
+
+    def test_33_sessions_expire_after_last_activity(self):
+        """Pruning uses touched_at (set by session routes), and never removes a running pipeline."""
+        import threading
+        now = time.time()
+        old = now - 3 * 3600
+        idle = self._session("t33_idle", created_at=old, touched_at=old)
+        active = self._session("t33_active", created_at=old, touched_at=old)
+        running = self._session("t33_running", created_at=old, touched_at=old, run_lock=threading.Lock())
+        client = TestClient(app)
+        client.get("/api/builder/t33_active/status")
+        self.assertGreaterEqual(active["touched_at"], now)
+        running["run_lock"].acquire()
+        try:
+            self.api.prune_old_builder_sessions()
+        finally:
+            running["run_lock"].release()
+        self.assertNotIn("t33_idle", BUILDER_SESSIONS)
+        self.assertFalse(os.path.isdir(idle["folder"]))
+        self.assertIn("t33_active", BUILDER_SESSIONS)
+        self.assertIn("t33_running", BUILDER_SESSIONS)
 
 
 if __name__ == "__main__":

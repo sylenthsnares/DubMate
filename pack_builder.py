@@ -39,6 +39,10 @@ class MissingPipelineError(RuntimeError):
     """
 
 
+class BuildCancelled(Exception):
+    """Processing was cancelled; the pipeline stops at the next stage boundary."""
+
+
 class StaleYtDlpError(RuntimeError):
     """
     A link import failed and the installed yt-dlp is old enough to be the likely cause.
@@ -114,7 +118,7 @@ class BuildProgress:
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.lock = threading.Lock()
-        self.status = "idle"  # "idle" | "extracting_audio" | "separating_stems" | "transcribing" | "slicing" | "assembling" | "transcribed" | "done" | "error"
+        self.status = "idle"  # "idle" | "queued" | "extracting_audio" | "separating_stems" | "transcribing" | "detecting_speakers" | "slicing" | "assembling" | "transcribed" | "done" | "error" | "cancelled"
         self.progress = 0.0   # 0.0 to 1.0
         self.message = "Initializing builder session..."
         self.stage = "init"
@@ -133,6 +137,11 @@ class BuildProgress:
         self.device_info: Dict[str, Any] = {}
         self.completed_at: Optional[float] = None
         self.pack_info: Optional[Dict[str, Any]] = None
+        # Stage keys this run skipped ("transcription", "speakers"), so the screen can say so.
+        self.skipped: List[str] = []
+        # Set by POST /cancel. Each /process run gets a fresh event, so cancelling the
+        # last run never cancels the next one.
+        self.cancel_requested = threading.Event()
 
     def update(self, status: str, progress: float, message: str, stage: str = "", segments: Optional[List[Dict[str, Any]]] = None, error: Optional[str] = None):
         with self.lock:
@@ -165,6 +174,7 @@ class BuildProgress:
                 "device_info": self.device_info,
                 "completed_at": self.completed_at,
                 "pack_info": self.pack_info,
+                "skipped": list(self.skipped),
             }
 
 
@@ -1206,11 +1216,13 @@ def _speaker_turns_child(vocals_wav: str, folder: str) -> int:
     return 0
 
 
-def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None,
+                       cancel: Optional[threading.Event] = None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
     """
     Runs _speaker_turns_child in the same interpreter and returns (turns, notice) like
     detect_speaker_turns. A non-zero exit (a native abort included), a timeout, or output
     that isn't a list of turns all return (None, SPEAKER_NOTICE_FAILED).
+    Setting `cancel` stops the child and raises BuildCancelled.
     """
     paths = [BASE_DIR] + [os.path.abspath(p) if p else os.getcwd() for p in sys.path]
     paths = list(dict.fromkeys(paths))
@@ -1233,6 +1245,17 @@ def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[
     timer = threading.Timer(SPEAKER_TIMEOUT_S, _stop)
     timer.daemon = True
     timer.start()
+
+    cancelled = threading.Event()
+    if cancel is not None:
+        def _watch_cancel() -> None:
+            while not cancel.wait(0.25):
+                if proc.poll() is not None:
+                    return
+            cancelled.set()
+            proc.kill()
+
+        threading.Thread(target=_watch_cancel, daemon=True).start()
     turns_json, tail = None, []
     try:
         for line in proc.stdout:
@@ -1256,6 +1279,8 @@ def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[
             proc.wait()
         proc.stdout.close()
 
+    if cancelled.is_set():
+        raise BuildCancelled()
     if timed_out.is_set():
         print(f"[PackBuilder] Speaker detection took longer than {SPEAKER_TIMEOUT_S} s, guessing from pauses.")
         return None, SPEAKER_NOTICE_FAILED
@@ -1276,13 +1301,15 @@ def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[
     return turns, ""
 
 
-def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+def detect_speaker_turns(vocals_wav: str, on_progress=None,
+                         cancel: Optional[threading.Event] = None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
     """
     Finds who speaks when on the voice stem: ([(start, end, speaker_id), ...] by start, "").
     On any failure the turns are None and the notice says speakers were guessed from pauses.
     on_progress(fraction, message) runs 0.88-0.90 while downloading (first time only, with
     the download message) and 0.90-0.98 while detecting (message "").
     The models download here; detection itself runs in a child process (_run_speaker_child).
+    Setting `cancel` stops the child and raises BuildCancelled.
     """
     try:
         if not _speaker_package_present():
@@ -1294,7 +1321,9 @@ def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[Li
 
         if on_progress:
             on_progress(0.90, "")
-        return _run_speaker_child(vocals_wav, _speaker_models_dir(), on_progress)
+        return _run_speaker_child(vocals_wav, _speaker_models_dir(), on_progress, cancel)
+    except BuildCancelled:
+        raise
     except Exception as ex:
         print(f"[PackBuilder] Speaker detection failed, guessing from pauses: {ex}")
         return None, SPEAKER_NOTICE_FAILED

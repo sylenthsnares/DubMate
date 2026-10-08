@@ -12,6 +12,8 @@ import time
 import uuid
 import shutil
 import asyncio
+import threading
+import importlib.util
 import urllib.parse
 from typing import Dict, Optional, Any
 
@@ -33,22 +35,97 @@ def _builder_session_or_404(session_id: str) -> Dict[str, Any]:
     session = BUILDER_SESSIONS.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="This session is no longer available. Add the video again.")
+    session["touched_at"] = time.time()
     return session
 
 
+def _run_lock(session: Dict[str, Any]) -> threading.Lock:
+    """One processing run at a time per session; held while the pipeline runs."""
+    return session.setdefault("run_lock", threading.Lock())
+
+
 def prune_old_builder_sessions(max_age_seconds: float = 7200.0):
-    """Purges builder sessions older than 2 hours to keep disk space lean."""
+    """Purges builder sessions 2 hours after their last activity, to keep disk space lean."""
     now = time.time()
     to_delete = []
     for s_id, session in list(BUILDER_SESSIONS.items()):
-        created_at = session.get("created_at", now)
-        if now - created_at > max_age_seconds:
+        lock = session.get("run_lock")
+        if lock is not None and lock.locked():
+            continue  # a running pipeline still writes to the folder
+        last_active = session.get("touched_at") or session.get("created_at", now)
+        if now - last_active > max_age_seconds:
             to_delete.append(s_id)
             folder = session.get("folder")
             if folder and os.path.isdir(folder):
                 shutil.rmtree(folder, ignore_errors=True)
     for s_id in to_delete:
         BUILDER_SESSIONS.pop(s_id, None)
+
+
+# The GPU probe imports torch (1 to 3 s), so it runs once, off the event loop.
+_GPU_STATE: Dict[str, Any] = {"value": None, "started": False}
+_GPU_LOCK = threading.Lock()
+
+
+def _installed(name: str) -> bool:
+    """Whether a module can be imported, found without importing it."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _probe_gpu() -> None:
+    try:
+        torch_avail, cuda_avail, _ = pack_builder.detect_torch_and_cuda()
+        _GPU_STATE["value"] = bool(torch_avail and cuda_avail)
+    except Exception as ex:
+        print(f"[Builder] GPU check failed: {ex}")
+        _GPU_STATE["value"] = False
+
+
+def _gpu_available(torch_installed: bool) -> Optional[bool]:
+    """True or False once known, None while the background probe runs."""
+    if not torch_installed:
+        return False
+    with _GPU_LOCK:
+        if not _GPU_STATE["started"]:
+            _GPU_STATE["started"] = True
+            threading.Thread(target=_probe_gpu, daemon=True).start()
+    return _GPU_STATE["value"]
+
+
+@router.get("/api/builder/capabilities")
+async def builder_capabilities():
+    """Which Pack Builder tools are installed, so the page only offers what works."""
+    torch_installed = _installed("torch")
+    return {
+        "separation": torch_installed and _installed("demucs"),
+        "transcription": _installed("whisper"),
+        "link_import": _installed("yt_dlp"),
+        "speakers": _installed("sherpa_onnx"),
+        "romaji": _installed("pykakasi"),
+        "gpu": _gpu_available(torch_installed),
+    }
+
+
+NO_SUBTITLE_LINES = "No timed lines in this file. Use an SRT or VTT file."
+
+
+def _parse_subtitle_file(filename: Optional[str], content: bytes):
+    text = content.decode("utf-8", errors="replace")
+    if (filename or "").lower().endswith(".vtt"):
+        return pack_builder.parse_vtt(text)
+    return pack_builder.parse_srt(text)
+
+
+@router.post("/api/builder/subtitles/check")
+async def builder_check_subtitles(file: UploadFile = File(...)):
+    """Checks a subtitle file as soon as it is chosen: how many lines, and who speaks."""
+    parsed = _parse_subtitle_file(file.filename, await file.read())
+    if not parsed:
+        raise HTTPException(status_code=400, detail=NO_SUBTITLE_LINES)
+    return {"count": len(parsed), "characters": sorted({s["character"] for s in parsed})}
 
 
 @router.post("/api/builder/upload")
@@ -106,6 +183,8 @@ async def builder_upload_video(file: UploadFile = File(...)):
             "duration": round(duration, 3),
             "progress": progress,
             "created_at": time.time(),
+            "touched_at": time.time(),
+            "run_lock": threading.Lock(),
             "vocals_path": None,
             "backing_path": None,
             "full_audio_path": None,
@@ -180,6 +259,8 @@ async def builder_import_url(payload: Dict[str, Any]):
             "duration": round(duration, 3),
             "progress": progress,
             "created_at": time.time(),
+            "touched_at": time.time(),
+            "run_lock": threading.Lock(),
             "vocals_path": None,
             "backing_path": None,
             "full_audio_path": result.get("full_audio_path"),
@@ -238,93 +319,33 @@ async def builder_import_url(payload: Dict[str, Any]):
 
 
 def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, whisper_model: str = "base", payload: Optional[Dict[str, Any]] = None):
-    """Background synchronous worker executing the AI processing pipeline."""
+    """Background synchronous worker executing the AI processing pipeline, one run per session at a time."""
     payload = payload or {}
     session = BUILDER_SESSIONS.get(session_id)
     if not session:
         return
 
     progress: pack_builder.BuildProgress = session["progress"]
-    session_dir = session["folder"]
-    video_path = session["video_path"]
-
+    # Read before waiting, so a cancel sent while this run waits applies to this run.
+    cancel = progress.cancel_requested
+    lock = _run_lock(session)
+    if not lock.acquire(blocking=False):
+        progress.update("queued", 0.0, "Finishing the last run")
+        lock.acquire()
     try:
-        # Step 1: Extract Audio (0% -> 20%)
-        progress.update("extracting_audio", 0.10, "Reading the audio", stage="audio_extraction")
-        full_wav = os.path.join(session_dir, "full_audio.wav")
-        pack_builder.extract_audio_from_video(video_path, full_wav)
-        session["full_audio_path"] = full_wav
-        progress.update("extracting_audio", 0.20, "Audio ready", stage="audio_extraction")
-
-        # Step 2: Stem Separation via Demucs (20% -> 60%)
-        progress.update("separating_stems", 0.30, "Separating voices from the background", stage="stem_separation")
-        stems_dir = os.path.join(session_dir, "stems")
-        stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
-        session["vocals_path"] = stem_results["vocals"]
-        session["backing_path"] = stem_results["backing"]
-        # The basic filter writes a copy of the full mix as vocals.wav, so only a
-        # real separation may be played back as "voices only".
-        session["voices_separated"] = not stem_results.get("used_fallback")
-        progress.voices_separated = session["voices_separated"]
-        # Say so when the neural model was unavailable. Silently substituting the
-        # crude filter meant the user was promised AI isolation and never told they
-        # did not get it.
-        if stem_results.get("used_fallback"):
-            progress.warning = stem_results.get("fallback_notice") or ""
-            progress.update("separating_stems", 0.60, stem_results.get("fallback_notice") or "Voices separated", stage="stem_separation")
-        else:
-            progress.update("separating_stems", 0.60, "Voices separated", stage="stem_separation")
-
-        # Step 3: Speech-to-Text Transcription via Whisper (60% -> 90%)
-        existing_subtitles = session.get("subtitle_segments") or progress.segments
-        from_whisper = False
-        if existing_subtitles and len(existing_subtitles) > 0:
-            progress.update("transcribing", 0.85, f"Using {len(existing_subtitles)} lines from your subtitles", stage="transcription")
-            segments = existing_subtitles
-        else:
-            progress.update("transcribing", 0.70, "Writing out the dialogue", stage="transcription")
-            is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
-            segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
-            from_whisper = True
-
-        # Whisper drops grunts, screams and laughs; find them on the voice stem.
-        # Only on a real separation: the basic filter's stem is the full mix.
-        if from_whisper and session.get("voices_separated"):
-            segments = pack_builder.add_nonverbal_segments(segments, session["vocals_path"], session.get("duration", 0))
-
-        # Step 4: who speaks (88% -> 98%). Only when the subtitles named nobody, so
-        # named subtitles never trigger the first-time download.
-        named = any(s.get("character") and s.get("character") != "Actor" for s in segments or [])
-        if segments and not named:
-            progress.update("detecting_speakers", 0.88, "Detecting who speaks", stage="speakers")
-
-            def _on_speaker_progress(fraction: float, message: str = "") -> None:
-                progress.update("detecting_speakers", fraction, message or "Detecting who speaks", stage="speakers")
-
-            turns, notice = pack_builder.detect_speaker_turns(session["vocals_path"], on_progress=_on_speaker_progress)
-            if notice:
-                progress.warning = f"{progress.warning} {notice}" if progress.warning else notice
-            segments = pack_builder.assign_speakers_to_segments(segments, turns)
-        elif segments:
-            segments = pack_builder.assign_speakers_to_segments(segments)
-        else:
-            # If no speech detected, create 1 initial default segment
-            dur = session.get("duration", 5.0)
-            segments = [{
-                "start": 0.5,
-                "end": min(dur, 4.0),
-                "text": "Dialogue line 1",
-                "character": "Actor"
-            }]
-
-        progress.characters = sorted(list({s["character"] for s in segments}))
-        total = len(segments)
-        no_words = sum(1 for s in segments if s.get("nonverbal"))
-        summary = f"Found {total} line{'' if total == 1 else 's'}"
-        if no_words:
-            summary += f", {no_words} without words"
-        progress.update("transcribed", 1.0, summary, stage="complete", segments=segments)
-
+        with progress.lock:
+            progress.skipped = []
+            progress.error = None
+            progress.error_code = None
+            progress.warning = None
+        _run_pipeline_stages(session, progress, cancel, language, whisper_model, payload)
+    except pack_builder.BuildCancelled:
+        print(f"[PackBuilderPipeline] Cancelled in session {session_id}")
+        with progress.lock:
+            # A newer run is already waiting ("queued"); its screen must not see "cancelled".
+            if progress.status != "queued":
+                progress.status = "cancelled"
+                progress.message = "Cancelled"
     except pack_builder.MissingPipelineError as missing:
         print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {missing}")
         progress.error_code = "pipeline_missing"
@@ -342,21 +363,136 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             "Processing didn't finish. Please try again, or use a different clip.",
             error="Processing didn't finish. Please try again, or use a different clip.",
         )
+    finally:
+        lock.release()
+
+
+def _run_pipeline_stages(session: Dict[str, Any], progress: "pack_builder.BuildProgress", cancel: threading.Event,
+                         language: Optional[str], whisper_model: str, payload: Dict[str, Any]) -> None:
+    """The stages of one run. Each progress write is a stage boundary, where a cancel stops the run."""
+    session_dir = session["folder"]
+    video_path = session["video_path"]
+
+    def step(status: str, fraction: float, message: str, stage: str) -> None:
+        if cancel.is_set():
+            raise pack_builder.BuildCancelled()
+        progress.update(status, fraction, message, stage=stage)
+
+    # Steps 1 and 2 already ran when this session's audio and separated tracks exist
+    # (a retry after a later stage failed, or Process again). The video can't change
+    # within a session, so they are still valid.
+    finished = [session.get(k) for k in ("full_audio_path", "vocals_path", "backing_path")]
+    if all(p and os.path.isfile(p) for p in finished):
+        progress.voices_separated = session.get("voices_separated")
+        progress.warning = session.get("separation_notice") or None
+    else:
+        # Step 1: Extract Audio (0% -> 20%)
+        step("extracting_audio", 0.10, "Reading the audio", "audio_extraction")
+        full_wav = os.path.join(session_dir, "full_audio.wav")
+        pack_builder.extract_audio_from_video(video_path, full_wav)
+        session["full_audio_path"] = full_wav
+        step("extracting_audio", 0.20, "Audio ready", "audio_extraction")
+
+        # Step 2: Stem Separation via Demucs (20% -> 60%)
+        step("separating_stems", 0.30, "Separating voices from the background", "stem_separation")
+        stems_dir = os.path.join(session_dir, "stems")
+        stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
+        session["vocals_path"] = stem_results["vocals"]
+        session["backing_path"] = stem_results["backing"]
+        # The basic filter writes a copy of the full mix as vocals.wav, so only a
+        # real separation may be played back as "voices only".
+        session["voices_separated"] = not stem_results.get("used_fallback")
+        progress.voices_separated = session["voices_separated"]
+        # Say so when the neural model was unavailable. Silently substituting the
+        # crude filter meant the user was promised AI isolation and never told they
+        # did not get it.
+        notice = (stem_results.get("fallback_notice") or "") if stem_results.get("used_fallback") else ""
+        session["separation_notice"] = notice
+        if notice:
+            progress.warning = notice
+        step("separating_stems", 0.60, notice or "Voices separated", "stem_separation")
+
+    # Step 3: the lines (60% -> 90%). Only this session's subtitles count, never the
+    # last run's lines, so a retry transcribes once the subtitles are removed.
+    subtitles = session.get("subtitle_segments") or []
+    from_whisper = False
+    if subtitles:
+        progress.skipped.append("transcription")
+        step("transcribing", 0.85, f"Using {len(subtitles)} lines from your subtitles", "transcription")
+        segments = [dict(s) for s in subtitles]
+    elif payload.get("transcribe") is False:
+        progress.skipped.append("transcription")
+        segments = []
+    else:
+        step("transcribing", 0.70, "Writing out the dialogue", "transcription")
+        is_romaji = (language and "romaji" in language.lower()) or bool(payload.get("romanize", False))
+        segments = pack_builder.transcribe_audio(session["vocals_path"], model_size=whisper_model, language=language, romanize=is_romaji)
+        from_whisper = True
+
+    # Whisper drops grunts, screams and laughs; find them on the voice stem.
+    # Only on a real separation: the basic filter's stem is the full mix.
+    if from_whisper and session.get("voices_separated"):
+        segments = pack_builder.add_nonverbal_segments(segments, session["vocals_path"], session.get("duration", 0))
+
+    # Step 4: who speaks (88% -> 98%). Only when the subtitles named nobody, so
+    # named subtitles never trigger the first-time download.
+    named = any(s.get("character") and s.get("character") != "Actor" for s in segments)
+    if segments and not named:
+        step("detecting_speakers", 0.88, "Detecting who speaks", "speakers")
+
+        def _on_speaker_progress(fraction: float, message: str = "") -> None:
+            if not cancel.is_set():
+                progress.update("detecting_speakers", fraction, message or "Detecting who speaks", stage="speakers")
+
+        turns, notice = pack_builder.detect_speaker_turns(session["vocals_path"], on_progress=_on_speaker_progress, cancel=cancel)
+        if notice:
+            progress.warning = f"{progress.warning} {notice}" if progress.warning else notice
+        segments = pack_builder.assign_speakers_to_segments(segments, turns)
+    else:
+        progress.skipped.append("speakers")
+        if segments:
+            segments = pack_builder.assign_speakers_to_segments(segments)
+
+    if cancel.is_set():
+        raise pack_builder.BuildCancelled()
+    progress.characters = sorted(list({s["character"] for s in segments}))
+    total = len(segments)
+    no_words = sum(1 for s in segments if s.get("nonverbal"))
+    summary = f"Found {total} line{'' if total == 1 else 's'}" if total else "No lines yet"
+    if no_words:
+        summary += f", {no_words} without words"
+    progress.update("transcribed", 1.0, summary, stage="complete", segments=segments)
 
 
 @router.post("/api/builder/{session_id}/process")
 async def builder_start_processing(session_id: str, payload: Optional[Dict[str, Any]] = None):
-    """Kicks off background Demucs vocal isolation + Whisper transcription pipeline."""
+    """Starts reading the audio, separating the voices and writing out the lines, in the background."""
     session = _builder_session_or_404(session_id)
 
     payload = payload or {}
     language = payload.get("language")
     whisper_model = payload.get("whisper_model", "base")
 
+    progress: pack_builder.BuildProgress = session["progress"]
+    # A fresh cancel flag for this run. A cancelled run that is still finishing its
+    # stage keeps its own, so it still stops, and this run waits for it (the run lock).
+    progress.cancel_requested = threading.Event()
+    # The progress stream must never find the last run's "error" or "transcribed".
+    busy = _run_lock(session).locked()
+    progress.update("queued", 0.0, "Finishing the last run" if busy else "Starting")
+
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, _run_builder_pipeline_sync, session_id, language, whisper_model, payload)
 
     return {"status": "processing", "session_id": session_id}
+
+
+@router.post("/api/builder/{session_id}/cancel")
+async def builder_cancel_processing(session_id: str):
+    """Asks the running pipeline to stop at its next stage boundary."""
+    session = _builder_session_or_404(session_id)
+    session["progress"].cancel_requested.set()
+    return {"status": "cancelling", "session_id": session_id}
 
 
 @router.get("/api/builder/{session_id}/progress")
@@ -380,7 +516,7 @@ async def builder_progress_stream(session_id: str):
                 last_progress = curr_prog
                 yield f"data: {json.dumps(state)}\n\n"
 
-            if curr_status in ("transcribed", "done", "error"):
+            if curr_status in ("transcribed", "done", "error", "cancelled"):
                 yield f"data: {json.dumps(state)}\n\n"
                 break
 
@@ -592,17 +728,9 @@ async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)
     """Imports an SRT or WebVTT subtitle file to instantly populate dialogue cues."""
     session = _builder_session_or_404(session_id)
 
-    content = await file.read()
-    text = content.decode("utf-8", errors="replace")
-    
-    fname = (file.filename or "").lower()
-    if fname.endswith(".vtt"):
-        parsed = pack_builder.parse_vtt(text)
-    else:
-        parsed = pack_builder.parse_srt(text)
-
+    parsed = _parse_subtitle_file(file.filename, await file.read())
     if not parsed:
-        raise HTTPException(status_code=400, detail="No timed lines found in that subtitle file. Use an SRT or VTT file.")
+        raise HTTPException(status_code=400, detail=NO_SUBTITLE_LINES)
 
     # Clamp to video duration
     max_dur = session.get("duration", 99999.0)
@@ -612,9 +740,11 @@ async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)
             s["end"] = min(max_dur, s["end"])
             clamped.append(s)
 
+    # The pipeline reads the subtitles from here, never from the last run's lines.
+    session["subtitle_segments"] = clamped
     progress: pack_builder.BuildProgress = session["progress"]
     with progress.lock:
-        progress.segments = clamped
+        progress.segments = [dict(s) for s in clamped]
         progress.characters = sorted(list({s["character"] for s in clamped}))
 
     return {
@@ -623,6 +753,14 @@ async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)
         "segments": clamped,
         "characters": progress.characters,
     }
+
+
+@router.delete("/api/builder/{session_id}/subtitles")
+async def builder_remove_subtitles(session_id: str):
+    """Forgets the session's subtitles, so the next run writes out the lines itself."""
+    session = _builder_session_or_404(session_id)
+    session["subtitle_segments"] = []
+    return {"status": "ok"}
 
 
 @router.post("/api/builder/{session_id}/cover")
