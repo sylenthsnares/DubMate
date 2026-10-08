@@ -30,9 +30,9 @@ const PANEL_COPY = {
   clicksFailed: "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again.",
   clap: CLAP_COPY,
   clapping: CLAP_COPY,
-  failedQuiet: "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.",
-  failedUneven: 'Your claps were uneven. Try again, clapping right on each click.',
-  failedNoisy: 'DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each click.',
+  failedQuiet: "DubMate couldn't hear your claps. Clap closer to the mic, right on each beat.",
+  failedUneven: 'Your claps were uneven. Try again, clapping right on each beat.',
+  failedNoisy: 'DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each beat.',
 };
 const ERROR_STEPS = new Set(['clicksFailed', 'failedQuiet', 'failedUneven', 'failedNoisy']);
 const CLAP_FAILED_STEP = { quiet: 'failedQuiet', noisy: 'failedNoisy', uneven: 'failedUneven' };
