@@ -579,7 +579,7 @@ Suggested PR split, one PR per phase: U1 floors and guards, U2 booth column, U3 
     - Each line becomes a compact row of about 44px (dot, #, character select, single-line text, timecode). Play, Transcribe, Romaji and Delete show only on the selected or hovered row, or in a "⋯" menu. Aim for 10 or more lines at 1440x900.
     - A listbox: rows get `tabindex`, `role="option"` and `aria-selected`; Up/Down move; a focused textarea selects its line; a visible focus ring. Start/End with nothing selected say "Select a line first" instead of adding a line.
     - One filled primary (Continue); Play neutral, Add line and Transcribe secondary, no purple. The character palette drops `#dc2626` and `#16a34a`, which mean recording and confirmed take.
-    - Cast chips wrap. Clip labels drop the "[Black Guy 1]" prefix and use 11px sans.
+    - Cast chips scroll in one row (owner request, see `pack-builder-editor-fixes.md`; this replaces "Cast chips wrap"). Clip labels drop the "[Black Guy 1]" prefix and use 11px sans.
 40i. **Q** `static/builder.html`, `static/js/pack_builder.js`: Pack ready. (added from full critique; Pack Builder P1)
     - "Record it now" (renamed from Try it) is the primary. "Download .zip" becomes a quiet "Save a copy (.zip)" link. Drop "Go to Studio" and the duplicate "is ready" toast.
 41. **Q** `scripts/` (dev-only screenshot script, playwright-core from a temp dir): capture every view at 1440x900, 1366x768 and 1280x720, as a release check for the booth column. (added from full critique) Capture the launcher at its real 960x680 window, and the header with the reconnecting pill at 1280 and 1024.

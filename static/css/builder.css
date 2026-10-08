@@ -938,12 +938,9 @@ body.resizing-timeline * {
   border-radius: var(--radius-full);
 }
 
-#btn-add-audio-track:disabled,
-#btn-add-audio-track[disabled] {
-  opacity: 0.45;
-  cursor: not-allowed;
-  pointer-events: none;
-  border-color: rgba(255, 255, 255, 0.08);
+.daw-channel-badge:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .timeline-hint {
@@ -964,33 +961,44 @@ body.resizing-timeline * {
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 
+/* Track numbers. The list scrolls with the timeline (pack_builder.js copies scrollTop). */
 .daw-channel-strips {
-  width: 165px;
+  width: 44px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border-wood);
   background: rgba(18, 14, 11, 0.96);
-  padding-top: 24px; /* Matches ruler height */
   user-select: none;
   height: 100%;
-  overflow-y: hidden;
+}
+
+.daw-channel-spacer {
+  height: 24px; /* Matches ruler height */
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.daw-channel-list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Room for the timeline's sideways scrollbar, so the list can scroll as far as the tracks. */
+.daw-channel-list::after {
+  content: '';
+  display: block;
+  height: 16px;
 }
 
 .daw-channel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 8px;
+  justify-content: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(22, 17, 13, 0.6);
-  transition: background 140ms ease;
-  gap: 6px;
   box-sizing: border-box;
-}
-
-.daw-channel-header:hover {
-  background: rgba(35, 28, 22, 0.9);
 }
 
 .channel-id-badge {
@@ -1005,59 +1013,9 @@ body.resizing-timeline * {
   flex-shrink: 0;
 }
 
-.channel-info {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  overflow: hidden;
-  min-width: 0;
-}
-
-.channel-title-input {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 700;
-  width: 100%;
-  padding: 3px 5px;
-  outline: none;
-  transition: all 140ms ease;
-}
-
-.channel-title-input:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.15);
-  cursor: pointer;
-}
-
-.channel-title-input:focus {
-  background: rgba(18, 14, 11, 0.95);
-  border-color: var(--primary);
-  color: var(--white);
-  box-shadow: 0 0 6px rgba(217, 119, 6, 0.4);
-  cursor: text;
-}
-
-.channel-indicator {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
-  flex-shrink: 0;
-}
-
-.channel-indicator.active {
-  background: var(--accent-green-bright);
-  box-shadow: 0 0 6px var(--accent-green-bright);
-}
-
 .timeline-canvas-scroll-container {
   flex: 1;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto;
   position: relative;
   user-select: none;
   cursor: grab;
@@ -1071,11 +1029,29 @@ body.resizing-timeline * {
   cursor: grabbing !important;
 }
 
+/* A thin scrollbar that shows on the dark timeline when tracks don't fit. */
+.timeline-canvas-scroll-container::-webkit-scrollbar-track,
+.timeline-canvas-scroll-container::-webkit-scrollbar-corner {
+  background: rgba(18, 14, 11, 0.96);
+}
+
+.timeline-canvas-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(204, 164, 88, 0.35);
+  border: 2px solid rgba(18, 14, 11, 0.96);
+}
+
+.timeline-canvas-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(204, 164, 88, 0.55);
+}
+
+/* Time labels stay in view while the tracks scroll up and down. */
 .timeline-track-ruler {
   height: 24px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  position: relative;
-  background: rgba(20, 15, 12, 0.9);
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  background: rgb(20, 15, 12);
   cursor: crosshair;
 }
 
@@ -1247,13 +1223,14 @@ body.resizing-timeline * {
   box-shadow: 0 0 8px rgba(220, 38, 38, 0.7);
 }
 
+/* Starts at the ruler's top and runs past every track. The tag sticks in the ruler. */
 .timeline-playhead {
   position: absolute;
-  top: 0;
+  top: -24px;
   bottom: 0;
   width: 1px;
   pointer-events: none;
-  z-index: 20;
+  z-index: 30;
 }
 
 .playhead-tag {
@@ -1261,14 +1238,15 @@ body.resizing-timeline * {
   height: 10px;
   background: var(--primary);
   transform: translateX(-50%) rotate(45deg);
-  position: absolute;
-  top: -16px;
+  position: sticky;
+  top: 8px;
+  margin-top: 8px;
   box-shadow: 0 0 8px var(--primary);
 }
 
 .playhead-line {
   position: absolute;
-  top: -6px;
+  top: 18px;
   bottom: 0;
   left: 0;
   width: 1.5px;
@@ -1300,7 +1278,6 @@ body.resizing-timeline * {
   gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border-subtle);
-  overflow-x: auto;
 }
 
 .char-strip-title {
@@ -1310,40 +1287,50 @@ body.resizing-timeline * {
   font-family: var(--font-mono);
 }
 
+/* Only the chips scroll; the Cast title and the + button stay put. */
 .character-chips-list {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 2px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(204, 164, 88, 0.35) transparent;
 }
 
-.channel-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+/* A fade on each edge that has more chips. */
+.character-chips-list.has-more-start {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
 }
 
-.btn-del-track {
-  background: transparent;
-  border: none;
-  color: var(--foreground-dim);
-  cursor: pointer;
-  border-radius: 3px;
-  width: 16px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  transition: all 120ms ease;
+.character-chips-list.has-more-end {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
+  mask-image: linear-gradient(to left, transparent, #000 24px);
 }
 
-.btn-del-track:hover {
-  background: rgba(220, 38, 38, 0.85);
-  color: var(--white);
+.character-chips-list.has-more-start.has-more-end {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+/* The fade would hide the focus ring, so it goes while the row has keyboard focus. */
+.character-chips-list:focus-visible,
+.character-chips-list.has-more-start:focus-visible,
+.character-chips-list.has-more-end:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .char-color-chip {
+  flex-shrink: 0;
+  scroll-margin-inline: 24px;
   display: flex;
   align-items: center;
   gap: 6px;
