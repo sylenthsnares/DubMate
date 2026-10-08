@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-Using the DubMate desktop app 1.1.3? Run the DubMate 2.0.0 installer from https://github.com/sylenthsnares/DubMate/releases/latest to get voice effects and the stronger noise cleanup. The in-app update alone brings everything else.
+Using the DubMate desktop app 1.1.3? Run the DubMate 2.0.0 installer from https://github.com/sylenthsnares/DubMate/releases/latest to get voice effects and the stronger noise cleanup. The in-app update alone brings everything else. Install 2.0 over 1.1.3 and keep "Do not uninstall": uninstalling 1.1.3 first deletes the Pack Builder add-on, which then has to download again.
 
 Running DubMate from source? Run update.bat (Windows) or update.sh (macOS or Linux) again after updating.
 
@@ -55,6 +55,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **About DubMate, Privacy and Licence Notices**: About DubMate, in the logo menu and the ? sheet, shows your version and links to the source code, the licence, the third-party notices, the privacy notice and how to report a security problem. On your own computer it lists the folders where DubMate keeps your work, with Open folder; in someone else's room it shows none of the host's folders. PRIVACY.md says what goes online, where your files are and how to delete them; THIRD_PARTY_NOTICES.md lists the projects DubMate is built on, with their licences. The Pack Builder's link import says to import only videos you have the right to use.
 
 ### Changed
+- **Your Files Survive a Reinstall**: the desktop app keeps your rooms, takes, saved videos and the Pack Builder add-on in your user folder (%LOCALAPPDATA%\DubMate on Windows, ~/Library/Application Support/DubMate on macOS) instead of the folder DubMate is installed in. The first start of 2.0 moves them there; when DubMate is installed on another drive this is a copy and can take a few minutes. Reinstalling and updating never remove them, and uninstalling removes them only when you tick "Also remove Pack Builder and my DubMate data". If a file can't be moved, it stays where it was and keeps working. Your packs folder doesn't move.
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
 - **Gentler Noise Reduction**: noise reduction no longer runs at maximum strength, and the fallback no longer gates out whispers and breaths. Cleaned takes are rebuilt when the settings change.
 - **Stronger Noise Cleanup in the Desktop App**: the 2.0 installer adds the stronger noise cleanup that source installs on Windows already had. A desktop app updated from 1.1.3 without it keeps the standard cleanup, and Check your room says how to get the stronger one.

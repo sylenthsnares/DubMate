@@ -6,7 +6,7 @@ dubmate/data_folders.py
 
 Both routes are for the engine's own computer only, so a tunnel guest or a LAN device never
 learns the host's paths. Open takes a folder key, never a path. Every path comes from
-data_folders(), the one place to change when the data root moves. Never imports app.
+data_folders(), which takes the desktop app's folders from dubmate/data_home.py. Never imports app.
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, HTTPException, Request
 
 import pack_loader
-from dubmate import common
+from dubmate import common, data_home
 
 router = APIRouter()
 
@@ -43,13 +43,26 @@ def data_folders() -> List[Dict[str, Any]]:
         rows.append(("packs" if i == 0 else f"packs-{i + 1}", "Scene packs" if own else "Your packs folder", packs_dir, own))
     settings = os.path.dirname(pack_loader.get_config_path())
     rows.append(("settings", "Settings", settings, n(settings) != n(pack_loader.BASE_DIR)))
-    import pack_builder  # already loaded by the builder routes; imported here to keep this module light
-    addon = pack_builder._addon_dir()
+    addon = _addon_dir()
     if addon:
         rows.append(("addon", "Pack Builder add-on", addon, True))
     rows.append(("data", "All DubMate data", data, True))
+    # Folders an older DubMate kept in its install folder that 2.0 no longer uses.
+    old = [p for p in data_home.left_behind([path for _key, _label, path, _own in rows]) if os.path.isdir(p)]
+    rows += [(f"old-{i + 1}", "Old copy, no longer used", p, True) for i, p in enumerate(old)]
     return [{"key": key, "label": label, "path": n(path), "exists": os.path.isdir(path), "own": own}
             for key, label, path, own in rows]
+
+
+def _addon_dir():
+    """The Pack Builder add-on folder, or None. The desktop app's comes from data_home, the
+    rule the launcher uses too: the per-user folder once moved, else where 1.x left it. A
+    source install has one only on sys.path."""
+    if data_home.is_packaged():
+        addon = data_home.resolve("ai-packages")
+        return addon if os.path.isdir(addon) else None
+    import pack_builder  # already loaded by the builder routes; imported here to keep this module light
+    return pack_builder._addon_dir()
 
 
 def open_folder(path: str) -> None:

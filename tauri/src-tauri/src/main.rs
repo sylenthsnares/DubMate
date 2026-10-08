@@ -74,6 +74,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_engine_port,
             get_last_failure,
+            get_file_move,
             trigger_start_sidecars,
             apply_update,
             updater::cancel_update,
@@ -91,6 +92,7 @@ fn main() {
             // Kill child sidecar processes cleanly when the window is closed
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 kill_sidecars(window.app_handle());
+                sidecars::stop_file_move(window.app_handle());
                 packbuilder::stop_packbuilder_install();
             }
         })
@@ -101,6 +103,13 @@ fn main() {
 #[tauri::command]
 fn get_engine_port(state: tauri::State<'_, SharedState>) -> u16 {
     state.0.lock().unwrap().engine_port.unwrap_or(DEFAULT_ENGINE_PORT)
+}
+
+/// Whether files are moving to the DubMate data folder, or stayed in the old one. The move
+/// starts from setup, before the launcher listens for `moving-files`.
+#[tauri::command]
+fn get_file_move(state: tauri::State<'_, SharedState>) -> state::FileMove {
+    state.0.lock().unwrap().file_move
 }
 
 /// The engine failure the launcher may have missed by listening late, if any.

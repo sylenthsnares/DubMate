@@ -76,6 +76,9 @@ Var UpdateMode
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
+; DubMate: set by the uninstaller's /KEEPDATA switch (the installer's reinstall flow).
+; Declared here so NSIS_HOOK_PREUNINSTALL can read it.
+Var KeepDataMode
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -241,10 +244,16 @@ Function PageReinstall
     !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
   ; Upgrading
   ${ElseIf} $R0 = 1
-    StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
+    ; DubMate: Tauri's line recommends uninstalling first, the choice not preselected here.
+    StrCpy $R1 "An older version of DubMate is installed. Installing over it keeps your rooms, settings and Pack Builder."
     StrCpy $R2 "$(uninstallBeforeInstalling)"
     StrCpy $R3 "$(dontUninstall)"
     !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
+    ; DubMate: an upgrade installs over the old version, so "Do not uninstall" is the
+    ; default. Only on the first visit: coming back keeps the user's choice.
+    ${If} $ReinstallPageCheck = 0
+      StrCpy $ReinstallPageCheck 2
+    ${EndIf}
   ; Downgrading
   ${ElseIf} $R0 = -1
     StrCpy $R1 "$(newerVersionInstalled)"
@@ -292,11 +301,12 @@ Function PageReinstall
     ; selected the last time we were on this page
     ${If} $ReinstallPageCheck <> 2
       SendMessage $R2 ${BM_SETCHECK} ${BST_CHECKED} 0
+      ${NSD_SetFocus} $R2
     ${Else}
       SendMessage $R3 ${BM_SETCHECK} ${BST_CHECKED} 0
+      ${NSD_SetFocus} $R3
     ${EndIf}
 
-    ${NSD_SetFocus} $R2
     nsDialogs::Show
   ${EndIf}
 FunctionEnd
@@ -357,8 +367,37 @@ Function PageLeaveReinstall
       ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
       ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
+      ; DubMate: a 2.0 or later uninstaller keeps Pack Builder and the user's data.
+      StrCpy $R1 "$R1 /KEEPDATA"
       StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
+
+      ; DubMate: a 1.x uninstaller ignores /KEEPDATA and always deletes ai-packages
+      ; (about 2 GB) and the Pack Builder choice from the folder it uninstalls ($4).
+      ; Move them out of its way, in the same folder so the rename is instant, and put
+      ; them back once it returns, whatever it returned.
+      InitPluginsDir
+      ${If} $4 != ""
+        ${If} ${FileExists} "$4\ai-packages\*.*"
+          Rename "$4\ai-packages" "$4\ai-packages.keep"
+        ${EndIf}
+        ${If} ${FileExists} "$4\packbuilder.optin"
+          CopyFiles /SILENT "$4\packbuilder.optin" "$PLUGINSDIR"
+        ${EndIf}
+      ${EndIf}
+      ClearErrors
       ExecWait '$R1' $0
+      ${IfThen} ${Errors} ${|} StrCpy $0 2 ${|} ; ExecWait failed, set fake exit code
+      ${If} $4 != ""
+        ${If} ${FileExists} "$4\ai-packages.keep\*.*"
+        ${AndIfNot} ${FileExists} "$4\ai-packages\*.*"
+          Rename "$4\ai-packages.keep" "$4\ai-packages"
+        ${EndIf}
+        ${If} ${FileExists} "$PLUGINSDIR\packbuilder.optin"
+        ${AndIfNot} ${FileExists} "$4\packbuilder.optin"
+          CopyFiles /SILENT "$PLUGINSDIR\packbuilder.optin" "$4"
+        ${EndIf}
+      ${EndIf}
+      ClearErrors
     ${EndIf}
 
     BringToFront
@@ -434,6 +473,12 @@ Var DeleteAppDataCheckboxState
 !define /ifndef WS_EX_LAYOUTRTL         0x00400000
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW un.ConfirmShow
 Function un.ConfirmShow ; Add add a `Delete app data` check box
+  ; DubMate: no choice to make when updating or reinstalling: everything is kept.
+  ${If} $UpdateMode = 1
+  ${OrIf} $KeepDataMode = 1
+    Return
+  ${EndIf}
+
   ; $1 inner dialog HWND
   ; $2 window DPI
   ; $3 style
@@ -457,14 +502,38 @@ Function un.ConfirmShow ; Add add a `Delete app data` check box
   IntOp $5 $5 / 96
   IntOp $6 $6 / 96
   IntOp $7 $7 / 96
-  System::Call 'user32::CreateWindowEx(i r3, w "${__NSD_CheckBox_CLASS}", w "$(deleteAppData)", i ${__NSD_CheckBox_STYLE}, i r4, i r5, i r6, i r7, p r1, i0, i0, i0) i .s'
+  ; DubMate: the one choice that removes the user's files (NSIS_HOOK_PREUNINSTALL), unticked.
+  System::Call 'user32::CreateWindowEx(i r3, w "${__NSD_CheckBox_CLASS}", w "Also remove Pack Builder and my DubMate data", i ${__NSD_CheckBox_STYLE}, i r4, i r5, i r6, i r7, p r1, i0, i0, i0) i .s'
   Pop $DeleteAppDataCheckbox
+
+  ; DubMate: what that means, under the label, with the same font and DPI math.
+  ${If} $(^RTL) = 1
+    StrCpy $3 "${__NSD_Label_EXSTYLE} | ${WS_EX_LAYOUTRTL}"
+    IntOp $4 50 * $2
+  ${Else}
+    StrCpy $3 "${__NSD_Label_EXSTYLE}"
+    IntOp $4 17 * $2
+  ${EndIf}
+  IntOp $5 125 * $2
+  IntOp $6 340 * $2
+  IntOp $7 40 * $2
+  IntOp $4 $4 / 96
+  IntOp $5 $5 / 96
+  IntOp $6 $6 / 96
+  IntOp $7 $7 / 96
+  StrCpy $9 "Rooms, takes, videos and settings in DubMate's own folder. Your scene packs are kept."
+  System::Call 'user32::CreateWindowEx(i r3, w "${__NSD_Label_CLASS}", w r9, i ${__NSD_Label_STYLE}, i r4, i r5, i r6, i r7, p r1, i0, i0, i0) i .s'
+  Pop $8
+
   SendMessage $HWNDPARENT ${WM_GETFONT} 0 0 $1
   SendMessage $DeleteAppDataCheckbox ${WM_SETFONT} $1 1
+  SendMessage $8 ${WM_SETFONT} $1 1
 FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE un.ConfirmLeave
 Function un.ConfirmLeave
-  SendMessage $DeleteAppDataCheckbox ${BM_GETCHECK} 0 0 $DeleteAppDataCheckboxState
+  ${If} $DeleteAppDataCheckbox != ""
+    SendMessage $DeleteAppDataCheckbox ${BM_GETCHECK} 0 0 $DeleteAppDataCheckboxState
+  ${EndIf}
 FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE un.SkipIfPassive
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -771,9 +840,11 @@ Section "!${PRODUCTNAME}" SecMain
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
 
-  ; DubMate: drop any stale Pack Builder opt-in marker left by a previous install.
-  ; The optional SecPackBuilder section below re-creates it when it is selected, so
-  ; deselecting the component on a reinstall reliably turns the pipeline back off.
+  ; DubMate: drop any stale Pack Builder opt-in marker left by a previous install, in
+  ; the DubMate data folder (2.0) or the install folder (1.x). The optional
+  ; SecPackBuilder section below re-creates it when it is selected, so deselecting the
+  ; component on a reinstall reliably turns the pipeline back off.
+  Delete "$LOCALAPPDATA\DubMate\packbuilder.optin"
   Delete "$INSTDIR\packbuilder.optin"
 
   !ifmacrodef NSIS_HOOK_POSTINSTALL
@@ -792,19 +863,20 @@ SectionEnd
 ; installer on a multi-gigabyte download with no progress and no cancel is a poor
 ; trade. It only records the choice as a marker file, and the launcher performs the
 ; download on first run with a real progress bar. The marker and the packages both
-; live under $INSTDIR so that installing DubMate to another drive never writes
-; gigabytes onto C:.
+; live in the DubMate data folder, %LOCALAPPDATA%\DubMate, which no install, reinstall
+; or uninstall touches unless the user asks.
 ;
-; The marker path MUST stay at $INSTDIR\packbuilder.optin (next to the main .exe),
-; which is where the Rust launcher looks for it.
+; The marker path MUST stay at $LOCALAPPDATA\DubMate\packbuilder.optin, which is where
+; the Rust launcher looks for it (paths.rs: user_data_root, PACKBUILDER_OPTIN_MARKER).
+; installMode is currentUser, so $LOCALAPPDATA is this user's, as the launcher reads it.
 Section /o "Pack Builder (about 2 GB, downloaded on first launch)" SecPackBuilder
   ; Declared in KB. The section itself only writes a 1-byte marker, so without
   ; this the components page space estimate would not move when it is ticked.
   AddSize 2097152
-  SetOutPath $INSTDIR
+  CreateDirectory "$LOCALAPPDATA\DubMate"
 
   ClearErrors
-  FileOpen $0 "$INSTDIR\packbuilder.optin" w
+  FileOpen $0 "$LOCALAPPDATA\DubMate\packbuilder.optin" w
   ${If} ${Errors}
     DetailPrint "Could not save the Pack Builder choice. Run the installer again to add it."
   ${Else}
@@ -834,8 +906,10 @@ Function InitPackBuilderDefault
     Return
   ${EndIf}
 
-  ; Otherwise preserve the choice made by a previous install at the same location.
-  ${If} ${FileExists} "$INSTDIR\packbuilder.optin"
+  ; Otherwise preserve the choice made by a previous install: 2.0 keeps it in the
+  ; DubMate data folder, 1.x kept it in the install folder.
+  ${If} ${FileExists} "$LOCALAPPDATA\DubMate\packbuilder.optin"
+  ${OrIf} ${FileExists} "$INSTDIR\packbuilder.optin"
     !insertmacro SelectSection ${SecPackBuilder}
   ${EndIf}
 FunctionEnd
@@ -870,6 +944,13 @@ Function un.onInit
   ${GetOptions} $CMDLINE "/UPDATE" $UpdateMode
   ${IfNot} ${Errors}
     StrCpy $UpdateMode 1
+  ${EndIf}
+
+  ; DubMate: the installer's reinstall flow passes /KEEPDATA so Pack Builder and the
+  ; user's data stay. Not /P... or /U...: GetOptions matches an option as a prefix.
+  ${GetOptions} $CMDLINE "/KEEPDATA" $KeepDataMode
+  ${IfNot} ${Errors}
+    StrCpy $KeepDataMode 1
   ${EndIf}
 
   ; A running instance would leave its own .exe behind and fail the uninstall.

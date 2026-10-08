@@ -14,6 +14,19 @@ pub struct DubMateState {
     /// The last `server-error`, until the next start. A failure in the first moments
     /// can come before the launcher listens, so it asks for this once it does.
     pub last_failure: Option<crate::sidecars::EngineFailure>,
+    /// The one-time move out of a 1.x install folder, for `get_file_move`: it starts
+    /// from setup, usually before the launcher listens for `moving-files`.
+    pub file_move: FileMove,
+    /// The Python running that move, so closing the window stops it too.
+    pub move_pid: Option<(u32, Option<String>)>,
+}
+
+#[derive(Default, Debug, Clone, Copy, serde::Serialize)]
+pub struct FileMove {
+    /// Files are being moved now.
+    pub moving: bool,
+    /// The last move left something in the old folder (it still works there).
+    pub failed: bool,
 }
 
 pub struct SharedState(pub Mutex<DubMateState>);
