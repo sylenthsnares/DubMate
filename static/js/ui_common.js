@@ -50,7 +50,8 @@ const MAX_TOASTS = 3;
  * and stays until its Close button is pressed. The entrance motion lives in style.css.
  * action {label, onClick} adds a button that runs onClick and closes the toast ("Undo").
  * duration is how long it shows (3.2 s by default). A toast waits while it is hovered or
- * has focus, then shows for its full duration again.
+ * has focus, then shows for its full duration again. Returns the toast, so its caller can
+ * close it early (toast.remove()).
  */
 export function showToast(message, { tone, action, duration = 3200 } = {}) {
   const container = document.getElementById('toast-container');
@@ -88,7 +89,7 @@ export function showToast(message, { tone, action, duration = 3200 } = {}) {
   container.appendChild(toast);
   const shown = container.querySelectorAll('.toast');
   for (let i = 0; i < shown.length - MAX_TOASTS; i++) shown[i].remove();
-  if (tone === 'error') return;
+  if (tone === 'error') return toast;
   let timer = null;
   let hovered = false;
   const wait = () => {
@@ -107,6 +108,7 @@ export function showToast(message, { tone, action, duration = 3200 } = {}) {
   toast.addEventListener('focusin', hold);
   toast.addEventListener('focusout', () => setTimeout(resume, 0));
   wait();
+  return toast;
 }
 
 /**

@@ -336,7 +336,11 @@ async function boot(caps = ALL, opts = {}) {
   {
     const b = await boot(ALL);
     await openEditor(b, LINES);
-    check(!b.$("btn-transcribe-line").hasAttribute("aria-disabled") && b.doc.querySelectorAll(".btn-whisper-cue").length === 2, "with transcription Transcribe is available");
+    const deck = b.$("btn-transcribe-line");
+    check(deck.getAttribute("aria-disabled") === "true" && deck.dataset.tip === "Select a line first", "with no line selected, Transcribe says 'Select a line first', like Start and End");
+    b.app.selectSegment(0);
+    check(!deck.hasAttribute("aria-disabled") && deck.dataset.tip === "Fill in the selected line's text from the audio" && b.doc.querySelectorAll(".btn-whisper-cue").length === 2,
+      "with transcription and a line selected, Transcribe is available");
     const romaji = (i) => { const btn = b.$(`cue-card-${i}`).querySelector(".btn-romaji-cue"); return !!btn && shown(btn); };
     check(!romaji(0) && romaji(1), "Romaji shows only on the line with Japanese text");
     // Typing Japanese into a line brings its Romaji action without a re-render.

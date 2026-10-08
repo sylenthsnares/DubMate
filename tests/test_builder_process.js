@@ -11,8 +11,11 @@
  *    names the failed stage and offers a way forward by error_code and stage;
  *  - Try again re-POSTs /process with no upload, Back to video keeps everything,
  *    Write the lines myself opens an empty editor;
- *  - Cancel aborts the upload or POSTs /cancel, and returns to Video at once;
- *  - a failed subtitle import stops before /process.
+ *  - Cancel aborts the upload or POSTs /cancel (after /process arrived), and returns to Video at once;
+ *  - a failed subtitle import stops before /process;
+ *  - without voice separation the row says a basic filter makes the backing track, and a run
+ *    without lines marks its skipped stages from the start;
+ *  - a session the engine no longer has starts over (or goes back to Video for a link).
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -402,7 +405,8 @@ async function startProcessing(opts = {}) {
     check(b.xhrs[0].aborted, "Cancel during upload aborts the request");
     check(b.app.currentStep === "upload" && text(b.$("selected-video-name")) === "clip.mp4", "Cancel returns to Video with the file kept");
     check(!b.requests.some((r) => r.url.endsWith("/cancel")) && b.processPosts().length === 0, "a cancelled upload never processes");
-    check(b.toasts.length === 0, "cancelling isn't an error");
+    check(JSON.stringify(b.toasts) === JSON.stringify(["Processing stopped. Your video and options are kept."]), "a toast (not an error) says processing stopped");
+    check(b.doc.activeElement === b.$("btn-start-process"), "focus moves to Process video");
     b.w.close();
   }
   {
@@ -443,7 +447,7 @@ async function startProcessing(opts = {}) {
     b.w.close();
   }
 
-  // 10. Starting processing fails (the session ended): it says so, with a way forward.
+  // 10. Starting processing fails (the engine no longer has the session): it says so, with a way forward.
   {
     const b = await startWithUpload({
       fetch: (u, init, json) => (u.endsWith("/process") ? json({ detail: "That session has ended. Add the video again." }, 404) : null),
@@ -451,7 +455,8 @@ async function startProcessing(opts = {}) {
     b.xhrs[0].respond(200, { session_id: "sess1", duration: 10 });
     await tick(30);
     check(b.$("process-radar").classList.contains("is-stopped") && ROWS.filter((id) => b.rowState(id) === "is-failed").length === 1, "a /process failure shows one red row");
-    check(b.$("view-step-process").textContent.includes("That session has ended. Add the video again.") && b.toasts.length === 0, "it shows the engine's message, with no toast");
+    check(text(b.$("process-headline")) === "That session has ended" && b.$("view-step-process").textContent.includes("Press Try again to upload your video again.") && b.toasts.length === 0,
+      "it says the session ended and how to go on, with no toast");
     b.w.close();
   }
 
@@ -464,6 +469,94 @@ async function startProcessing(opts = {}) {
     await tick(1100);
     check(text(b.$("process-headline")) === "Couldn't write out the lines" && JSON.stringify(b.actions()) === JSON.stringify(["Write the lines myself", "Back to video"]), "polling /status shows the same error state");
     check(b.toasts.length === 0, "polling adds no toast");
+    b.w.close();
+  }
+
+  // 12. Without voice separation installed, its row says what really runs.
+  {
+    const b = await startProcessing({ caps: { ...ALL, separation: false } });
+    const row = b.$("stage-stems");
+    check(text(row.querySelector(".stage-title")) === "Make the backing track" && text(row.querySelector(".stage-desc")) === "Uses a basic filter to quiet the voices",
+      "without separation the row reads 'Make the backing track · Uses a basic filter to quiet the voices'");
+    // The engine's message says the same (test_pack_builder test_35).
+    b.sources[0].send({ status: "separating_stems", stage: "stem_separation", progress: 0.3, message: "Making the backing track", skipped: [] });
+    check(text(b.$("process-headline")) === "Making the backing track", "the headline says the backing track is being made");
+    check(!b.$("view-step-process").textContent.includes("Separat"), "nothing on the screen claims voice separation");
+    b.sources[0].send({ status: "error", stage: "stem_separation", progress: 0, skipped: [], error: "Boom.", message: "Boom." });
+    check(text(b.$("process-headline")) === "Couldn't make the backing track", "its failure says it couldn't make the backing track");
+    b.w.close();
+  }
+  {
+    const b = await startProcessing();
+    check(text(b.$("stage-stems").querySelector(".stage-title")) === "Separate the voices", "with separation the row reads 'Separate the voices'");
+    b.w.close();
+  }
+
+  // 13. Processing without lines: writing out the lines and detecting speakers read Skipped from the start.
+  {
+    const b = await startProcessing({ caps: { ...ALL, transcription: false } });
+    const body = JSON.parse(b.processPosts()[0].body);
+    check(body.transcribe === false, "with neither transcription nor subtitles, /process is sent transcribe:false");
+    b.sources[0].send({ status: "extracting_audio", stage: "audio_extraction", progress: 0.1, message: "Reading the audio", skipped: [] });
+    check(b.rowState("stage-whisper") === "is-skipped" && b.rowState("stage-speakers") === "is-skipped", "both later stages read Skipped while the run goes");
+    b.w.close();
+  }
+
+  // 14. The engine no longer has a link's session: Back to video is the way forward, with the notice.
+  {
+    const b = await boot({ fetch: (u, init, json) => (u.endsWith("/process") ? json({ detail: "This session is no longer available. Add the video again." }, 404) : null) });
+    b.app.sessionId = "link1";
+    b.$("btn-start-process").disabled = false;
+    b.$("btn-start-process").click();
+    await tick(30);
+    check(text(b.$("process-headline")) === "That session has ended" && JSON.stringify(b.actions()) === JSON.stringify(["Back to video"]),
+      "a link session that ended offers only Back to video");
+    b.$("btn-process-back").click();
+    await tick();
+    check(b.app.currentStep === "upload" && !b.app.sessionId && shown(b.$("session-ended-notice")), "Back to video says the session ended");
+    check(b.$("btn-start-process").disabled, "and there is nothing to process until a video is added");
+    b.w.close();
+  }
+  {
+    // With the file still here, Try again uploads it again into a new session.
+    let first = true;
+    const b = await startWithUpload({
+      fetch: (u, init, json) => {
+        if (!u.endsWith("/process")) return null;
+        if (first) { first = false; return json({ detail: "This session is no longer available. Add the video again." }, 404); }
+        return null;
+      },
+    });
+    b.xhrs[0].respond(200, { session_id: "sess1", duration: 10 });
+    await tick(30);
+    check(JSON.stringify(b.actions()) === JSON.stringify(["Try again", "Back to video"]), "with the file kept, Try again is offered");
+    b.$("btn-process-retry").click();
+    await tick();
+    check(b.xhrs.length === 2, "Try again uploads the video again");
+    b.xhrs[1].respond(200, { session_id: "sess2", duration: 10 });
+    await tick(30);
+    check(b.processPosts().length === 2 && b.processPosts()[1].url === "/api/builder/sess2/process", "and processes the new session");
+    b.w.close();
+  }
+
+  // 15. Cancel while /process is still on its way: /cancel goes after it, so the engine can't miss it.
+  {
+    let answer = null;
+    const b = await boot({
+      fetch: (u, init, json) => (u.endsWith("/process") ? new Promise((resolve) => { answer = () => resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }); }) : null),
+    });
+    b.app.sessionId = "link1";
+    b.$("btn-start-process").disabled = false;
+    b.$("btn-start-process").click();
+    await tick();
+    b.$("btn-process-cancel").click();
+    await tick();
+    check(!b.requests.some((r) => r.url.endsWith("/cancel")), "Cancel waits for the /process request");
+    answer();
+    await tick();
+    const posts = b.requests.filter((r) => /\/(process|cancel)$/.test(r.url)).map((r) => r.url.split("/").pop());
+    check(JSON.stringify(posts) === JSON.stringify(["process", "cancel"]), "then POSTs /cancel, after /process");
+    check(b.sources.length === 0 && b.app.currentStep === "upload", "the cancelled run is never followed");
     b.w.close();
   }
 

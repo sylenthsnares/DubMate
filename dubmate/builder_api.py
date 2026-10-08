@@ -339,30 +339,33 @@ def _run_builder_pipeline_sync(session_id: str, language: Optional[str] = None, 
             progress.error_code = None
             progress.warning = None
         _run_pipeline_stages(session, progress, cancel, language, whisper_model, payload)
-    except pack_builder.BuildCancelled:
-        print(f"[PackBuilderPipeline] Cancelled in session {session_id}")
-        with progress.lock:
-            # A newer run is already waiting ("queued"); its screen must not see "cancelled".
-            if progress.status != "queued":
+    except Exception as ex:
+        if progress.cancel_requested is not cancel:
+            # A newer run is already waiting ("queued"): its screen must see neither this
+            # run's "cancelled" nor its error.
+            print(f"[PackBuilderPipeline] A replaced run ended in session {session_id}: {ex!r}")
+        elif isinstance(ex, pack_builder.BuildCancelled):
+            print(f"[PackBuilderPipeline] Cancelled in session {session_id}")
+            with progress.lock:
                 progress.status = "cancelled"
                 progress.message = "Cancelled"
-    except pack_builder.MissingPipelineError as missing:
-        print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {missing}")
-        progress.error_code = "pipeline_missing"
-        progress.update("error", 0.0, str(missing), error=str(missing))
-    except RuntimeError as run_err:
-        # These carry copy written for the user (see transcribe_audio).
-        print(f"[PackBuilderPipeline] Error in session {session_id}: {run_err}")
-        progress.error_code = "processing_failed"
-        progress.update("error", 0.0, str(run_err), error=str(run_err))
-    except Exception as ex:
-        print(f"[PackBuilderPipeline] Error in session {session_id}: {ex}")
-        progress.error_code = "processing_failed"
-        progress.update(
-            "error", 0.0,
-            "Processing didn't finish. Please try again, or use a different clip.",
-            error="Processing didn't finish. Please try again, or use a different clip.",
-        )
+        elif isinstance(ex, pack_builder.MissingPipelineError):
+            print(f"[PackBuilderPipeline] Pipeline missing in session {session_id}: {ex}")
+            progress.error_code = "pipeline_missing"
+            progress.update("error", 0.0, str(ex), error=str(ex))
+        elif isinstance(ex, RuntimeError):
+            # These carry copy written for the user (see transcribe_audio).
+            print(f"[PackBuilderPipeline] Error in session {session_id}: {ex}")
+            progress.error_code = "processing_failed"
+            progress.update("error", 0.0, str(ex), error=str(ex))
+        else:
+            print(f"[PackBuilderPipeline] Error in session {session_id}: {ex}")
+            progress.error_code = "processing_failed"
+            progress.update(
+                "error", 0.0,
+                "Processing didn't finish. Please try again, or use a different clip.",
+                error="Processing didn't finish. Please try again, or use a different clip.",
+            )
     finally:
         lock.release()
 
@@ -393,8 +396,10 @@ def _run_pipeline_stages(session: Dict[str, Any], progress: "pack_builder.BuildP
         session["full_audio_path"] = full_wav
         step("extracting_audio", 0.20, "Audio ready", "audio_extraction")
 
-        # Step 2: Stem Separation via Demucs (20% -> 60%)
-        step("separating_stems", 0.30, "Separating voices from the background", "stem_separation")
+        # Step 2: Stem Separation via Demucs (20% -> 60%). Without it, a basic filter
+        # makes the backing track, and the stage says so.
+        separates = _installed("torch") and _installed("demucs")
+        step("separating_stems", 0.30, "Separating voices from the background" if separates else "Making the backing track", "stem_separation")
         stems_dir = os.path.join(session_dir, "stems")
         stem_results = pack_builder.separate_audio_stems(full_wav, stems_dir)
         session["vocals_path"] = stem_results["vocals"]
@@ -535,9 +540,10 @@ async def builder_progress_stream(session_id: str):
 
 @router.get("/api/builder/{session_id}/status")
 async def builder_get_status(session_id: str):
-    """Polling alternative to SSE for retrieving builder session status."""
+    """Polling alternative to SSE for retrieving builder session status, with the
+    number of subtitle lines the session holds (a reopened page shows them)."""
     session = _builder_session_or_404(session_id)
-    return session["progress"].to_dict()
+    return {**session["progress"].to_dict(), "subtitles_count": len(session.get("subtitle_segments") or [])}
 
 
 @router.get("/api/builder/{session_id}/waveform")
@@ -740,18 +746,15 @@ async def builder_import_subtitles(session_id: str, file: UploadFile = File(...)
             s["end"] = min(max_dur, s["end"])
             clamped.append(s)
 
-    # The pipeline reads the subtitles from here, never from the last run's lines.
+    # The pipeline reads the subtitles from here, never from the last run's lines. The
+    # lines being edited stay until a run finishes, so a cancelled Process again keeps them.
     session["subtitle_segments"] = clamped
-    progress: pack_builder.BuildProgress = session["progress"]
-    with progress.lock:
-        progress.segments = [dict(s) for s in clamped]
-        progress.characters = sorted(list({s["character"] for s in clamped}))
 
     return {
         "status": "ok",
         "count": len(clamped),
         "segments": clamped,
-        "characters": progress.characters,
+        "characters": sorted({s["character"] for s in clamped}),
     }
 
 
@@ -859,6 +862,9 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
 
     # Step 2: Assemble complete pack folder
     progress.update("assembling", 0.90, "Adding the pack to your library", stage="assembling")
+    # Build again replaces the pack this session built, in its folder, even when the
+    # title changed (the pack keeps its id and takes the new title).
+    built = session.get("pack_folder")
     pack_folder = await asyncio.to_thread(
         pack_builder.assemble_pack,
         pack_name=pack_name,
@@ -867,8 +873,10 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
         line_slices=sliced_lines,
         cover_image_path=cover_path,
         authors=authors,
-        subtitle=subtitle
+        subtitle=subtitle,
+        folder_name=os.path.basename(built) if built and os.path.isdir(built) else None,
     )
+    session["pack_folder"] = pack_folder
 
     # Step 3: Refresh server pack registry
     new_registry = await asyncio.to_thread(packs_cache.get_packs_registry, True)

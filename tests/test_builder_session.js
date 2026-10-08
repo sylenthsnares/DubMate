@@ -170,12 +170,12 @@ function typeInto(b, field, value) {
     b.w.close();
   }
   {
-    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=editor", status: { status: "error", stage: "transcription", error: "Whisper ran out of memory.", skipped: [] } });
-    check(b.app.currentStep === "process" && b.$("stage-whisper").classList.contains("is-failed"), "a failed session shows the error state");
+    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=upload", status: { status: "error", stage: "transcription", error: "Whisper ran out of memory.", skipped: [] } });
+    check(b.app.currentStep === "process" && b.$("stage-whisper").classList.contains("is-failed"), "a session that failed before its lines opened shows the error state");
     b.w.close();
   }
   {
-    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=editor", status: { status: "cancelled", skipped: [] }, session: { id: "s1", details: { packName: "Dawn raid", language: "en", videoName: "raid.mp4" } } });
+    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=upload", status: { status: "cancelled", skipped: [] }, session: { id: "s1", details: { packName: "Dawn raid", language: "en", videoName: "raid.mp4" } } });
     check(b.app.currentStep === "upload" && b.app.sessionId === "s1", "a cancelled session opens Video with the session kept");
     check(shown(b.$("video-selected-card")) && text(b.$("selected-video-name")) === "raid.mp4" && !b.$("btn-start-process").disabled,
       "Video shows the kept video, ready to process");
@@ -494,6 +494,198 @@ function typeInto(b, field, value) {
     check(compiles.length === before + 1 && JSON.parse(compiles[compiles.length - 1].body).segments[0].text === "We go in at noon", "Build again builds the edited lines");
     check(shown(box) && !shown(stale), "after Build again, Pack ready shows");
     check(b.errors.length === 0, `no console errors building (${b.errors.join(" | ")})`);
+    b.w.close();
+  }
+
+  // 9. Edited lines come back on a reload whatever the engine's status (review fixes).
+  {
+    // Transcription failed, then "Write the lines myself": the status stays "error".
+    const status = { status: "error", stage: "transcription", error: "Whisper crashed.", skipped: [], voices_separated: true };
+    const b = await editor({ status });
+    check(b.app.currentStep === "editor" && b.rows().length === 3, "step=editor on an errored session reopens the editor with its lines");
+    check(b.$("view-step-process").classList.contains("active") === false, "the processing error screen doesn't show");
+    b.w.close();
+  }
+  {
+    // A failed build leaves "error" at the slicing stage.
+    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=compile", status: { status: "error", stage: "slicing", error: "Couldn't cut line 2.", skipped: [] } });
+    check(b.app.currentStep === "compile" && b.app.segments.length === 3, "step=compile after a failed build opens Build with the lines");
+    b.w.close();
+  }
+  {
+    // Process again, then Cancel: "cancelled" while the old lines are still there.
+    const b = await editor({ status: { status: "cancelled", skipped: [] } });
+    check(b.app.currentStep === "editor" && b.rows().length === 3, "step=editor on a cancelled session reopens the editor");
+    b.w.close();
+  }
+  {
+    // Cancelled on Video: the reload knows the lines were opened (sessionStorage), so Video goes back to them.
+    const b = await boot({
+      url: "http://localhost:8000/builder.html?session=s1&step=upload",
+      status: { status: "cancelled", skipped: [] },
+      session: { id: "s1", details: { packName: "Dawn raid", language: "en", videoName: "raid.mp4", reached: 2 } },
+    });
+    check(b.app.currentStep === "upload" && text(b.$("label-start-process")) === "Back to Edit lines", "a cancelled Process again offers Back to Edit lines after a reload");
+    check(shown(b.$("btn-reprocess")), "and Process again");
+    b.$("btn-start-process").click();
+    await tick(40);
+    check(b.app.currentStep === "editor" && b.rows().length === 3, "Back to Edit lines opens the saved lines");
+    b.w.close();
+  }
+  {
+    // A first run that was cancelled (the lines never opened) still opens Video.
+    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=upload", status: { status: "cancelled", skipped: [] } });
+    check(b.app.currentStep === "upload" && text(b.$("label-start-process")) === "Process video", "a first run that was cancelled opens Video, ready to process");
+    check(!b.requests.some((r) => /\/segments$/.test(r.url)), "it reads no lines");
+    b.w.close();
+  }
+  {
+    // Opening the editor is remembered for this tab.
+    const b = await editor();
+    const saved = JSON.parse(b.w.sessionStorage.getItem("dubmate_builder_session_s1") || "{}");
+    check(saved.reached === 2, "reaching the editor is kept in the session's details");
+    b.w.close();
+  }
+
+  // 10. Write the lines myself after a failed Process again keeps the lines.
+  {
+    const b = await editor();
+    b.$("step-nav-upload").click();
+    b.$("btn-reprocess").click();
+    b.$("btn-reprocess-confirm").click();
+    await tick(40);
+    const src = b.sources[b.sources.length - 1];
+    src.onmessage({ data: JSON.stringify({ status: "error", stage: "transcription", error_code: "processing_failed", error: "Whisper crashed.", skipped: [], voices_separated: true }) });
+    await tick();
+    b.$("btn-process-write").click();
+    await tick(40);
+    check(b.app.currentStep === "editor" && b.rows().length === 3 && b.app.segments[0].text === "We go in at dawn", "Write the lines myself keeps the lines the session had");
+    b.w.close();
+  }
+
+  // 11. Browser Back during a Process again run stops it, and its result never replaces the lines.
+  {
+    const b = await editor();
+    b.$("step-nav-upload").click();
+    b.$("btn-reprocess").click();
+    b.$("btn-reprocess-confirm").click();
+    await tick(40);
+    const src = b.sources[b.sources.length - 1];
+    check(b.app.currentStep === "process", "Process again shows the processing screen");
+    b.w.history.back();
+    await tick(60);
+    check(b.app.currentStep === "editor", "Back returns to Edit lines");
+    check(b.requests.some((r) => r.url === "/api/builder/s1/cancel" && r.method === "POST") && src.closed, "and stops the run (POST /cancel, stream closed)");
+    src.onmessage({ data: JSON.stringify({ status: "transcribed", stage: "complete", progress: 1, segments: [{ start: 1, end: 2, text: "New pass", character: "X" }], skipped: [] }) });
+    await tick(700);
+    check(b.app.segments.length === 3 && b.app.segments[0].text === "We go in at dawn", "the stopped run's lines never replace the edited ones");
+    const lastPut = b.puts().pop();
+    check(!!lastPut && JSON.parse(lastPut.body).segments.length === 3, "the kept lines are saved again, in case the run finished before the cancel landed");
+    b.w.close();
+  }
+
+  // 12. Delete keeps the keyboard's place; an Undo toast closes once its step is used or the editor is left.
+  {
+    const b = await editor();
+    b.rows()[1].focus();
+    b.rows()[1].click();
+    b.key(b.rows()[1], "Delete");
+    check(b.app.selectedSegmentIndex === 1 && b.app.segments[1].text === "Understood", "after Delete, the next line is selected");
+    check(b.doc.activeElement === b.rows()[1], "and has the focus");
+    b.key(b.rows()[1], "Delete");
+    check(b.app.selectedSegmentIndex === 0 && b.doc.activeElement === b.rows()[0], "deleting the last line selects the one before");
+    const toasts = () => Array.from(b.doc.querySelectorAll("#toast-container .toast")).filter((t) => t.querySelector(".toast-action"));
+    check(toasts().length === 2, "each delete has its Undo toast");
+    b.key(b.doc.body, "z", { ctrlKey: true });
+    check(b.app.segments.length === 2 && toasts().length === 1 && text(toasts()[0].querySelector(".toast-message")) === "Line 2 deleted",
+      "Ctrl+Z closes the toast of the step it undid");
+    b.$("step-nav-upload").click();
+    await tick();
+    check(toasts().length === 0, "leaving the editor closes its Undo toasts");
+    b.w.close();
+  }
+
+  // 13. Keys on controls: Space presses a focused button, Delete on a chip or a toast keeps the line.
+  {
+    const b = await editor();
+    b.rows()[0].click();
+    const chipName = b.chips()[0].querySelector(".chip-name");
+    chipName.focus();
+    b.key(chipName, "Backspace");
+    b.key(b.chips()[0].querySelector(".chip-del-btn"), "Delete");
+    check(b.app.segments.length === 3, "Delete or Backspace on a Cast chip doesn't delete the selected line");
+    const playing = b.app.editorVideo.paused;
+    const del = b.rows()[0].querySelector(".btn-delete-cue");
+    del.focus();
+    const space = b.key(del, " ", { code: "Space" });
+    check(!space.defaultPrevented && b.app.editorVideo.paused === playing, "Space on a focused button is left to the button");
+    b.rows()[0].click();
+    b.rows()[0].focus();
+    b.key(b.rows()[0], "Delete");
+    const undo = b.lastToast().querySelector(".toast-action");
+    undo.focus();
+    b.key(undo, "Delete");
+    check(b.app.segments.length === 2, "Delete with the toast's Undo focused deletes nothing more");
+    b.w.close();
+  }
+
+  // 14. The Lines column is one Tab stop: only the selected row's fields are in the Tab order.
+  {
+    const b = await editor({ lines: [...LINES, { start: 7, end: 8, text: "", character: "Aki", nonverbal: true }] });
+    const fieldsTabbable = (row) => [".cue-char-select", ".cue-text-input"].map((s) => row.querySelector(s).tabIndex);
+    check(b.rows().every((r) => fieldsTabbable(r).every((t) => t === -1)), "before a selection, no row's fields are in the Tab order");
+    check(!b.rows()[3].querySelector(".cue-nonverbal-badge").hasAttribute("tabindex"), "the 'No words' badge is not a Tab stop");
+    b.rows()[1].click();
+    check(fieldsTabbable(b.rows()[1]).every((t) => t === 0) && fieldsTabbable(b.rows()[0]).every((t) => t === -1), "the selected row's fields join the Tab order");
+    b.rows()[2].click();
+    check(fieldsTabbable(b.rows()[1]).every((t) => t === -1) && fieldsTabbable(b.rows()[2]).every((t) => t === 0), "and leave it with the selection");
+    b.w.close();
+  }
+
+  // 15. A new session starts with no cast; Cancel says so, moves focus, and Process isn't done.
+  {
+    const b = await editor();
+    check(b.app.characterColors.size === 2, "the editor has the session's cast");
+    b.$("step-nav-upload").click();
+    b.$("btn-change-video").click();
+    b.$("btn-change-confirm").click();
+    check(b.app.characterColors.size === 0, "Change video forgets the cast and its colours");
+    b.w.close();
+  }
+  {
+    const b = await boot({ url: "http://localhost:8000/builder.html?session=s1&step=upload", status: { status: "idle", skipped: [] } });
+    b.$("btn-start-process").click();
+    await tick(40);
+    b.$("btn-process-cancel").click();
+    await tick();
+    check(b.app.currentStep === "upload" && b.doc.activeElement === b.$("btn-start-process"), "Cancel returns to Video with focus on Process video");
+    check(b.toasts.some((t) => text(t) === "Processing stopped. Your video and options are kept."), "a toast says processing stopped");
+    check(!b.$("step-nav-process").classList.contains("completed"), "the stepper doesn't show Process as done");
+    b.w.close();
+  }
+
+  // 16. A restored session shows the subtitles it holds; × on a file not sent yet keeps the link's.
+  {
+    const b = await boot({
+      url: "http://localhost:8000/builder.html?session=s1&step=upload",
+      status: { status: "idle", skipped: [], subtitles_count: 3 },
+      fetch: (u, init, json) => (u === "/api/builder/subtitles/check" ? json({ count: 2, characters: ["Levi"] }) : null),
+    });
+    check(shown(b.$("sub-chip")) && text(b.$("sub-chip-summary")) === "3 lines", "the session's subtitles show as a chip after a reload");
+    check(text(b.$("label-start-process")) === "Process video", "Process video doesn't say 'without lines'");
+    const ev = new b.w.Event("drop", { bubbles: true, cancelable: true });
+    ev.dataTransfer = { files: [new b.w.File(["x"], "scene.srt", { type: "text/plain" })] };
+    b.$("sub-dropzone").hidden = false;
+    b.$("sub-dropzone").dispatchEvent(ev);
+    await tick();
+    check(text(b.$("sub-chip-name")) === "scene.srt", "a dropped file takes the chip");
+    b.$("btn-remove-sub").click();
+    await tick();
+    check(!b.requests.some((r) => /\/subtitles$/.test(r.url) && r.method === "DELETE"), "× on a file not sent yet removes nothing on the engine");
+    check(shown(b.$("sub-chip")) && text(b.$("sub-chip-summary")) === "3 lines", "and the session's own subtitles show again");
+    b.$("btn-remove-sub").click();
+    await tick();
+    check(b.requests.some((r) => r.url === "/api/builder/s1/subtitles" && r.method === "DELETE") && !shown(b.$("sub-chip")), "× on the session's subtitles removes them on the engine");
     b.w.close();
   }
 

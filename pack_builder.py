@@ -1490,10 +1490,12 @@ def assemble_pack(
     line_slices: List[Dict[str, Any]],
     cover_image_path: Optional[str] = None,
     authors: Optional[List[str]] = None,
-    subtitle: Optional[str] = None
+    subtitle: Optional[str] = None,
+    folder_name: Optional[str] = None,
 ) -> str:
     """
-    Assembles a complete, compliant DubMate scene pack inside `Packs/<pack_name>`.
+    Assembles a complete, compliant DubMate scene pack inside `Packs/<pack_name>`, or
+    `Packs/<folder_name>` to rebuild an earlier pack under a new title.
     Generates:
     - `dub_video.mp4`
     - `_backing_track.wav`
@@ -1505,7 +1507,7 @@ def assemble_pack(
     - `icon.png` (if provided)
     """
     safe_title = pack_name.strip() or "Custom Dub Scene"
-    folder_name = pack_loader.safe_folder_name(safe_title, "Custom_Pack")
+    folder_name = folder_name or pack_loader.safe_folder_name(safe_title, "Custom_Pack")
     
     target_base = pack_loader.PACKS_DIRS[0]
     os.makedirs(target_base, exist_ok=True)

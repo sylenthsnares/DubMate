@@ -1133,7 +1133,8 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     const palette = Array.from({ length: 8 }, (_, i) => colour(app.getCharacterColor(`Cast ${i}`)));
     check(new Set(palette).size === 8, "eight characters get eight different colours");
     check(!palette.includes(colour("#dc2626")) && !palette.includes(colour("#16a34a")), "no character is red or green");
-    check(palette[0] === colour("#d97706") && palette[1] === colour("#06b6d4"), "the palette starts amber, then cyan");
+    check(palette[0] === colour("#06b6d4") && palette[1] === colour("#ec4899"), "the palette starts cyan, then magenta");
+    check(palette.indexOf(colour("#d97706")) === 4 && palette.indexOf(colour("#b45309")) === 6, "amber (the selection colour) comes later, apart from terracotta");
     w.close();
   }
 

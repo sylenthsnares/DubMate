@@ -171,7 +171,7 @@ The label is in the body font. The green dot and the inline `borderColor` writes
 - **Start/End with nothing selected:**
   - The buttons are `aria-disabled` with the tip "Select a line first".
   - I/O and [/] show the toast "Select a line first" and no longer add a line.
-- **The character palette** drops `#dc2626` and `#16a34a`. The new 8-colour order keeps neighbours distinct: `#d97706` amber, `#06b6d4` cyan, `#ec4899` magenta, `#cca458` brass, `#7c5cff` violet, `#60a5fa` sky, `#b45309` terracotta, `#a3a3f5` periwinkle. Colours are per session and not saved, so nothing migrates.
+- **The character palette** drops `#dc2626` and `#16a34a`. The new 8-colour order keeps neighbours distinct: `#06b6d4` cyan, `#ec4899` magenta, `#cca458` brass, `#7c5cff` violet, `#d97706` amber, `#60a5fa` sky, `#b45309` terracotta, `#a3a3f5` periwinkle. (Review fix: amber is the selection colour and the primary, so the first character isn't amber, and terracotta sits two places away from it.) Colours are per session and not saved, so nothing migrates.
 - **Timeline blocks** show only the text, in an 11px sans. Their `data-tip` and `aria-label` read "Detective Mori: We go in…".
   - `.ruler-tick`, `.segment-block-label` and `.segment-inline-delete-btn` reach 11px.
   - Their `EXEMPT` entries leave `tests/test_css_floors.js`.
@@ -432,6 +432,16 @@ Every group runs `python tests/run_all_tests.py`.
     - A toast's Undo after later changes undoes back to before its own change, the later ones too. A toast waits while hovered or focused, then shows its full time again.
     - The Pack details are filled in once per session, so going back and forth keeps your edits and "Build again" builds what you see.
     - The menu's Studio link asks like Exit. Record it now opens the studio without asking.
+
+## Review fixes
+
+- **A reload finds edited lines whatever the engine's status.** `restoreSession` opens the editor (or Build) for `step=editor`/`compile` unless a run is still going, so a failed build, a failed or cancelled Process again, and lines written after a failed transcription all come back. The furthest step reached is kept in the session's `sessionStorage` details, so Video after a reload still offers "Back to Edit lines". Write the lines myself keeps the session's lines instead of starting from none. Importing subtitles no longer replaces the lines on the engine; the run that uses them does.
+- **Build again replaces the same pack, even under a new title.** The engine keeps the folder it built for the session and rebuilds there (`assemble_pack(folder_name=…)`); the pack keeps its id and takes the new title. The "Replaces the pack you built" tooltip is now true.
+- **Without voice separation the processing screen says what runs:** "Make the backing track · Uses a basic filter to quiet the voices", and the engine's message says "Making the backing track". A run sent without lines marks its two skipped stages from the start.
+- **Runs:** Cancel waits for the in-flight `/process` before `/cancel`, says "Processing stopped…", and moves focus to the Video primary; browser Back from a run stops it; a run that finished before the cancel landed doesn't take the kept lines (they are saved again). A cancelled run that then fails never overwrites a newer queued run. `/process` answering 404 starts a new session (uploads the file again), or for a link goes back to Video with the "session has ended" notice.
+- **Editor:** Delete selects the line that took its place; an Undo toast closes when Ctrl+Z uses its step or the editor is left; Space and Delete on a focused button, Cast chip or toast are left to that control; only the selected row's fields are in the Tab order and the "No words" badge isn't a stop; the cast resets with the session; Transcribe in the deck says "Select a line first" like Start and End; the stepper's Process reads as a quiet waypoint and isn't "done" after a cancelled first run; "Back to Edit lines" drops the microphone; row selects at rest have no arrow and get the brass ring; the palette starts on cyan (amber is the selection colour); Pack ready scrolls into view; smooth scrolling follows reduced motion; ruler ticks use the muted text colour and the tracks badge is neutral, not green.
+- Restored sessions show the subtitles the engine holds (`/status` has `subtitles_count`); × on a file not sent yet only forgets it and brings the link's own subtitles back.
+- Kept as is: the GPU pill is a dot under 1100px (named, focusable, tooltip).
 
 ## Hands-on checks for the owner
 

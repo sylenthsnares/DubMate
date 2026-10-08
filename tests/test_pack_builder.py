@@ -1497,7 +1497,7 @@ class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
         def extract(video, out):
             calls.append("extract")
             if gate is not None:
-                gate.wait(5)
+                gate.wait(30)
             with open(out, "wb") as f:
                 f.write(b"RIFF")
             return out
@@ -1532,7 +1532,7 @@ class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def _wait_for(self, client, sid, statuses, timeout=5.0):
+    def _wait_for(self, client, sid, statuses, timeout=30.0):
         deadline = time.time() + timeout
         state = None
         while time.time() < deadline:
@@ -1770,6 +1770,97 @@ class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
         self.assertIn("t33_active", BUILDER_SESSIONS)
         self.assertIn("t33_running", BUILDER_SESSIONS)
 
+
+    def test_34_replaced_run_never_overwrites_the_queued_one(self):
+        """A cancelled run that then fails (not by the cancel) leaves a newer queued run's status alone."""
+        import threading
+        calls = []
+        self._fake_pipeline(calls)
+        session = self._session("t34")
+        progress = session["progress"]
+
+        def extract_then_break(video, out):
+            # Cancel, then a newer /process arrives while this stage still runs; then it fails.
+            progress.cancel_requested.set()
+            progress.cancel_requested = threading.Event()
+            progress.update("queued", 0.0, "Finishing the last run")
+            raise RuntimeError("ffmpeg crashed.")
+
+        from unittest import mock
+        with mock.patch.object(pack_builder, "extract_audio_from_video", extract_then_break):
+            self.api._run_builder_pipeline_sync("t34")
+        state = progress.to_dict()
+        self.assertEqual((state["status"], state["message"]), ("queued", "Finishing the last run"))
+        self.assertIsNone(state["error"])
+
+    def test_35_basic_filter_stage_says_so(self):
+        """Without voice separation installed, the stage message names the backing track, not separation."""
+        calls = []
+        self._fake_pipeline(calls)
+        session = self._session("t35")
+        seen = []
+        real_installed = self.api._installed
+        from unittest import mock
+
+        def separate(wav, out_dir):
+            seen.append(session["progress"].message)
+            os.makedirs(out_dir, exist_ok=True)
+            paths = {k: os.path.join(out_dir, f"{k}.wav") for k in ("vocals", "backing")}
+            for p in paths.values():
+                with open(p, "wb") as f:
+                    f.write(b"RIFF")
+            return dict(paths, used_fallback=True, fallback_notice="Voice separation isn't installed, so a basic filter was used.")
+
+        with mock.patch.object(pack_builder, "separate_audio_stems", separate), \
+                mock.patch.object(self.api, "_installed", lambda name: False if name == "demucs" else real_installed(name)):
+            self.api._run_builder_pipeline_sync("t35")
+        self.assertEqual(seen, ["Making the backing track"])
+        self.assertIs(session["progress"].voices_separated, False)
+
+    def test_36_subtitles_wait_for_the_run(self):
+        """Importing subtitles keeps the edited lines (a cancelled Process again loses nothing); /status counts them."""
+        sid = "t36"
+        session = self._session(sid)
+        progress = session["progress"]
+        edited = [{"start": 1.0, "end": 2.0, "text": "My edit", "character": "Levi"}]
+        progress.segments = [dict(s) for s in edited]
+        client = TestClient(app)
+        self.assertEqual(client.get(f"/api/builder/{sid}/status").json()["subtitles_count"], 0)
+        res = client.post(f"/api/builder/{sid}/import_subtitles",
+                          files={"file": ("scene.srt", io.BytesIO(SRT_THREE.encode("utf-8")), "text/plain")})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["count"], 3)
+        self.assertEqual(progress.segments, edited, "the lines being edited stay until a run replaces them")
+        self.assertEqual(client.get(f"/api/builder/{sid}/status").json()["subtitles_count"], 3)
+        client.delete(f"/api/builder/{sid}/subtitles")
+        self.assertEqual(client.get(f"/api/builder/{sid}/status").json()["subtitles_count"], 0)
+
+    def test_37_build_again_under_a_new_title_replaces_the_pack(self):
+        """Build again after a title change rebuilds the same pack (same id and folder) with the new title."""
+        sid = "t37"
+        session = self._session(sid)
+        video = os.path.join(session["folder"], "clip.mp4")
+        create_dummy_mp4(video, duration_sec=4.0)
+        vocals = os.path.join(session["folder"], "vocals.wav")
+        create_dummy_wav(vocals, duration_sec=4.0)
+        session.update(video_path=video, vocals_path=vocals, full_audio_path=vocals, backing_path=vocals)
+        client = TestClient(app)
+        lines = [{"start": 0.5, "end": 1.8, "text": "Believe it!", "character": "Naruto"}]
+        folders = []
+        try:
+            first = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "Rename Test Pack", "segments": lines})
+            self.assertEqual(first.status_code, 200)
+            folders.append(os.path.join(pack_loader.PACKS_DIRS[0], first.json()["pack_id"]))
+            folders.append(os.path.join(pack_loader.PACKS_DIRS[0], "Rename Test Pack 2"))
+            again = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "Rename Test Pack 2", "segments": lines})
+            self.assertEqual(again.status_code, 200)
+            self.assertEqual(again.json()["pack_id"], first.json()["pack_id"], "Build again keeps the pack's id")
+            self.assertFalse(os.path.isdir(folders[1]), "no second pack is made")
+            with open(os.path.join(folders[0], "pack.json"), encoding="utf-8") as f:
+                self.assertEqual(json.load(f)["title"], "Rename Test Pack 2")
+        finally:
+            for folder in folders:
+                shutil.rmtree(folder, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,11 @@ function detailText(body, fallback) {
   return fallback;
 }
 
+// Smooth scrolling, unless the system asks for reduced motion.
+function scrollBehavior() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+}
+
 // Kana and CJK ideographs: a line in Japanese script can be converted to romaji.
 const JAPANESE_SCRIPT = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
 
@@ -27,7 +32,12 @@ const HERO_LINES = {
 const PROCESS_STAGES = [
   { key: 'upload', status: 'uploading', active: 'Uploading the video', failed: "The upload didn't finish" },
   { key: 'audio_extraction', status: 'extracting_audio', active: 'Reading the audio', failed: "Couldn't read the audio" },
-  { key: 'stem_separation', status: 'separating_stems', active: 'Separating the voices', failed: "Couldn't separate the voices" },
+  {
+    key: 'stem_separation', status: 'separating_stems', active: 'Separating the voices', failed: "Couldn't separate the voices",
+    title: 'Separate the voices', desc: 'Splits dialogue from music and effects',
+    // Without voice separation installed, the engine makes the backing track with a basic filter.
+    basic: { title: 'Make the backing track', desc: 'Uses a basic filter to quiet the voices', active: 'Making the backing track', failed: "Couldn't make the backing track" },
+  },
   { key: 'transcription', status: 'transcribing', active: 'Writing out the lines', failed: "Couldn't write out the lines" },
   { key: 'speakers', status: 'detecting_speakers', active: 'Detecting who speaks', failed: "Couldn't detect who speaks" },
 ];
@@ -35,6 +45,7 @@ const PROCESS_STAGES = [
 const PROCESS_FAILURES = {
   subtitles: { row: 'transcription', headline: "Couldn't read the subtitles" },
   start: { row: 'audio_extraction', headline: "Processing didn't start" },
+  ended: { row: 'audio_extraction', headline: 'That session has ended' },
 };
 const ICON_TICK = '<svg class="icon-tick" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 // Whether CSS can size a textarea to its text (the selected line's text grows without JS).
@@ -52,18 +63,21 @@ const ICON_ALERT = '<svg class="icon-alert" width="13" height="13" viewBox="0 0 
 const STEP_ORDER = ['upload', 'process', 'editor', 'compile'];
 // Engine statuses whose lines can be edited (a build in progress or done included).
 const LINES_READY = ['transcribed', 'done', 'slicing', 'assembling'];
+// Engine statuses with no run going.
+const STOPPED = ['error', 'cancelled', 'idle'];
 const UNDO_LIMIT = 50;
 const UNDO_TOAST_MS = 6000;
 const SAVE_FAILED = "Couldn't save your changes. Trying again…";
 
 // Character colours, in an order that keeps neighbours apart. Red (recording) and
 // green (a confirmed take) mean something else in DubMate, so no character gets them.
+// Amber is the selection colour (and the primary), so it comes later, apart from terracotta.
 const PALETTE = [
-  '#d97706', // amber
   '#06b6d4', // cyan
   '#ec4899', // magenta
   '#cca458', // brass
   '#7c5cff', // violet
+  '#d97706', // amber
   '#60a5fa', // sky
   '#b45309', // terracotta
   '#a3a3f5', // periwinkle
@@ -75,8 +89,11 @@ export class PackBuilderApp {
     this.videoFile = null;
     this.coverFile = null;
     this.subFile = null;
-    // Lines in the subtitles a link import brought (kept on the engine), 0 for none.
-    this.linkSubtitleCount = 0;
+    this.subFileSent = false; // the chosen file went to the engine (it then holds its lines)
+    // Lines in the subtitles the session holds on the engine (a link's own, an imported
+    // file, or a restored session's), 0 for none, and the chip's name for them.
+    this.engineSubtitleCount = 0;
+    this.engineSubtitleName = '';
     // GET /api/builder/capabilities: what is installed. Null until it answers, and
     // nothing is hidden until then.
     this.capabilities = null;
@@ -91,6 +108,8 @@ export class PackBuilderApp {
     this.processState = null; // the last state renderProcessState() drew
     this.uploadInRun = false; // the run started with a file to upload (shows the Upload row)
     this.uploadXhr = null;
+    this.processRequest = null; // the POST /process in flight, so a Cancel lands after it
+    this.runSkipped = []; // stages this run skips, known before it starts (no transcription)
     this.progressSource = null;
     this.progressPoll = null;
 
@@ -138,6 +157,7 @@ export class PackBuilderApp {
     // the undo steps, the save queue, the last build and an explicit leave.
     this.reachedStep = 0;
     this.undoStack = [];
+    this.undoToasts = []; // {toast, step}: a toast's Undo, closed once its step is gone
     this.save = { wanted: false, inFlight: false, failed: false, retryTimer: null, delay: 0 };
     this.builtSignature = null;
     this.compiling = false;
@@ -216,8 +236,9 @@ export class PackBuilderApp {
     // aria-disabled rather than disabled, so the tooltip still says why on hover and focus.
     if (this.btnTranscribeLine) {
       if (canTranscribe) {
-        this.btnTranscribeLine.removeAttribute('aria-disabled');
-        this.btnTranscribeLine.dataset.tip = "Fill in the selected line's text from the audio";
+        // Like Start and End: available once a line is selected.
+        this._markButtonsOn = null;
+        this.updateMarkButtons();
       } else {
         this.btnTranscribeLine.setAttribute('aria-disabled', 'true');
         this.btnTranscribeLine.dataset.tip = "Automatic transcription isn't installed.";
@@ -230,7 +251,7 @@ export class PackBuilderApp {
 
   /** Subtitles will give the lines: a checked file, or the ones a link import brought. */
   hasSubtitles() {
-    return !!this.subFile || this.linkSubtitleCount > 0;
+    return !!this.subFile || this.engineSubtitleCount > 0;
   }
 
   /** Without transcription and without subtitles, processing writes no lines. */
@@ -240,6 +261,8 @@ export class PackBuilderApp {
 
   updateStartButtonLabel() {
     if (!this.labelStartProcess) return;
+    // The microphone means recording elsewhere in DubMate; going back to the lines keeps only the chevron.
+    this.iconStartProcess.style.display = this.isProcessed() ? 'none' : ''; // .btn svg outranks [hidden]
     if (this.isProcessed()) this.labelStartProcess.textContent = 'Back to Edit lines';
     else this.labelStartProcess.textContent = this.willWriteLines() ? 'Process video' : 'Process video without lines';
   }
@@ -317,6 +340,7 @@ export class PackBuilderApp {
     this.btnRemoveCover = document.getElementById('btn-remove-cover');
     this.btnStartProcess = document.getElementById('btn-start-process');
     this.labelStartProcess = document.getElementById('label-start-process');
+    this.iconStartProcess = document.getElementById('icon-start-process');
     this.sessionEndedNotice = document.getElementById('session-ended-notice');
     this.btnReprocess = document.getElementById('btn-reprocess');
     this.reprocessConfirm = document.getElementById('reprocess-confirm');
@@ -744,6 +768,10 @@ export class PackBuilderApp {
       }
 
       if (this.currentStep !== 'editor') return;
+      // A focused button or link keeps Space (it presses it), and Delete or Backspace on a
+      // button, a Cast chip or a toast never deletes the selected line.
+      const onControl = tag === 'BUTTON' || tag === 'A' || !!active?.closest?.('#character-chips-list, #toast-container');
+      if (onControl && (e.code === 'Space' || e.key === 'Delete' || e.key === 'Backspace')) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -780,7 +808,12 @@ export class PackBuilderApp {
   setStep(stepName, { fromHistory = false, replace = false } = {}) {
     if (this.currentStep === 'editor' && stepName !== 'editor') this.pauseMedia();
     this.currentStep = stepName;
-    this.reachedStep = Math.max(this.reachedStep, STEP_ORDER.indexOf(stepName));
+    const reached = Math.max(this.reachedStep, STEP_ORDER.indexOf(stepName));
+    if (reached !== this.reachedStep) {
+      this.reachedStep = reached;
+      // A reload knows the lines were opened, whatever the engine says later.
+      this.saveSessionDetails();
+    }
     Object.keys(this.steps).forEach(k => {
       this.steps[k].classList.toggle('active', k === stepName);
     });
@@ -790,8 +823,10 @@ export class PackBuilderApp {
 
     if (stepName === 'editor') {
       this.setupEditorView();
+    } else {
+      this.closeUndoToasts(); // their Undo acts on the editor
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
   }
 
   /**
@@ -816,7 +851,9 @@ export class PackBuilderApp {
         this.navSteps[step] = el;
       }
       el.classList.toggle('active', i === current);
-      el.classList.toggle('completed', i !== current && i <= this.reachedStep);
+      // Process is done only once its lines opened: a cancelled or failed run isn't.
+      const done = step === 'process' ? this.reachedStep >= STEP_ORDER.indexOf('editor') : i <= this.reachedStep;
+      el.classList.toggle('completed', i !== current && done);
       if (i === current) el.setAttribute('aria-current', 'step');
       else el.removeAttribute('aria-current');
     });
@@ -853,8 +890,13 @@ export class PackBuilderApp {
     if (id) this.restoreSession(id, params.get('step'));
   }
 
-  /** Browser Back or Forward: another session's entry reopens it; this session's moves to its step. */
+  /**
+   * Browser Back or Forward: another session's entry reopens it; this session's moves to its
+   * step. Leaving the processing screen this way stops the run, as Cancel does, so it never
+   * opens the editor over the lines later.
+   */
   onHistoryStep(state) {
+    if (this.currentStep === 'process' && (this.processState || {}).status !== 'error') this.stopRun();
     const params = new URLSearchParams(window.location.search);
     const id = params.get('session');
     const step = (state && state.step) || params.get('step') || 'upload';
@@ -870,7 +912,12 @@ export class PackBuilderApp {
     this.setStep('upload', { fromHistory: true });
   }
 
-  /** Opens a session from the URL by what the engine says it is doing. An ended session says so on Step 1. */
+  /**
+   * Opens a session from the URL. A run still going shows the processing screen. Lines that
+   * were edited reopen the editor (or Build) whatever the engine's status: a failed build,
+   * a failed or cancelled Process again, or lines written after a failed transcription.
+   * An ended session says so on Step 1.
+   */
   async restoreSession(id, step) {
     let res = null;
     try {
@@ -888,17 +935,22 @@ export class PackBuilderApp {
     this.resetSessionState();
     this.sessionId = id;
     this.uploadInRun = false;
-    this.restoreSessionDetails();
+    this.runSkipped = [];
+    const details = this.restoreSessionDetails();
+    this.showEngineSubtitles(data.subtitles_count || 0, 'Your subtitles');
     const status = data.status;
+    const editorIndex = STEP_ORDER.indexOf('editor');
+    const reachedEditor = step === 'editor' || step === 'compile' || (details && details.reached >= editorIndex);
 
-    if (LINES_READY.includes(status)) {
-      let lines = {};
-      try {
-        const segRes = await fetch(`/api/builder/${encodeURIComponent(id)}/segments`);
-        if (segRes.ok) lines = await segRes.json();
-      } catch (e) {
-        console.warn('[PackBuilder] Could not read the lines:', e);
-      }
+    if (!LINES_READY.includes(status) && !STOPPED.includes(status)) {
+      // Still processing: the processing screen follows the run.
+      this.setStep('process', { fromHistory: true });
+      this.renderProcessState(data);
+      this.listenToProgressSSE();
+      return;
+    }
+    if (LINES_READY.includes(status) || (reachedEditor && step !== 'upload')) {
+      const lines = await this.fetchLines(id);
       if (lines.duration > 0) this.duration = lines.duration;
       const toBuild = step === 'compile' && (lines.segments || []).length > 0;
       this.openEditor(
@@ -906,17 +958,32 @@ export class PackBuilderApp {
         { quiet: true, fromHistory: toBuild, replace: !toBuild },
       );
       if (toBuild) this.goToCompileStep({ replace: true });
-    } else if (status === 'error') {
-      this.setStep('process', { fromHistory: true });
-      this.renderProcessState(data);
-    } else if (status === 'cancelled' || status === 'idle') {
-      this.setStep('upload', { replace: true });
-    } else {
-      // Still processing: the processing screen follows the run.
-      this.setStep('process', { fromHistory: true });
-      this.renderProcessState(data);
-      this.listenToProgressSSE();
+      return;
     }
+    if (reachedEditor) {
+      // Video (or a failed Process again) with lines to go back to.
+      const lines = await this.fetchLines(id);
+      if (lines.duration > 0) this.duration = lines.duration;
+      this.takeLines({ segments: lines.segments || [], voices_separated: data.voices_separated, warning: data.warning });
+      this.reachedStep = editorIndex;
+    }
+    if (status === 'error') {
+      this.setStep('process', { fromHistory: true });
+      this.renderProcessState(data);
+    } else {
+      this.setStep('upload', { replace: true });
+    }
+  }
+
+  /** The session's lines on the engine: {segments, characters, duration}, or {} when they can't be read. */
+  async fetchLines(id) {
+    try {
+      const res = await fetch(`/api/builder/${encodeURIComponent(id)}/segments`);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('[PackBuilder] Could not read the lines:', e);
+    }
+    return {};
   }
 
   /** The session in the URL has ended (the engine restarted, or it expired): say so on Step 1 and clean the URL. */
@@ -932,12 +999,14 @@ export class PackBuilderApp {
       packName: this.inputPackTitle.value,
       language: this.selectTranscribeLang.value,
       videoName: this.selectedVideoName.textContent,
+      reached: this.reachedStep,
     };
     try {
       sessionStorage.setItem(`dubmate_builder_session_${this.sessionId}`, JSON.stringify(details));
     } catch (e) { /* storage full or blocked: only the details are lost */ }
   }
 
+  /** Puts back this session's details from sessionStorage, and returns them (null when there are none). */
   restoreSessionDetails() {
     let details = null;
     try {
@@ -948,6 +1017,7 @@ export class PackBuilderApp {
       this.selectTranscribeLang.value = details.language;
     }
     this.showSelectedVideo((details && details.videoName) || 'Your video', '');
+    return details;
   }
 
   /** Leaving would lose something: a save that hasn't gone through, or lines on Edit lines or Build not built as they are. */
@@ -1021,11 +1091,6 @@ export class PackBuilderApp {
       this.videoThumbContainer.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
     }
     this.btnStartProcess.disabled = true;
-    // A link's subtitles belonged to the session that just went.
-    if (this.linkSubtitleCount) {
-      this.linkSubtitleCount = 0;
-      this.showFileChip(this.subChip, this.subDropzone, null);
-    }
     this.updateVideoStepActions();
   }
 
@@ -1042,12 +1107,19 @@ export class PackBuilderApp {
   /** A new video or session: nothing of the last one's steps, undo, build or Pack details carries over. */
   resetSessionState() {
     this.reachedStep = 0;
-    this.undoStack = [];
+    this.clearUndo();
     this.builtSignature = null;
     this.compiledPackId = null;
     this.compileFilled = false;
     this.segments = [];
     this.selectedSegmentIndex = null;
+    this.characterColors = new Map();
+    // The engine's subtitles belonged to the last session; a chosen file goes to the next one.
+    this.subFileSent = false;
+    if (this.engineSubtitleCount) {
+      this.engineSubtitleCount = 0;
+      if (!this.subFile) this.showFileChip(this.subChip, this.subDropzone, null);
+    }
     // A save still waiting belonged to the last session's lines.
     clearTimeout(this.save.retryTimer);
     this.save = { wanted: false, inFlight: false, failed: false, retryTimer: null, delay: 0 };
@@ -1122,6 +1194,7 @@ export class PackBuilderApp {
       return;
     }
     this.subFile = file;
+    this.subFileSent = false;
     const lines = `${data.count} line${data.count === 1 ? '' : 's'}`;
     // The parser names a line nobody claims "Actor"; that isn't a speaker found.
     const speakers = (data.characters || []).filter((c) => c && c !== 'Actor').length;
@@ -1130,9 +1203,21 @@ export class PackBuilderApp {
     this.updateStartButtonLabel();
   }
 
-  /** × on the subtitles chip: forgets the file, and the session's subtitles on the engine. */
+  /** Shows the subtitles the session holds on the engine as a chip, unless a chosen file takes their place. */
+  showEngineSubtitles(count, name) {
+    this.engineSubtitleCount = count;
+    this.engineSubtitleName = name;
+    if (count && !this.subFile) this.showFileChip(this.subChip, this.subDropzone, name, plural(count, 'line'));
+    this.updateStartButtonLabel();
+  }
+
+  /**
+   * × on the subtitles chip. A file not sent yet is only forgotten, and the session's own
+   * subtitles (a link's) show again. Subtitles on the engine are removed there too.
+   */
   async removeSubtitles() {
-    if (this.sessionId) {
+    const onEngine = this.subFile ? this.subFileSent : this.engineSubtitleCount > 0;
+    if (this.sessionId && onEngine) {
       try {
         const res = await fetch(`/api/builder/${this.sessionId}/subtitles`, { method: 'DELETE' });
         if (!res.ok) throw new Error(String(res.status));
@@ -1140,13 +1225,14 @@ export class PackBuilderApp {
         this.showToast("Couldn't remove the subtitles. Try again.");
         return;
       }
+      this.engineSubtitleCount = 0;
     }
     this.subFile = null;
-    this.linkSubtitleCount = 0;
+    this.subFileSent = false;
     this.showSubError('');
     this.showFileChip(this.subChip, this.subDropzone, null);
-    this.updateStartButtonLabel();
-    this.subDropzone.focus();
+    this.showEngineSubtitles(this.engineSubtitleCount, this.engineSubtitleName);
+    (this.subDropzone.hidden ? this.btnRemoveSub : this.subDropzone).focus();
   }
 
   async handleUrlImport() {
@@ -1242,11 +1328,7 @@ export class PackBuilderApp {
       this.btnStartProcess.disabled = false;
 
       // The video's own subtitles give the lines, unless a file was chosen (it replaces them).
-      this.linkSubtitleCount = data.has_subtitles ? data.subtitles_count : 0;
-      if (this.linkSubtitleCount && !this.subFile) {
-        const n = this.linkSubtitleCount;
-        this.showFileChip(this.subChip, this.subDropzone, 'From the video', `${n} line${n === 1 ? '' : 's'}`);
-      }
+      this.showEngineSubtitles(data.has_subtitles ? data.subtitles_count : 0, 'From the video');
       this.updateVideoStepActions();
       this.saveSessionDetails();
       this.writeUrl('upload', true);
@@ -1283,6 +1365,7 @@ export class PackBuilderApp {
   async startProcessingPipeline() {
     if (!this.videoFile && !this.sessionId) return;
     const run = ++this.processRun;
+    this.runSkipped = [];
     this.stopProgressUpdates();
     this.uploadInRun = !this.sessionId;
     this.setStep('process');
@@ -1325,10 +1408,11 @@ export class PackBuilderApp {
           const err = await subRes.json().catch(() => ({}));
           throw this.processError('subtitles', detailText(err, 'Check the file and try again.'));
         }
+        // The engine holds them now. The lines in the editor stay until the run finishes.
         const subJson = await subRes.json();
-        if (subJson.segments && subJson.segments.length > 0) {
-          this.segments = subJson.segments;
-        }
+        this.subFileSent = true;
+        this.engineSubtitleCount = subJson.count || 0;
+        this.engineSubtitleName = this.subFile.name;
       }
 
       await this.requestProcessing(run);
@@ -1396,13 +1480,28 @@ export class PackBuilderApp {
     const lang = this.selectTranscribeLang.value;
     const body = { language: lang, whisper_model: 'base' };
     if (!this.willWriteLines()) body.transcribe = false;
+    // Without transcription or subtitles, those two stages read Skipped from the start.
+    this.runSkipped = body.transcribe === false ? ['transcription', 'speakers'] : [];
     this.renderProcessState({ status: 'queued', progress: 0, message: 'Starting' });
-    const processRes = await fetch(`/api/builder/${this.sessionId}/process`, {
+    const request = fetch(`/api/builder/${this.sessionId}/process`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    this.processRequest = request;
+    let processRes;
+    try {
+      processRes = await request;
+    } finally {
+      if (this.processRequest === request) this.processRequest = null;
+    }
     if (run !== this.processRun) return;
+    if (processRes.status === 404) {
+      // The engine no longer has this session: the next try starts a new one.
+      this.sessionId = null;
+      this.resetSessionState();
+      throw this.processError('ended', this.videoFile ? 'Press Try again to upload your video again.' : 'Add the video again.');
+    }
     if (!processRes.ok) {
       const err = await processRes.json().catch(() => ({}));
       throw this.processError('start', detailText(err, 'Try again.'));
@@ -1425,33 +1524,65 @@ export class PackBuilderApp {
     }
   }
 
-  /** Cancel: stops the upload, or asks the engine to stop, and returns to Video at once with everything kept. */
+  /** Cancel: stops the run and returns to Video at once with everything kept, saying so. */
   cancelProcessing() {
+    this.stopRun();
+    this.showToast('Processing stopped. Your video and options are kept.');
+    this.showVideoStep();
+  }
+
+  /**
+   * Stops the upload, or asks the engine to stop (after its /process arrived), and stops
+   * following the run. A run on lines already opened (Process again) can finish before the
+   * cancel lands, so the lines kept here are saved again once it has.
+   */
+  stopRun() {
     this.processRun++;
     if (this.uploadXhr) {
       this.uploadXhr.abort();
     } else if (this.sessionId) {
-      // The engine stops at its next stage boundary; a new run waits for it.
-      fetch(`/api/builder/${this.sessionId}/cancel`, { method: 'POST' })
+      // The engine stops at its next stage boundary; a new run waits for it. A cancel that
+      // reached the engine before this run's /process would be lost, so it goes after it.
+      const url = `/api/builder/${this.sessionId}/cancel`;
+      const keepLines = this.isProcessed();
+      const send = () => fetch(url, { method: 'POST' })
+        .then(() => { if (keepLines && this.isProcessed()) this.syncSegmentsToServer(); })
         .catch((e) => console.warn('[PackBuilder] Cancel not sent:', e));
+      if (this.processRequest) this.processRequest.then(send, () => {});
+      else send();
     }
     this.stopProgressUpdates();
-    this.setStep('upload');
   }
 
   /** Back to video after a failure: the file, chips, pack name and language are kept. */
   backToVideo() {
     this.processRun++;
     this.stopProgressUpdates();
-    this.setStep('upload');
+    if (!this.sessionId && !this.videoFile) {
+      // The session ended and there is no file to send again: the link field, with the notice.
+      this.changeVideo();
+      this.sessionEndedNotice.hidden = false;
+    }
+    this.showVideoStep();
   }
 
-  /** Write the lines myself: the editor with no lines, on the voice track when separation finished. */
+  /** Video after leaving the processing screen, with focus on its primary (the processing screen is gone). */
+  showVideoStep() {
+    this.setStep('upload');
+    const target = !this.btnStartProcess.disabled ? this.btnStartProcess
+      : (this.currentIngestTab === 'url' ? this.inputYoutubeUrl : this.videoDropzone);
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  /**
+   * Write the lines myself: the editor on the voice track when separation finished, with the
+   * lines this session already has (none after a first run), so a failed Process again keeps them.
+   */
   writeLinesMyself() {
     const state = this.processState || {};
     this.processRun++;
     this.stopProgressUpdates();
-    this.openEditor({ segments: [], voices_separated: state.voices_separated });
+    this.openEditor({ segments: this.segments, voices_separated: state.voices_separated, warning: state.warning });
   }
 
   stopProgressUpdates() {
@@ -1525,7 +1656,7 @@ export class PackBuilderApp {
       this.stopProgressUpdates();
     } else if (status === 'cancelled') {
       this.stopProgressUpdates();
-      this.setStep('upload');
+      this.showVideoStep();
     }
   }
 
@@ -1538,7 +1669,9 @@ export class PackBuilderApp {
     const status = state.status;
     const failed = status === 'error';
     const finished = status === 'transcribed' || status === 'done';
-    const rows = PROCESS_STAGES.filter((s) => s.key !== 'upload' || this.uploadInRun);
+    // Without voice separation installed, its row says what runs instead.
+    const stages = PROCESS_STAGES.map((s) => (s.basic && !this.has('separation') ? { ...s, ...s.basic } : s));
+    const rows = stages.filter((s) => s.key !== 'upload' || this.uploadInRun);
     const failure = failed ? (PROCESS_FAILURES[state.stage] || null) : null;
 
     // The row that is running, or that failed. Rows before it are finished.
@@ -1553,14 +1686,15 @@ export class PackBuilderApp {
     }
     // Before the engine's first stage, a finished upload is already ticked.
     const uploaded = this.uploadInRun && !!this.sessionId && status !== 'uploading';
-    const skipped = new Set(state.skipped || []);
+    const skipped = new Set([...(state.skipped || []), ...this.runSkipped]);
     const message = (state.error || state.message || '').trim();
 
-    PROCESS_STAGES.forEach((stage) => {
+    stages.forEach((stage) => {
       const row = this.processRows.get(stage.key);
       const i = rows.indexOf(stage);
       row.hidden = i < 0;
       if (i < 0) return;
+      if (stage.title) row.querySelector('.stage-title').textContent = stage.title;
       let kind = 'pending';
       if (failed && i === current) kind = 'failed';
       else if (skipped.has(stage.key)) kind = 'skipped';
@@ -1579,7 +1713,7 @@ export class PackBuilderApp {
       const desc = row.querySelector('.stage-desc');
       if (kind === 'failed') desc.textContent = message || "Processing didn't finish. Try again.";
       else if (kind === 'skipped') desc.textContent = 'Skipped';
-      else desc.textContent = desc.dataset.desc || '';
+      else desc.textContent = stage.desc || desc.dataset.desc || '';
     });
 
     // The headline: the active stage as a sentence, or the stage that failed.
@@ -1610,7 +1744,9 @@ export class PackBuilderApp {
     // Cancel while it runs; when it fails, a way forward with the primary first.
     this.btnProcessCancel.hidden = failed || finished;
     let order = [];
-    if (failed && state.stage === 'transcription') {
+    if (failed && !this.sessionId && !this.videoFile) {
+      order = [this.btnProcessBack]; // nothing to try again with
+    } else if (failed && state.stage === 'transcription') {
       order = state.error_code === 'pipeline_missing'
         ? [this.btnProcessWrite, this.btnProcessBack]
         : [this.btnProcessRetry, this.btnProcessWrite, this.btnProcessBack];
@@ -1639,13 +1775,7 @@ export class PackBuilderApp {
    * the lines, the server's notice and a result toast (not with opts.quiet). opts also go to setStep.
    */
   openEditor(data, opts = {}) {
-    this.segments = data.segments || this.segments;
-    this.selectedSegmentIndex = null;
-    this.undoStack = [];
-    // Only an explicit false means no voice track; older engines don't send the flag.
-    this.voicesSeparated = data.voices_separated !== false;
-    this.editorWarning = (data.warning || '').trim();
-    this.renderEditorNotice();
+    this.takeLines(data);
     this.setStep('editor', opts);
     const total = this.segments.length;
     // With no lines, the Lines column says what to do instead.
@@ -1654,6 +1784,17 @@ export class PackBuilderApp {
     let summary = `Found ${total} line${total === 1 ? '' : 's'}`;
     if (noWords) summary += `, ${noWords} without words`;
     this.showToast(summary);
+  }
+
+  /** The editor's lines, voice track and notice from the engine, without showing the editor. */
+  takeLines(data) {
+    this.segments = data.segments || this.segments;
+    this.selectedSegmentIndex = null;
+    this.clearUndo();
+    // Only an explicit false means no voice track; older engines don't send the flag.
+    this.voicesSeparated = data.voices_separated !== false;
+    this.editorWarning = (data.warning || '').trim();
+    this.renderEditorNotice();
   }
 
   // --- STEP 3: Timeline & Cue Editor ---
@@ -2100,20 +2241,22 @@ export class PackBuilderApp {
    * One line as a compact row. Every action is in the markup and CSS shows the ones that
    * apply (Play on hover, all of them on the selected row), so selecting rebuilds nothing.
    * The character select holds only its own option until it is opened (fillCharacterOptions).
+   * Only the selected row's fields are in the Tab order: Tab passes the list in one stop.
    */
   lineRowHtml(seg, idx, selected, tabbable, canTranscribe) {
     const text = seg.text || '';
     const name = escapeHtml(seg.character);
+    const field = selected ? '' : ' tabindex="-1"';
     const noWords = seg.nonverbal
-      ? `<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${text.trim() ? ' hidden' : ''}>No words</span>`
+      ? `<span class="cue-nonverbal-badge" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${text.trim() ? ' hidden' : ''}>No words</span>`
       : '';
     const action = (cls, label, icon, extra = '') =>
       `<button type="button" class="btn btn-ghost btn-xs line-action ${cls}" aria-label="${label}" data-tip="${label}"${extra}>${icon}</button>`;
     return `<div class="builder-line-row${selected ? ' selected' : ''}" id="cue-card-${idx}" data-idx="${idx}" role="listitem" tabindex="${tabbable ? 0 : -1}"${selected ? ' aria-current="true"' : ''} aria-label="${escapeHtml(this.rowLabel(seg, idx))}">`
       + `<span class="cue-dot" style="background: ${this.getCharacterColor(seg.character)};"></span>`
       + `<span class="cue-number" aria-hidden="true">${idx + 1}</span>`
-      + `<select class="form-input cue-char-select" aria-label="Character"><option value="${name}" selected>${name}</option></select>`
-      + `<div class="cue-text-cell">${noWords}<textarea class="form-input cue-text-input" rows="1" aria-label="Line text" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}">${escapeHtml(text)}</textarea></div>`
+      + `<select class="form-input cue-char-select" aria-label="Character"${field}><option value="${name}" selected>${name}</option></select>`
+      + `<div class="cue-text-cell">${noWords}<textarea class="form-input cue-text-input" rows="1" aria-label="Line text"${field} placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}">${escapeHtml(text)}</textarea></div>`
       + '<div class="cue-actions">'
       + action('btn-preview-cue', 'Play this line', ICON_PLAY)
       + (canTranscribe ? action('btn-whisper-cue', 'Fill in this line&#39;s text from the audio', ICON_MIC) : '')
@@ -2344,13 +2487,16 @@ export class PackBuilderApp {
     input.focus();
   }
 
-  /** Start and End act on the selected line. With none they say so, and so do their keys. */
+  /** Start, End and Transcribe act on the selected line. With none they say so, and so do their keys. */
   updateMarkButtons() {
     const has = !!this.segments[this.selectedSegmentIndex];
     if (this._markButtonsOn === has) return;
     this._markButtonsOn = has;
-    [[this.btnMarkIn, 'Start the selected line at the playhead (I or [)'],
-      [this.btnMarkOut, 'End the selected line at the playhead (O or ])']].forEach(([btn, tip]) => {
+    const buttons = [[this.btnMarkIn, 'Start the selected line at the playhead (I or [)'],
+      [this.btnMarkOut, 'End the selected line at the playhead (O or ])']];
+    // Without transcription installed, Transcribe keeps saying that instead.
+    if (this.btnTranscribeLine && this.has('transcription')) buttons.push([this.btnTranscribeLine, "Fill in the selected line's text from the audio"]);
+    buttons.forEach(([btn, tip]) => {
       if (has) btn.removeAttribute('aria-disabled');
       else btn.setAttribute('aria-disabled', 'true');
       btn.dataset.tip = has ? tip : 'Select a line first';
@@ -2487,7 +2633,7 @@ export class PackBuilderApp {
     this.renderSegmentsList();
     this.renderCharacterChips();
     this.syncSegmentsToServer();
-    if (exists) this.showToast(`Merged into ${name}`, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
+    if (exists) this.showUndoToast(`Merged into ${name}`, step);
     return name;
   }
 
@@ -2579,7 +2725,7 @@ export class PackBuilderApp {
     this.renderSegmentsList();
     this.syncSegmentsToServer();
     const message = moved ? `${name} deleted. ${plural(moved, 'line')} moved to ${fallback}` : `${name} deleted`;
-    this.showToast(message, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
+    this.showUndoToast(message, step);
   }
 
   /**
@@ -2605,18 +2751,23 @@ export class PackBuilderApp {
     previous.forEach((row) => {
       row.classList.remove('selected');
       row.removeAttribute('aria-current');
-      row.querySelector('.cue-text-input').style.height = '';
+      const textInput = row.querySelector('.cue-text-input');
+      textInput.style.height = '';
+      textInput.tabIndex = -1;
+      row.querySelector('.cue-char-select').tabIndex = -1;
       this.updateCardTimecode(parseInt(row.dataset.idx, 10));
     });
     if (target) {
       target.classList.add('selected');
       target.setAttribute('aria-current', 'true');
+      target.querySelector('.cue-text-input').removeAttribute('tabindex');
+      target.querySelector('.cue-char-select').removeAttribute('tabindex');
       this.updateCardTimecode(idx);
       this.fitLineText(target.querySelector('.cue-text-input'));
       // Scrolled into view in the next frame, with that frame's layout, so the click or
       // key that selected doesn't wait for one.
       cancelAnimationFrame(this._scrollRowFrame);
-      this._scrollRowFrame = requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+      this._scrollRowFrame = requestAnimationFrame(() => target.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' }));
     }
     this.updateMarkButtons();
   }
@@ -3064,12 +3215,14 @@ export class PackBuilderApp {
     this._dragFrameId = null;
     const step = this.pushUndo();
     this.segments.splice(idx, 1);
-    this.selectedSegmentIndex = null;
+    // The line that took its place is selected (the one before, at the end), so the keyboard keeps its place.
+    const next = this.segments[idx] ? idx : idx - 1;
+    this.selectedSegmentIndex = next >= 0 ? next : null;
     this.renderTimelineSegments();
     this.renderSegmentsList();
     this.renderCharacterChips();
     this.syncSegmentsToServer();
-    this.showToast(`Line ${idx + 1} deleted`, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
+    this.showUndoToast(`Line ${idx + 1} deleted`, step);
   }
 
   markInAtPlayhead() {
@@ -3181,6 +3334,27 @@ export class PackBuilderApp {
     };
   }
 
+  /** A toast that says what changed, with an Undo back to before `step`. */
+  showUndoToast(message, step) {
+    const toast = this.showToast(message, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
+    if (toast) this.undoToasts.push({ toast, step });
+  }
+
+  /** Closes the Undo toasts whose step was undone already, or all of them away from the editor. */
+  closeUndoToasts() {
+    this.undoToasts = this.undoToasts.filter(({ toast, step }) => {
+      if (this.currentStep === 'editor' && this.undoStack.includes(step) && toast.isConnected) return true;
+      toast.remove();
+      return false;
+    });
+  }
+
+  /** Forgets every undo step (new lines), and their toasts. */
+  clearUndo() {
+    this.undoStack = [];
+    this.closeUndoToasts();
+  }
+
   /** Keeps the state from before a change, up to 50 steps. Returns the step, for a toast's Undo. */
   pushUndo(step = this.snapshot()) {
     this.undoStack.push(step);
@@ -3196,6 +3370,7 @@ export class PackBuilderApp {
     if (step && !this.undoStack.includes(step)) return;
     let snap = this.undoStack.pop();
     while (step && snap && snap !== step) snap = this.undoStack.pop();
+    this.closeUndoToasts();
     if (!snap) return;
     this.segments = snap.segments;
     this.characterColors = new Map(snap.colors);
@@ -3406,7 +3581,8 @@ export class PackBuilderApp {
       this.compiling = false;
       this.compileProgressBox.style.display = 'none';
       this.updateBuildState();
-      this.btnPlaytestNow.focus();
+      this.btnPlaytestNow.focus({ preventScroll: true });
+      this.compileSuccessBox.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' });
     } catch (ex) {
       this.compiling = false;
       this.compileProgressBox.style.display = 'none';
@@ -3468,7 +3644,7 @@ export class PackBuilderApp {
     });
   }
 
-  showToast(message, opts) { showToast(message, opts); }
+  showToast(message, opts) { return showToast(message, opts); }
 }
 
 // Instantiate Pack Builder Studio
