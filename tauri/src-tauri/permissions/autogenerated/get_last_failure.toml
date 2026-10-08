@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-last-failure"
+description = "Enables the get_last_failure command without any pre-configured scope."
+commands.allow = ["get_last_failure"]
+
+[[permission]]
+identifier = "deny-get-last-failure"
+description = "Denies the get_last_failure command without any pre-configured scope."
+commands.deny = ["get_last_failure"]

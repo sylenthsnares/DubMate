@@ -14,6 +14,7 @@ import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
+import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
@@ -286,7 +287,10 @@ class DubMateApp {
     this.modalAudioSettings = document.getElementById('modal-audio-settings');
     this.btnCloseAudioSettings = document.getElementById('btn-close-audio-settings');
     this.audioSetupStatusPill = document.getElementById('audio-setup-status-pill');
+    this.audioSetupTitle = document.getElementById('audio-setup-title');
     this.audioSetupSubtitle = document.getElementById('audio-setup-subtitle');
+    this.audioIntroPrivacy = document.getElementById('audio-intro-privacy');
+    this.audioIntroAsker = document.getElementById('audio-intro-asker');
     this.audioStepIntro = document.getElementById('audio-setup-step-intro');
     this.audioStepDenied = document.getElementById('audio-setup-step-denied');
     this.audioStepDevices = document.getElementById('audio-setup-step-devices');
@@ -297,6 +301,11 @@ class DubMateApp {
     this.btnDismissAudioDenied = document.getElementById('btn-dismiss-audio-denied');
     this.audioDeniedHeading = document.getElementById('audio-denied-heading');
     this.audioDeniedDetail = document.getElementById('audio-denied-detail');
+    this.audioRecovery = document.getElementById('audio-recovery');
+    this.audioRecoverySteps = document.getElementById('audio-recovery-steps');
+    this.audioRecoveryOs = document.getElementById('audio-recovery-os');
+    this.audioRecoveryMore = document.getElementById('audio-recovery-more');
+    this.audioRecoveryOthers = document.getElementById('audio-recovery-others');
     this.selectAudioInput = document.getElementById('select-audio-input');
     this.selectAudioOutput = document.getElementById('select-audio-output');
     this.audioInputNote = document.getElementById('audio-input-note');
@@ -305,11 +314,9 @@ class DubMateApp {
     this.audioOutputUnsupported = document.getElementById('audio-output-unsupported');
     this.btnRefreshAudioDevices = document.getElementById('btn-refresh-audio-devices');
     this.btnAudioSettingsDone = document.getElementById('btn-audio-settings-done');
-    this.levelMeterMask = document.getElementById('level-meter-mask');
+    this.levelMeterFill = document.getElementById('level-meter-fill');
     this.levelMeterPeakTick = document.getElementById('level-meter-peak-tick');
     this.levelMeterTrack = document.getElementById('level-meter-track');
-    this.levelMeterRms = document.getElementById('level-meter-rms');
-    this.levelMeterPeakReadout = document.getElementById('level-meter-peak-readout');
     this.levelMeterLamp = document.getElementById('level-meter-lamp');
     this.levelMeterHint = document.getElementById('level-meter-hint');
     this.audioExportsRow = document.getElementById('audio-exports-row');
@@ -351,6 +358,7 @@ class DubMateApp {
     this.roomCheckLoud = document.getElementById('room-check-loud');
     this.roomCheckLoudResult = document.getElementById('room-check-loud-result');
     this.btnRoomLoudLine = document.getElementById('btn-room-loud-line');
+    this.btnRoomCheckAgain = document.getElementById('btn-room-check-again');
     this.roomCheckRefresh = document.getElementById('room-check-refresh');
     this.roomCheckRefreshText = document.getElementById('room-check-refresh-text');
     this.btnRoomCheckRefresh = document.getElementById('btn-room-check-refresh');
@@ -1416,6 +1424,8 @@ class DubMateApp {
   async initRouter() {
     captureHomeOriginParam();
     this.pointHomeLinksAtOwnEngine();
+    // Pack Builder installing in the background (desktop app only). Not awaited.
+    this.initPackBuilderInstall();
     await this.fetchPacks();
     this.loadEngineMicSync();
 
@@ -1788,7 +1798,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

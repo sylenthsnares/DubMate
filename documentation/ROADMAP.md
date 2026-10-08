@@ -107,8 +107,8 @@ All of this goes into one PR.
    - U3: the lobby.
    - U4: the landing page and joining.
    - U5: polish.
-     - U5a: the launcher.
-     - U5b: premiere, export and Audio settings.
+     - U5b: Audio settings and the launcher (done, `design/ui-u5b-settings-launcher.md`). One level target for the meter, status colours that mean what they say, Done always in view, the denied step for your computer only; a launcher in the studio's look that stays calm on a slow start and saves red for real failures; Skip this time on updates; Pack Builder installing in the background with a header chip and Restart to finish. Hands-on checks on the desktop app are listed in the design.
+     - Premiere and export (40-40c): a separate PR.
      - U5c: Pack Builder.
    - The host-only guards (starting recording, dialogue presence, export) and clap noise rejection for mic sync are not UI work. They landed in the bug-fix PR #19 (`fix/first-test-findings`).
 

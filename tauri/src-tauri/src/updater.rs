@@ -25,8 +25,11 @@ pub enum UpdateCheckResult {
     UpdateAvailable {
         current_version: String,
         latest_version: String,
+        /// The release notes. Kept for older launchers; the current one doesn't show them.
         changelog: String,
         download_url: String,
+        /// No app.py yet: this download is DubMate itself, not an update.
+        first_download: bool,
     },
     NoInternet {
         message: String,
@@ -38,6 +41,76 @@ pub struct UpdateProgressPayload {
     pub received: u64,
     pub total: u64,
     pub percentage: u8,
+    /// Seconds left, once the download speed has settled.
+    pub eta_secs: Option<u64>,
+}
+
+/// How much each new speed reading moves the smoothed speed.
+const ETA_SMOOTHING: f64 = 0.3;
+
+/// Time left for a download, from a smoothed speed. It says nothing (None) until enough
+/// time and samples have passed for the speed to mean something, so the launcher never
+/// shows a wild first guess.
+pub(crate) struct EtaEstimator {
+    min_secs: f64,
+    min_samples: u32,
+    samples: u32,
+    /// Seconds and bytes at the last sample.
+    last: (f64, f64),
+    /// Bytes per second, smoothed.
+    speed: Option<f64>,
+}
+
+impl EtaEstimator {
+    pub(crate) fn new(min_secs: f64, min_samples: u32) -> Self {
+        Self { min_secs, min_samples, samples: 0, last: (0.0, 0.0), speed: None }
+    }
+
+    /// Records that `done` bytes had arrived `elapsed` seconds after the start. Only
+    /// progress counts as a sample.
+    pub(crate) fn sample(&mut self, elapsed: f64, done: f64) {
+        let (then, before) = self.last;
+        if elapsed <= then || done <= before {
+            return;
+        }
+        let speed = (done - before) / (elapsed - then);
+        self.speed = Some(match self.speed {
+            Some(smoothed) => smoothed + ETA_SMOOTHING * (speed - smoothed),
+            None => speed,
+        });
+        self.samples += 1;
+        self.last = (elapsed, done);
+    }
+
+    /// Seconds to fetch `remaining` more bytes, or None while the speed isn't stable yet.
+    pub(crate) fn eta_secs(&self, elapsed: f64, remaining: f64) -> Option<u64> {
+        if elapsed < self.min_secs || self.samples < self.min_samples {
+            return None;
+        }
+        let speed = self.speed.filter(|s| *s > 0.0)?;
+        Some((remaining.max(0.0) / speed).round() as u64)
+    }
+}
+
+/// Set by "Skip this time" on the update card; `download_bundle` checks it per chunk.
+static UPDATE_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What `apply_update` returns when the download was skipped.
+pub const UPDATE_SKIPPED: &str = "skipped";
+
+/// Stops the update download in progress. It has no effect once the download is done:
+/// the launcher hides Skip when installing starts.
+#[tauri::command]
+pub fn cancel_update() {
+    UPDATE_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn clear_update_cancel() {
+    UPDATE_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn update_cancelled() -> bool {
+    UPDATE_CANCEL.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// A step of applying the update that has no byte count (event `update-stage`). The
@@ -194,18 +267,16 @@ pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> 
         Some(asset) => UpdateCheckResult::UpdateAvailable {
             current_version: current_clean.to_string(),
             latest_version: latest_clean.to_string(),
-            changelog: if !app_py_exists {
-                "Downloading DubMate. This happens once.".to_string()
-            } else {
-                release.body.unwrap_or_else(|| "General improvements and fixes.".to_string())
-            },
+            changelog: release.body.unwrap_or_else(|| "General improvements and fixes.".to_string()),
             download_url: asset.browser_download_url.clone(),
+            first_download: !app_py_exists,
         },
         None => UpdateCheckResult::UpToDate,
     }
 }
 
 /// Downloads the app bundle zip into memory, reporting progress as `update-progress`.
+/// Returns `Err(UPDATE_SKIPPED)` when `cancel_update` stops it.
 pub async fn download_bundle(download_url: &str, app_handle: tauri::AppHandle) -> Result<Vec<u8>, String> {
     let client = reqwest::Client::builder()
         .user_agent("DubMate-Studio-Desktop/1.0")
@@ -226,8 +297,14 @@ pub async fn download_bundle(download_url: &str, app_handle: tauri::AppHandle) -
     let mut stream = response.bytes_stream();
     let mut last_percent: u8 = 0;
     let mut last_emit = std::time::Instant::now();
+    let started = std::time::Instant::now();
+    let mut eta = EtaEstimator::new(10.0, 3);
 
     while let Some(chunk) = stream.next().await {
+        if update_cancelled() {
+            println!("[Updater] Download skipped.");
+            return Err(UPDATE_SKIPPED.to_string());
+        }
         let chunk = chunk.map_err(|e| format!("Error reading update stream: {}", e))?;
         bytes.extend_from_slice(&chunk);
 
@@ -241,12 +318,20 @@ pub async fn download_bundle(download_url: &str, app_handle: tauri::AppHandle) -
         if percent > last_percent || last_emit.elapsed() >= std::time::Duration::from_millis(250) {
             last_percent = percent;
             last_emit = std::time::Instant::now();
+            let elapsed = started.elapsed().as_secs_f64();
+            eta.sample(elapsed, received as f64);
+            let eta_secs = if total_size > 0 {
+                eta.eta_secs(elapsed, total_size.saturating_sub(received) as f64)
+            } else {
+                None
+            };
             let _ = app_handle.emit(
                 "update-progress",
                 UpdateProgressPayload {
                     received,
                     total: total_size,
                     percentage: percent,
+                    eta_secs,
                 },
             );
         }
@@ -258,6 +343,7 @@ pub async fn download_bundle(download_url: &str, app_handle: tauri::AppHandle) -
             received: bytes.len() as u64,
             total: if total_size > 0 { total_size } else { bytes.len() as u64 },
             percentage: 100,
+            eta_secs: None,
         },
     );
 
@@ -580,6 +666,98 @@ mod tests {
         // Same site-packages the installer filled; nothing already satisfied is replaced.
         assert!(!args.iter().any(|a| a == "--target" || a == "--user" || a == "--upgrade"));
         assert_eq!(&args[args.len() - 2..], ["-r", "req.txt"]);
+    }
+
+    const MB: f64 = 1024.0 * 1024.0;
+
+    #[test]
+    fn no_time_left_until_the_speed_has_settled() {
+        // The update download: at least 10 s and 3 samples.
+        let mut eta = EtaEstimator::new(10.0, 3);
+        assert_eq!(eta.eta_secs(0.0, 100.0 * MB), None);
+        eta.sample(4.0, 4.0 * MB);
+        eta.sample(8.0, 8.0 * MB);
+        eta.sample(9.0, 9.0 * MB);
+        // Three samples, but under 10 s.
+        assert_eq!(eta.eta_secs(9.0, 91.0 * MB), None);
+        // Past 10 s with enough samples: 1 MB/s.
+        eta.sample(11.0, 11.0 * MB);
+        assert_eq!(eta.eta_secs(11.0, 89.0 * MB), Some(89));
+
+        // Two samples are never enough, however long it has run.
+        let mut slow = EtaEstimator::new(10.0, 3);
+        slow.sample(30.0, 30.0 * MB);
+        slow.sample(60.0, 60.0 * MB);
+        assert_eq!(slow.eta_secs(60.0, 40.0 * MB), None);
+    }
+
+    #[test]
+    fn a_steady_speed_gives_a_steady_estimate() {
+        let mut eta = EtaEstimator::new(10.0, 3);
+        for second in 1..=20 {
+            eta.sample(second as f64, second as f64 * 2.0 * MB);
+        }
+        // 2 MB/s with 60 MB to go.
+        assert_eq!(eta.eta_secs(20.0, 60.0 * MB), Some(30));
+    }
+
+    #[test]
+    fn a_sudden_burst_moves_the_estimate_only_part_way() {
+        let mut eta = EtaEstimator::new(0.0, 1);
+        for second in 1..=10 {
+            eta.sample(second as f64, second as f64 * MB);
+        }
+        assert_eq!(eta.eta_secs(10.0, 100.0 * MB), Some(100));
+        // One second at 10 MB/s: smoothed, not taken at face value.
+        eta.sample(11.0, 20.0 * MB);
+        let after = eta.eta_secs(11.0, 100.0 * MB).unwrap();
+        assert!(after > 10 && after < 100, "got {after}");
+    }
+
+    #[test]
+    fn samples_without_progress_do_not_count() {
+        let mut eta = EtaEstimator::new(0.0, 2);
+        eta.sample(5.0, 5.0 * MB);
+        // Same bytes later on: no new sample, and the speed isn't dragged to zero.
+        eta.sample(9.0, 5.0 * MB);
+        assert_eq!(eta.eta_secs(9.0, 10.0 * MB), None);
+        eta.sample(10.0, 10.0 * MB);
+        assert!(eta.eta_secs(10.0, 10.0 * MB).is_some());
+        // Nothing left is zero seconds, not None.
+        assert_eq!(eta.eta_secs(10.0, 0.0), Some(0));
+    }
+
+    #[test]
+    fn the_launcher_learns_whether_this_is_the_first_download() {
+        let update = UpdateCheckResult::UpdateAvailable {
+            current_version: "1.1.3".to_string(),
+            latest_version: "1.1.4".to_string(),
+            changelog: "Fixes".to_string(),
+            download_url: "https://github.com/x.zip".to_string(),
+            first_download: true,
+        };
+        let value = serde_json::to_value(&update).unwrap();
+        assert_eq!(value["status"], "UpdateAvailable");
+        assert_eq!(value["data"]["first_download"], true);
+        assert_eq!(value["data"]["latest_version"], "1.1.4");
+        assert_eq!(value["data"]["changelog"], "Fixes");
+
+        let progress = serde_json::to_value(UpdateProgressPayload {
+            received: 1,
+            total: 2,
+            percentage: 50,
+            eta_secs: None,
+        })
+        .unwrap();
+        assert!(progress["eta_secs"].is_null());
+    }
+
+    #[test]
+    fn skipping_is_cleared_when_an_update_starts() {
+        cancel_update();
+        assert!(update_cancelled());
+        clear_update_cancel();
+        assert!(!update_cancelled());
     }
 
     /// A small bundle zip holding the given files.

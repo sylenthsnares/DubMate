@@ -2,8 +2,9 @@
 // noise cleanup can be tuned to the room, and the Room row in Audio settings that runs it
 // and shows the report card. The pure functions below are exported for the node tests.
 // RoomCheckMethods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { micErrorMessage, safeStorageGet, safeStorageSet, safeStorageRemove } from './audio_setup.js';
+import { micErrorMessage, safeStorageGet, safeStorageSet, safeStorageRemove, setStatusState } from './audio_setup.js';
 import { chosenDevice, deviceLabel } from './mic_sync.js';
+import { LEVEL_GOOD_MAX_DB, LEVEL_GOOD_MIN_DB, LEVEL_QUIET_PEAK_DB } from './level_target.js';
 
 // localStorage: one entry {profile_id, verdict, device_label, device_id, measured_at}.
 const ROOM_CHECK_KEY = 'dubmate_room_check';
@@ -33,16 +34,13 @@ const ROOM_NEW_MIC = 'New microphone. Check your room so cleanup fits it.';
 const ROOM_SAVE_FAILED = "DubMate couldn't finish the check. Try again.";
 const ROOM_REFRESH_FAILED = "DubMate couldn't refresh your older takes. Try again.";
 
-// The loudest-line check, in dB of peak: a shout should peak around -10 to -6, so Good is
+// The loudest-line check, in dB of peak, on the meter's target (level_target.js): Good is
 // -10 to -6, advice aims at -8 and an "up" never lands the loudest line above -6, so a
 // shout keeps its headroom.
-const LOUD_GOOD_MIN_DB = -10;
-const LOUD_GOOD_MAX_DB = -6;
 const LOUD_TARGET_DB = -8;
-const LOUD_UP_CEILING_DB = -6;
+const LOUD_UP_CEILING_DB = LEVEL_GOOD_MAX_DB;
 const LOUD_CLIP_DB = -0.1;
-// Below this peak, or this close to the room, nobody spoke.
-const LOUD_QUIET_PEAK_DB = -45;
+// Below the quiet peak, or this close to the room, nobody spoke.
 const LOUD_MIN_ABOVE_ROOM_DB = 6;
 const LOUD_UNHEARD = "DubMate couldn't hear you. Try again, a bit louder.";
 
@@ -163,16 +161,16 @@ export function clipLevels(samples, sampleRate) {
 export function loudLineAdvice(peakDb, voiceDb, floorDb) {
   const known = (v) => typeof v === 'number' && Number.isFinite(v);
   const aboveRoom = known(voiceDb) && known(floorDb) ? voiceDb - floorDb : null;
-  if (!known(peakDb) || peakDb < LOUD_QUIET_PEAK_DB || (aboveRoom !== null && aboveRoom < LOUD_MIN_ABOVE_ROOM_DB)) {
+  if (!known(peakDb) || peakDb < LEVEL_QUIET_PEAK_DB || (aboveRoom !== null && aboveRoom < LOUD_MIN_ABOVE_ROOM_DB)) {
     return { text: LOUD_UNHEARD, snrText: '' };
   }
   let text = 'Good level.';
   const down = Math.max(1, Math.round(peakDb - LOUD_TARGET_DB));
   if (peakDb >= LOUD_CLIP_DB) {
     text = `Your loudest line clips. Turn your mic down by about ${down} dB.`;
-  } else if (peakDb > LOUD_GOOD_MAX_DB) {
+  } else if (peakDb > LEVEL_GOOD_MAX_DB) {
     text = `Turn your mic down by about ${down} dB.`;
-  } else if (peakDb < LOUD_GOOD_MIN_DB) {
+  } else if (peakDb < LEVEL_GOOD_MIN_DB) {
     const up = Math.min(Math.round(LOUD_TARGET_DB - peakDb), Math.floor(LOUD_UP_CEILING_DB - peakDb));
     text = `Turn your mic up by about ${up} dB.`;
   }
@@ -222,6 +220,7 @@ export class RoomCheckMethods {
     if (this.btnCancelRoomCheck) this.btnCancelRoomCheck.addEventListener('click', () => this.cancelRoomCheck());
     if (this.btnRoomCheckStandard) this.btnRoomCheckStandard.addEventListener('click', () => this.useStandardCleanup());
     if (this.btnRoomLoudLine) this.btnRoomLoudLine.addEventListener('click', () => this.runLoudLineCheck());
+    if (this.btnRoomCheckAgain) this.btnRoomCheckAgain.addEventListener('click', () => this.openRoomCheckPanel());
     if (this.btnRoomCheckRefresh) this.btnRoomCheckRefresh.addEventListener('click', () => this.refreshOlderTakes());
   }
 
@@ -240,6 +239,10 @@ export class RoomCheckMethods {
     const matches = checkMatchesMic(check, this.roomCheckInputs(), this.audioSetup.inputId);
     if (!check) this.roomCheckStatus.textContent = ROOM_NOT_CHECKED;
     else this.roomCheckStatus.textContent = matches ? ROOM_ROW_COPY[check.verdict] : ROOM_NEW_MIC;
+    // A noisy room, or a check made with another microphone, needs attention.
+    let state = 'pending';
+    if (check) state = matches && check.verdict !== 'noisy' ? 'done' : 'attention';
+    setStatusState(this.roomCheckStatus, state);
     // A guest's page lives on an address that changes whenever the host restarts DubMate.
     if (this.isEngineLocal()) {
       this.roomCheckStatus.removeAttribute('data-tip');
@@ -272,6 +275,7 @@ export class RoomCheckMethods {
       this.roomState && this.roomState.takes, this.user && this.user.id, check ? check.profile_id : null);
     this.roomCheckRefresh.style.display = refreshing || count > 0 ? '' : 'none';
     if (this.roomCheckRefreshText) {
+      setStatusState(this.roomCheckRefreshText, 'attention');
       const when = check ? 'before this check' : 'with an earlier room check';
       this.roomCheckRefreshText.textContent = refreshing
         ? 'Refreshing older takes…'
@@ -313,7 +317,7 @@ export class RoomCheckMethods {
     }
     if (this.btnStartRoomCheck) {
       this.btnStartRoomCheck.disabled = step === 'listening';
-      this.btnStartRoomCheck.textContent = step === 'listening' ? 'Listening…' : 'Start';
+      this.btnStartRoomCheck.textContent = { listening: 'Listening…', failed: 'Check again' }[step] || 'Start';
     }
     this.renderRoomCheckRow();
     this.renderMicSyncRow();
@@ -334,6 +338,7 @@ export class RoomCheckMethods {
     if (!model) return;
     const unusable = !!model.unusable;
     if (this.roomCheckLoud) this.roomCheckLoud.style.display = unusable ? 'none' : '';
+    if (this.btnRoomCheckAgain) this.btnRoomCheckAgain.style.display = unusable ? '' : 'none';
     this.roomCheckCard.classList.toggle('is-error', unusable);
     if (this.roomCheckVerdict) this.roomCheckVerdict.style.display = unusable ? 'none' : '';
     if (this.roomCheckLight) {

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod external;
 mod mic_permission;
 mod packbuilder;
 mod paths;
@@ -72,17 +73,23 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_engine_port,
+            get_last_failure,
             trigger_start_sidecars,
             apply_update,
+            updater::cancel_update,
             packbuilder::get_packbuilder_status,
-            packbuilder::install_packbuilder,
+            packbuilder::start_packbuilder_install,
+            packbuilder::get_packbuilder_install,
             packbuilder::remove_packbuilder,
             mic_permission::allow_room_origin,
+            external::open_mic_settings,
+            external::open_studio_in_browser,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 kill_sidecars(window.app_handle());
+                packbuilder::stop_packbuilder_install();
             }
         })
         .run(tauri::generate_context!())
@@ -94,6 +101,12 @@ fn get_engine_port(state: tauri::State<'_, SharedState>) -> u16 {
     state.0.lock().unwrap().engine_port.unwrap_or(DEFAULT_ENGINE_PORT)
 }
 
+/// The engine failure the launcher may have missed by listening late, if any.
+#[tauri::command]
+fn get_last_failure(state: tauri::State<'_, SharedState>) -> Option<sidecars::EngineFailure> {
+    state.0.lock().unwrap().last_failure.clone()
+}
+
 #[tauri::command]
 async fn trigger_start_sidecars(app: tauri::AppHandle) {
     kill_sidecars(&app);
@@ -102,6 +115,9 @@ async fn trigger_start_sidecars(app: tauri::AppHandle) {
 
 #[tauri::command]
 async fn apply_update(download_url: String, app: tauri::AppHandle) -> Result<(), String> {
+    // A Skip from an earlier update must not stop this one.
+    updater::clear_update_cancel();
+
     // Only ever fetch from this project's own release assets. Without this the
     // command would extract whatever zip the caller names over the install dir.
     if !updater::is_trusted_update_url(&download_url) {
