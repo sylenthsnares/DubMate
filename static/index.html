@@ -597,9 +597,9 @@
         <div class="stage-info-group">
           <button id="btn-back-lobby" class="btn btn-ghost btn-sm" aria-label="Back to lobby">‹ Lobby</button>
           <div class="line-progress-badge">
-            <span id="booth-line-indicator" class="booth-line-text">Line 1 / 20</span>
+            <span id="booth-line-indicator" class="booth-line-text" tabindex="0">Line 1 of 1</span>
           </div>
-          <span id="booth-time-badge" class="time-badge">00:00.00 - 00:00.00</span>
+          <span id="booth-time-badge" class="time-badge">0.0 s</span>
           <button id="btn-toggle-filter-lines" class="btn btn-secondary btn-sm"
             data-tip="Switch between your lines and all lines">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -685,7 +685,6 @@
                 <span class="legend-dot dot-take" aria-hidden="true"></span>
                 <span class="legend-text" id="waveform-take-legend">Your take</span>
               </div>
-              <span class="legend-offset-pill" id="waveform-offset-legend">Offset: 0 ms</span>
             </div>
             <div class="waveform-canvas-box">
               <canvas id="waveform-canvas"
@@ -705,7 +704,7 @@
               <div class="nudge-buttons">
                 <button class="btn-nudge" data-nudge="-100" data-tip="100 ms earlier">-100ms</button>
                 <button class="btn-nudge" data-nudge="-25" data-tip="25 ms earlier">-25ms</button>
-                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Back to the automatic timing">Auto</button>
+                <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Back to the automatic timing">Reset to auto</button>
                 <button class="btn-nudge" data-nudge="25" data-tip="25 ms later">+25ms</button>
                 <button class="btn-nudge" data-nudge="100" data-tip="100 ms later">+100ms</button>
               </div>
@@ -718,6 +717,7 @@
                 data-tip="DubMate matched this take to the original line. Use [ and ] to adjust it."></span>
               <button id="btn-original-speed" class="btn btn-ghost btn-xs" style="display: none;"
                 data-tip="Play this take at the speed you recorded it">Original speed</button>
+              <span class="timing-drag-hint" hidden>Drag or press [ ] to adjust timing</span>
             </div>
           </div>
 
@@ -730,133 +730,73 @@
           </div>
         </div>
 
-        <!-- Right: Studio Recording & Vintage Hardware Rack Deck -->
+        <!-- Right: one stacked column. Record deck (pinned), then a scrolling middle with
+             Takes, Voice and Monitor, then the line navigation (pinned). -->
         <div class="booth-controls" id="booth-controls-panel">
 
-          <!-- Deck 1: Studio Monitoring & Headphone Deck (VOX Amp Style) -->
-          <div class="glass-card control-card rack-wood-frame" id="card-studio-monitoring">
+          <!-- Row 1: the record deck -->
+          <div class="record-deck glass-card rack-wood-frame" id="card-record-console">
             <div class="panel-header-sm amp-faceplate">
-              <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
-              <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                  stroke-linecap="round" stroke-linejoin="round">
-                  <path
-                    d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
-                </svg>
-                <span>MONITOR</span>
-              </div>
-            </div>
-
-            <!-- 3-Column Balanced Amp Section: Backing Dial | Click Rocker | Guide Rocker -->
-            <div class="monitoring-deck-grid">
-              <!-- Column 1: Master Backing Level Channel -->
-              <div class="dsp-dial-channel amp-master-vol">
-                <span class="dsp-channel-title">BACKING</span>
-                <input type="range" id="slider-backing-vol" min="0" max="100" step="5" value="60"
-                  aria-label="Backing volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="60"
-                  aria-valuetext="60 percent" data-tip="Volume of the scene's music and effects while you record">
-                <span id="val-backing-vol" class="dsp-channel-readout">60%</span>
-              </div>
-
-              <!-- Column 2: Metronome Click Analog Rocker Switch -->
-              <div class="analog-rocker-channel">
-                <span class="dsp-channel-title">CLICK</span>
-                <label class="analog-rocker-unit" data-tip="Count-in beeps before each take">
-                  <input type="checkbox" id="check-metronome" checked class="analog-rocker-input"
-                    aria-label="Count-in click">
-                  <div class="analog-rocker-housing">
-                    <div class="rocker-paddle">
-                      <span class="rocker-symbol rocker-i">I</span>
-                      <div class="rocker-divider"></div>
-                      <span class="rocker-symbol rocker-o">O</span>
-                    </div>
-                  </div>
-                </label>
-                <span class="rocker-status-tag" id="tag-metronome">ON</span>
-              </div>
-
-              <!-- Column 3: Guide Voice Analog Rocker Switch -->
-              <div class="analog-rocker-channel">
-                <span class="dsp-channel-title">GUIDE</span>
-                <label class="analog-rocker-unit" data-tip="Hear the original voice in your headphones while you record">
-                  <input type="checkbox" id="check-guide-voice" class="analog-rocker-input"
-                    aria-label="Guide voice">
-                  <div class="analog-rocker-housing">
-                    <div class="rocker-paddle">
-                      <span class="rocker-symbol rocker-i">I</span>
-                      <div class="rocker-divider"></div>
-                      <span class="rocker-symbol rocker-o">O</span>
-                    </div>
-                  </div>
-                </label>
-                <span class="rocker-status-tag" id="tag-guide-voice">OFF</span>
-              </div>
-            </div>
-
-            <!-- A/B Channel Selector Bar -->
-            <div class="ab-switch-box">
-              <button id="btn-toggle-ab" class="btn-ab" data-tip="Switch between your take and the original voice">
-                <span id="label-ab-state"><strong style="color: var(--primary);">[ A: Your Dub ]</strong> ⇄ B:
-                  Orig</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Deck 2: Master Hardware Record Console (Broadcast Deck Surface) -->
-          <div class="record-btn-container glass-card" id="card-record-console">
-            <!-- Console Top Header -->
-            <div class="record-console-header">
               <div class="record-track-tag">
-                <span class="rec-dot-live"></span>
+                <span class="rec-dot-live" aria-hidden="true"></span>
                 <span>RECORD</span>
               </div>
-              <span class="record-mode-badge" id="record-engine-badge">ARMED</span>
+              <span class="record-mode-badge" id="record-engine-badge">READY</span>
             </div>
 
-            <!-- Center Record Pilot Lamp Button -->
-            <div class="record-bezel-wrapper">
-              <div class="record-halo-ring"></div>
-              <button id="btn-record-main" class="btn-big-record" data-tip="Record (Space)">
-                <span id="record-icon" aria-hidden="true">●</span>
-              </button>
-            </div>
+            <div class="record-deck-body">
+              <div class="record-deck-main">
+                <div class="record-bezel-wrapper">
+                  <div class="record-halo-ring"></div>
+                  <button id="btn-record-main" class="btn-big-record" aria-label="Record take 1 (Space)"
+                    data-tip="Record take 1 (Space)">
+                    <span id="record-icon" aria-hidden="true">●</span>
+                  </button>
+                </div>
+                <div class="record-next-action" aria-live="polite">
+                  <div id="record-status-label" class="record-status-label">Record take 1</div>
+                  <div id="record-status-sub" class="record-status-sub"><kbd>Space</kbd> · 3-beat count-in</div>
+                </div>
+              </div>
 
-            <!-- Tape Transport Status Readout Strip -->
-            <div id="record-status-label" class="record-status-label">Press Space to record</div>
+              <!-- One transport: the original line or the take in the dub -->
+              <div class="transport-seg" role="group" aria-label="Listen">
+                <button id="btn-play-orig" class="transport-seg-btn" type="button" aria-pressed="false"
+                  data-tip="Play the original line">▶ Original</button>
+                <button id="btn-preview-take" class="transport-seg-btn" type="button" aria-pressed="false" disabled
+                  data-tip="Play your take over the scene's music">▶ <span id="label-preview-take">Take</span></button>
+              </div>
 
-            <!-- Take history: one click away, from the first take on a line you can record -->
-            <div id="take-history" class="take-history" style="display: none;">
-              <button id="btn-take-history" class="btn btn-secondary btn-xs" aria-expanded="false"
-                aria-controls="take-history-panel"
-                data-tip="Listen to your takes and choose the one used in the dub"><span class="take-history-count">Takes (1)</span><span aria-hidden="true" class="take-history-chevron"></span></button>
-              <div id="take-history-panel" class="take-history-panel" style="display: none;"></div>
-            </div>
-
-            <!-- Full-Width Audition / Playback Transport Controls -->
-            <div class="listen-btn-group full-width-transport">
-              <button id="btn-play-orig" class="btn btn-secondary btn-transport-full" data-tip="Play the original line">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-                <span>Original</span>
-              </button>
-              <button id="btn-preview-take" class="btn btn-primary btn-transport-full"
-                data-tip="Play your take over the scene's music">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-                <span>Preview</span>
-              </button>
+              <div id="mic-sync-hint" class="mic-sync-hint" hidden>
+                <span class="mic-sync-hint-text">Sync your mic so takes line up on their own.</span>
+                <button id="btn-mic-sync-settings" class="btn btn-secondary btn-xs" type="button">Audio settings</button>
+                <button id="btn-mic-sync-dismiss" class="btn btn-ghost btn-xs mic-sync-hint-close" type="button"
+                  aria-label="Dismiss">×</button>
+              </div>
             </div>
           </div>
 
+          <!-- Row 2: the scrolling middle -->
+          <div class="booth-column-scroll" id="booth-column-scroll">
+
+          <!-- Takes -->
+          <div class="takes-card glass-card rack-wood-frame" id="card-takes" style="display: none;">
+            <div class="panel-header-sm amp-faceplate">
+              <span>TAKES</span>
+            </div>
+            <div class="takes-card-body">
+              <div id="take-history" class="take-history" style="display: none;">
+                <button id="btn-take-history" class="btn btn-secondary btn-xs" aria-expanded="false"
+                  aria-controls="take-history-panel"
+                  data-tip="Listen to your takes and choose the one used in the dub"><span class="take-history-count">Takes (1)</span><span aria-hidden="true" class="take-history-chevron"></span></button>
+                <div id="take-history-panel" class="take-history-panel" style="display: none;"></div>
+              </div>
+            </div>
+          </div>
           <!-- Deck 3: Voice. Presets and Level first; the full rack one click away.
                Shown on a line you can record that has a take (voice_rack.js). -->
           <div class="fx-panel glass-card rack-wood-frame" id="card-voice-dsp" style="display: none;">
             <div class="panel-header-sm amp-faceplate" style="justify-content: space-between;">
-              <span class="amp-screw amp-screw-tl" aria-hidden="true"></span>
-              <span class="amp-screw amp-screw-tr" aria-hidden="true"></span>
               <div style="display: flex; align-items: center; gap: 6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -901,8 +841,8 @@
                     aria-valuetext="0 decibels" data-tip="How loud this take sits in the dub">
                   <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                     <span id="val-gain" class="dsp-channel-readout">0 dB</span>
-                    <span id="badge-gain-match" class="badge-calibrated uncalibrated"
-                      style="font-size: 11px; padding: 1px 4px; display: none;">Match</span>
+                    <span id="badge-gain-match" class="badge-calibrated calibrated"
+                      style="font-size: 11px; padding: 1px 4px; display: none;">✓ Matched</span>
                   </div>
                 </div>
                 <div class="voice-meter" aria-hidden="true">
@@ -1122,19 +1062,33 @@
             </div>
           </div>
 
-          <!-- Deck 4: Line Step Navigation Deck -->
+          <!-- Monitor: what you hear while you record -->
+          <div class="monitor-strip glass-card" id="card-studio-monitoring">
+            <div class="monitor-row">
+              <label class="monitor-label" for="slider-backing-vol">Backing</label>
+              <input type="range" id="slider-backing-vol" class="monitor-slider" min="0" max="100" step="5" value="60"
+                aria-valuetext="60 percent" data-tip="Volume of the scene's music and effects while you record">
+              <span id="val-backing-vol" class="monitor-readout">60%</span>
+            </div>
+            <div class="monitor-row monitor-switches">
+              <label class="monitor-switch" data-tip="Beeps on the count-in">
+                <input type="checkbox" id="check-metronome" class="switch-checkbox" checked>
+                <span>Count-in</span>
+              </label>
+              <label class="monitor-switch" data-tip="Hear the original voice while you record">
+                <input type="checkbox" id="check-guide-voice" class="switch-checkbox">
+                <span>Hear original</span>
+              </label>
+            </div>
+          </div>
+
+          </div>
+
+          <!-- Row 3: line navigation -->
           <div class="booth-nav-group">
-            <button id="btn-prev-line" class="btn btn-secondary btn-sm" style="flex: 1;"
+            <button id="btn-prev-line" class="btn btn-secondary btn-sm booth-nav-prev" type="button"
               aria-label="Previous line">‹ Prev</button>
-            <button id="btn-clear-take" class="btn btn-ghost btn-sm" data-tip="Delete this take">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18" />
-                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-              </svg>
-            </button>
-            <button id="btn-next-line" class="btn btn-primary btn-sm" style="flex: 2;">Next line ›</button>
+            <button id="btn-next-line" class="btn btn-primary btn-sm booth-nav-next" type="button">Next line ›</button>
           </div>
 
         </div>

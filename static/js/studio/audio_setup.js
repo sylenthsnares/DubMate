@@ -946,8 +946,16 @@ export class AudioSetupMethods {
   }
 
   // Guard used by the record path so the browser permission
-  // prompt is never the first thing a user sees.
+  // prompt is never the first thing a user sees. A failed open is kept in micError,
+  // so the record deck shows NO MIC and why until the mic opens again.
   async ensureMicReady() {
+    const ready = await this.checkMicReady();
+    if (ready) this.micError = null;
+    this.updateRecordButtonUI();
+    return ready;
+  }
+
+  async checkMicReady() {
     if (this.audioSetup.permission === 'granted') return true;
 
     let state = 'unknown';
@@ -962,6 +970,7 @@ export class AudioSetupMethods {
         await this.audio.requestMicrophone();
         this.audio.releaseMicrophone();
       } catch (err) {
+        this.micError = err;
         const name = (err && err.name) || '';
         if (name === 'NotAllowedError' || name === 'SecurityError') {
           this.audioSetup.permission = 'denied';

@@ -4,6 +4,11 @@
 import { WaveformRenderer } from '../waveform.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
+import { micErrorMessage } from './audio_setup.js';
+
+const LOCK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const SAVING_ICON = '<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>';
+const IDLE_HINT = '<kbd>Space</kbd> · 3-beat count-in';
 
 export class BoothMethods {
   toggleFilterLines() {
@@ -37,14 +42,27 @@ export class BoothMethods {
     });
   }
 
-  /** "Matched" vs "Scene Target" badge for the take's auto-gain against gainDb. */
-  renderGainMatchBadge(take, gainDb) {
+  /** "✓ Matched" while the take sits at its scene-matched level, and Auto for takes that
+   *  have one. Reads the take's own values: the dial only moves in 0.5 dB steps. */
+  renderGainMatchBadge(take) {
+    const hasAuto = !!take && take.auto_gain_db !== undefined && take.auto_gain_db !== null;
+    if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = hasAuto ? 'inline-flex' : 'none';
     if (!this.badgeGainMatch) return;
-    const matchVal = parseFloat(take.auto_gain_db);
-    const label = `${matchVal >= 0 ? '+' : ''}${matchVal} dB`;
-    const isMatched = Math.abs(gainDb - matchVal) < 0.1;
-    this.badgeGainMatch.innerText = isMatched ? `✓ Matched` : `Match: ${label}`;
-    this.badgeGainMatch.className = isMatched ? 'badge-calibrated calibrated' : 'badge-calibrated uncalibrated';
+    const matched = hasAuto && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    this.badgeGainMatch.textContent = '✓ Matched';
+    this.badgeGainMatch.style.display = matched ? 'inline-block' : 'none';
+  }
+
+  /** "+1.9 dB", one decimal. */
+  gainText(db) {
+    const v = Math.round((Number(db) || 0) * 10) / 10;
+    return `${v > 0 ? '+' : ''}${v} dB`;
+  }
+
+  /** The number the next take on this line gets. */
+  nextTakeNumber(line) {
+    const entry = line ? this.roomState?.takes?.[line.line_id] : undefined;
+    return entry?.next_number || takeCount(this.roomState?.takes, line) + 1;
   }
 
   getMyAssignedCharacters() {
@@ -135,41 +153,24 @@ export class BoothMethods {
     const myAssignedLines = this.roomState.pack.lines.filter(l => myAssignedChars.includes(l.character));
     const myLinePos = myAssignedLines.findIndex(l => l.index === index) + 1;
 
-    this.boothLineIndicator.innerText = isMyLine
-      ? (myAssignedLines.length > 0 ? `Your line ${myLinePos}/${myAssignedLines.length} (line ${index + 1})` : `Line ${index + 1}/${this.roomState.pack.lines.length}`)
-      : `Line ${index + 1}/${this.roomState.pack.lines.length} (locked)`;
+    // Scene numbering, as on the line chips; your own position and the time range in the tooltip.
+    this.boothLineIndicator.textContent = `Line ${index + 1} of ${this.roomState.pack.lines.length}`;
+    const range = `${(line.start || 0).toFixed(1)}–${(line.end || 0).toFixed(1)} s`;
+    this.boothLineIndicator.dataset.tip = isMyLine && myLinePos > 0
+      ? `Your line ${myLinePos} of ${myAssignedLines.length} · ${range}` : range;
 
     const lineDur = (line.duration !== undefined ? line.duration : Math.max(0.5, (line.end || 0) - (line.start || 0)));
-    this.boothTimeBadge.innerText = `${(line.start || 0).toFixed(2)}s - ${(line.end || 0).toFixed(2)}s (${lineDur.toFixed(2)}s)`;
+    this.boothTimeBadge.textContent = `${lineDur.toFixed(1)} s`;
     this.stageCaptionChar.innerText = isMyLine ? line.character.toUpperCase() : `${line.character.toUpperCase()} (LOCKED)`;
     const lineCap = (line.caption || line.text || '').trim();
     this.stageCaptionText.innerText = lineCap ? `“${lineCap}”` : `(${line.character}, no subtitle)`;
 
     const take = pickedTake(this.roomState.takes, line);
-    if (take) {
-      this.sliderNudge.value = take.offset_ms || 0;
-      this.nudgeDisplay.innerText = (take.offset_ms || 0) + ' ms';
-      this.sliderGain.value = take.gain_db || 0;
-      this.valGain.innerText = (take.gain_db > 0 ? '+' : '') + (take.gain_db || 0) + ' dB';
-
-      if (take.auto_gain_db !== undefined) {
-        if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'inline-flex';
-        if (this.badgeGainMatch) {
-          this.badgeGainMatch.style.display = 'inline-block';
-          this.renderGainMatchBadge(take, parseFloat(this.sliderGain.value) || 0);
-        }
-      } else {
-        if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'none';
-        if (this.badgeGainMatch) this.badgeGainMatch.style.display = 'none';
-      }
-    } else {
-      this.sliderNudge.value = 0;
-      this.nudgeDisplay.innerText = '0 ms';
-      this.sliderGain.value = 0;
-      this.valGain.innerText = '0 dB';
-      if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = 'none';
-      if (this.badgeGainMatch) this.badgeGainMatch.style.display = 'none';
-    }
+    this.setNudgeValue(take ? (take.offset_ms || 0) : 0, false);
+    const gainDb = take ? (parseFloat(take.gain_db) || 0) : 0;
+    this.sliderGain.value = gainDb;
+    this.valGain.textContent = this.gainText(gainDb);
+    this.renderGainMatchBadge(take);
 
     const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
     if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
@@ -266,10 +267,7 @@ export class BoothMethods {
       isLast = (index >= this.roomState.pack.lines.length - 1);
     }
 
-    if (this.btnPrevLine) {
-      this.btnPrevLine.disabled = isFirst;
-      this.btnPrevLine.style.opacity = isFirst ? '0.4' : '1';
-    }
+    if (this.btnPrevLine) this.btnPrevLine.disabled = isFirst;
 
     if (this.btnNextLine) {
       if (isLast) {
@@ -303,47 +301,92 @@ export class BoothMethods {
     }
   }
 
+  /** The record deck: state badge, record button, the next-action lines and the transport.
+   *  The badge is READY, COUNT-IN, REC, SAVING, NO MIC or OFFLINE; hidden on lines you
+   *  can't record, where the line says who voices the character. */
   updateRecordButtonUI(take = null) {
     if (!take) {
       take = this.takeForLine(this.currentLineIndex);
     }
+    this.renderTransport(take);
+    if (!this.btnRecordMain) return;
 
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    const isMyLine = this.canRecordLine(line);
-    // Only the line's actor can delete its takes; hide the button for everyone else.
-    if (this.btnClearTake) this.btnClearTake.style.display = isMyLine ? '' : 'none';
+    const badge = this.recordEngineBadge;
+    const sub = this.recordStatusSub;
+    const show = ({ state = null, glyph, html = false, cls = '', main, hint = '', hintHtml = false, name }) => {
+      if (badge) {
+        badge.hidden = !state;
+        badge.textContent = state || '';
+        badge.classList.toggle('is-rec', state === 'REC');
+        badge.classList.toggle('is-warn', state === 'NO MIC' || state === 'OFFLINE');
+      }
+      this.btnRecordMain.className = `btn-big-record${cls}`;
+      if (html) this.recordIcon.innerHTML = glyph;
+      else this.recordIcon.textContent = glyph;
+      this.recordStatusLabel.textContent = main;
+      if (sub) {
+        if (hintHtml) sub.innerHTML = hint;
+        else sub.textContent = hint;
+        sub.hidden = !hint;
+      }
+      this.btnRecordMain.setAttribute('aria-label', name);
+      this.btnRecordMain.dataset.tip = name;
+    };
 
-    if (!isMyLine) {
-      this.btnRecordMain.className = 'btn-big-record locked';
-      this.recordIcon.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+    if (!this.canRecordLine(line)) {
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
       const actorText = assignedNames.length > 0 ? assignedNames.join(', ') : 'another actor';
-      this.recordStatusLabel.innerText = `${line?.character} is voiced by ${actorText}`;
+      const main = `${line?.character} is voiced by ${actorText}`;
+      show({ glyph: LOCK_ICON, html: true, cls: ' locked', main, name: main });
       return;
     }
 
+    const n = this.nextTakeNumber(line);
     if (this.recordState === 'recording') {
-      this.btnRecordMain.className = 'btn-big-record recording';
-      this.recordIcon.innerText = '■';
-      this.recordStatusLabel.innerText = "Recording. Press Space to stop";
+      show({ state: 'REC', glyph: '■', cls: ' recording', main: 'Recording · Space to stop', name: 'Stop recording (Space)' });
     } else if (this.recordState === 'countdown') {
-      this.btnRecordMain.className = 'btn-big-record';
-      this.recordIcon.innerText = '✕';
-      this.recordStatusLabel.innerText = "Counting in. Click to cancel";
+      show({ state: 'COUNT-IN', glyph: '✕', main: 'Counting in… Space or click to cancel', name: 'Cancel the count-in (Space)' });
     } else if (this.recordState === 'processing') {
-      this.btnRecordMain.className = 'btn-big-record';
-      this.recordIcon.innerHTML = `<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>`;
-      this.recordStatusLabel.innerText = "Saving take…";
+      show({ state: 'SAVING', glyph: SAVING_ICON, html: true, main: `Saving take ${n}…`, name: `Saving take ${n}` });
     } else {
-      this.btnRecordMain.className = 'btn-big-record';
-      if (take) {
-        this.recordIcon.innerText = '↺';
-        this.recordStatusLabel.innerText = `Take ${take.number} by ${take.user_name} (${take.duration}s)`;
+      const idle = { glyph: '●', main: `Record take ${n}`, name: `Record take ${n} (Space)` };
+      if (this.audioSetup?.permission === 'denied' || this.micError) {
+        show({ ...idle, state: 'NO MIC', hint: micErrorMessage(this.micError || { name: 'NotAllowedError' }) });
+      } else if (this.socket && this.socket.connectionState !== 'open') {
+        show({ ...idle, state: 'OFFLINE', hint: "Takes will upload when you're back online." });
       } else {
-        this.recordIcon.innerText = '●';
-        this.recordStatusLabel.innerText = 'Press Space to record';
+        show({ ...idle, state: 'READY', hint: IDLE_HINT, hintHtml: true });
       }
+    }
+  }
+
+  /** "▶ Original | ▶ Take N": Take waits for a take, and aria-pressed marks the side you hear. */
+  renderTransport(take = this.takeForLine(this.currentLineIndex)) {
+    if (!this.btnPlayOrig || !this.btnPreviewTake) return;
+    this.btnPreviewTake.disabled = !take || !!this.isProcessingTake;
+    if (this.labelPreviewTake) this.labelPreviewTake.textContent = take ? `Take ${take.number}` : 'Take';
+    const playingTake = this.isPlayingCurrentTake();
+    const hearOriginal = !!this.isPlayingReference || (playingTake && this.audio.abState === 'B');
+    this.btnPlayOrig.setAttribute('aria-pressed', String(hearOriginal));
+    this.btnPreviewTake.setAttribute('aria-pressed', String(playingTake && this.audio.abState !== 'B'));
+  }
+
+  /** A transport press. While the take plays, the other side switches what you hear in
+   *  place (the preview carries both); the side you hear stops. Otherwise it plays that side. */
+  pressTransport(side) {
+    const want = side === 'take' ? 'A' : 'B';
+    if (this.isPlayingCurrentTake()) {
+      if (this.audio.abState !== want) this.setABMode(want);
+      else this.stopBoothPlayback();
+      return;
+    }
+    if (side === 'take') {
+      this.setABMode('A');
+      this.previewCurrentTake();
+    } else {
+      this.playOriginalReference();
     }
   }
 
@@ -427,6 +470,7 @@ export class BoothMethods {
       this.stageVideo.pause();
     }
     this.waveform.setPlayhead(-1);
+    this.renderTransport();
   }
 
   // Play Original Reference Clip with Animated Playhead
@@ -442,6 +486,7 @@ export class BoothMethods {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     const token = this.activePlaybackToken;
     this.isPlayingReference = true;
+    this.renderTransport();
 
     await this.syncVideoSeek(line.start);
     if (token !== this.activePlaybackToken) return;
@@ -475,6 +520,7 @@ export class BoothMethods {
           this.isPlayingReference = false;
           this.waveform.setPlayhead(-1);
           this.stageVideo.pause();
+          this.renderTransport();
         }
       },
     });
@@ -546,6 +592,7 @@ export class BoothMethods {
     this.activePlaybackToken = (this.activePlaybackToken || 0) + 1;
     const token = this.activePlaybackToken;
     this.isPlayingTake = true;
+    this.renderTransport();
 
     const offsetSec = offsetMs / 1000.0;
     const previewStartSec = Math.max(0, line.start + Math.min(0, offsetSec));
@@ -585,34 +632,23 @@ export class BoothMethods {
           this.isPlayingTake = false;
           this.waveform.setPlayhead(-1);
           this.stageVideo.pause();
+          this.renderTransport();
         }
       },
     });
     this.startVoiceMeter();
   }
 
-  toggleABState() {
-    const nextState = this.audio.abState === 'A' ? 'B' : 'A';
-    this.setABMode(nextState);
-  }
-
+  /** A = the take, B = the original, swapped in place while the take's preview plays. */
   setABMode(state) {
     this.audio.setABState(state);
-    if (state === 'A') {
-      this.labelABState.innerHTML = `<span style="color: var(--primary); font-weight: 700;">[ A: Your Dub ]</span> <span style="color: var(--foreground-dim);">⇄ B: Orig</span>`;
-    } else {
-      this.labelABState.innerHTML = `<span style="color: var(--foreground-dim);">A: Dub ⇄</span> <span style="color: var(--accent-brass); font-weight: 700;">[ B: Original ]</span>`;
-    }
+    this.renderTransport();
   }
 
   setNudgeValue(val, syncSocket = true) {
     const clamped = Math.max(-800, Math.min(800, val));
     this.sliderNudge.value = clamped;
-    this.nudgeDisplay.innerText = `${clamped > 0 ? '+' : ''}${clamped} ms`;
-    const legendElem = document.getElementById('waveform-offset-legend');
-    if (legendElem) {
-      legendElem.innerText = `Offset: ${clamped > 0 ? '+' : ''}${clamped} ms`;
-    }
+    this.nudgeDisplay.textContent = `${clamped > 0 ? '+' : ''}${clamped} ms`;
     this.waveform.offsetMs = clamped;
     this.waveform.render();
     if (syncSocket) {
@@ -622,11 +658,15 @@ export class BoothMethods {
   }
 
   /** "Lined up automatically" by the timing readout until the take is nudged, and
-   *  Original speed on a fitted take. "Nudged" is derived: 5 ms or more off auto_offset_ms. */
+   *  Original speed on a fitted take. "Nudged" is derived: 5 ms or more off auto_offset_ms.
+   *  "Reset to auto" looks active only at the take's automatic timing (0 for older takes). */
   updateTimingCaption() {
     if (!this.timingCaption) return;
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const take = this.roomState && this.takeForLine(this.currentLineIndex);
+    const autoMs = typeof take?.auto_offset_ms === 'number' ? take.auto_offset_ms : 0;
+    this.btnNudgeReset?.classList.toggle('is-active', !!take && parseInt(this.sliderNudge.value, 10) === autoMs);
+    if (this.timingDragHint) this.timingDragHint.hidden = !take;
     const stretch = Number(take?.stretch ?? 1);
     const fitted = !!take && Number.isFinite(stretch) && stretch !== 1;
     const auto = !!take && take.aligned === true && typeof take.auto_offset_ms === 'number'
@@ -673,14 +713,18 @@ export class BoothMethods {
     }
   }
 
-  /** Sends the take's timing and level. Its sound (voice chain) is saved by flushVoiceSave. */
-  syncTakeParams() {
+  /** Sends the take's timing and level. Its sound (voice chain) is saved by flushVoiceSave.
+   *  The Level dial shows the take's level rounded to its 0.5 dB steps: while it sits on that
+   *  rounding, the take keeps its exact level (gainDb sets one outright). */
+  syncTakeParams({ gainDb } = {}) {
     const lineIdx = this.currentLineIndex;
     const offsetMs = parseInt(this.sliderNudge.value, 10);
-    const gain = parseFloat(this.sliderGain.value);
 
     const take = this.roomState && this.takeForLine(lineIdx);
     if (!take) return;
+    const dial = parseFloat(this.sliderGain.value);
+    const current = parseFloat(take.gain_db) || 0;
+    const gain = gainDb ?? (Math.abs(dial - current) <= 0.25 ? current : dial);
     take.offset_ms = offsetMs;
     take.gain_db = gain;
 
@@ -694,10 +738,10 @@ export class BoothMethods {
   showTakeLevel(take) {
     const gainDb = parseFloat(take.gain_db) || 0;
     this.sliderGain.value = gainDb;
-    this.valGain.innerText = (gainDb > 0 ? '+' : '') + gainDb + ' dB';
+    this.valGain.textContent = this.gainText(gainDb);
     this.audio.setGain(gainDb);
     this.updateKnobsVisuals();
-    if (take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, gainDb);
+    this.renderGainMatchBadge(take);
   }
 
   isPlayingCurrentTake() {
@@ -970,11 +1014,9 @@ export class BoothMethods {
     const interactiveElements = [
       this.btnPrevLine,
       this.btnNextLine,
-      this.btnClearTake,
       this.btnToggleReady,
       this.btnJumpScreening,
       this.btnBackLobby,
-      this.btnToggleAB,
       this.btnPlayOrig,
       this.btnPreviewTake,
       this.btnToggleFilterLines,
@@ -1039,7 +1081,11 @@ export class BoothMethods {
     // off 0 / off the previous take's auto gain (the slider still shows that take's level).
     const prevTake = this.takeForLine(lineIndex);
     const prevAuto = prevTake ? parseFloat(prevTake.auto_gain_db) : NaN;
-    const autoGain = gain === 0 || (!Number.isNaN(prevAuto) && Math.abs(gain - prevAuto) < 0.05);
+    // The dial rounds to 0.5 dB: an unmoved dial on a matched take still counts as matched.
+    const prevGain = prevTake ? (parseFloat(prevTake.gain_db) || 0) : NaN;
+    const prevMatched = !Number.isNaN(prevAuto) && (Math.abs(gain - prevAuto) < 0.05
+      || (Math.abs(gain - prevGain) <= 0.25 && Math.abs(prevGain - prevAuto) < 0.05));
+    const autoGain = gain === 0 || prevMatched;
 
     const formData = new FormData();
     formData.append('file', blob, `take_${lineIndex}.webm`);
@@ -1079,7 +1125,8 @@ export class BoothMethods {
           this.screeningBuffers.set(data.take.url, recordedBuffer);
         }
       }
-      this.showToast(this.takeSavedMessage());
+      this.showToast('Take saved');
+      if (this.shouldOfferMicSync()) this.showMicSyncHint();
       await this.loadBoothLine(lineIndex);
     } catch (err) {
       this.recordState = 'idle';
@@ -1143,11 +1190,6 @@ export class BoothMethods {
     }
   }
 
-  /** Deletes the take in the dub; the line falls back to its newest other take. */
-  clearCurrentTake() {
-    return this.deleteTake(this.takeForLine(this.currentLineIndex));
-  }
-
   /** Deletes one of the current line's takes after a confirm. */
   async deleteTake(take) {
     if (this.isProcessingTake) return;
@@ -1202,11 +1244,11 @@ export class BoothMethods {
     const show = !!line && takes.length >= 1 && this.canRecordLine(line);
     const open = show && !!this.takeHistoryOpen;
     this.btnTakeHistory.parentElement.style.display = show ? '' : 'none';
+    if (this.cardTakes) this.cardTakes.style.display = show ? '' : 'none';
     const label = this.btnTakeHistory.querySelector('.take-history-count');
     if (label) label.textContent = `Takes (${takes.length})`;
     this.btnTakeHistory.setAttribute('aria-expanded', String(open));
     this.takeHistoryPanel.style.display = open ? '' : 'none';
-    this.takeHistoryPanel.closest('.record-btn-container')?.classList.toggle('take-history-open', open);
     this.takeHistoryPanel.innerHTML = '';
     if (!open) return;
 

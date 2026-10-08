@@ -245,17 +245,22 @@ class DubMateApp {
     this.valBackingVol = document.getElementById('val-backing-vol');
     this.checkMetronome = document.getElementById('check-metronome');
     this.checkGuideVoice = document.getElementById('check-guide-voice');
-    this.btnToggleAB = document.getElementById('btn-toggle-ab');
-    this.labelABState = document.getElementById('label-ab-state');
 
     // Audio & FX Controls
     this.btnRecordMain = document.getElementById('btn-record-main');
     this.recordIcon = document.getElementById('record-icon');
+    this.recordEngineBadge = document.getElementById('record-engine-badge');
     this.recordStatusLabel = document.getElementById('record-status-label');
+    this.recordStatusSub = document.getElementById('record-status-sub');
+    this.micSyncHint = document.getElementById('mic-sync-hint');
+    this.cardTakes = document.getElementById('card-takes');
     this.btnTakeHistory = document.getElementById('btn-take-history');
     this.takeHistoryPanel = document.getElementById('take-history-panel');
     this.btnPlayOrig = document.getElementById('btn-play-orig');
     this.btnPreviewTake = document.getElementById('btn-preview-take');
+    this.labelPreviewTake = document.getElementById('label-preview-take');
+    this.timingDragHint = document.querySelector('.timing-drag-hint');
+    this.btnNudgeReset = document.querySelector('.btn-nudge-reset');
     this.sliderNudge = document.getElementById('slider-nudge');
     this.nudgeDisplay = document.getElementById('nudge-display');
     this.timingCaption = document.getElementById('timing-caption');
@@ -347,7 +352,6 @@ class DubMateApp {
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
     this.btnNextLine = document.getElementById('btn-next-line');
-    this.btnClearTake = document.getElementById('btn-clear-take');
     this.btnJumpScreening = document.getElementById('btn-jump-screening');
     this.btnBackLobby = document.getElementById('btn-back-lobby');
 
@@ -728,29 +732,24 @@ class DubMateApp {
 
     // Record & Playback Controls
     this.btnRecordMain.addEventListener('click', () => this.toggleRecording());
-    this.btnPlayOrig.addEventListener('click', () => this.playOriginalReference());
-    this.btnPreviewTake.addEventListener('click', () => this.previewCurrentTake());
+    this.btnPlayOrig.addEventListener('click', () => this.pressTransport('original'));
+    this.btnPreviewTake.addEventListener('click', () => this.pressTransport('take'));
+    document.getElementById('btn-mic-sync-settings')?.addEventListener('click', () => {
+      this.hideMicSyncHint();
+      this.openAudioSettings();
+    });
+    document.getElementById('btn-mic-sync-dismiss')?.addEventListener('click', () => this.hideMicSyncHint());
 
     this.sliderBackingVol.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10);
       this.valBackingVol.innerText = `${val}%`;
+      e.target.setAttribute('aria-valuetext', `${val} percent`);
       this.audio.backingVolume = val / 100.0;
     });
 
     this.checkMetronome.addEventListener('change', (e) => {
       this.audio.metronomeEnabled = e.target.checked;
-      const tag = document.getElementById('tag-metronome');
-      if (tag) tag.innerText = e.target.checked ? 'ON' : 'OFF';
     });
-
-    if (this.checkGuideVoice) {
-      this.checkGuideVoice.addEventListener('change', (e) => {
-        const tag = document.getElementById('tag-guide-voice');
-        if (tag) tag.innerText = e.target.checked ? 'ON' : 'OFF';
-      });
-    }
-
-    this.btnToggleAB.addEventListener('click', () => this.toggleABState());
 
     this.sliderNudge.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10);
@@ -774,31 +773,30 @@ class DubMateApp {
     // Level is not an effect: a gain after the take's sound, sent with its timing.
     this.sliderGain.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
-      this.valGain.innerText = (val > 0 ? '+' : '') + val + ' dB';
-      const take = this.takeForLine(this.currentLineIndex);
-      if (take && take.auto_gain_db !== undefined) this.renderGainMatchBadge(take, val);
+      this.valGain.textContent = this.gainText(val);
       this.audio.setGain(val);
       this.syncTakeParams();
+      this.renderGainMatchBadge(this.takeForLine(this.currentLineIndex));
     });
 
     if (this.btnAutoMatchGain) {
       this.btnAutoMatchGain.addEventListener('click', () => {
         const take = this.takeForLine(this.currentLineIndex);
         if (take && take.auto_gain_db !== undefined) {
+          // The dial moves in 0.5 dB steps; the take gets the exact matched level.
           const targetGain = parseFloat(take.auto_gain_db);
           this.sliderGain.value = targetGain;
-          this.valGain.innerText = (targetGain > 0 ? '+' : '') + targetGain + ' dB';
+          this.valGain.textContent = this.gainText(targetGain);
           this.audio.setGain(targetGain);
-          this.syncTakeParams();
-          this.renderGainMatchBadge(take, targetGain);
-          this.showToast(`Level matched to the original (${targetGain >= 0 ? '+' : ''}${targetGain} dB)`);
+          this.updateKnobsVisuals();
+          this.syncTakeParams({ gainDb: targetGain });
+          this.renderGainMatchBadge(take);
         }
       });
     }
 
     this.btnPrevLine.addEventListener('click', () => this.stepLine(-1));
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
-    this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
     this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
     // Escape inside the take history closes it and returns to the button, and nothing else.
     this.btnTakeHistory.parentElement.addEventListener('keydown', (e) => {
@@ -903,6 +901,7 @@ class DubMateApp {
     this.socket.on('connection_state', (data) => {
       const wasLost = !!this._connectionLost;
       this.renderConnectionState(data.payload || {});
+      if (this.roomState) this.updateRecordButtonUI();
       // The engine's join forgets where you were and whether you were ready, and while
       // it had given up those changes weren't sent. Say them again once it is back,
       // after the join and the queued changes (both go out right after this event).

@@ -125,14 +125,14 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
   const btnSpeed = $(env, "btn-original-speed");
   const auto = env.w.document.querySelector(".btn-nudge-reset");
 
-  // 0. Markup: Auto replaces "0 ms"; caption and Original speed start hidden.
+  // 0. Markup: "Reset to auto" replaces "0 ms"; caption and Original speed start hidden.
   {
-    if (auto.textContent.trim() !== "Auto") fail(`reset label: ${auto.textContent}`);
+    if (auto.textContent.trim() !== "Reset to auto") fail(`reset label: ${auto.textContent}`);
     if (auto.dataset.tip !== "Back to the automatic timing") fail(`reset tip: ${auto.dataset.tip}`);
     if (shown(caption) || shown(btnSpeed)) fail("caption or Original speed shown at boot");
     if (caption.dataset.tip !== CAPTION_TIP) fail(`caption tip: ${caption.dataset.tip}`);
     if (btnSpeed.dataset.tip !== "Play this take at the speed you recorded it") fail(`speed tip: ${btnSpeed.dataset.tip}`);
-    console.log("PASS: the reset button reads Auto; caption and Original speed start hidden");
+    console.log("PASS: the reset button reads Reset to auto; caption and Original speed start hidden");
   }
 
   // 1. An aligned, unnudged take shows the caption; a 25 ms nudge hides it; Auto brings it back.

@@ -250,7 +250,6 @@ export function initAllKnobs() {
   const dials = [];
   
   const dialConfigs = [
-    { id: 'slider-backing-vol', size: 44, ticks: 11 },
     { id: 'slider-gain', size: 40, ticks: 11 },
   ];
   const inputs = dialConfigs.map((cfg) => [document.getElementById(cfg.id), cfg]);

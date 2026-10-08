@@ -492,53 +492,6 @@ export class WaveformRenderer {
     }
 
     // -------------------------------------------------------------
-    // 9. Dragging Delta HUD Overlay Badge
-    // -------------------------------------------------------------
-    if (this.isDragging || Math.abs(this.offsetMs) > 1) {
-      const offsetFraction = (this.offsetMs / 1000.0) / this.totalDuration;
-      const pixelOffset = offsetFraction * w;
-      const badgeX = Math.max(90, Math.min(w - 90, pixelOffset + w / 2));
-      const badgeY = lane2Top + 13;
-      const sign = this.offsetMs > 0 ? '+' : '';
-      const text = `OFFSET: ${sign}${this.offsetMs} ms (${(this.offsetMs / 1000).toFixed(2)}s)`;
-
-      ctx.fillStyle = this.isDragging ? 'rgba(217, 119, 6, 0.95)' : 'rgba(35, 28, 22, 0.92)';
-      ctx.strokeStyle = this.isDragging ? '#f59e0b' : 'rgba(217, 119, 6, 0.4)';
-      ctx.lineWidth = 1;
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-      ctx.shadowBlur = 8;
-
-      const badgeW = 148;
-      const badgeH = 22;
-      ctx.beginPath();
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH, 5);
-      } else {
-        ctx.rect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH);
-      }
-      ctx.fill();
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, badgeX, badgeY);
-    }
-
-    // -------------------------------------------------------------
-    // 10. Drag-to-Sync Hint (Top Right)
-    // -------------------------------------------------------------
-    if (hasTake && !this.isDragging) {
-      ctx.fillStyle = 'rgba(217, 119, 6, 0.85)';
-      ctx.font = '600 9.5px "Plus Jakarta Sans", sans-serif';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('Drag or press [ ] to adjust timing', w - 10, lane2Top + 13);
-    }
-
-    // -------------------------------------------------------------
     // 11. Animated Playhead Marker (Sweeps Both Tracks)
     // -------------------------------------------------------------
     if (this.playheadProgress !== null && this.playheadProgress !== undefined && this.playheadProgress >= 0) {
