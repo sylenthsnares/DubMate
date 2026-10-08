@@ -248,7 +248,7 @@ async def builder_import_url(payload: Dict[str, Any]):
             "device": device,
         }
         if subtitle_segments:
-            progress.segments = subtitle_segments
+            progress.segments = [dict(s) for s in subtitle_segments]
 
         BUILDER_SESSIONS[session_id] = {
             "session_id": session_id,
