@@ -127,9 +127,32 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         self.assertIn("startup-progress", js)
         self.assertIn("server-error", js)
         self.assertIn("server-ready", js)
-        self.assertIn("showError(", js)
+        self.assertIn("showFailure(", js)
         self.assertIn("btnRetry", js)
-        self.assertIn("maxAttempts = 120", js)
+        # Timing is elapsed time, not a poll count (U5b 39a); the red card waits 3 minutes.
+        self.assertNotIn("maxAttempts", js)
+        self.assertIn("NO_ANSWER_AFTER_MS = 3 * 60 * 1000", js)
+        # The launcher's half of the Rust contract (U5b 39a, 39b).
+        for name in ("update-status", "update-progress", "update-stage", "update-complete"):
+            self.assertIn(f'"{name}"', js, name)
+        for cmd in ("cancel_update", "start_packbuilder_install", "get_packbuilder_status",
+                    "open_studio_in_browser", "trigger_start_sidecars", "apply_update"):
+            self.assertIn(f'"{cmd}"', js, cmd)
+        self.assertIn("eta_secs", js)
+        self.assertIn("first_download", js)
+        # Pack Builder installs in the background: no launcher card, no blocking install.
+        self.assertNotIn("packbuilder-progress", js)
+        self.assertNotIn("renderBuilderProgress", js)
+        self.assertNotIn('"install_packbuilder"', js)
+        self.assertNotIn('id="builder-stages"', html)
+        self.assertNotIn('id="tech-log"', html)
+        # Open in browser goes through Rust, never window.open.
+        self.assertNotIn("window.open(", js)
+        # Accessibility hooks.
+        self.assertIn('role="status"', html)
+        self.assertIn('aria-live="polite"', html)
+        self.assertIn('role="progressbar"', html)
+        self.assertIn('role="alert"', html)
 
         with open(tauri_conf_path, "r", encoding="utf-8") as f:
             conf = json.load(f)

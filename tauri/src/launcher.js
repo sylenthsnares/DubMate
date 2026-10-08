@@ -1,409 +1,470 @@
-// launcher.js - Bridges the Tauri desktop window into DubMate.
-// The engine port is chosen at runtime (8000 unless taken), so never hardcode it.
+// launcher.js - The desktop window's front door: the splash while the engine starts,
+// the update card, and the error card for real failures.
+//
+// Rust owns what the splash says (`startup-progress`); this file only adds how long it
+// has been waiting. The red card is for failures Rust reports (`server-error`), or for
+// no answer at all after 3 minutes. The engine port is chosen at runtime (8000 unless
+// taken), so never hardcode it.
 
 const splash = document.getElementById("splash");
-const updaterBox = document.getElementById("updater-box");
-const errorBox = document.getElementById("error-box");
-const progressBar = document.getElementById("progress-bar");
-const progressFill = document.getElementById("progress-fill");
-const progressPercent = document.getElementById("progress-percent");
-const progressText = document.getElementById("progress-text");
-const progressHeadline = document.getElementById("progress-headline");
-const builderStages = document.getElementById("builder-stages");
-const techDetails = document.getElementById("tech-details");
-const techLog = document.getElementById("tech-log");
-const updaterMsg = document.getElementById("updater-msg");
 const statusText = document.getElementById("status-text");
 const detailText = document.getElementById("detail-text");
-const errorMsg = document.getElementById("error-msg");
-const errorTitle = document.getElementById("error-title");
-const errorDetails = document.getElementById("error-details");
-const errorRaw = document.getElementById("error-raw");
+const btnRestartSlow = document.getElementById("btn-restart-slow");
+const updaterBox = document.getElementById("updater-box");
 const updaterTitle = document.getElementById("updater-title");
+const updaterMsg = document.getElementById("updater-msg");
+const progressHeadline = document.getElementById("progress-headline");
+const progressBar = document.getElementById("progress-bar");
+const progressFill = document.getElementById("progress-fill");
+const progressMeta = document.getElementById("progress-meta");
+const btnSkipUpdate = document.getElementById("btn-skip-update");
+const errorBox = document.getElementById("error-box");
+const errorTitle = document.getElementById("error-title");
+const errorMsg = document.getElementById("error-msg");
+const errorRaw = document.getElementById("error-raw");
 const btnRetry = document.getElementById("btn-retry");
+const btnErrorSecondary = document.getElementById("btn-error-secondary");
+const btnErrorDetails = document.getElementById("btn-error-details");
 const btnOpenBrowser = document.getElementById("btn-open-browser");
 
-let isUpdating = false;
-let isEntering = false;
-let pollingActive = false;
-let isInstallingBuilder = false;
-// Blocks entry into the studio until we know whether a first-run Pack Builder
-// download is required. Cleared by the update-status handler or the safety timer.
-let builderCheckPending = false;
+/** From here the splash shows how long it has been waiting. */
+const SLOW_AFTER_MS = 8 * 1000;
+/** From here it says so and offers a restart, still on the neutral splash. */
+const VERY_SLOW_AFTER_MS = 25 * 1000;
+/** Rust reports a hung engine after 3 minutes; this only covers Rust never answering. */
+const NO_ANSWER_AFTER_MS = 3 * 60 * 1000;
+/** Entry waits for the update check, but never longer than this. */
+const UPDATE_CHECK_CAP_MS = 20 * 1000;
+const HEALTH_POLL_MS = 500;
+
 // Resolved from Rust once the engine has bound. 8000 is only the starting guess.
 let enginePort = 8000;
+let startedAt = Date.now();
+let engineHealthy = false;
+// Inside the desktop app, entry waits for `update-status` so a pending update is never
+// skipped by accident.
+let updateCheckPending = false;
+let isUpdating = false;
+let isEntering = false;
+let failureShown = false;
+let pollingActive = false;
+// What the error card's buttons do; set by each failure.
+let primaryAction = null;
+let secondaryAction = null;
+// Bumped per card, so a slow /health answer only reveals Open in browser on its own card.
+let failureSeq = 0;
+
+function tauriInvoke() {
+  return window.__TAURI__?.core?.invoke || null;
+}
 
 function engineUrl(path = "") {
   return `http://127.0.0.1:${enginePort}${path}`;
 }
 
-async function refreshEnginePort(invoke) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Leaves the launcher for the studio. Its own function so tests can watch it. */
+function navigate(url) {
+  window.location.replace(url);
+}
+
+function showView(view) {
+  splash.hidden = view !== "splash";
+  updaterBox.hidden = view !== "update";
+  errorBox.hidden = view !== "error";
+}
+
+async function engineAnswers() {
+  try {
+    const resp = await fetch(engineUrl("/health"), { cache: "no-store" });
+    return !!resp.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+// --- Splash -----------------------------------------------------------------
+
+/** Runs every second: the elapsed line, Restart from 25 s, and the 3 minute safety. */
+function renderElapsed() {
+  if (isEntering || isUpdating || failureShown) return;
+  const elapsed = Date.now() - startedAt;
+  const waiting = !engineHealthy;
+  if (waiting && elapsed >= NO_ANSWER_AFTER_MS) {
+    showEngineFailure({
+      title: "DubMate didn't start",
+      message: "It didn't answer for 3 minutes. Press Restart DubMate.",
+      detail: `Address: ${engineUrl()}`,
+    });
+    return;
+  }
+  const secs = Math.floor(elapsed / 1000);
+  let line = "";
+  if (waiting && elapsed >= VERY_SLOW_AFTER_MS) line = `Taking longer than usual · ${secs} s`;
+  else if (waiting && elapsed >= SLOW_AFTER_MS) line = `Still starting · ${secs} s`;
+  detailText.textContent = line;
+  btnRestartSlow.hidden = !(waiting && elapsed >= VERY_SLOW_AFTER_MS);
+}
+
+/** Back to the splash, counting from now. */
+function restartWait() {
+  failureShown = false;
+  engineHealthy = false;
+  startedAt = Date.now();
+  detailText.textContent = "";
+  btnRestartSlow.hidden = true;
+  showView("splash");
+  pollHealth();
+}
+
+/** Restart DubMate: Rust stops and starts the engine and reports its stages. */
+function restartEngine() {
+  restartWait();
+  const invoke = tauriInvoke();
+  if (invoke) {
+    // It resolves only once the engine answers, so don't wait for it.
+    invoke("trigger_start_sidecars").catch((e) => console.warn("[Launcher] Restart failed:", e));
+  }
+}
+
+/** Watches /health until the engine answers. It never writes text. */
+async function pollHealth() {
+  if (pollingActive) return;
+  pollingActive = true;
+  while (!engineHealthy && !isEntering && !isUpdating && !failureShown) {
+    if (await engineAnswers()) {
+      engineHealthy = true;
+      break;
+    }
+    await sleep(HEALTH_POLL_MS);
+  }
+  pollingActive = false;
+  if (engineHealthy) {
+    renderElapsed();
+    tryEnter();
+  }
+}
+
+function tryEnter() {
+  if (isEntering || isUpdating || failureShown || !engineHealthy || updateCheckPending) return;
+  isEntering = true;
+  navigate(engineUrl());
+}
+
+// --- Error card ---------------------------------------------------------------
+
+/**
+ * Shows the error card. The title is the cause, the message the action, and the
+ * detail (the log) sits behind Show details. `primary` and `secondary` are
+ * [label, action] pairs; a null secondary hides that button.
+ */
+function showFailure({ title, message, detail, primary, secondary }) {
+  failureShown = true;
+  const seq = ++failureSeq;
+  showView("error");
+  errorTitle.textContent = title;
+  errorMsg.textContent = message;
+  errorRaw.textContent = detail || "";
+  setDetailsOpen(false);
+  btnErrorDetails.hidden = !detail;
+  [btnRetry.textContent, primaryAction] = primary;
+  btnErrorSecondary.hidden = !secondary;
+  if (secondary) [btnErrorSecondary.textContent, secondaryAction] = secondary;
+  btnOpenBrowser.hidden = true;
+  btnRetry.focus();
+  // Open in browser only helps if the engine answers; checked once, as the card opens.
+  if (tauriInvoke()) {
+    engineAnswers().then((up) => {
+      if (up && failureShown && seq === failureSeq) btnOpenBrowser.hidden = false;
+    });
+  }
+}
+
+function setDetailsOpen(open) {
+  errorRaw.hidden = !open;
+  btnErrorDetails.textContent = open ? "Hide details" : "Show details";
+  btnErrorDetails.setAttribute("aria-expanded", String(open));
+}
+
+async function copyDetails() {
+  const text = errorRaw.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    btnErrorSecondary.textContent = "Copied";
+    setTimeout(() => {
+      if (secondaryAction === copyDetails) btnErrorSecondary.textContent = "Copy details";
+    }, 2000);
+  } catch (_) {
+    // No clipboard: show the log selected, ready to copy by hand.
+    setDetailsOpen(true);
+    window.getSelection?.()?.selectAllChildren(errorRaw);
+  }
+}
+
+/** An engine failure from Rust ({kind, title, message, detail}). */
+function showEngineFailure(failure) {
+  showFailure({
+    title: failure.title || "DubMate didn't start",
+    message: failure.message || "Press Restart DubMate to try again.",
+    detail: failure.detail,
+    primary: ["Restart DubMate", restartEngine],
+    secondary: failure.detail ? ["Copy details", copyDetails] : null,
+  });
+}
+
+/**
+ * Rust puts the plain reason first and the technical part after "\n\nDetails: ".
+ * Without the marker the whole text is technical.
+ */
+function splitDetails(error) {
+  const text = String(error ?? "");
+  const marker = "\n\nDetails: ";
+  const cut = text.indexOf(marker);
+  if (cut < 0) return { reason: "", detail: text };
+  return { reason: text.slice(0, cut).trim(), detail: text.slice(cut + marker.length) };
+}
+
+/** `server-error` is a struct; an older payload was a string with the details appended. */
+function failureFromPayload(payload) {
+  if (payload && typeof payload === "object") return payload;
+  const { reason, detail } = splitDetails(payload || "DubMate couldn't start.");
+  return reason
+    ? { title: "DubMate didn't start", message: reason, detail }
+    : { title: "DubMate didn't start", message: detail, detail: "" };
+}
+
+// --- Update card --------------------------------------------------------------
+
+function etaText(secs) {
+  if (typeof secs !== "number" || !Number.isFinite(secs)) return "";
+  if (secs < 60) return "less than a minute left";
+  return `about ${Math.round(secs / 60)} min left`;
+}
+
+function megabytes(bytes) {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+function setProgressText(text) {
+  progressMeta.textContent = text;
+  progressBar.setAttribute("aria-valuetext", text);
+}
+
+function showUpdateCard(update) {
+  const first = !!update.first_download;
+  updaterTitle.textContent = first ? "Downloading DubMate" : `Updating to DubMate ${update.latest_version}`;
+  updaterMsg.textContent = first ? "This happens once." : "DubMate restarts when it's done.";
+  progressHeadline.textContent = first ? "" : "Downloading the update";
+  progressBar.classList.add("is-idle");
+  progressFill.style.width = "0%";
+  progressBar.setAttribute("aria-valuenow", "0");
+  setProgressText("");
+  btnSkipUpdate.hidden = first;
+  btnSkipUpdate.disabled = false;
+  btnSkipUpdate.textContent = "Skip this time";
+  showView("update");
+}
+
+/** An `update-progress` payload: {received, total, percentage, eta_secs}. */
+function renderUpdateProgress(p) {
+  if (!p) return;
+  progressBar.classList.remove("is-idle");
+  if (p.total > 0) {
+    const pct = Math.max(0, Math.min(100, Math.round(p.percentage)));
+    progressFill.style.width = `${pct}%`;
+    progressBar.setAttribute("aria-valuenow", String(pct));
+    const parts = [`${pct}%`, `${megabytes(p.received)} of ${megabytes(p.total)}`];
+    const eta = etaText(p.eta_secs);
+    if (eta) parts.push(eta);
+    setProgressText(parts.join(" · "));
+  } else {
+    // Size unknown: a full bar with the moving sheen, and just the amount so far.
+    progressFill.style.width = "100%";
+    progressBar.removeAttribute("aria-valuenow");
+    setProgressText(megabytes(p.received));
+  }
+}
+
+/**
+ * An `update-stage` payload: a step with no byte count, such as installing what the
+ * new version needs. The engine may be stopped from here, so Skip goes.
+ */
+function renderUpdateStage(payload) {
+  if (!payload) return;
+  btnSkipUpdate.hidden = true;
+  progressHeadline.textContent = payload.headline || "Finishing the update";
+  progressBar.classList.remove("is-idle");
+  progressFill.style.width = "100%";
+  progressBar.removeAttribute("aria-valuenow");
+  setProgressText(payload.detail || "");
+}
+
+async function runUpdate(update) {
+  const invoke = tauriInvoke();
+  isUpdating = true;
+  failureShown = false;
+  showUpdateCard(update);
+  try {
+    await invoke("apply_update", { downloadUrl: update.download_url });
+    // Success: `update-complete` follows and opens the studio.
+  } catch (e) {
+    isUpdating = false;
+    if (String(e) === "skipped") {
+      openStudioWithoutUpdate();
+      return;
+    }
+    console.error("[Updater] Update failed:", e);
+    showUpdateFailure(update, e);
+  }
+}
+
+/** Skip, or Open DubMate after a failed update: wait for the engine, don't restart it. */
+function openStudioWithoutUpdate() {
+  isUpdating = false;
+  updateCheckPending = false;
+  restartWait();
+}
+
+function showUpdateFailure(update, error) {
+  const { reason, detail } = splitDetails(error);
+  if (update.first_download) {
+    // There is nothing to open yet.
+    showFailure({
+      title: "DubMate didn't download",
+      message: reason ? `${reason} Press Try again.` : "Check your internet connection, then press Try again.",
+      detail,
+      primary: ["Try again", () => runUpdate(update)],
+      secondary: detail ? ["Copy details", copyDetails] : null,
+    });
+    return;
+  }
+  showFailure({
+    title: "The update didn't install",
+    message: `The update to DubMate ${update.latest_version} didn't install. `
+      + `${reason ? `${reason} ` : ""}You're still on ${update.current_version}.`,
+    detail,
+    primary: ["Open DubMate", openStudioWithoutUpdate],
+    secondary: ["Try the update again", () => runUpdate(update)],
+  });
+}
+
+// --- Pack Builder ---------------------------------------------------------------
+
+/**
+ * Starts the Pack Builder download when the installer recorded an opt-in. The command
+ * returns at once and the install runs in the background; the studio shows it.
+ */
+async function startPackBuilderIfWanted(invoke) {
+  try {
+    const status = await invoke("get_packbuilder_status");
+    if (status?.opted_in && !status.installed) {
+      invoke("start_packbuilder_install").catch((e) => console.warn("[PackBuilder] Install didn't start:", e));
+    }
+  } catch (e) {
+    console.warn("[PackBuilder] Status unavailable:", e);
+  }
+}
+
+// --- Wiring -----------------------------------------------------------------------
+
+async function listenToRust() {
+  const { listen } = window.__TAURI__.event;
+  const invoke = tauriInvoke();
+
   try {
     const p = await invoke("get_engine_port");
     if (Number.isInteger(p) && p > 0) enginePort = p;
   } catch (e) {
     console.warn("[Launcher] Could not resolve engine port, using", enginePort, e);
   }
-}
 
-function showSplash() {
-  if (splash) splash.style.display = "flex";
-  if (updaterBox) updaterBox.style.display = "none";
-  if (errorBox) errorBox.style.display = "none";
-}
+  listen("startup-progress", (event) => {
+    if (!isEntering && typeof event.payload === "string") statusText.textContent = event.payload;
+  });
 
-function showUpdater() {
-  if (splash) splash.style.display = "none";
-  if (updaterBox) updaterBox.style.display = "block";
-  if (errorBox) errorBox.style.display = "none";
-}
+  listen("server-ready", (event) => {
+    // Rust sends the port it actually bound to.
+    if (Number.isInteger(event?.payload) && event.payload > 0) enginePort = event.payload;
+    engineHealthy = true;
+    if (updateCheckPending && !isUpdating) statusText.textContent = "Checking for updates";
+    renderElapsed();
+    tryEnter();
+  });
 
-// `detail` is the raw error text. It sits behind "Show details" so the message
-// stays plain, and stays selectable for bug reports.
-function showError(msg, title, detail) {
-  if (isEntering || isUpdating || isInstallingBuilder) return;
-  if (splash) splash.style.display = "none";
-  if (updaterBox) updaterBox.style.display = "none";
-  if (errorBox) errorBox.style.display = "block";
-  if (errorTitle && title) errorTitle.innerText = title;
-  if (errorMsg) errorMsg.innerText = msg || "DubMate is taking longer than usual to start. Click Try again.";
-  if (errorDetails && errorRaw) {
-    const raw = detail ? String(detail) : "";
-    errorRaw.innerText = raw;
-    errorDetails.open = false;
-    errorDetails.style.display = raw ? "block" : "none";
-  }
-}
+  listen("server-error", (event) => {
+    if (isUpdating || isEntering) return;
+    showEngineFailure(failureFromPayload(event.payload));
+  });
 
-function updateStatus(mainMsg, subMsg) {
-  if (statusText && mainMsg) statusText.innerText = mainMsg;
-  if (detailText && subMsg !== undefined) detailText.innerText = subMsg;
-}
-
-async function init() {
-  // Wire action buttons
-  if (btnRetry) {
-    btnRetry.addEventListener("click", async () => {
-      showSplash();
-      updateStatus("Restarting DubMate", "");
-      if (window.__TAURI__?.core?.invoke) {
-        try {
-          await window.__TAURI__.core.invoke("trigger_start_sidecars");
-        } catch (e) {
-          console.warn("[Launcher] trigger_start_sidecars error:", e);
-        }
-      }
-      pollAndEnterStudio();
-    });
-  }
-
-  if (btnOpenBrowser) {
-    btnOpenBrowser.addEventListener("click", () => {
-      window.open(engineUrl(), "_blank");
-    });
-  }
-
-  // Setup Tauri event listeners if running inside Tauri
-  const setupTauri = async () => {
-    if (typeof window.__TAURI__ !== "undefined" && window.__TAURI__.event) {
-      const { listen } = window.__TAURI__.event;
-      const { invoke } = window.__TAURI__.core;
-
-      await refreshEnginePort(invoke);
-
-      // Hold studio entry until update-status tells us whether a first-run Pack
-      // Builder download is needed. Never hold longer than 20s.
-      builderCheckPending = true;
-      setTimeout(() => {
-        if (builderCheckPending) {
-          builderCheckPending = false;
-          pollAndEnterStudio();
-        }
-      }, 20000);
-
-      // Listen for OTA update check result
-      listen("update-status", async (event) => {
-        const payload = event.payload;
-        if (payload?.status === "UpdateAvailable" && payload.data) {
-          isUpdating = true;
-          showUpdater();
-          if (updaterMsg) {
-            updaterMsg.innerText = payload.data.first_download
-              ? "Downloading DubMate. This happens once."
-              : payload.data.changelog || "Downloading the update";
-          }
-
-          try {
-            await invoke("apply_update", { downloadUrl: payload.data.download_url });
-          } catch (e) {
-            // Previously this fell through to enterStudio() silently, so a failed
-            // update was indistinguishable from a successful one and users kept
-            // running the old code believing the fix had shipped.
-            console.error("[Updater] Update failed:", e);
-            isUpdating = false;
-            builderCheckPending = false;
-            const failure = updateFailureMessage(payload.data, e);
-            showError(failure.message, "Update failed", failure.detail);
-          }
-        } else {
-          // No update pending, so this is the right moment to settle the optional
-          // Pack Builder download before the window navigates into the studio.
-          if (await maybeInstallPackBuilder(invoke)) {
-            pollAndEnterStudio();
-          }
-        }
-      });
-
-      // Structured install progress during the Pack Builder download
-      listen("packbuilder-progress", (event) => {
-        renderBuilderProgress(event.payload);
-      });
-
-      // Listen for download progress
-      listen("update-progress", (event) => {
-        const p = event.payload;
-        if (p) {
-          // The updater shares this card with the Pack Builder install; keep the
-          // builder-only chrome out of the way.
-          if (builderStages) builderStages.style.display = "none";
-          if (techDetails) techDetails.style.display = "none";
-          if (progressBar) progressBar.classList.remove("is-idle");
-          if (progressHeadline) progressHeadline.innerText = "Downloading the update";
-          const receivedMb = (p.received / (1024 * 1024)).toFixed(1);
-          if (p.total > 0) {
-            if (progressFill) progressFill.style.width = `${p.percentage}%`;
-            if (progressPercent) progressPercent.innerText = `${p.percentage}%`;
-            if (progressText) {
-              progressText.innerText = `${receivedMb} MB / ${(p.total / (1024 * 1024)).toFixed(1)} MB`;
-            }
-          } else {
-            // Size unknown: a full bar with the moving sheen, and just the amount so far.
-            if (progressFill) progressFill.style.width = "100%";
-            if (progressPercent) progressPercent.innerText = "";
-            if (progressText) progressText.innerText = `${receivedMb} MB`;
-          }
-        }
-      });
-
-      // A step after the download with no byte count (installing what the update needs)
-      listen("update-stage", (event) => {
-        renderUpdateStage(event.payload);
-      });
-
-      // Listen for update completion
-      listen("update-complete", () => {
-        if (progressText) progressText.innerText = "Restarting";
-        setTimeout(() => {
-          window.location.reload();
-        }, 500);
-      });
-
-      // Listen for startup progress events from Rust
-      listen("startup-progress", (event) => {
-        if (!isUpdating && !isEntering && event.payload) {
-          updateStatus("Starting DubMate", event.payload);
-        }
-      });
-
-      // Listen for server error events from Rust
-      listen("server-error", (event) => {
-        if (!isUpdating && !isEntering) {
-          // Rust sends { kind, title, message, detail }.
-          const failure = event.payload;
-          if (failure && typeof failure === "object") {
-            showError(failure.message, failure.title, failure.detail || undefined);
-            return;
-          }
-          // Rust appends the raw error as "\n\nDetails: ..."; keep it behind Show details.
-          const text = String(event.payload || "DubMate couldn't start. Click Try again.");
-          const marker = "\n\nDetails: ";
-          const cut = text.indexOf(marker);
-          if (cut >= 0) {
-            showError(text.slice(0, cut), "DubMate didn't start", text.slice(cut + marker.length));
-          } else {
-            showError(text, "DubMate didn't start");
-          }
-        }
-      });
-
-      // Listen for server readiness from Rust
-      listen("server-ready", (event) => {
-        // Rust sends the port it actually bound to.
-        if (Number.isInteger(event?.payload) && event.payload > 0) {
-          enginePort = event.payload;
-        }
-        if (!isUpdating) {
-          enterStudio();
-        }
-      });
-    }
-  };
-
-  await setupTauri();
-
-  // Active polling to transition into the studio the instant the engine responds
-  pollAndEnterStudio();
-}
-
-/**
- * Shows an `UpdateStagePayload` from Rust (a step with no byte count, such as
- * installing what the new version needs): its headline and detail over a full bar
- * with the moving sheen, and no percentage.
- */
-function renderUpdateStage(payload) {
-  if (!payload) return;
-  if (builderStages) builderStages.style.display = "none";
-  if (techDetails) techDetails.style.display = "none";
-  if (progressHeadline) progressHeadline.innerText = payload.headline || "Finishing the update";
-  if (progressText) progressText.innerText = payload.detail || "";
-  if (progressBar) progressBar.classList.remove("is-idle");
-  if (progressFill) progressFill.style.width = "100%";
-  if (progressPercent) progressPercent.innerText = "";
-}
-
-/**
- * The error card's text for a failed update. Rust puts the plain reason first and the
- * technical part after "\n\nDetails: "; the reason joins the message and the rest stays
- * behind Show details.
- */
-function updateFailureMessage(update, error) {
-  const text = String(error ?? "");
-  const marker = "\n\nDetails: ";
-  const cut = text.indexOf(marker);
-  const reason = cut >= 0 ? `${text.slice(0, cut).trim()} ` : "";
-  return {
-    message: `The update to version ${update.latest_version} didn't install. ${reason}` +
-      `DubMate is still on version ${update.current_version}. Click Try again to open it.`,
-    detail: cut >= 0 ? text.slice(cut + marker.length) : error,
-  };
-}
-
-const BUILDER_STAGE_ORDER = ["preparing", "downloading", "installing", "finalizing"];
-
-/**
- * Renders a `PackBuilderProgress` from Rust: stage indicator, bar, plain-language
- * headline, and the raw pip line tucked into a collapsed details pane.
- *
- * Tolerates a bare string payload so an older Rust build (or the engine-restart
- * notice) still shows something sensible rather than "[object Object]".
- */
-function renderBuilderProgress(payload) {
-  if (!payload) return;
-  const p = typeof payload === "string"
-    ? { phase: "", headline: payload.slice(0, 120), detail: "", percent: null, raw: payload }
-    : payload;
-
-  if (progressHeadline && p.headline) progressHeadline.innerText = p.headline;
-  if (progressText) progressText.innerText = p.detail || "";
-
-  if (typeof p.percent === "number" && Number.isFinite(p.percent)) {
-    const pct = Math.max(0, Math.min(100, p.percent));
-    if (progressFill) progressFill.style.width = `${pct}%`;
-    if (progressPercent) progressPercent.innerText = `${Math.round(pct)}%`;
-  }
-
-  // Highlight the current stage and mark earlier ones done.
-  if (builderStages && p.phase) {
-    const current = BUILDER_STAGE_ORDER.indexOf(p.phase);
-    builderStages.querySelectorAll(".stage").forEach((el) => {
-      const index = BUILDER_STAGE_ORDER.indexOf(el.dataset.stage);
-      el.classList.toggle("is-active", index === current);
-      el.classList.toggle("is-done", current >= 0 && index < current);
-    });
-  }
-
-  if (techLog && p.raw) {
-    techLog.innerText = p.raw;
-  }
-}
-
-/**
- * Starts the one-time Pack Builder AI download when the installer recorded an opt-in.
- * It runs in the background, so this always lets the caller enter the studio.
- */
-async function maybeInstallPackBuilder(invoke) {
-  let status = null;
-  try {
-    status = await invoke("get_packbuilder_status");
-  } catch (e) {
-    console.warn("[PackBuilder] Status unavailable:", e);
-  }
-
-  if (!status || !status.opted_in || status.installed) {
-    builderCheckPending = false;
-    return true;
-  }
-
-  builderCheckPending = false;
-  // It installs in the background and returns at once; the studio shows its progress.
-  try {
-    await invoke("start_packbuilder_install");
-  } catch (e) {
-    console.warn("[PackBuilder] Install didn't start:", e);
-  }
-  return true;
-}
-
-async function pollAndEnterStudio() {
-  if (pollingActive) return;
-  pollingActive = true;
-
-  const maxAttempts = 120; // Up to 60 seconds
-  for (let i = 1; i <= maxAttempts; i++) {
-    if (isUpdating || isEntering || isInstallingBuilder || builderCheckPending) {
-      pollingActive = false;
+  listen("update-status", async (event) => {
+    const payload = event.payload;
+    if (payload?.status === "UpdateAvailable" && payload.data) {
+      updateCheckPending = false;
+      runUpdate(payload.data);
       return;
     }
+    // Up to date or offline.
+    await startPackBuilderIfWanted(invoke);
+    updateCheckPending = false;
+    tryEnter();
+  });
 
-    try {
-      const resp = await fetch(engineUrl("/health"), {
-        headers: { "Cache-Control": "no-cache" }
-      });
-      if (resp.ok) {
-        pollingActive = false;
-        enterStudio();
-        return;
+  listen("update-progress", (event) => renderUpdateProgress(event.payload));
+  listen("update-stage", (event) => renderUpdateStage(event.payload));
+
+  // Rust restarted the engine on the new files before sending this.
+  listen("update-complete", () => {
+    setProgressText("Restarting");
+    openStudioWithoutUpdate();
+  });
+}
+
+let initialised = false;
+
+async function init() {
+  if (initialised) return;
+  initialised = true;
+
+  btnRestartSlow.addEventListener("click", restartEngine);
+  btnRetry.addEventListener("click", () => primaryAction?.());
+  btnErrorSecondary.addEventListener("click", () => secondaryAction?.());
+  btnErrorDetails.addEventListener("click", () => setDetailsOpen(errorRaw.hidden));
+  btnOpenBrowser.addEventListener("click", () => {
+    tauriInvoke()?.("open_studio_in_browser").catch((e) => console.warn("[Launcher] Open in browser:", e));
+  });
+  btnSkipUpdate.addEventListener("click", () => {
+    btnSkipUpdate.disabled = true;
+    btnSkipUpdate.textContent = "Skipping…";
+    // apply_update then fails with "skipped", and runUpdate opens the studio.
+    tauriInvoke()("cancel_update").catch((e) => {
+      console.warn("[Updater] Skip failed:", e);
+      btnSkipUpdate.disabled = false;
+      btnSkipUpdate.textContent = "Skip this time";
+    });
+  });
+
+  startedAt = Date.now();
+  setInterval(renderElapsed, 1000);
+
+  if (window.__TAURI__?.event && tauriInvoke()) {
+    updateCheckPending = true;
+    setTimeout(() => {
+      if (updateCheckPending) {
+        updateCheckPending = false;
+        tryEnter();
       }
-    } catch (_) {}
-
-    // Live continuous status updates
-    if (i <= 5) {
-      updateStatus("Starting DubMate", "");
-    } else if (i <= 15) {
-      updateStatus("Starting DubMate", "");
-    } else if (i <= 25) {
-      updateStatus("Starting DubMate", "");
-    } else {
-      updateStatus("Still starting", "");
-    }
-
-    // After 25 attempts (12.5s), show error recovery if taking unusually long
-    if (i === 30 && !isEntering && !isUpdating) {
-      showError("DubMate is taking longer than usual to start. Click Try again, or open it in your browser.", "Still starting");
-    }
-
-    await new Promise((r) => setTimeout(r, 500));
+    }, UPDATE_CHECK_CAP_MS);
+    await listenToRust();
   }
 
-  pollingActive = false;
-  if (!isUpdating && !isEntering) {
-    showError(
-      "DubMate didn't start within a minute. Click Try again to restart it.",
-      "DubMate didn't start",
-      `Address: ${engineUrl()}`
-    );
-  }
+  pollHealth();
 }
 
-function enterStudio() {
-  if (isUpdating || isEntering || isInstallingBuilder || builderCheckPending) return;
-  isEntering = true;
-  updateStatus("Opening DubMate", "");
-  // Seamlessly load the full DubMate interface into the native window
-  window.location.replace(engineUrl());
-}
-
-window.addEventListener("DOMContentLoaded", init);
-if (document.readyState === "complete" || document.readyState === "interactive") {
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", init);
+} else {
   init();
 }
