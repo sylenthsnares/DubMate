@@ -63,10 +63,10 @@ Sizes in px. Row text is 12.5px, numbers and times 11px, the select 12px. There 
 ```
 
 - **Header** (32px): dot, number, the character select (160px; 140px in a narrow column) with "+ New character…" as now, the times "0:03.90 – 0:05.30" (mono 11px, brass), and **Play** (`btn-sm` with icon and label) at the right edge. A row's Play turns into the card's Play in the same spot, so a second click plays again.
-- **Text**: a textarea under the header, lined up with the select. 14px with a 20px line height (inputs are 14px in DESIGN.md). Sized to its content with `field-sizing: content` (the existing `fitLineText` measure where that is missing), at least 1 line. No 4-line cap: it grows to 10 lines, or to the space the card has in the list (`100cqh` minus the header and footer), whichever is less, and only then scrolls. Focus: amber border, as inputs.
+- **Text**: a textarea under the header, lined up with the select. 14px with a 20px line height (inputs are 14px in DESIGN.md). Sized to its content with `field-sizing: content` (the existing `fitLineText` measure where that is missing), at least 1 line. No 4-line cap: it grows to 10 lines, or to the space the card has in the list (the list's height at the default timeline, `100vh - 456px`, minus the header and footer; at least 3 lines), whichever is less, and only then scrolls. Focus: amber border, as inputs.
 - **Footer** (32px): left, **Set start** and **Set end** (`btn-sm` secondary, icons from the deck's Start and End). They do what the deck's Start and End and the keys I, O, `[` and `]` do: set the selected line's start or end to the playhead (`markInAtPlayhead`, `markOutAtPlayhead`). Tooltips: "Set the start to the playhead (I or [)", "Set the end to the playhead (O or ])". Right, **Transcribe** (only when transcription is installed; tooltip "Fill in this line's text from the audio"), **Romaji** (only when it applies, updated while typing, as now) and **Delete** (ghost, trash icon, red on hover). All labelled. While Transcribe or Romaji runs, its icon becomes the spinner and the label stays.
 - **Look**: 8px radius, 1px amber (`--primary`) border, an amber wash over `--card-header`, and a soft offset shadow (`0 6px 16px rgba(0,0,0,0.35)`, depth, not a glow). 6px margin above and below, 10px 12px 12px padding, 8px between header, text and footer. The card's number is ivory.
-- **Narrow column** (a container query on the list, under 520px wide, as at 960x680): the select is 140px. The footer wraps onto two lines only if it must (`flex-wrap`), never clipping a button.
+- **Narrow column** (a width container query on the list, under 520px wide, as at 960x680): the select is 140px. The footer wraps onto two lines only if it must (`flex-wrap`), never clipping a button.
 - **Motion**: layout changes at once, so clicks, keys and the scroll position are exact. The card's border and wash fade in and its text and footer fade and settle 2px over `--duration-fast` with `--ease-out`. None of it under `prefers-reduced-motion: reduce`.
 - **Clicking the card's empty space** does nothing (no seek while editing). Play, the timeline and the arrow keys move the video.
 
@@ -101,7 +101,7 @@ The selected card is always fully in view after selecting, including the last li
 
 **A. Rows and an honest Play** (`pack_builder.js`, tests). Two templates, `lineRowHtml` (plain row) and `lineCardHtml` (the card's final markup and `data-action`s), `renderSegmentsList` building rows plus the one card, `selectSegment` swapping two rows with the scroll anchor and focus rules, the click handler (Play selects then plays; Set start and Set end call the mark functions; empty card space does nothing), `focusin` ignoring buttons, `refreshRowText` for Transcribe and Romaji, `updateNonverbalBadge`, `updateCardTimecode` and `changeLineCharacter` working on both forms. Delete the lazy select fill. Tests first (see Tests).
 
-**B. The look** (`builder.css`). Rows (40px, 13px text, hover, Play column, `hover: none`), the card (header, text, footer, look, motion and its reduced-motion rule), the container query on the list, the `cqh` text cap, `overflow-anchor: none`. Remove what no longer applies: the 1180px row rules, the rest-state select styling, the 4-line `max-height: 78px`, `.line-action` display rules. Run the fit check at the three sizes and fix until the targets hold.
+**B. The look** (`builder.css`). Rows (40px, 13px text, hover, Play column, `hover: none`), the card (header, text, footer, look, motion and its reduced-motion rule), the container query on the list, the text cap, `overflow-anchor: none`. Remove what no longer applies: the 1180px row rules, the rest-state select styling, the 4-line `max-height: 78px`, `.line-action` display rules. Run the fit check at the three sizes and fix until the targets hold.
 
 **C. Measure and record.** `dm_pw/pbfix_perf.js` before and after, `pbl_before.js <port> after`, the measured tables in this doc, the CHANGELOG line, the full suite.
 
@@ -126,8 +126,66 @@ Dev checks (not committed): `pbl_before.js` (shots, fit, the real-mouse Play cli
 - **Tests that assume fields in every row**: about 20 assertions change. Each keeps its intent; none is dropped.
 - **Speed**: a selection now writes two rows' markup and builds one textarea (field-sizing measures it). That is less than the old 40 rows of fields cost to render, but the click handler is on the hot path. Measure with `pbfix_perf.js`.
 - **The scroll correction** reads layout once per selection. On a click the layout is clean, so the read is free; holding Down could force one layout per key. Measure key repeat; if it costs more than a frame, read the target's top in the frame instead.
-- **`cqh` and container queries** need Chromium 105+ and Safari 16+. WebView2 and current macOS WKWebView have them. Without them the text caps at 10 lines and the footer wraps.
+- **Container queries** need Chromium 105+ and Safari 16+. WebView2 and current macOS WKWebView have them. Without them the select stays 160px and the footer wraps. The list is a width container only: a size container (for a `cqh` text cap) made every editor frame's layout about 5x slower (see Measured).
 - **Parallel PRs**: #26 and #28 change `style.css` and studio files, not `builder.css` or `pack_builder.js`. No overlap expected.
+
+## Measured
+
+Group C, 2026-10-09. Real Chromium, headless, the fixture engine on an isolated home. "Before" is main (`f851fa9`; the Pack Builder files are the same on `dd783ef`), "after" is this branch, both served by the same engine build in the same session.
+
+### Fit (`pbl_before.js`, a short line selected, timeline at its default height)
+
+| | 1440x900 | 1280x720 | 960x680 |
+|---|---:|---:|---:|
+| Lines list height | 452 | 272 | 232 |
+| Row height, before / after | 39 / 40 | 39 / 40 | 39 / 40 |
+| Selected line height, before / after | 39 / 134 | 39 / 134 | 69 / 134 |
+| Rows fully visible besides the selected line, before / after (target) | 10 / 7 (6) | 5 / 3 (3) | 3 / 2 (2) |
+| Long line (220 characters): text height, inner scroll, before | 78, no | 78, yes | 78, yes |
+| Long line: text height, inner scroll, after | 52, no | 72, no | 110, yes (5 lines; the card fills the list) |
+| Long line card fully in view, after | yes | yes | yes |
+| Last line selected, fully in view (before and after) | yes | yes | yes |
+| Down from line 4: line 5 selected, focused, brass ring (before and after) | yes | yes | yes |
+| Console errors | 0 | 0 | 0 |
+
+Card buttons at every size: Play, Set start, Set end, Transcribe and Delete, 32px tall, labelled (Delete keeps only its icon in the narrow column, its name stays for screen readers). Text sizes: row text 13px, name and select 12px, number and times 11px, card text 14px.
+
+### Play on an unselected row (real mouse)
+
+Hover line 8, move to its Play and click (`page.mouse.click` at the button's centre, real layout). Before: line 8 selected, nothing played (`previews: []`, video paused) at all three sizes. After: line 8 selected and played on the first click (`previews: [7]`, video playing) at all three sizes. Screenshots `after-C-lines-after-play-click-*`.
+
+### Speed (`pbfix_perf.js`, 40 lines, 1440x900, median of 5)
+
+The first after runs showed a regression in the browser's layout, not in the code. With the list as a size container (for a `cqh` text cap), every layout in the editor cost 3 to 4 ms instead of 0.5 to 0.7: a trace of 8 selects had 34 ms of layout in the 120 ms after each click, against 9 ms on main. Two paired runs agreed: click to next frame 49 against 36 ms and 45 against 25 ms, select handler 3.9 against 2.0 and 3.8 against 1.8 ms, one run with a 117 ms long task during select, and more dropped drag frames (19 against 8, 10 against 5). The list is now a width container only, and the text cap comes from the window height (`100vh - 570px`, the same height at the default timeline). Layout after a select is back to 12 ms, and `tests/test_css_floors.js` now fails on a size container or `cqh` in `builder.css`. The paired run after that change:
+
+| | Before (main) | After |
+|---|---:|---:|
+| Select: click handler, ms | 2.4 | 3.4 |
+| Select: click to next frame, ms | 31.4 | 33.2 |
+| Select: long tasks, ms | 0 | 0 |
+| Keystroke `input`, ms | 0.4 | 0.3 |
+| Text commit `change`, ms | 2.9 | 2.8 |
+| Drag `pointermove` median / max, ms | 0.1 / 0.4 | 0.1 / 0.3 |
+| Drop `pointerup`, ms | 28.9 | 17.3 |
+| Drag frames over 16 ms | 11 of 811 | 6 of 636 |
+| Editor open: first blocks / waveform, ms | 112 / 332 | 87 / 164 |
+| Console errors | 0 | 0 |
+
+Outputs in `dm_pbfix/perf_pbl_{before,after}_C{,2,3}.json` (C3 is this table). The machine was busier than in the morning's baseline (select to next frame 23.8 ms then), which is why every comparison is paired.
+
+Within the before medians plus 20%: the next frame after a select (+6%), keystroke, commit, drag and drop, with no long tasks during select. **Not within it: the select click handler**, 3.4 ms against a 2.9 ms bound (2.4 before). The extra 1 ms is the card being built on select: writing the new card's markup (0.8 ms, a select, a textarea and six icons) and the closed card's row (0.25 ms) and removing the old card (0.25 ms). It stays far under a frame, and the next frame comes only 2 ms later. Building every card ahead of time is what made the old rows' fields select on press, so this PR keeps the cost.
+
+### Holding Down through 10 rows (`pbl_c_keys.js`, 5 rounds, 50 keys, key every 33 ms)
+
+| | Before | After |
+|---|---:|---:|
+| `keydown` handler median / max, ms | 1.2 / 3.0 | 2.9 / 5.4 |
+| Key to next frame median / 90th percentile, ms | 19.2 / 31.5 | 21.2 / 36.4 |
+| Long tasks, ms | 53 | 0 |
+| The target's top read (`getBoundingClientRect`) median / max, ms | none | 0 / 0.5 |
+| Ends on line 15, focused, fully in view | yes | yes |
+
+Each key's handler is under one frame and the layout read before the swap costs nothing measurable, so the read stays in the handler (the Risks fallback, reading it in the frame, isn't needed).
 
 ## Decided without the owner
 
