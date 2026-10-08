@@ -51,11 +51,13 @@ const ICON_TICK = '<svg class="icon-tick" width="13" height="13" viewBox="0 0 24
 // Whether CSS can size a textarea to its text (the selected line's text grows without JS).
 const FIELD_SIZING = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
 
-// The line rows' icon actions.
+// The line rows' and the line card's icons.
 const ICON_PLAY = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 19 12 6 20 6 4"/></svg>';
 const ICON_MIC = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
 const ICON_GLOBE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 const ICON_TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+const ICON_SET_START = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4v16"/><path d="M4 4h10l4 6-4 6H4"/></svg>';
+const ICON_SET_END = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 4v16"/><path d="M20 4H10L6 10l4 6h10"/></svg>';
 const ICON_SPINNER = '<svg class="spinning" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
 const ICON_ALERT = '<svg class="icon-alert" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
 
@@ -2232,38 +2234,64 @@ export class PackBuilderApp {
     return `Line ${idx + 1}, ${seg.character}, ${this.formatTime(seg.start)}`;
   }
 
-  /** The selected row shows start – end; the others show their start. */
+  /** The selected line's card shows start – end; rows at rest show their start. */
   rowTimecode(seg, selected) {
     return selected ? `${this.formatTime(seg.start)} – ${this.formatTime(seg.end)}` : this.formatTime(seg.start);
   }
 
+  /** "No words" stands in for a line found without words, until it has text. */
+  nonverbalBadgeHtml(seg) {
+    if (!seg.nonverbal) return '';
+    return `<span class="cue-nonverbal-badge" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${(seg.text || '').trim() ? ' hidden' : ''}>No words</span>`;
+  }
+
   /**
-   * One line as a compact row. Every action is in the markup and CSS shows the ones that
-   * apply (Play on hover, all of them on the selected row), so selecting rebuilds nothing.
-   * The character select holds only its own option until it is opened (fillCharacterOptions).
-   * Only the selected row's fields are in the Tab order: Tab passes the list in one stop.
+   * A line at rest: text and one button, no form fields, so nothing on it only selects.
+   * Play is the last item, at the right edge, where the card's Play takes its place.
    */
-  lineRowHtml(seg, idx, selected, tabbable, canTranscribe) {
-    const text = seg.text || '';
-    const name = escapeHtml(seg.character);
-    const field = selected ? '' : ' tabindex="-1"';
-    const noWords = seg.nonverbal
-      ? `<span class="cue-nonverbal-badge" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${text.trim() ? ' hidden' : ''}>No words</span>`
-      : '';
-    const action = (cls, label, icon, extra = '') =>
-      `<button type="button" class="btn btn-ghost btn-xs line-action ${cls}" aria-label="${label}" data-tip="${label}"${extra}>${icon}</button>`;
-    return `<div class="builder-line-row${selected ? ' selected' : ''}" id="cue-card-${idx}" data-idx="${idx}" role="listitem" tabindex="${tabbable ? 0 : -1}"${selected ? ' aria-current="true"' : ''} aria-label="${escapeHtml(this.rowLabel(seg, idx))}">`
+  lineRowHtml(seg, idx) {
+    return `<span class="cue-dot" style="background: ${this.getCharacterColor(seg.character)};"></span>`
+      + `<span class="cue-number" aria-hidden="true">${idx + 1}</span>`
+      + `<span class="cue-char-name">${escapeHtml(seg.character)}</span>`
+      + `<span class="cue-text-cell">${this.nonverbalBadgeHtml(seg)}<span class="cue-text">${escapeHtml(seg.text || '')}</span></span>`
+      + `<span class="cue-timecode-badge">${this.rowTimecode(seg, false)}</span>`
+      + `<button type="button" class="btn btn-ghost btn-xs line-action btn-preview-cue" data-action="play" tabindex="-1" aria-label="Play line ${idx + 1}" data-tip="Play this line">${ICON_PLAY}</button>`;
+  }
+
+  /** The character select's options: the whole cast, the line's own character, and "+ New character…". */
+  characterOptionsHtml(seg) {
+    const cast = this.castNames();
+    if (!cast.includes(seg.character)) cast.push(seg.character);
+    return cast.map((c) => `<option value="${escapeHtml(c)}"${c === seg.character ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('')
+      + '<option value="__ADD_NEW__">+ New character…</option>';
+  }
+
+  /**
+   * The selected line: an editor card with its character, its whole text, its times and
+   * labelled buttons. Each button's icon and label are separate spans, so a spinner
+   * replaces the icon only.
+   */
+  lineCardHtml(seg, idx, canTranscribe) {
+    const button = (cls, act, icon, label, extra = '') =>
+      `<button type="button" class="btn btn-sm ${cls}" data-action="${act}"${extra}><span class="btn-icon">${icon}</span><span class="btn-label">${label}</span></button>`;
+    return '<div class="cue-card-head">'
       + `<span class="cue-dot" style="background: ${this.getCharacterColor(seg.character)};"></span>`
       + `<span class="cue-number" aria-hidden="true">${idx + 1}</span>`
-      + `<select class="form-input cue-char-select" aria-label="Character"${field}><option value="${name}" selected>${name}</option></select>`
-      + `<div class="cue-text-cell">${noWords}<textarea class="form-input cue-text-input" rows="1" aria-label="Line text"${field} placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}">${escapeHtml(text)}</textarea></div>`
-      + '<div class="cue-actions">'
-      + action('btn-preview-cue', 'Play this line', ICON_PLAY)
-      + (canTranscribe ? action('btn-whisper-cue', 'Fill in this line&#39;s text from the audio', ICON_MIC) : '')
-      + action('btn-romaji-cue', 'Convert to romaji', ICON_GLOBE, this.romajiApplies(seg) ? '' : ' hidden')
-      + action('btn-delete-cue', 'Delete line', ICON_TRASH)
+      + `<select class="form-input cue-char-select" aria-label="Character">${this.characterOptionsHtml(seg)}</select>`
+      + `<span class="cue-timecode-badge">${this.rowTimecode(seg, true)}</span>`
+      + button('btn-secondary btn-preview-cue', 'play', ICON_PLAY, 'Play', ` aria-label="Play line ${idx + 1}" data-tip="Play this line"`)
       + '</div>'
-      + `<span class="cue-timecode-badge">${this.rowTimecode(seg, selected)}</span>`
+      + `<div class="cue-text-cell">${this.nonverbalBadgeHtml(seg)}<textarea class="form-input cue-text-input" rows="1" aria-label="Line text" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}">${escapeHtml(seg.text || '')}</textarea></div>`
+      + '<div class="cue-card-foot">'
+      + '<div class="cue-card-marks">'
+      + button('btn-secondary btn-set-start', 'set-start', ICON_SET_START, 'Set start', ' data-tip="Set the start to the playhead (I or [)"')
+      + button('btn-secondary btn-set-end', 'set-end', ICON_SET_END, 'Set end', ' data-tip="Set the end to the playhead (O or ])"')
+      + '</div>'
+      + '<div class="cue-card-tools">'
+      + (canTranscribe ? button('btn-secondary btn-whisper-cue', 'transcribe', ICON_MIC, 'Transcribe', ' data-tip="Fill in this line&#39;s text from the audio"') : '')
+      + button('btn-secondary btn-romaji-cue', 'romaji', ICON_GLOBE, 'Romaji', ` data-tip="Convert this line to romaji"${this.romajiApplies(seg) ? '' : ' hidden'}`)
+      + button('btn-ghost btn-delete-cue', 'delete', ICON_TRASH, 'Delete')
+      + '</div>'
       + '</div>';
   }
 
@@ -2291,18 +2319,21 @@ export class PackBuilderApp {
     container.setAttribute('role', 'list');
     const canTranscribe = this.has('transcription');
     const selected = this.segments[this.selectedSegmentIndex] ? this.selectedSegmentIndex : null;
-    // Roving tabindex: Tab reaches the selected row, or the first one before any selection.
+    // Roving tabindex: Tab reaches the selected line, or the first one before any selection.
     const tabbable = selected === null ? 0 : selected;
-    container.innerHTML = this.segments
-      .map((seg, idx) => this.lineRowHtml(seg, idx, idx === selected, idx === tabbable, canTranscribe))
-      .join('');
+    container.innerHTML = this.segments.map((seg, idx) => {
+      const isSelected = idx === selected;
+      return `<div class="builder-line-row${isSelected ? ' selected' : ''}" id="cue-card-${idx}" data-idx="${idx}" role="listitem" tabindex="${idx === tabbable ? 0 : -1}"${isSelected ? ' aria-current="true"' : ''} aria-label="${escapeHtml(this.rowLabel(seg, idx))}">`
+        + (isSelected ? this.lineCardHtml(seg, idx, canTranscribe) : this.lineRowHtml(seg, idx))
+        + '</div>';
+    }).join('');
     const row = document.getElementById(`cue-card-${tabbable}`);
     if (row && selected !== null) this.fitLineText(row.querySelector('.cue-text-input'));
     if (row && hadFocus) row.focus({ preventScroll: true });
   }
 
   /**
-   * The selected row's text shows in full, up to 4 lines (CSS caps it), then scrolls. CSS
+   * The card's text shows in full (CSS caps very long text, then it scrolls). CSS
    * field-sizing grows it without a layout read; this measures only where that is missing.
    */
   fitLineText(textarea) {
@@ -2311,15 +2342,25 @@ export class PackBuilderApp {
     textarea.style.height = `${textarea.scrollHeight + 2}px`; // + the 1px borders
   }
 
-  /** Fills a row's character select with the whole cast, when it is about to open. */
-  fillCharacterOptions(select, idx) {
+  /**
+   * A line's text changed from outside its field (Transcribe, Romaji): the card's text box
+   * if the line is open, else its row's text. The line may have been closed meanwhile.
+   */
+  refreshRowText(idx) {
+    const row = document.getElementById(`cue-card-${idx}`);
     const seg = this.segments[idx];
-    if (!seg) return;
-    const cast = this.castNames();
-    if (!cast.includes(seg.character)) cast.push(seg.character);
-    select.innerHTML = cast.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
-      + '<option value="__ADD_NEW__">+ New character…</option>';
-    select.value = seg.character;
+    if (!row || !seg) return;
+    const field = row.querySelector('.cue-text-input');
+    if (field) {
+      field.value = seg.text || '';
+      this.fitLineText(field);
+      const romaji = row.querySelector('.btn-romaji-cue');
+      if (romaji) romaji.hidden = !this.romajiApplies(seg);
+    } else {
+      const text = row.querySelector('.cue-text');
+      if (text) text.textContent = seg.text || '';
+    }
+    this.updateNonverbalBadge(idx);
   }
 
   /**
@@ -2335,34 +2376,35 @@ export class PackBuilderApp {
       const row = rowOf(e.target);
       if (!row) return;
       const idx = idxOf(row);
-      const btn = e.target.closest('button');
+      const btn = e.target.closest('button[data-action]');
       if (btn) {
-        const textInput = row.querySelector('.cue-text-input');
-        if (btn.classList.contains('btn-preview-cue')) this.previewSegmentAudio(idx);
-        else if (btn.classList.contains('btn-whisper-cue')) this.transcribeSingleSegment(idx, btn, textInput);
-        else if (btn.classList.contains('btn-romaji-cue')) this.romanizeSingleSegment(idx, btn, textInput);
-        else if (btn.classList.contains('btn-delete-cue')) this.deleteSegment(idx);
+        const action = btn.dataset.action;
+        if (action === 'play') {
+          // Selects and plays in the same click, so the browser lets it play.
+          if (this.selectedSegmentIndex !== idx) this.selectSegment(idx);
+          this.previewSegmentAudio(idx);
+        } else if (action === 'set-start') this.markInAtPlayhead();
+        else if (action === 'set-end') this.markOutAtPlayhead();
+        else if (action === 'transcribe') this.transcribeSingleSegment(idx, btn);
+        else if (action === 'romaji') this.romanizeSingleSegment(idx, btn);
+        else if (action === 'delete') this.deleteSegment(idx);
         return;
       }
-      if (e.target.closest('select, textarea')) return;
+      // The open card's own space does nothing, so editing never moves the video.
+      if (row.classList.contains('selected')) return;
       this.selectSegment(idx);
       this.seekTo(this.segments[idx].start);
     });
 
-    // A field of another line selects that line, without moving the video.
+    // A field selects its line, without moving the video. A button never does: pressing
+    // one focuses it, and selecting then would move it out from under the pointer.
     list.addEventListener('focusin', (e) => {
       const row = rowOf(e.target);
-      if (!row || e.target === row) return;
+      if (!row || e.target === row || e.target.closest('button')) return;
       const idx = idxOf(row);
-      if (e.target.classList.contains('cue-char-select')) this.fillCharacterOptions(e.target, idx);
       // A committed text edit is one undo step, from the text the field had when it took focus.
       if (e.target.classList.contains('cue-text-input')) this.textBefore = { idx, text: this.segments[idx].text || '' };
       if (this.selectedSegmentIndex !== idx) this.selectSegment(idx);
-    });
-    // A click can open the select as it takes focus, so the press fills it too.
-    list.addEventListener('pointerdown', (e) => {
-      const select = e.target.closest('.cue-char-select');
-      if (select && document.activeElement !== select) this.fillCharacterOptions(select, idxOf(rowOf(select)));
     });
 
     list.addEventListener('input', (e) => {
@@ -2373,7 +2415,7 @@ export class PackBuilderApp {
       this.updateNonverbalBadge(idx);
       const romaji = row.querySelector('.btn-romaji-cue');
       if (romaji) romaji.hidden = !this.romajiApplies(this.segments[idx]);
-      if (row.classList.contains('selected')) this.fitLineText(e.target);
+      this.fitLineText(e.target);
     });
 
     list.addEventListener('change', (e) => {
@@ -2410,7 +2452,10 @@ export class PackBuilderApp {
         this.seekTo(this.segments[next].start);
       } else if (e.target === row && e.key === 'Enter') {
         e.preventDefault();
-        row.querySelector('.cue-text-input').focus();
+        if (this.selectedSegmentIndex !== idx) this.selectSegment(idx);
+        const field = row.querySelector('.cue-text-input');
+        field.focus();
+        field.setSelectionRange(field.value.length, field.value.length); // to type on from the end
       } else if (e.key === 'Escape' && e.target.classList.contains('cue-text-input')) {
         e.preventDefault();
         row.focus();
@@ -2418,7 +2463,7 @@ export class PackBuilderApp {
     });
   }
 
-  /** A line's new character: its dot, row name, block and the Cast row follow; nothing is rebuilt. */
+  /** A line's new character: its dot, name, block and the Cast row follow; nothing is rebuilt. */
   changeLineCharacter(idx, select) {
     const seg = this.segments[idx];
     const name = select.value;
@@ -2433,6 +2478,8 @@ export class PackBuilderApp {
     const row = document.getElementById(`cue-card-${idx}`);
     if (row) {
       row.querySelector('.cue-dot').style.background = color;
+      const rowName = row.querySelector('.cue-char-name');
+      if (rowName) rowName.textContent = name;
       row.setAttribute('aria-label', this.rowLabel(seg, idx));
     }
     const block = this.segmentBlocks[idx];
@@ -2445,7 +2492,7 @@ export class PackBuilderApp {
   }
 
   /**
-   * "+ New character…" in a row: the select makes way for a name field. Enter (or leaving the
+   * "+ New character…" in the card: the select makes way for a name field. Enter (or leaving the
    * field with a name) creates the character and gives it the line; Esc puts the select back.
    */
   askNewCharacter(idx, select) {
@@ -2615,6 +2662,9 @@ export class PackBuilderApp {
       if (!exists) {
         this.pushUndo();
         this.getCharacterColor(name);
+        const select = this.segmentsListContainer.querySelector('.builder-line-row.selected .cue-char-select');
+        const seg = this.segments[this.selectedSegmentIndex];
+        if (select && seg) select.innerHTML = this.characterOptionsHtml(seg);
       }
       this.renderCharacterChips();
       const chip = Array.from(this.characterChipsList.children).find((c) => c.querySelector('.chip-name')?.dataset.char === name);
@@ -2729,45 +2779,65 @@ export class PackBuilderApp {
   }
 
   /**
-   * Moves the highlight to a line's block and row: class toggles, the rows' tabindex and
-   * timecodes, and the one textarea that grows. Nothing is rebuilt.
+   * Moves the selection: the old card closes into a row and the new row opens into a card
+   * (two rows' markup; the row elements stay), and the block's highlight moves. Nothing
+   * else is rebuilt. The line that was clicked stays where it was on screen.
    */
   selectSegment(idx) {
     this.selectedSegmentIndex = idx;
     const list = this.segmentsListContainer;
     const target = document.getElementById(`cue-card-${idx}`);
-    const focusOnRow = document.activeElement?.parentElement === list && document.activeElement !== target;
+    const opened = !!target && !target.classList.contains('selected');
     const previous = Array.from(list.querySelectorAll('.builder-line-row.selected, .builder-line-row[tabindex="0"]'))
       .filter((row) => row !== target);
-    // Tabindex and focus go first: changed after the classes and text below, a focused
+    const closing = previous.filter((row) => row.classList.contains('selected'));
+    const active = document.activeElement;
+    const activeRow = active && active !== list && list.contains(active) ? active.closest('.builder-line-row') : null;
+    // Focus inside a row about to be rebuilt goes to the same control in its new markup
+    // (Play to Play), or to the selected row. A text field is left first, so its edit commits.
+    const rebuilt = activeRow && active !== activeRow && (closing.includes(activeRow) || (opened && activeRow === target));
+    const focusAction = rebuilt ? (active.dataset.action || '') : null;
+    if (rebuilt && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) active.blur();
+    // Read before anything changes, while the layout is still clean.
+    const topBefore = target ? target.getBoundingClientRect().top : 0;
+    // Tabindex and focus go first: changed after the markup below, a focused
     // row's tabindex makes the browser recalculate the styles at once (about 2 ms).
     if (target) target.tabIndex = 0;
     previous.forEach((row) => { row.tabIndex = -1; });
     // Keyboard focus on a row follows the selection.
-    if (target && focusOnRow) target.focus({ preventScroll: true });
+    if (target && active === activeRow && activeRow !== target) target.focus({ preventScroll: true });
 
     this.timelineSegmentsOverlay.querySelectorAll('.builder-segment-block.selected').forEach((b) => b.classList.remove('selected'));
     if (this.segmentBlocks[idx]) this.segmentBlocks[idx].classList.add('selected');
-    previous.forEach((row) => {
+    closing.forEach((row) => {
+      const i = parseInt(row.dataset.idx, 10);
       row.classList.remove('selected');
       row.removeAttribute('aria-current');
-      const textInput = row.querySelector('.cue-text-input');
-      textInput.style.height = '';
-      textInput.tabIndex = -1;
-      row.querySelector('.cue-char-select').tabIndex = -1;
-      this.updateCardTimecode(parseInt(row.dataset.idx, 10));
+      if (this.segments[i]) row.innerHTML = this.lineRowHtml(this.segments[i], i);
     });
     if (target) {
       target.classList.add('selected');
       target.setAttribute('aria-current', 'true');
-      target.querySelector('.cue-text-input').removeAttribute('tabindex');
-      target.querySelector('.cue-char-select').removeAttribute('tabindex');
-      this.updateCardTimecode(idx);
-      this.fitLineText(target.querySelector('.cue-text-input'));
-      // Scrolled into view in the next frame, with that frame's layout, so the click or
-      // key that selected doesn't wait for one.
+      if (opened) {
+        target.innerHTML = this.lineCardHtml(this.segments[idx], idx, this.has('transcription'));
+        this.fitLineText(target.querySelector('.cue-text-input'));
+      } else {
+        this.updateCardTimecode(idx);
+      }
+      if (focusAction !== null) {
+        const control = focusAction && target.querySelector(`[data-action="${focusAction}"]`);
+        (control || target).focus({ preventScroll: true });
+      }
+      // In the next frame, with that frame's layout, so the click or key that selected
+      // doesn't wait for one: the line moves back to where it was (a card above it may
+      // have closed), then the whole card scrolls into view.
       cancelAnimationFrame(this._scrollRowFrame);
-      this._scrollRowFrame = requestAnimationFrame(() => target.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' }));
+      this._scrollRowFrame = requestAnimationFrame(() => {
+        if (!target.isConnected) return; // the list was drawn again meanwhile
+        list.scrollTop += target.getBoundingClientRect().top - topBefore;
+        const block = target.offsetHeight > list.clientHeight ? 'start' : 'nearest';
+        target.scrollIntoView({ behavior: scrollBehavior(), block });
+      });
     }
     this.updateMarkButtons();
   }
@@ -2979,7 +3049,7 @@ export class PackBuilderApp {
     if (badge && seg) badge.hidden = !!(seg.text || '').trim();
   }
 
-  /** A row's timecode and name, after its line moved or was selected or deselected. */
+  /** A row's or the card's timecode and name, after its line moved. */
   updateCardTimecode(idx) {
     const row = document.getElementById(`cue-card-${idx}`);
     const seg = this.segments[idx];
@@ -3382,14 +3452,22 @@ export class PackBuilderApp {
     this.syncSegmentsToServer();
   }
 
-  async transcribeSingleSegment(idx, btnEl, textInputEl) {
+  /** While a line's Transcribe or Romaji runs, its button shows the spinner in place of its icon. */
+  busyButton(btnEl) {
+    const icon = btnEl ? btnEl.querySelector('.btn-icon') : null;
+    const original = icon ? icon.innerHTML : '';
+    if (icon) icon.innerHTML = ICON_SPINNER;
+    if (btnEl) btnEl.disabled = true;
+    return () => {
+      if (icon) icon.innerHTML = original;
+      if (btnEl) btnEl.disabled = false;
+    };
+  }
+
+  async transcribeSingleSegment(idx, btnEl) {
     if (!this.sessionId || idx < 0 || idx >= this.segments.length) return;
     const seg = this.segments[idx];
-    const origText = btnEl ? btnEl.innerHTML : '';
-    if (btnEl) {
-      btnEl.innerHTML = ICON_SPINNER;
-      btnEl.disabled = true;
-    }
+    const done = this.busyButton(btnEl);
 
     const lang = this.selectTranscribeLang ? this.selectTranscribeLang.value : 'auto';
     const isRomaji = lang === 'ja_romaji';
@@ -3411,8 +3489,7 @@ export class PackBuilderApp {
         if (data.text && data.text.trim()) {
           this.pushUndo();
           seg.text = data.text.trim();
-          if (textInputEl) textInputEl.value = seg.text;
-          this.updateNonverbalBadge(idx);
+          this.refreshRowText(idx);
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
           this.showToast(`Line ${idx + 1}: "${seg.text}"`);
@@ -3426,14 +3503,11 @@ export class PackBuilderApp {
       console.warn('Transcription error:', e);
       this.showToast("Couldn't transcribe this line. Type the text instead.");
     } finally {
-      if (btnEl) {
-        btnEl.innerHTML = origText;
-        btnEl.disabled = false;
-      }
+      done();
     }
   }
 
-  async romanizeSingleSegment(idx, btnEl, textInputEl) {
+  async romanizeSingleSegment(idx, btnEl) {
     if (!this.sessionId || idx < 0 || idx >= this.segments.length) return;
     const seg = this.segments[idx];
     if (!seg.text || !seg.text.trim()) {
@@ -3441,11 +3515,7 @@ export class PackBuilderApp {
       return;
     }
 
-    const origText = btnEl ? btnEl.innerHTML : '';
-    if (btnEl) {
-      btnEl.innerHTML = ICON_SPINNER;
-      btnEl.disabled = true;
-    }
+    const done = this.busyButton(btnEl);
 
     try {
       const res = await fetch(`/api/builder/${this.sessionId}/romanize`, {
@@ -3459,8 +3529,7 @@ export class PackBuilderApp {
         if (data.romaji && data.romaji.trim()) {
           this.pushUndo();
           seg.text = data.romaji.trim();
-          if (textInputEl) textInputEl.value = seg.text;
-          this.updateNonverbalBadge(idx);
+          this.refreshRowText(idx);
           this.renderTimelineSegments();
           this.syncSegmentsToServer();
           this.showToast(`Line ${idx + 1}: "${seg.text}"`);
@@ -3471,10 +3540,7 @@ export class PackBuilderApp {
     } catch (e) {
       console.warn('Romanization error:', e);
     } finally {
-      if (btnEl) {
-        btnEl.innerHTML = origText;
-        btnEl.disabled = false;
-      }
+      done();
     }
   }
 
@@ -3486,9 +3552,7 @@ export class PackBuilderApp {
     }
     const idx = this.selectedSegmentIndex;
     const card = document.getElementById(`cue-card-${idx}`);
-    const btn = card ? card.querySelector('.btn-whisper-cue') : null;
-    const textInput = card ? card.querySelector('.cue-text-input') : null;
-    this.transcribeSingleSegment(idx, btn, textInput);
+    this.transcribeSingleSegment(idx, card ? card.querySelector('.btn-whisper-cue') : null);
   }
 
   // --- STEP 4: Compile & Launch ---

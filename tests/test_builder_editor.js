@@ -355,8 +355,11 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(!!badge && badge.textContent === "No words", "a line without words shows the 'No words' badge");
     check(badge.getAttribute("data-tip") === "A grunt, laugh or other sound without words. Record it like any other line.", "the badge explains itself in a tooltip");
     check(!cards[0].querySelector(".cue-nonverbal-badge"), "a line with words has no badge");
-    check(cards[1].querySelector(".cue-text-input").getAttribute("placeholder") === "No words. Type a cue like (laughs) if you want.", "a line without words gets the cue placeholder");
+    ed.app.selectSegment(0);
     check(cards[0].querySelector(".cue-text-input").getAttribute("placeholder") === "Line text", "a line with words keeps the plain placeholder");
+    ed.app.selectSegment(1);
+    check(!!cards[1].querySelector(".cue-nonverbal-badge") && cards[1].querySelector(".cue-text-input").getAttribute("placeholder") === "No words. Type a cue like (laughs) if you want.",
+      "a line without words gets the cue placeholder, and its card keeps the badge");
 
     const labels = Array.from(doc.querySelectorAll("#timeline-segments-overlay .segment-block-label"))
       .map((el) => (typeof el.innerText === "string" ? el.innerText : el.textContent));
@@ -382,8 +385,8 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     // Transcribing the line fills it in and clears the badge too.
     ed.w.fetch = (url) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
       String(url).includes("/transcribe_segment") ? { text: "Argh" } : {}) });
-    await ed.app.transcribeSingleSegment(1, null, box);
-    check(ed.app.segments[1].text === "Argh" && badgeNow().hidden === true, "a transcribed line loses the 'No words' badge");
+    await ed.app.transcribeSingleSegment(1, null);
+    check(ed.app.segments[1].text === "Argh" && box.value === "Argh" && badgeNow().hidden === true, "a transcribed line loses the 'No words' badge");
 
     // A re-render keeps the badge hidden for a line with text.
     ed.app.renderSegmentsList();
@@ -919,6 +922,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
       && first[2].classList.contains("selected") && card(2).classList.contains("selected"), "selecting another line moves the highlight");
 
     // A text edit updates that line's block label only.
+    card(1).querySelector(".cue-number").click();
     const ta = card(1).querySelector(".cue-text-input");
     ta.value = "Bee";
     ta.dispatchEvent(new w.Event("input", { bubbles: true }));
@@ -991,6 +995,9 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     pointer(wrap, "pointermove", 360);
     pointer(wrap, "pointerup", 360);
     check(app.segments.map((s) => s.text).join(",") === "C,A,B" && app.segments[2].start === 3.1, "the drop sorts the lines by time");
+    const text0 = doc.getElementById("cue-card-0").querySelector(".cue-text");
+    check((text0 ? text0.textContent : "") === "C", "the first row shows the line that now comes first");
+    app.selectSegment(0);
     const ta = doc.getElementById("cue-card-0").querySelector(".cue-text-input");
     check(ta.value === "C", "the first card shows the line that now comes first");
     ta.value = "edited";
@@ -1098,19 +1105,21 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     key(text0, "Escape");
     check(doc.activeElement === firstRows[0], "Esc in the text returns to the row");
 
-    // Focusing another row's field selects that line without seeking.
-    const seekCount = seeks.length;
-    firstRows[2].querySelector(".cue-text-input").focus();
-    check(app.selectedSegmentIndex === 2 && firstRows[2].classList.contains("selected") && seeks.length === seekCount,
-      "focusing a line's text selects it without seeking");
+    // Enter on another focused row opens that line's text without seeking.
+    let seekCount = seeks.length;
+    firstRows[2].focus();
+    key(firstRows[2], "Enter");
+    check(app.selectedSegmentIndex === 2 && firstRows[2].classList.contains("selected") && doc.activeElement === firstRows[2].querySelector(".cue-text-input")
+      && seeks.length === seekCount, "Enter on a line's row selects it and focuses its text without seeking");
 
-    // The character select holds its own option until it is opened.
+    // The card's character select holds the whole cast from the start.
+    app.selectSegment(0);
+    seekCount = seeks.length;
     const sel = firstRows[0].querySelector(".cue-char-select");
-    check(sel.options.length === 1 && sel.value === "Speaker 1", "a row's character select holds only its current option");
-    sel.focus();
     const names = Array.from(sel.options).map((o) => o.value);
-    check(names.includes("Speaker 1") && names.includes("Speaker 2") && names.includes("__ADD_NEW__"), "focusing the select fills in the cast");
-    check(app.selectedSegmentIndex === 0 && seeks.length === seekCount, "focusing a line's select selects it without seeking");
+    check(sel.value === "Speaker 1" && names.includes("Speaker 2") && names.includes("__ADD_NEW__"), "the card's select holds the whole cast");
+    sel.focus();
+    check(app.selectedSegmentIndex === 0 && seeks.length === seekCount, "focusing a line's select doesn't seek");
     sel.value = "Speaker 2";
     sel.dispatchEvent(new w.Event("change", { bubbles: true }));
     check(app.segments[0].character === "Speaker 2", "changing the select recasts the line");
@@ -1135,6 +1144,155 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(!palette.includes(colour("#dc2626")) && !palette.includes(colour("#16a34a")), "no character is red or green");
     check(palette[0] === colour("#06b6d4") && palette[1] === colour("#ec4899"), "the palette starts cyan, then magenta");
     check(palette.indexOf(colour("#d97706")) === 4 && palette.indexOf(colour("#b45309")) === 6, "amber (the selection colour) comes later, apart from terracotta");
+    w.close();
+  }
+
+  // (r) every control does what it says on the first click: a row's Play plays, rows at rest
+  // are text and Play only, and the selected line opens into a card with its controls labelled.
+  {
+    let answerTranscribe = null;
+    const ed = await bootEditor({ segments: [
+      { start: 1, end: 2, text: "A", character: "Speaker 1" },
+      { start: 3, end: 4, text: "B", character: "Speaker 2" },
+      { start: 5, end: 6, text: "C", character: "Speaker 1" },
+    ] }, null, { fetch: (u) => (u.includes("/transcribe_segment")
+      ? new Promise((r) => { answerTranscribe = () => r({ ok: true, status: 200, json: () => Promise.resolve({ text: "Later" }) }); })
+      : null) });
+    const { w, doc, app, video, media } = ed;
+    const textOf = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent).trim();
+    const list = doc.getElementById("segments-list-container");
+    const row = (i) => doc.getElementById(`cue-card-${i}`);
+    const rows = () => Array.from(list.querySelectorAll(".builder-line-row"));
+    const blocks = () => Array.from(doc.querySelectorAll("#timeline-segments-overlay .builder-segment-block"));
+    const action = (i, a) => row(i).querySelector(`[data-action="${a}"]`);
+    const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    const atRest = () => rows().filter((r) => !r.classList.contains("selected"));
+
+    // Play on a row that isn't selected: the press changes nothing, the click selects and plays.
+    app.selectSegment(0);
+    const play = row(2).querySelector(".btn-preview-cue");
+    const markup = row(2).innerHTML;
+    play.focus(); // a mouse press focuses the button before the click
+    check(app.selectedSegmentIndex === 0 && row(2).innerHTML === markup, "pressing a row's Play changes neither the selection nor the row");
+    media.calls.length = 0;
+    play.click();
+    check(app.selectedSegmentIndex === 2 && row(2).classList.contains("selected"), "clicking a row's Play selects its line");
+    check(media.calls.includes("play:editor-video") && video.currentTime === 5 && app.stopAt === 6,
+      "clicking a row's Play plays the line from its start and stops at its end");
+    check(doc.activeElement === action(2, "play") && doc.activeElement !== play, "focus moves to the card's Play");
+    app.pauseMedia();
+    media.calls.length = 0;
+    video.currentTime = 0;
+    action(2, "play").click();
+    check(media.calls.includes("play:editor-video") && video.currentTime === 5 && app.stopAt === 6, "the card's Play plays the line again");
+    app.pauseMedia();
+
+    // Rows at rest hold no form fields; their only control is Play.
+    check(atRest().length === 2 && atRest().every((r) => !r.querySelector("select, textarea, input")),
+      "rows at rest have no select, text box or input");
+    check(atRest().every((r) => {
+      const buttons = r.querySelectorAll("button");
+      return buttons.length === 1 && buttons[0].dataset.action === "play" && buttons[0].getAttribute("aria-label") === `Play line ${parseInt(r.dataset.idx, 10) + 1}`
+        && buttons[0].tabIndex === -1;
+    }), "a row at rest has one control, Play ('Play line N'), out of the Tab order");
+    check(textOf(row(1).querySelector(".cue-char-name")) === "Speaker 2" && textOf(row(1).querySelector(".cue-text")) === "B"
+      && textOf(row(1).querySelector(".cue-timecode-badge")) === app.formatTime(3), "a row at rest shows its character, text and start");
+    check(row(1).lastElementChild === action(1, "play"), "a row's Play is its last item, at the right edge");
+
+    // The card: character, text, times and labelled buttons.
+    const card = row(2);
+    const sel = card.querySelector(".cue-char-select");
+    const names = sel ? Array.from(sel.options).map((o) => o.value) : [];
+    check(!!sel && sel.value === "Speaker 1" && names.includes("Speaker 2") && names.includes("__ADD_NEW__"),
+      "the card's select holds the whole cast and '+ New character…'");
+    check(card.querySelector("textarea.cue-text-input")?.value === "C", "the card has the line's text in a text box");
+    check(textOf(card.querySelector(".cue-timecode-badge")) === `${app.formatTime(5)} – ${app.formatTime(6)}`, "the card shows start – end");
+    const label = (a) => (action(2, a) ? textOf(action(2, a)) : null);
+    check(label("play") === "Play" && action(2, "play").getAttribute("aria-label") === "Play line 3", "the card's Play is labelled 'Play'");
+    check(label("set-start") === "Set start" && label("set-end") === "Set end" && label("delete") === "Delete",
+      "the card has Set start, Set end and Delete, labelled");
+    check(action(2, "set-start").dataset.tip === "Set the start to the playhead (I or [)"
+      && action(2, "set-end").dataset.tip === "Set the end to the playhead (O or ])", "Set start and Set end name their keys in a tooltip");
+    check(label("transcribe") === "Transcribe" && action(2, "transcribe").dataset.tip === "Fill in this line's text from the audio",
+      "with transcription installed the card has Transcribe");
+    check(action(2, "romaji")?.hidden === true, "Romaji stays hidden on a line it doesn't apply to");
+
+    // Set start and Set end: the playhead, the card's times and the block, one undo step each.
+    app.duration = 10;
+    app.pixelsPerSecond = 100;
+    let depth = app.undoStack.length;
+    media.clock(video, 4.6);
+    action(2, "set-start").click();
+    check(app.segments[2].start === 4.6 && app.segments[2].end === 6 && app.undoStack.length === depth + 1, "Set start sets the start to the playhead, one undo step");
+    check(textOf(row(2).querySelector(".cue-timecode-badge")) === `${app.formatTime(4.6)} – ${app.formatTime(6)}` && Math.abs(parseFloat(blocks()[2].style.left) - 460) < 0.01,
+      "the card's times and the block follow Set start");
+    media.clock(video, 5.5);
+    action(2, "set-end").click();
+    check(app.segments[2].end === 5.5 && app.undoStack.length === depth + 2, "Set end sets the end to the playhead, one undo step");
+    check(textOf(row(2).querySelector(".cue-timecode-badge")) === `${app.formatTime(4.6)} – ${app.formatTime(5.5)}` && Math.abs(parseFloat(blocks()[2].style.width) - 90) < 0.01,
+      "the card's times and the block follow Set end");
+
+    // Selecting swaps two rows: the same row elements and ids, the same blocks, nothing re-rendered.
+    let listRenders = 0, timelineRenders = 0;
+    const renderList = app.renderSegmentsList, renderTimeline = app.renderTimelineSegments;
+    app.renderSegmentsList = function (...a) { listRenders++; return renderList.apply(this, a); };
+    app.renderTimelineSegments = function (...a) { timelineRenders++; return renderTimeline.apply(this, a); };
+    const firstRows = rows();
+    const firstBlocks = blocks();
+    const middle = row(1).firstElementChild;
+    row(0).querySelector(".cue-text").click();
+    check(app.selectedSegmentIndex === 0 && row(0).querySelector(".cue-text-input") && !row(2).querySelector(".cue-text-input"),
+      "selecting another line closes the old card and opens the new one");
+    check(rows().every((r, i) => r === firstRows[i] && r.id === `cue-card-${i}` && r.dataset.idx === String(i))
+      && blocks().every((b, i) => b === firstBlocks[i]) && listRenders === 0 && timelineRenders === 0,
+      "selecting keeps the row elements, their ids and the blocks, with no re-render");
+    check(row(1).firstElementChild === middle, "a row the selection didn't touch isn't rebuilt");
+
+    // Clicking the card's own space neither seeks nor changes the selection.
+    video.currentTime = 9;
+    media.writes.length = 0;
+    row(0).dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+    row(0).querySelector(".cue-number").click();
+    check(app.selectedSegmentIndex === 0 && media.writes.length === 0, "clicking the card's empty space does nothing");
+
+    // Keyboard: Up and Down from the card, Enter to the text, Esc back; focus never drops.
+    row(0).focus();
+    key(row(0), "ArrowDown");
+    check(app.selectedSegmentIndex === 1 && doc.activeElement === row(1) && !!row(1).querySelector(".cue-text-input"), "ArrowDown on the card opens the next line and focuses it");
+    key(row(1), "Enter");
+    check(doc.activeElement === row(1).querySelector(".cue-text-input"), "Enter on the card focuses its text");
+    key(doc.activeElement, "Escape");
+    check(doc.activeElement === row(1), "Esc in the text returns to the card");
+    key(row(1), "ArrowUp");
+    check(app.selectedSegmentIndex === 0 && doc.activeElement === row(0), "ArrowUp on the card opens the line above");
+    row(0).querySelector(".cue-text-input").focus();
+    app.selectSegment(2); // a block on the timeline, say
+    check(doc.activeElement !== doc.body && list.contains(doc.activeElement), "focus in a card that closes stays in the list");
+    action(2, "delete").focus();
+    app.selectSegment(1);
+    check(doc.activeElement === row(1).querySelector('[data-action="delete"]'), "focus on a card's button follows to the same button");
+
+    // Enter on a focused row before any selection selects it and focuses its text.
+    app.selectedSegmentIndex = null;
+    renderList.call(app);
+    row(0).focus();
+    key(row(0), "Enter");
+    check(app.selectedSegmentIndex === 0 && doc.activeElement === row(0).querySelector(".cue-text-input"), "Enter on an unselected row opens it and focuses its text");
+
+    // A Transcribe that answers after the selection moved updates that line's row.
+    app.selectSegment(1);
+    const tbtn = action(1, "transcribe");
+    tbtn.click();
+    check(!!tbtn.querySelector(".spinning") && textOf(tbtn) === "Transcribe", "Transcribe shows the spinner and keeps its label");
+    row(2).querySelector(".cue-text").click();
+    answerTranscribe();
+    await tick();
+    check(app.segments[1].text === "Later" && textOf(row(1).querySelector(".cue-text")) === "Later", "a Transcribe that finishes after the selection moved updates its row");
+
+    // Without transcription the card has no Transcribe.
+    app.applyCapabilities({ ...app.capabilities, transcription: false });
+    check(!!row(2).querySelector(".cue-text-input") && !action(2, "transcribe"), "without transcription the card has no Transcribe");
+    await tick(50);
     w.close();
   }
 

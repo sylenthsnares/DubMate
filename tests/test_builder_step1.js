@@ -330,7 +330,7 @@ async function boot(caps = ALL, opts = {}) {
     deck.click();
     await tick(30);
     check(!b.requests.some((r) => r.url.includes("/transcribe_segment")), "the unavailable Transcribe does nothing");
-    check(b.doc.querySelectorAll(".btn-whisper-cue").length === 0, "the line rows have no Transcribe action");
+    check(b.doc.querySelectorAll(".btn-whisper-cue").length === 0, "the line rows and the card have no Transcribe action");
     b.w.close();
   }
   {
@@ -339,10 +339,14 @@ async function boot(caps = ALL, opts = {}) {
     const deck = b.$("btn-transcribe-line");
     check(deck.getAttribute("aria-disabled") === "true" && deck.dataset.tip === "Select a line first", "with no line selected, Transcribe says 'Select a line first', like Start and End");
     b.app.selectSegment(0);
-    check(!deck.hasAttribute("aria-disabled") && deck.dataset.tip === "Fill in the selected line's text from the audio" && b.doc.querySelectorAll(".btn-whisper-cue").length === 2,
-      "with transcription and a line selected, Transcribe is available");
+    const whisper = b.doc.querySelectorAll(".btn-whisper-cue");
+    check(!deck.hasAttribute("aria-disabled") && deck.dataset.tip === "Fill in the selected line's text from the audio" && whisper.length === 1 && b.$("cue-card-0").contains(whisper[0]),
+      "with transcription and a line selected, Transcribe is available, in the deck and the line's card");
     const romaji = (i) => { const btn = b.$(`cue-card-${i}`).querySelector(".btn-romaji-cue"); return !!btn && shown(btn); };
-    check(!romaji(0) && romaji(1), "Romaji shows only on the line with Japanese text");
+    check(!romaji(0), "Romaji doesn't show on a line without Japanese text");
+    b.app.selectSegment(1);
+    check(romaji(1), "Romaji shows on the line with Japanese text");
+    b.app.selectSegment(0);
     // Typing Japanese into a line brings its Romaji action without a re-render.
     const box = b.$("cue-card-0").querySelector(".cue-text-input");
     const card = b.$("cue-card-0");
@@ -355,12 +359,14 @@ async function boot(caps = ALL, opts = {}) {
     const b = await boot(ALL);
     b.$("select-transcribe-lang").value = "ja";
     await openEditor(b, LINES);
-    check(shown(b.$("cue-card-0").querySelector(".btn-romaji-cue")), "with Japanese chosen every line offers Romaji");
+    b.app.selectSegment(0);
+    check(shown(b.$("cue-card-0").querySelector(".btn-romaji-cue")), "with Japanese chosen the card offers Romaji for any line");
     b.w.close();
   }
   {
     const b = await boot({ ...ALL, romaji: false });
     await openEditor(b, LINES);
+    b.app.selectSegment(1);
     check([...b.doc.querySelectorAll(".btn-romaji-cue")].every((btn) => !shown(btn)), "without the romaji tool no line offers Romaji");
     b.w.close();
   }

@@ -134,6 +134,13 @@ async function boot(opts = {}) {
 /** Boots straight into the editor through ?session=s1&step=editor. */
 const editor = (opts = {}) => boot({ url: "http://localhost:8000/builder.html?session=s1&step=editor", ...opts });
 
+/** Line i's field in its card (sel: the text box by default), opening the line first with a click on its row. */
+function lineField(b, i, sel = ".cue-text-input") {
+  const row = b.rows()[i];
+  if (!row.classList.contains("selected")) row.click();
+  return b.rows()[i].querySelector(sel);
+}
+
 /** Types into a field the way a person does: focus, input, then change and blur. */
 function typeInto(b, field, value) {
   field.focus();
@@ -150,7 +157,7 @@ function typeInto(b, field, value) {
     check(b.app.sessionId === "s1" && b.app.currentStep === "editor", "?session=s1 with a transcribed status opens the editor");
     check(b.requests.some((r) => r.url === "/api/builder/s1/status") && b.requests.some((r) => r.url === "/api/builder/s1/segments" && r.method === "GET"),
       "restoring reads the session's status, then its lines");
-    check(b.rows().length === 3 && b.rows()[1].querySelector(".cue-text-input").value === "Not a minute later", "the editor shows the server's lines");
+    check(b.rows().length === 3 && text(b.rows()[1].querySelector(".cue-text")) === "Not a minute later", "the editor shows the server's lines");
     check(b.$("input-pack-title").value === "Dawn raid" && b.$("select-transcribe-lang").value === "ja", "the pack name and spoken language come back from sessionStorage");
     check(b.$("editor-video").getAttribute("src") === "/api/builder/s1/video", "the editor plays the session's video");
     check(b.w.history.state && b.w.history.state.step === "editor", "the restored entry carries its step, without a new history entry");
@@ -248,10 +255,9 @@ function typeInto(b, field, value) {
     const b = await editor({
       fetch: (u, init, json) => (init.method === "PUT" ? new Promise((resolve) => held.push(() => resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }))) : null),
     });
-    const fields = () => b.rows().map((r) => r.querySelector(".cue-text-input"));
-    typeInto(b, fields()[0], "First");
-    typeInto(b, fields()[0], "Second");
-    typeInto(b, fields()[0], "Third");
+    typeInto(b, lineField(b, 0), "First");
+    typeInto(b, lineField(b, 0), "Second");
+    typeInto(b, lineField(b, 0), "Third");
     await tick();
     check(b.puts().length === 1, "a save waits while one is in flight");
     held.shift()();
@@ -272,7 +278,7 @@ function typeInto(b, field, value) {
         return json({ status: "ok" });
       },
     });
-    typeInto(b, b.rows()[0].querySelector(".cue-text-input"), "Changed");
+    typeInto(b, lineField(b, 0), "Changed");
     await tick(40);
     const notice = b.$("editor-notice");
     check(shown(notice) && text(notice) === "Couldn't save your changes. Trying again…", "a failed save shows the notice");
@@ -285,7 +291,7 @@ function typeInto(b, field, value) {
   {
     // A save still failing when the video changes belongs to the old session: it stops.
     const b = await editor({ fetch: (u, init) => (init.method === "PUT" ? Promise.reject(new Error("offline")) : null) });
-    typeInto(b, b.rows()[0].querySelector(".cue-text-input"), "Changed");
+    typeInto(b, lineField(b, 0), "Changed");
     await tick(40);
     b.$("step-nav-upload").click();
     b.$("btn-change-video").click();
@@ -359,7 +365,7 @@ function typeInto(b, field, value) {
     check(app.undoStack.length === depth, "a click on a line without moving it adds no undo step");
 
     // A recast.
-    const sel = b.rows()[0].querySelector(".cue-char-select");
+    const sel = lineField(b, 0, ".cue-char-select");
     sel.focus();
     sel.value = "Aki";
     sel.dispatchEvent(new b.w.Event("change", { bubbles: true }));
@@ -368,7 +374,7 @@ function typeInto(b, field, value) {
     check(app.segments[0].character === "Mori" && b.rows()[0].querySelector(".cue-char-select").value === "Mori", "Ctrl+Z on the select undoes the recast");
 
     // A text commit; inside the field the browser's own undo is left alone.
-    const field = b.rows()[2].querySelector(".cue-text-input");
+    const field = lineField(b, 2);
     field.focus();
     field.value = "Roger";
     field.dispatchEvent(new b.w.Event("input", { bubbles: true }));
@@ -397,7 +403,7 @@ function typeInto(b, field, value) {
     b.chipNamed("Aki").querySelector(".chip-name").click();
     enter(nameInput(), "Akira");
     check(app.segments[1].character === "Akira" && !!b.chipNamed("Akira") && !b.chipNamed("Aki"), "Enter renames the character and its lines");
-    check(b.rows()[1].querySelector(".cue-char-select").value === "Akira", "the line's row follows the rename");
+    check(text(b.rows()[1].querySelector(".cue-char-name")) === "Akira", "the line's row follows the rename");
 
     // Rename onto another name merges.
     b.chipNamed("Akira").querySelector(".chip-name").click();
@@ -425,15 +431,16 @@ function typeInto(b, field, value) {
     toast.querySelector(".toast-action").click();
     check(app.segments[0].character === "Mori" && !!b.chipNamed("Mori"), "Undo brings the character back");
 
-    // The row's "+ New character…" swaps its select for a name field.
+    // The card's "+ New character…" swaps its select for a name field.
     const row = b.rows()[2];
-    const sel = row.querySelector(".cue-char-select");
+    const sel = lineField(b, 2, ".cue-char-select");
     sel.focus();
-    check(Array.from(sel.options).some((o) => o.value === "__ADD_NEW__" && o.text === "+ New character…"), "the row select offers '+ New character…'");
+    check(Array.from(sel.options).some((o) => o.value === "__ADD_NEW__" && o.text === "+ New character…"), "the card's select offers '+ New character…'");
+    check(Array.from(sel.options).some((o) => o.value === "Narrator"), "a character added in the Cast row is in the card's select");
     sel.value = "__ADD_NEW__";
     sel.dispatchEvent(new b.w.Event("change", { bubbles: true }));
     let input = row.querySelector(".cue-char-input");
-    check(!!input && sel.hidden && b.doc.activeElement === input, "it swaps the select for a name field in the row");
+    check(!!input && sel.hidden && b.doc.activeElement === input, "it swaps the select for a name field in the card");
     b.key(input, "Escape");
     check(!row.querySelector(".cue-char-input") && !sel.hidden && sel.value === "Mori" && app.segments[2].character === "Mori", "Esc restores the select");
     sel.focus();
@@ -443,6 +450,9 @@ function typeInto(b, field, value) {
     enter(input, "Guard");
     check(app.segments[2].character === "Guard" && !row.querySelector(".cue-char-input") && sel.value === "Guard" && !!b.chipNamed("Guard"),
       "Enter creates the character and gives it the line");
+    b.$("btn-add-character").click();
+    enter(nameInput(), "Sergeant");
+    check(Array.from(sel.options).some((o) => o.value === "Sergeant") && sel.value === "Guard", "a character added while a card is open joins its select");
     check(b.errors.length === 0, `no console errors editing the Cast (${b.errors.join(" | ")})`);
     b.w.close();
   }
@@ -483,7 +493,7 @@ function typeInto(b, field, value) {
     // A line edit after the build.
     b.$("step-nav-editor").click();
     await tick();
-    typeInto(b, b.rows()[0].querySelector(".cue-text-input"), "We go in at noon");
+    typeInto(b, lineField(b, 0), "We go in at noon");
     b.$("btn-proceed-to-compile").click();
     await tick();
     check(shown(stale) && !shown(box), "an edit to the lines shows the change notice on Build");
@@ -629,16 +639,17 @@ function typeInto(b, field, value) {
     b.w.close();
   }
 
-  // 14. The Lines column is one Tab stop: only the selected row's fields are in the Tab order.
+  // 14. The Lines column is one Tab stop: only the selected line's card has fields in the Tab order.
   {
     const b = await editor({ lines: [...LINES, { start: 7, end: 8, text: "", character: "Aki", nonverbal: true }] });
-    const fieldsTabbable = (row) => [".cue-char-select", ".cue-text-input"].map((s) => row.querySelector(s).tabIndex);
-    check(b.rows().every((r) => fieldsTabbable(r).every((t) => t === -1)), "before a selection, no row's fields are in the Tab order");
+    const tabStops = (row) => Array.from(row.querySelectorAll("select, textarea, input, button")).filter((el) => el.tabIndex >= 0);
+    check(b.rows().every((r) => tabStops(r).length === 0), "before a selection, no row has a Tab stop inside it");
     check(!b.rows()[3].querySelector(".cue-nonverbal-badge").hasAttribute("tabindex"), "the 'No words' badge is not a Tab stop");
     b.rows()[1].click();
-    check(fieldsTabbable(b.rows()[1]).every((t) => t === 0) && fieldsTabbable(b.rows()[0]).every((t) => t === -1), "the selected row's fields join the Tab order");
+    const fields = (row) => [".cue-char-select", ".cue-text-input"].map((s) => row.querySelector(s));
+    check(fields(b.rows()[1]).every((f) => f && f.tabIndex === 0) && tabStops(b.rows()[0]).length === 0, "the selected line's fields join the Tab order");
     b.rows()[2].click();
-    check(fieldsTabbable(b.rows()[1]).every((t) => t === -1) && fieldsTabbable(b.rows()[2]).every((t) => t === 0), "and leave it with the selection");
+    check(tabStops(b.rows()[1]).length === 0 && fields(b.rows()[2]).every((f) => f && f.tabIndex === 0), "and leave it with the selection");
     b.w.close();
   }
 
