@@ -192,6 +192,17 @@ C4: the mic card's clicks are counted where they happen (in the lobby), and the 
 - The booth deep link from the Lines cell (U3 step 27) is deferred; the cell shows progress only.
 - ui-plan steps 31 and 32 stay open; they are not about joining.
 
+### Decided while building G1 (identity and the server), revisit
+
+- `common.sanitize_color` is gone rather than given a new fallback: `identity.normalize_color` is the only colour check on the server and only ever returns one of the 8 palette hexes, so nothing else reaches a style attribute.
+- The server treats a colour outside the palette and the legacy table as "no wish" (the first free hue); the client maps it to Coral before sending. Same outcome for one person, and the server never trusts an arbitrary hex.
+- Auto-cast (and the creator's character) skips characters with no lines.
+- A guest repeating a claim or a give-back is harmless (no refusal). Refusals read "Tani is voicing Old Man now." (someone holds it) or "Only the host can change who voices Old Man." (someone else, several people, a shared character).
+- Cast evenly broadcasts a `cast_evenly` message; older pages apply its state through the catch-all handler like any other.
+- The "Coral is taken here" toast shows once per room and colour (`sessionStorage`), so a reconnect doesn't repeat it.
+- Take uploads cut the uploader's name to 24 too, so the "every name is 24" rule has no back door.
+- The landing's and the join prompt's swatches already use the new picker in G1 (the palette must be one list from the first commit); G2 restyles those screens.
+
 ## Hands-on checks (owner, in the morning)
 
 1. First run as a host: does the landing read "who, what, go"? Pick a scene with the keyboard and press Enter.
