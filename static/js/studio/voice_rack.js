@@ -135,6 +135,8 @@ export class VoiceRackMethods {
     if (this.voicePageSummary) this.voicePageSummary.hidden = !open;
     const scroller = document.getElementById('booth-column-scroll');
     if (open && scroller) scroller.scrollTop = 0;
+    // The hidden Takes list lost its scroll place: the take in the dub shows again.
+    if (!open) this.revealTakeRow(this.takesList?.querySelector('.take-row.picked'));
     if (focus) (open ? this.btnVoiceBack : this.btnVoiceAllEffects)?.focus();
   }
 

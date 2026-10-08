@@ -609,6 +609,75 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     console.log("PASS: Backspace deletes, Space on Undo doesn't record, the chip drops the take, focus stays on the card");
   }
 
+  // 11. Many takes stay tidy: the list scrolls inside the card (its scrollbar in the
+  //     card's gutter, so rows keep their width), a long card gives way before Voice and
+  //     Monitor, the durations line up, the A/B switch keeps one line, and the take in
+  //     the dub is scrolled into view without losing where you scrolled to on a redraw.
+  {
+    const css = fs.readFileSync(path.join(PROJECT_ROOT, "static", "css", "style.css"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    // The block whose whole selector is `sel` (not one in a selector list).
+    const rule = (sel) => {
+      const m = css.match(new RegExp(`(^|\\})\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
+      return m ? m[2] : "";
+    };
+    const listCss = rule(".takes-list");
+    for (const [what, re] of [
+      ["a max-height", /max-height\s*:\s*calc\(/],
+      ["overflow-y: auto", /overflow-y\s*:\s*auto/],
+      ["overflow-x: hidden", /overflow-x\s*:\s*hidden/],
+      ["scrollbar-gutter: stable", /scrollbar-gutter\s*:\s*stable/],
+    ]) {
+      if (!re.test(listCss)) fail(`.takes-list needs ${what} so many takes scroll inside the card`);
+    }
+    if (/scrollbar-(width|color)\s*:/.test(listCss)) fail(".takes-list sets scrollbar-width/color; Chromium then draws the grey bar");
+    if (!/@supports not selector\(::-webkit-scrollbar\)\s*\{[^}]*\.takes-list\s*[,{]/.test(css)) fail(".takes-list lacks the Firefox scrollbar colours");
+    const longCss = rule(".takes-card.is-long");
+    if (!/flex-shrink\s*:\s*1/.test(longCss) || !/min-height\s*:/.test(longCss)) fail("a long Takes card doesn't give way in the column");
+    if (!/white-space\s*:\s*nowrap/.test(rule(".transport-seg-btn"))) fail("the A/B switch can wrap ('▶ Take 25')");
+    if (!/minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)/.test(rule(".transport-seg"))) fail("the A/B halves can grow past the deck");
+    const nameCss = rule(".take-name");
+    if (!/min-width\s*:/.test(nameCss) || !/tabular-nums/.test(nameCss)) fail("'Take 9' and 'Take 10' rows don't line up their durations");
+
+    // 25 takes, the oldest in the dub: it sits at the bottom of the list.
+    const many = () => ({ t1000: { picked: "k1", next_number: 26, takes: Array.from({ length: 25 }, (_, i) => mk(`k${i + 1}`, i + 1, { timing_score: 0.5 })) } });
+    // A 150px list of 42px rows (JSDOM has no layout).
+    const ROW = 42, VIEW = 150, TOP = 100;
+    let scrolled = 0;
+    Object.defineProperty(list, "clientHeight", { configurable: true, get: () => VIEW });
+    Object.defineProperty(list, "scrollHeight", { configurable: true, get: () => list.children.length * ROW });
+    Object.defineProperty(list, "scrollTop", { configurable: true, get: () => scrolled,
+      set: (v) => { scrolled = Math.max(0, Math.min(v, Math.max(0, list.scrollHeight - VIEW))); } });
+    const realRect = w.Element.prototype.getBoundingClientRect;
+    w.Element.prototype.getBoundingClientRect = function rect() {
+      const box = (top, h) => ({ top, bottom: top + h, left: 0, right: 314, width: 314, height: h, x: 0, y: top });
+      if (this === list) return box(TOP, VIEW);
+      if (this.parentElement === list) return box(TOP + [...list.children].indexOf(this) * ROW - scrolled, ROW - 4);
+      return realRect.call(this);
+    };
+    const inView = (row) => { const r = row.getBoundingClientRect(); return r.top >= TOP && r.bottom <= TOP + VIEW; };
+    try {
+      await show(env, room(many()), 1);
+      await show(env, room(many()), 0);
+      const picked = list.querySelector(".take-row.picked");
+      if (!picked || text(picked.querySelector(".take-name")) !== "Take 1") fail("the oldest take isn't the row in the dub");
+      if (!inView(picked)) fail(`the take in the dub is scrolled out of view (scrollTop ${list.scrollTop})`);
+      if (!card.classList.contains("is-long")) fail("25 rows didn't mark the Takes card long");
+      list.scrollTop = 300;
+      app.renderTakesCard();
+      if (list.scrollTop !== 300) fail(`a redraw lost the list's scroll place (${list.scrollTop})`);
+      app.roomState.takes.t1000.picked = "k25";
+      app.renderTakesCard();
+      if (!inView(list.querySelector(".take-row.picked")) || list.scrollTop !== 0) fail(`a new take in the dub isn't scrolled into view (${list.scrollTop})`);
+      await show(env, room({ t1000: { picked: "a1", next_number: 3, takes: [mk("a1", 1), mk("b2", 2)] } }), 0);
+      if (card.classList.contains("is-long") || list.scrollTop !== 0) fail("two takes kept the long card or an old scroll place");
+    } finally {
+      w.Element.prototype.getBoundingClientRect = realRect;
+      for (const k of ["clientHeight", "scrollHeight", "scrollTop"]) delete list[k];
+    }
+    console.log("PASS: many takes scroll inside the card, the long card gives way, rows line up, A/B keeps one line, the take in the dub stays in view");
+  }
+
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
   console.log("All takes card checks passed.");
   process.exit(0);
