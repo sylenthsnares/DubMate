@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod external;
 mod mic_permission;
 mod packbuilder;
 mod paths;
@@ -80,6 +81,8 @@ fn main() {
             packbuilder::get_packbuilder_install,
             packbuilder::remove_packbuilder,
             mic_permission::allow_room_origin,
+            external::open_mic_settings,
+            external::open_studio_in_browser,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed
