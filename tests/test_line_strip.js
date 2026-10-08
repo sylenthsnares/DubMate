@@ -183,6 +183,13 @@ const centre = (i, width) => Math.max(0, Math.min(2 * PAD + N * (CHIP + GAP) - G
     if (!/your lines/i.test(toggle.dataset.tip)) fail(`My lines tip: ${toggle.dataset.tip}`);
     app.toggleFilterLines();
     if (!/everyone/i.test(toggle.dataset.tip)) fail(`All lines tip: ${toggle.dataset.tip}`);
+    // A fixed name with aria-pressed for the state: a label that swapped to "All lines"
+    // would be read as "All lines, toggle button, not pressed".
+    for (const on of [false, true, false]) {
+      if (!!app.filterMyLinesOnly !== on) app.toggleFilterLines();
+      if (text(toggle) !== "My lines") fail(`the toggle's name changes with its state: '${text(toggle)}' (pressed ${on})`);
+      if (toggle.hasAttribute("aria-label") && toggle.getAttribute("aria-label") !== "My lines") fail(`toggle aria-label: ${toggle.getAttribute("aria-label")}`);
+    }
     console.log("PASS: other people's chips are hollow, and the toggle is pressed with My lines on");
   }
 
@@ -357,6 +364,101 @@ const centre = (i, width) => Math.max(0, Math.min(2 * PAD + N * (CHIP + GAP) - G
     const ind = doc.getElementById("booth-line-indicator");
     if (ind.style.minWidth !== `${`Line ${N} of ${N}`.length}ch`) fail(`indicator min-width: ${ind.style.minWidth}`);
     console.log("PASS: the 'Line N of M' badge is as wide as its longest text");
+  }
+
+  // 9. A press that never became a drag, released off the strip (or a move with no button
+  //    held), ends the drag: a later hover doesn't scroll the strip or keep the grab cursor.
+  {
+    await show(0);
+    const ptr = (type, el, x, buttons) => {
+      const ev = new w.MouseEvent(type, { clientX: x, button: 0, buttons, bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "pointerType", { value: "mouse" });
+      Object.defineProperty(ev, "pointerId", { value: 1 });
+      el.dispatchEvent(ev);
+    };
+    strip.scrollLeft = 200;
+    ptr("pointerdown", chipFor(6), 300, 1);
+    ptr("pointermove", chipFor(6), 302, 1);
+    ptr("pointerup", doc.body, 302, 0);  // released outside the strip, before the threshold
+    ptr("pointermove", chipFor(6), 150, 0);
+    if (strip.scrollLeft !== 200) fail(`a hover after a release off the strip scrolled it to ${strip.scrollLeft}`);
+    if (strip.classList.contains("is-dragging")) fail("the grab cursor stuck after a release off the strip");
+
+    // The pointerup is lost altogether (released outside the window): the next move,
+    // with no button held, ends the drag.
+    strip.scrollLeft = 200;
+    ptr("pointerdown", chipFor(6), 300, 1);
+    ptr("pointermove", chipFor(6), 250, 1);
+    if (strip.scrollLeft !== 250 || !strip.classList.contains("is-dragging")) fail(`drag didn't start: ${strip.scrollLeft}`);
+    ptr("pointermove", chipFor(6), 100, 0);
+    if (strip.scrollLeft !== 250) fail(`a move with no button held kept dragging: ${strip.scrollLeft}`);
+    if (strip.classList.contains("is-dragging")) fail("the grab cursor stuck after a lost pointerup");
+    ptr("pointermove", chipFor(6), 50, 0);
+    if (strip.scrollLeft !== 250) fail("the drag came back");
+    await tick();
+    console.log("PASS: a press released off the strip, or a lost pointerup, ends the drag");
+  }
+
+  // 10. With focus on a chip, , and . move the line and the tab stop with it; Space or
+  //     Enter on a chip is the chip's own (it picks that line), not Record.
+  {
+    doc.getElementById("view-booth").classList.add("active");
+    let recorded = 0;
+    const realToggle = app.toggleRecording;
+    app.toggleRecording = () => { recorded++; };
+    await show(4);
+    chipFor(5).focus();
+    key(doc.activeElement, ".");
+    await tick();
+    if (app.currentLineIndex !== 5) fail(`. moved to line ${app.currentLineIndex + 1}`);
+    if (text(doc.activeElement.querySelector(".chip-num")) !== "6") fail(`focus stayed on chip ${text(doc.activeElement)} after .`);
+    if (doc.activeElement.tabIndex !== 0 || chips().filter((c) => c.tabIndex === 0).length !== 1) fail("the tab stop didn't follow the line");
+    key(doc.activeElement, ",");
+    await tick();
+    if (app.currentLineIndex !== 4 || text(doc.activeElement.querySelector(".chip-num")) !== "5") fail(`, : line ${app.currentLineIndex + 1}, focus ${text(doc.activeElement)}`);
+    // Arrowing along without picking keeps focus on the chip across a redraw.
+    key(doc.activeElement, "ArrowRight");
+    app.renderTimelineChips();
+    if (text(doc.activeElement.querySelector(".chip-num")) !== "6") fail(`a redraw took focus off the arrowed-to chip: ${text(doc.activeElement)}`);
+
+    const sp = new w.KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true });
+    doc.activeElement.dispatchEvent(sp);
+    if (recorded) fail("Space on a focused chip started a recording");
+    if (sp.defaultPrevented) fail("Space on a focused chip was taken from the chip");
+    const en = key(doc.activeElement, "Enter");
+    if (recorded || en.defaultPrevented) fail("Enter on a focused chip was taken");
+    doc.activeElement.blur();
+    app.toggleRecording = realToggle;
+    console.log("PASS: , and . move the tab stop with the line; Space and Enter on a chip are the chip's");
+  }
+
+  // 11. The current chip keeps its amber edge when it has a take (.active wins over .done).
+  {
+    const rules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .map((m, i) => ({ i, sel: m[1].trim(), body: m[2] }))
+      .filter((r) => /border-color/.test(r.body));
+    const lastOf = (re) => Math.max(-1, ...rules.filter((r) => r.sel.split(",").some((s) => re.test(s.trim()))).map((r) => r.i));
+    const done = lastOf(/^\.chip-item\.done$/), active = lastOf(/^\.chip-item\.active$/);
+    if (done < 0 || active < 0) fail("no .chip-item.done / .chip-item.active border rules");
+    if (done > active) fail("the current chip with a take shows the teal .done edge, not the amber .active one");
+    console.log("PASS: the current chip's amber edge wins over a recorded chip's teal one");
+  }
+
+  // 12. A take waiting to upload has its own marker; ↑ is a take saving now.
+  {
+    await show(0);
+    app.savingLines = { t1001: { lineId: "t1001", roomId: "R1" } };
+    app.pendingUploads = { t1004: [{ fields: { lineId: "t1004", roomId: "R1" } }] };
+    app.renderTimelineChips();
+    const saving = chipFor(2).querySelector(".chip-saving"), waiting = chipFor(5).querySelector(".chip-saving");
+    if (text(saving) !== "↑") fail(`saving marker: ${text(saving)}`);
+    if (!waiting || !text(waiting) || text(waiting) === "↑") fail(`waiting marker: ${text(waiting)}`);
+    if (!/waiting to upload/.test(chipFor(5).getAttribute("aria-label")) || !/waiting to upload/.test(chipFor(5).dataset.tip)) fail(`waiting name: ${chipFor(5).getAttribute("aria-label")}`);
+    if (!/saving a take/.test(chipFor(2).getAttribute("aria-label"))) fail(`saving name: ${chipFor(2).getAttribute("aria-label")}`);
+    app.savingLines = {};
+    app.pendingUploads = {};
+    app.renderTimelineChips();
+    console.log("PASS: a take waiting to upload is marked apart from one saving");
   }
 
   if (env.errors.length) fail(`console errors: ${env.errors.join(" | ")}`);

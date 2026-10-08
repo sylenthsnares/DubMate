@@ -3224,16 +3224,17 @@ body.is-taking .dm-tip {
   border-color: var(--primary);
   color: var(--foreground);
 }
+/* A recorded line's teal edge; the current line's amber (.active, below) wins over it */
+.chip-item.done {
+  border-color: var(--accent-teal);
+  color: var(--foreground);
+}
 .chip-item.active {
   background: var(--secondary);
   border-color: var(--primary);
   color: var(--primary);
   box-shadow: 0 0 10px var(--accent-amber-glow);
   font-weight: 800;
-}
-.chip-item.done {
-  border-color: var(--accent-teal);
-  color: var(--foreground);
 }
 .chip-tick {
   font-size: 11px;
@@ -3249,7 +3250,8 @@ body.is-taking .dm-tip {
   font-weight: 500;
   color: var(--foreground-muted);
 }
-/* The line whose take is saving (↑ in place of the count; a dashed edge) */
+/* The line whose take is saving (↑ in place of the count; a dashed edge), or has one
+   waiting to upload again (⟳, muted) */
 .chip-item.is-saving {
   border-style: dashed;
   border-color: var(--primary);
@@ -3259,6 +3261,9 @@ body.is-taking .dm-tip {
   font-size: 12px;
   font-weight: 700;
   color: var(--primary);
+}
+.chip-saving.is-waiting {
+  color: var(--foreground-muted);
 }
 
 /* ------------------------------------------------------------- */

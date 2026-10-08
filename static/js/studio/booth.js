@@ -31,9 +31,9 @@ export class BoothMethods {
     this.showToast(this.filterMyLinesOnly ? "Showing your lines" : "Showing all lines");
   }
 
-  /** "My lines" (pressed) or "All lines": the label says what the strip shows. */
+  /** "My lines", pressed while the strip shows only yours. The name stays put and
+   *  aria-pressed carries the state (a swapped label would read "All lines, not pressed"). */
   renderLineFilterToggle() {
-    if (this.labelFilterLines) this.labelFilterLines.textContent = this.filterMyLinesOnly ? 'My lines' : 'All lines';
     if (this.btnToggleFilterLines) {
       this.btnToggleFilterLines.setAttribute('aria-pressed', String(!!this.filterMyLinesOnly));
       this.btnToggleFilterLines.dataset.tip = this.filterMyLinesOnly
@@ -543,9 +543,12 @@ export class BoothMethods {
     initLineStrip(strip);
     this.renderLineFilterToggle();
     const myAssignedChars = this.getMyAssignedCharacters();
-    // A redraw (a take saved, someone else's take) keeps the scroll and a focused chip.
+    // A redraw (a take saved, someone else's take) keeps the scroll and a focused chip;
+    // when the line changed (, and . with a chip focused), focus goes with the line.
     const keepLeft = strip.scrollLeft;
     const focusedLine = strip.contains(document.activeElement) ? document.activeElement.dataset.line : undefined;
+    const lineChanged = this.chipsDrawnLine !== this.currentLineIndex;
+    this.chipsDrawnLine = this.currentLineIndex;
     const frag = document.createDocumentFragment();
     let activeChip = null;
 
@@ -586,10 +589,12 @@ export class BoothMethods {
       num.textContent = String(idx + 1);
       chip.appendChild(num);
       if (saving || waiting) {
-        // In place of the count, so the chip keeps its width: ↑ while a take goes up.
+        // In place of the count, so the chip keeps its width: ↑ while a take goes up,
+        // ⟳ while one waits to upload again.
         const mark = document.createElement('span');
         mark.className = 'chip-saving';
-        mark.textContent = '↑';
+        mark.classList.toggle('is-waiting', waiting);
+        mark.textContent = saving ? '↑' : '⟳';
         chip.appendChild(mark);
       } else if (count) {
         const tick = document.createElement('span');
@@ -612,7 +617,7 @@ export class BoothMethods {
     // Only if the swap moved it: setting it anyway would stop a glide that's under way.
     if (strip.scrollLeft !== keepLeft) strip.scrollLeft = keepLeft;
     if (focusedLine !== undefined) {
-      const again = strip.querySelector(`.chip-item[data-line="${focusedLine}"]`) || activeChip;
+      const again = (!lineChanged && strip.querySelector(`.chip-item[data-line="${focusedLine}"]`)) || activeChip;
       if (again) focusChip(strip, again);
     }
     updateStripEdges(strip);

@@ -89,6 +89,8 @@ export function initLineStrip(strip) {
   });
   strip.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    // No button held: the release happened where the strip didn't see it.
+    if (!(e.buttons & 1)) { endDrag(); return; }
     const dx = e.clientX - drag.x;
     if (!drag.moved) {
       if (Math.abs(dx) <= DRAG_PX || !canScroll(strip, -Math.sign(dx))) return;
@@ -100,15 +102,19 @@ export function initLineStrip(strip) {
     updateStripEdges(strip);
   });
   const endDrag = () => {
-    if (drag?.moved) {
+    if (!drag) return;
+    if (drag.moved) {
       swallowClick = true;
       setTimeout(() => { swallowClick = false; }, 0);
     }
     drag = null;
     strip.classList.remove('is-dragging');
   };
-  strip.addEventListener('pointerup', endDrag);
-  strip.addEventListener('pointercancel', endDrag);
+  // Released anywhere: before the threshold there is no pointer capture, so the release
+  // may land outside the strip.
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+  strip.addEventListener('lostpointercapture', endDrag);
   strip.addEventListener('click', (e) => {
     if (!swallowClick) return;
     swallowClick = false;
