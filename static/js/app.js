@@ -652,7 +652,8 @@ class DubMateApp {
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
     this.btnStartSession.addEventListener('click', () => {
-      // The host moves everyone; a member just goes to the booth themselves.
+      // Only the host sees Start (renderLobbyState) and moves everyone. The check stays
+      // for a stale render: a member would only open their own booth, never set_status.
       if (this.isHost({ allowDummy: true })) this.socket.setStatus('recording');
       this.showView('booth');
       this.loadBoothLine(this.findFirstAssignedLine());
