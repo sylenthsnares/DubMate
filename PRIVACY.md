@@ -1,6 +1,6 @@
 # Privacy
 
-DubMate has no accounts, no ads, and doesn't collect usage data or crash reports. Recording, effects and rendering happen on the host's computer, not on a server. This page lists everything that does go online, where your files are, and how to delete them.
+DubMate has no accounts, no ads, and doesn't collect usage data or crash reports. Takes are saved, mixed and rendered on the computer running the room, not on a server. This page lists everything that does go online, where your files are, and how to delete them.
 
 - [What DubMate doesn't do](#what-dubmate-doesnt-do)
 - [What goes online, and to whom](#what-goes-online-and-to-whom)

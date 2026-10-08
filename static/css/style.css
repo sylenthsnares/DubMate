@@ -5717,6 +5717,11 @@ svg {
   border-top: 1px solid var(--border);
 }
 
+/* The ghost button's label lines up with the sheet's left edge (btn-sm pads 12px). */
+.shortcut-sheet-footer .btn-ghost {
+  margin-left: -12px;
+}
+
 /* ------------------------------------------------------------- */
 /* ABOUT DUBMATE                                                 */
 /* ------------------------------------------------------------- */
@@ -5811,11 +5816,6 @@ svg {
   row-gap: 2px;
 }
 
-/* The ghost button's label lines up with "Not created yet" on the right edge. */
-.about-folder .btn {
-  margin-right: -8px;
-}
-
 .about-folder-label {
   font-size: 12px;
   font-weight: 600;
@@ -5838,6 +5838,14 @@ svg {
   user-select: text;
   /* A path has few spaces: it wraps instead of running out of the card. */
   overflow-wrap: anywhere;
+}
+
+/* A folder you chose: About's note doesn't tell you to delete it. */
+.about-folder-shared {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
 }
 
 .about-folder-error,

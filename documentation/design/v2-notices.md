@@ -36,7 +36,7 @@ Before 2.0, someone can find out in a minute, in plain words, what DubMate sends
   - packs in `<install>/Packs` plus the `packs_dir`/`extra_packs_dirs` from config;
   - the Pack Builder add-on at `<install>/ai-packages`, with speaker models in `ai-packages/dubmate-models/speakers`.
   
-  The installer PR moves the desktop data root to `%LOCALAPPDATA%\DubMate` / `~/Library/Application Support/DubMate`. It isn't on origin yet (checked at `f851fa9`), so PRIVACY.md describes the 2.0 locations and the PR body carries the TODO to check them against `fix/v2-installer` before merge.
+  The installer PR moves the desktop data root to `%LOCALAPPDATA%\DubMate` / `~/Library/Application Support/DubMate`. PRIVACY.md describes those 2.0 locations; they match `dubmate/data_home.py` on `origin/fix/v2-installer` (checked at `25fd740`).
 - **Shipped binaries**:
   - `externalBin` = cloudflared, ffmpeg, deep-filter (`tauri.conf.json:44-48`).
   - Python runtime: CPython 3.12.4 embeddable from python.org on Windows; python-build-standalone 20240713 on macOS.
@@ -99,16 +99,17 @@ Before 2.0, someone can find out in a minute, in plain words, what DubMate sends
 
 New `dubmate/data_folders.py`, the one place the studio learns real paths:
 
-- `data_folders() -> list[{key, label, path, exists}]`, in order:
+- `data_folders() -> list[{key, label, path, exists, own}]`, in order:
   - `rooms` "Rooms and takes" (`CACHE_DIR/rooms`);
-  - `exports` "Saved videos" (`common.exports_dir()`);
-  - `packs` "Scene packs" (one row per `pack_loader.PACKS_DIRS` entry, keys `packs`, `packs-2`…);
+  - `exports` "Saved videos" (`pack_loader.get_exports_dir()`, which creates no folder for the default);
+  - one row per `pack_loader.PACKS_DIRS` entry, keys `packs`, `packs-2`…: "Scene packs" for the folder that comes with DubMate, "Your packs folder" for one you chose;
   - `settings` "Settings" (folder of `pack_loader.get_config_path()`);
   - `addon` "Pack Builder add-on", only when `pack_builder._addon_dir()` finds one;
-  - `data` "Everything else" (`CACHE_DIR`).
-- `GET /api/data-folders` → `{folders: [...]}`. `common.require_own_computer`, so a tunnel guest or LAN device gets 403.
-- `POST /api/data-folders/open` `{key}` → own computer only. It resolves the path from `data_folders()` **by key** (never a path from the request), requires an existing directory, and opens it in the file manager (`explorer <dir>` / `open <dir>` / `xdg-open <dir>`, beside `rooms_api.reveal_in_file_manager`). Unknown key → 400; missing folder → 404 "That folder doesn't exist yet."
-- Works in the desktop app and in a browser on the host's computer, like Show in folder. No Rust needed. The installer PR changes the paths inside `data_folders()` and adds no second endpoint (PR body note).
+  - `data` "All DubMate data" (`CACHE_DIR`).
+- `own` is false for a folder that may hold other files: an Export or Packs folder the user chose (Videos, Downloads…), or settings that fell back to the install folder. About only tells you to delete the own ones.
+- `GET /api/data-folders` → `{folders: [...]}`, built in a worker thread. `common.require_own_computer`, so a tunnel guest or LAN device gets 403.
+- `POST /api/data-folders/open` `{key}` → own computer only. It resolves the path from `data_folders()` **by key** (never a path from the request), requires an existing directory, and opens it in the file manager (`explorer <dir>` / `open <dir>` / `xdg-open <dir>`; not `rooms_api.reveal_in_file_manager`, which selects an item in its parent folder). Unknown key → 400; missing folder → 404 "That folder doesn't exist yet."
+- Works in the desktop app and in a browser on the host's computer, like Show in folder. No Rust needed. The installer PR's `GET /api/about/paths` (013f083) has no caller once this merges; this endpoint is the one that stays (both PR bodies say so). The paths follow the installer's move without changes here, since `data_folders()` reads `CACHE_DIR` and `_addon_dir()`.
 
 ### 3. Desktop app: fixed DubMate pages
 
@@ -138,11 +139,11 @@ New `dubmate/data_folders.py`, the one place the studio learns real paths:
    - **Older desktop app** (`olderDesktopApp`, or the invoke refused): "Copy link", with the same hint behaviour as `downloadPageControl`.
    - Generalise that helper into `externalLinkControl({url, label, page})`, and rebuild `downloadPageControl` on it, behaviour unchanged.
 4. "Privacy" (title 14px 700), then two 12px sentences:
-   - "DubMate has no accounts and collects no usage data. Recording, effects and rendering happen on the host's computer."
-   - "Recording in someone else's room: your takes are sent to the host's computer, and the host can export and share them."
+   - "DubMate has no accounts and collects no usage data. Your takes are saved and mixed on the computer running the room, not on a server."
+   - On this computer: "Recording in someone else's room: your takes are sent to the host's computer, and the host can export and share them." In someone else's room the same line without the prefix.
 5. "Where your data lives":
-   - **Own computer:** fetched from `GET /api/data-folders` when the panel opens. One row per folder: the label (12px 600), the path (JetBrains Mono 12px, `user-select: text`, `overflow-wrap: anywhere`, `--foreground-muted`), and `btn-ghost btn-xs` "Open folder" (it posts `/api/data-folders/open`; failure shows the error inline under the row, `role="status"`). A folder that doesn't exist yet shows "Not created yet" instead of the button. Below the list, 12px muted: "To remove everything, quit DubMate and delete these folders. The privacy notice lists the rest." A failed fetch shows "Couldn't read the folders." and the list stays empty.
-   - **Member or guest** (`!isEngineLocal()`): no request and no paths. One line: "Your name, colour and audio settings are kept in this browser. What you record is on the host's computer."
+   - **Own computer:** fetched from `GET /api/data-folders` when the panel opens. One row per folder: the label (12px 600), the path (JetBrains Mono 12px, `user-select: text`, `overflow-wrap: anywhere`, `--foreground-muted`), and `btn-secondary btn-xs` "Open folder" (it posts `/api/data-folders/open`; failure shows the error inline under the row, `role="status"`). A folder that doesn't exist yet shows "Not created yet" instead of the button. A folder that isn't DubMate's own says "May hold other files" under its path. Below the list, 12px muted: "To remove everything, quit DubMate and delete each folder that isn't marked “May hold other files”. In a marked folder, delete only what you don't need. The Privacy link at the top lists the rest." A failed fetch shows "Couldn't read the folders. The Privacy link at the top lists them." and the list stays empty.
+   - **Member or guest** (`!isEngineLocal()`): no request and no paths. One line: "Your name, colour and audio settings are kept on this device." (A desktop-app member is in the app, not a browser; the takes line above already says where their recordings go.)
 
 ### 5. Audio settings privacy lines
 
@@ -191,7 +192,7 @@ Under `#url-input-group` (`builder.html`), shown and hidden with it: `<p id="url
 
 ## Risks
 
-- **2.0 paths.** PRIVACY.md describes the installer PR's folders, which aren't on origin yet. The PR body TODO says to check them against `fix/v2-installer` before merge, and the About panel shows whatever the engine really uses.
+- **2.0 paths.** PRIVACY.md describes the installer PR's folders (checked against `origin/fix/v2-installer`), and the About panel shows whatever the engine really uses.
 - **FFmpeg source offer.**
   - BtbN prunes old autobuilds. That breaks the pin and a source link that points at the build.
   - So the notice points at FFmpeg's own git at the exact commit and at BtbN's scripts at the tag.
@@ -204,11 +205,11 @@ Under `#url-input-group` (`builder.html`), shown and hidden with it: `<p id="url
 
 1. "Your content" is a section of PRIVACY.md, not a separate CONTENT.md. README's "Fair Use" section becomes a short "Your content", dropping the § 107 claim.
 2. Open folder goes through an own-computer-only engine route with fixed keys (as Show in folder does), not external.rs. Paths are always shown as selectable text too.
-3. This PR adds `GET /api/data-folders`. The installer PR should change its paths, not add a second endpoint.
+3. This PR adds `GET /api/data-folders`, with Open folder by key. The installer PR's `GET /api/about/paths` came first but has no caller; `/api/data-folders` stays and `/api/about/paths` should be dropped from whichever PR merges second.
 4. One Rust command, `open_dubmate_page`, with five fixed pages. It takes page names, never URLs.
 5. The own-computer mic intro line becomes "Your takes are saved on this computer."
 6. The guest sentence also shows on the Audio settings devices step, because desktop members skip the intro.
-7. A guest's About says "This room runs DubMate X" and shows no paths, only that their settings are in this browser.
+7. A guest's About says "This room runs DubMate X" and shows no paths, only that their settings are on this device.
 8. The studio keeps Google Fonts, disclosed in PRIVACY.md. Self-hosting them is a suggested follow-up.
 9. The FFmpeg GPL source is offered by links to the exact upstream commit and build scripts.
 10. All notices go in one file with the licence texts appended. Rust crates are summed up by licence, and the non-MIT/Apache ones are named.

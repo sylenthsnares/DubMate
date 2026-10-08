@@ -6,9 +6,11 @@
  *    focus goes back to what opened it;
  *  - on this computer: "Version X", one row per folder from GET /api/data-folders, Open
  *    folder posts the folder's key (an error shows under the row), a folder that isn't
- *    there yet says so, and a failed read says so;
+ *    there yet says so, a folder that may hold other files (one you chose) says so and the
+ *    note only tells you to delete the others, and a failed read says so;
  *  - on someone else's engine: "This room runs DubMate X", no /api/data-folders request,
- *    the line about this browser, and no path anywhere in the panel;
+ *    the line about this device, the takes line without "someone else's room", and no path
+ *    anywhere in the panel;
  *  - the links: in a browser, anchors to a new tab; in the desktop app, open_dubmate_page
  *    with the page's name; an app older than 2.0 copies the link instead.
  * Socket and fetch are stubbed.
@@ -34,16 +36,19 @@ const LINKS = [
   { page: "security", label: "Security", url: `${REPO}/blob/main/SECURITY.md` },
 ];
 const FOLDERS = [
-  { key: "rooms", label: "Rooms and takes", path: "C:\\Users\\ana\\AppData\\Local\\DubMate\\rooms", exists: true },
-  { key: "exports", label: "Saved videos", path: "C:\\Users\\ana\\Videos\\DubMate", exists: false },
-  { key: "data", label: "Everything else", path: "C:\\Users\\ana\\AppData\\Local\\DubMate", exists: true },
+  { key: "rooms", label: "Rooms and takes", path: "C:\\Users\\ana\\AppData\\Local\\DubMate\\rooms", exists: true, own: true },
+  { key: "exports", label: "Saved videos", path: "C:\\Users\\ana\\Videos", exists: true, own: false },
+  { key: "packs", label: "Scene packs", path: "C:\\Program Files\\DubMate\\resources\\Packs", exists: false, own: true },
+  { key: "data", label: "All DubMate data", path: "C:\\Users\\ana\\AppData\\Local\\DubMate", exists: true, own: true },
 ];
-const PRIVACY = [
-  "DubMate has no accounts and collects no usage data. Recording, effects and rendering happen on the host's computer.",
-  "Recording in someone else's room: your takes are sent to the host's computer, and the host can export and share them.",
-];
-const DELETE_NOTE = "To remove everything, quit DubMate and delete these folders. The privacy notice lists the rest.";
-const GUEST_DATA = "Your name, colour and audio settings are kept in this browser. What you record is on the host's computer.";
+const NO_SERVER = "DubMate has no accounts and collects no usage data. Your takes are saved and mixed on the computer running the room, not on a server.";
+const TAKES = "your takes are sent to the host's computer, and the host can export and share them.";
+const PRIVACY = [NO_SERVER, `Recording in someone else's room: ${TAKES}`];
+const GUEST_PRIVACY = [NO_SERVER, "Your takes are sent to the host's computer, and the host can export and share them."];
+const SHARED = "May hold other files";
+const DELETE_NOTE = `To remove everything, quit DubMate and delete each folder that isn't marked “${SHARED}”. In a marked folder, delete only what you don't need. The Privacy link at the top lists the rest.`;
+const READ_ERROR = "Couldn't read the folders. The Privacy link at the top lists them.";
+const GUEST_DATA = "Your name, colour and audio settings are kept on this device.";
 const EMOJI = /\p{Extended_Pictographic}/u;
 
 function fail(msg) {
@@ -135,7 +140,10 @@ async function openFromMenu(env) {
     check(modal.getAttribute("role") === "dialog" && modal.getAttribute("aria-modal") === "true"
       && modal.getAttribute("aria-labelledby") === "about-title", "About isn't a labelled modal dialog");
     check(norm($("about-title")) === "About DubMate", `About title: ${norm($("about-title"))}`);
-    check(!!modal.querySelector(".studio-modal-card.about-card .modal-close-btn"), "About has no close button");
+    const close = modal.querySelector(".studio-modal-card.about-card .modal-close-btn");
+    check(!!close && !!close.querySelector("svg") && norm(close) === "" && close.getAttribute("aria-label") === "Close", `About's close button isn't the drawn X: ${close && close.outerHTML}`);
+    const builderLabel = (fs.readFileSync(path.join(PROJECT_ROOT, "static", "builder.html"), "utf8").match(/id="btn-mode-dropdown"[^>]*aria-label="([^"]*)"/) || [])[1];
+    check(builderLabel === "DubMate menu", `the Pack Builder names the logo menu ${builderLabel}`);
 
     menuBtn.focus();
     await openFromMenu(env);
@@ -175,7 +183,7 @@ async function openFromMenu(env) {
     const modal = $("modal-about");
     check(isShown($("about-version")) && norm($("about-version")) === "Version 2.0.0", `version line: ${norm($("about-version"))}`);
     check(norm(modal.querySelector(".about-licence")) === "Free and open source under the GNU GPL v3.", "the licence line");
-    const privacy = Array.from(modal.querySelectorAll(".about-privacy .about-text")).map(norm);
+    const privacy = Array.from(modal.querySelectorAll(".about-privacy .about-text")).filter(isShown).map(norm);
     check(privacy.join("|") === PRIVACY.join("|"), `privacy lines: ${privacy.join(" | ")}`);
     check(env.calls.filter((c) => c.url === "/api/data-folders").length === 1, "the folders weren't read once on open");
 
@@ -185,9 +193,14 @@ async function openFromMenu(env) {
       check(norm(rows[i].querySelector(".about-folder-label")) === f.label, `row ${i} label: ${norm(rows[i].querySelector(".about-folder-label"))}`);
       check(norm(rows[i].querySelector(".about-folder-path")) === f.path, `row ${i} path: ${norm(rows[i].querySelector(".about-folder-path"))}`);
     });
-    check(!rows[1].querySelector("button") && norm(rows[1].querySelector(".about-folder-missing")) === "Not created yet", "a missing folder doesn't say Not created yet");
+    check(!rows[2].querySelector("button") && norm(rows[2].querySelector(".about-folder-missing")) === "Not created yet", "a missing folder doesn't say Not created yet");
     const open = rows[0].querySelector("button");
-    check(!!open && norm(open) === "Open folder" && open.classList.contains("btn-ghost") && open.classList.contains("btn-xs"), `Open folder: ${open && open.outerHTML}`);
+    check(!!open && norm(open) === "Open folder" && open.classList.contains("btn-secondary") && open.classList.contains("btn-xs"), `Open folder: ${open && open.outerHTML}`);
+    // A folder you chose (Videos here) may hold other files: it says so, the others don't.
+    FOLDERS.forEach((f, i) => {
+      const shared = rows[i].querySelector(".about-folder-shared");
+      check(f.own ? !shared : isShown(shared) && norm(shared) === SHARED, `row ${i} other-files mark: ${shared && shared.outerHTML}`);
+    });
     check(isShown($("about-folders-note")) && norm($("about-folders-note")) === DELETE_NOTE, `delete note: ${norm($("about-folders-note"))}`);
     check(!isShown($("about-guest-data")), "the guest line shows on this computer");
 
@@ -214,7 +227,7 @@ async function openFromMenu(env) {
     });
     await openFromMenu(env);
     check(!isShown(env.$("about-version")), `version line after a failed read: ${norm(env.$("about-version"))}`);
-    check(isShown(env.$("about-folders-error")) && norm(env.$("about-folders-error")) === "Couldn't read the folders.", "a failed read doesn't say so");
+    check(isShown(env.$("about-folders-error")) && norm(env.$("about-folders-error")) === READ_ERROR, `a failed read: ${norm(env.$("about-folders-error"))}`);
     check(!env.$("modal-about").querySelector(".about-folder") && !isShown(env.$("about-folders-note")), "a failed read still shows rows or the delete note");
     console.log("PASS: when the reads fail, the version line hides and the folders say they couldn't be read");
     if (env.errors.length) fail(`console errors: ${env.errors.join(" | ")}`);
@@ -228,6 +241,8 @@ async function openFromMenu(env) {
     check(isShown(modal), "About didn't open for a guest");
     check(norm(env.$("about-version")) === "This room runs DubMate 2.0.0", `guest version line: ${norm(env.$("about-version"))}`);
     check(!env.calls.some((c) => c.url.startsWith("/api/data-folders")), "a guest's About asked for the host's folders");
+    const privacy = Array.from(modal.querySelectorAll(".about-privacy .about-text")).filter(isShown).map(norm);
+    check(privacy.join("|") === GUEST_PRIVACY.join("|"), `guest privacy lines: ${privacy.join(" | ")}`);
     check(isShown(env.$("about-guest-data")) && norm(env.$("about-guest-data")) === GUEST_DATA, `guest line: ${norm(env.$("about-guest-data"))}`);
     check(!modal.querySelector(".about-folder") && !isShown(env.$("about-folders-note")), "a guest sees folder rows or the delete note");
     check(!/[A-Za-z]:\\|\/Users\/|\/home\/|AppData/.test(modal.textContent), "path text in a guest's About");

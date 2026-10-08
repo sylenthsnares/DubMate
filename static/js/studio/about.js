@@ -52,6 +52,8 @@ export class AboutMethods {
     error.hidden = true;
     note.hidden = true;
     document.getElementById('about-guest-data').hidden = local;
+    document.getElementById('about-takes-own').hidden = !local;
+    document.getElementById('about-takes-guest').hidden = local;
     if (!local) return;
     const token = (this.aboutFoldersToken = (this.aboutFoldersToken || 0) + 1);
     let folders = null;
@@ -68,7 +70,10 @@ export class AboutMethods {
     note.hidden = false;
   }
 
-  /** One folder: its name, its path as selectable text, and Open folder (or "Not created yet"). */
+  /**
+   * One folder: its name, its path as selectable text, Open folder (or "Not created yet"),
+   * and "May hold other files" when it isn't DubMate's own (a folder you chose).
+   */
   aboutFolderRow(folder) {
     const row = document.createElement('li');
     row.className = 'about-folder';
@@ -86,7 +91,7 @@ export class AboutMethods {
     if (folder.exists) {
       action = document.createElement('button');
       action.type = 'button';
-      action.className = 'btn btn-ghost btn-xs';
+      action.className = 'btn btn-secondary btn-xs';
       action.textContent = 'Open folder';
       action.addEventListener('click', () => this.openDataFolder(folder.key, error));
     } else {
@@ -94,7 +99,14 @@ export class AboutMethods {
       action.className = 'about-folder-missing';
       action.textContent = 'Not created yet';
     }
-    row.append(label, action, path, error);
+    row.append(label, action, path);
+    if (!folder.own) {
+      const shared = document.createElement('span');
+      shared.className = 'about-folder-shared';
+      shared.textContent = 'May hold other files';
+      row.append(shared);
+    }
+    row.append(error);
     return row;
   }
 

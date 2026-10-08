@@ -1624,7 +1624,13 @@
        are this computer's only; someone else's room never shows the host's paths. -->
   <div id="modal-about" class="studio-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="about-title" hidden>
     <div class="studio-modal-card about-card">
-      <button type="button" id="btn-close-about" class="modal-close-btn" aria-label="Close">✕</button>
+      <button type="button" id="btn-close-about" class="modal-close-btn" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
       <div class="about-head">
         <div class="logo-icon about-logo" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1644,16 +1650,19 @@
 
       <section class="about-section about-privacy" aria-labelledby="about-privacy-title">
         <h3 id="about-privacy-title" class="about-section-title">Privacy</h3>
-        <p class="about-text">DubMate has no accounts and collects no usage data. Recording, effects and rendering happen on the host's computer.</p>
-        <p class="about-text">Recording in someone else's room: your takes are sent to the host's computer, and the host can export and share them.</p>
+        <p class="about-text">DubMate has no accounts and collects no usage data. Your takes are saved and mixed on the computer running the room, not on a server.</p>
+        <!-- One of these two (about.js): on this computer, or in someone else's room. -->
+        <p id="about-takes-own" class="about-text">Recording in someone else's room: your takes are sent to the host's computer, and the host can export and share them.</p>
+        <p id="about-takes-guest" class="about-text" hidden>Your takes are sent to the host's computer, and the host can export and share them.</p>
       </section>
 
       <section class="about-section" aria-labelledby="about-data-title">
         <h3 id="about-data-title" class="about-section-title">Where your data lives</h3>
         <ul id="about-folders" class="about-folders"></ul>
-        <p id="about-folders-error" class="about-text" role="status" hidden>Couldn't read the folders.</p>
-        <p id="about-folders-note" class="about-text about-meta" hidden>To remove everything, quit DubMate and delete these folders. The privacy notice lists the rest.</p>
-        <p id="about-guest-data" class="about-text" hidden>Your name, colour and audio settings are kept in this browser. What you record is on the host's computer.</p>
+        <p id="about-folders-error" class="about-text" role="status" hidden>Couldn't read the folders. The Privacy link at the top lists them.</p>
+        <!-- Only says delete about DubMate's own folders: a chosen Export or Packs folder may be Videos or Downloads. -->
+        <p id="about-folders-note" class="about-text about-meta" hidden>To remove everything, quit DubMate and delete each folder that isn't marked “May hold other files”. In a marked folder, delete only what you don't need. The Privacy link at the top lists the rest.</p>
+        <p id="about-guest-data" class="about-text" hidden>Your name, colour and audio settings are kept on this device.</p>
       </section>
     </div>
   </div>
