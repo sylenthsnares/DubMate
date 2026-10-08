@@ -6,10 +6,12 @@
 import { AudioEngine } from '../audio_engine.js';
 import { AUDIO_SETUP_DONE_KEY, micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.js';
 import { PANEL_COPY, START_LABEL, chosenDevice } from './mic_sync.js';
+import { levelHint, levelZone } from './level_target.js';
 
 // sessionStorage: "Skip sync" was pressed in this tab, so the card stays a line.
 const SYNC_SKIPPED_KEY = 'dubmate_mic_sync_skipped';
-const LEVEL_HINT = 'Say your loudest line. Aim for the amber zone.';
+// Audio settings' words: the meter's bands are grey, green (good) and red.
+const LEVEL_HINT = levelHint().text;
 const CLICK_STEPS = new Set(['ready', 'listening', 'clicksFailed']);
 const METER_FLOOR_DB = -60;
 const METER_FALL_DB_PER_FRAME = 0.6;
@@ -77,7 +79,9 @@ export class MicCardMethods {
     $('mic-card-meter').hidden = step === 'mic';
 
     // 1. Microphone: allow it (the only cold getUserMedia here), then choose the devices.
-    const allowed = this.audioSetup.permission === 'granted';
+    // A finished setup counts when the browser can't say (Firefox, some WebViews).
+    const allowed = this.audioSetup.permission === 'granted'
+      || (this.audioSetup.setupComplete && this.audioSetup.permission === 'unknown');
     const allow = $('btn-mic-card-allow');
     allow.hidden = allowed;
     allow.disabled = !!this.audioSetup.requesting;
@@ -173,6 +177,14 @@ export class MicCardMethods {
     await run();
     this.micCardMeterError = '';
     this.renderMicCard();
+    // mic_sync.js moves focus to Audio settings' own Try again / Start clapping, in the
+    // closed dialog: bring it back to the card's.
+    if (this.isAudioSettingsOpen() || this.micCardDone()) return;
+    const card = document.getElementById('mic-card');
+    if (card?.contains(document.activeElement) && !document.activeElement.disabled) return;
+    const next = ['btn-mic-card-clicks', 'btn-mic-card-clapping'].map((id) => document.getElementById(id))
+      .find((el) => el && !el.hidden && !el.disabled);
+    next?.focus();
   }
 
   micCardSkipSync() {
@@ -235,20 +247,26 @@ export class MicCardMethods {
     this.micCardRaf = null;
     if (!this.isAudioSettingsOpen() && !this.micSyncBusy) this.audio.stopInputMonitor();
     this.micCardLevelDb = -Infinity;
-    const mask = document.getElementById('mic-card-meter-mask');
-    if (mask) mask.style.width = '100%';
+    this.drawMicCardLevel(-Infinity);
   }
 
   renderMicCardLevel() {
     const level = this.audio.readInputLevel();
-    // Falls back slowly, so a short word still reads on the meter.
-    const now = level ? level.rmsDb : -Infinity;
+    // The peak, as Audio settings' meter and its bands; falls back slowly, so a short word
+    // still reads on the meter.
+    const now = level ? level.peakDb : -Infinity;
     const db = Math.max(now, (this.micCardLevelDb ?? -Infinity) - METER_FALL_DB_PER_FRAME);
     this.micCardLevelDb = db;
-    const pct = level ? AudioEngine.dbToMeterPercent(db, METER_FLOOR_DB) : 0;
-    const mask = document.getElementById('mic-card-meter-mask');
-    if (mask) mask.style.width = `${(100 - pct).toFixed(1)}%`;
+    this.drawMicCardLevel(level ? db : -Infinity);
+  }
+
+  drawMicCardLevel(db) {
     const meter = document.getElementById('mic-card-meter');
-    if (meter) meter.setAttribute('aria-valuenow', (Number.isFinite(db) ? Math.max(METER_FLOOR_DB, Math.min(0, db)) : METER_FLOOR_DB).toFixed(1));
+    if (!meter) return;
+    const fill = meter.querySelector('.level-meter-fill');
+    if (fill) fill.style.width = `${AudioEngine.dbToMeterPercent(db, METER_FLOOR_DB).toFixed(1)}%`;
+    const zone = levelZone(db);
+    ['quiet', 'good', 'loud'].forEach((z) => meter.classList.toggle(`is-${z}`, z === zone));
+    meter.setAttribute('aria-valuenow', (Number.isFinite(db) ? Math.max(METER_FLOOR_DB, Math.min(0, db)) : METER_FLOOR_DB).toFixed(1));
   }
 }

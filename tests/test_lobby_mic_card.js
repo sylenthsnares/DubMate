@@ -231,12 +231,27 @@ function enterLobby(app, opts) {
     $(doc, "btn-mic-card-devices-next").click();
     await tick(150);
     if (!visible($(doc, "mic-card-meter"))) fail("no level meter");
-    if (text($(doc, "mic-card-level-hint")) !== "Say your loudest line. Aim for the amber zone.") fail(`level hint: ${text($(doc, "mic-card-level-hint"))}`);
+    // The meter's bands are grey (too quiet), green (good) and red (too loud): no amber zone.
+    if (text($(doc, "mic-card-level-hint")) !== "Say your loudest line. Aim for the green band.") fail(`level hint: ${text($(doc, "mic-card-level-hint"))}`);
     if (!app.audio.monitorAnalyser) fail("the card's meter did not open the mic");
-    const mask = $(doc, "mic-card-meter-mask");
+    const meterTrack = $(doc, "mic-card-meter");
+    const fill = meterTrack.querySelector(".level-meter-fill");
+    if (!fill) fail("the card's meter has no bar (.level-meter-fill, styled with Audio settings' meter)");
     await tick(100);
-    if (mask.style.width === "" || mask.style.width === "100%") fail(`the meter does not move: ${mask.style.width}`);
-    pass("the level step runs its own meter");
+    const width = parseFloat(fill.style.width);
+    if (!(width > 0 && width <= 100)) fail(`the meter does not move: ${fill.style.width}`);
+    const zones = ["is-quiet", "is-good", "is-loud"].filter((z) => meterTrack.classList.contains(z));
+    if (zones.length !== 1) fail(`the meter shows no single zone: ${meterTrack.className}`);
+    // The bar is drawn: Audio settings' fill rule positions it inside the track.
+    const css = require("fs").readFileSync(require("path").join(__dirname, "..", "static", "css", "style.css"), "utf8");
+    const rule = /\.level-meter-fill\s*\{([^}]*)\}/.exec(css);
+    if (!rule || !/position:\s*absolute/.test(rule[1]) || !/bottom:\s*0/.test(rule[1])) fail("no drawn .level-meter-fill rule in style.css");
+    for (const cls of meterTrack.innerHTML.match(/class="([^"]+)"/g) || []) {
+      for (const c of cls.slice(7, -1).split(/\s+/)) {
+        if (!new RegExp(`\\.${c}[\\s{.:,]`).test(css)) fail(`the card's meter uses .${c}, which style.css never styles`);
+      }
+    }
+    pass("the level step runs its own meter, drawn in the meter's zones");
 
     $(doc, "btn-mic-card-level-next").click();
     await tick(30);
@@ -257,11 +272,14 @@ function enterLobby(app, opts) {
       app.showMicSyncPanel("listening");
       if (text(clicks) !== "Listening…" || !clicks.disabled) fail("the card does not show the run");
       app.showMicSyncPanel("clicksFailed");
+      // As mic_sync.js does: focus goes to Audio settings' own button, in the closed dialog.
+      app.btnStartMicSync?.focus();
       app.micSyncBusy = false;
     };
     clicks.click();
     await tick(30);
     if (runs !== 1) fail("Play clicks did not start a run");
+    if (doc.activeElement !== clicks) fail(`focus after a failed run is on ${doc.activeElement?.id || doc.activeElement?.tagName}, not the card's Try again`);
     if (text(copy) !== CLICKS_FAILED_COPY) fail(`failure copy: ${text(copy)}`);
     if (text(clicks) !== "Try again" || clicks.disabled) fail("no Try again after a failed run");
     if (!visible($(doc, "btn-mic-card-clap-instead"))) fail("no Clap instead after a failed run");
@@ -353,6 +371,17 @@ function enterLobby(app, opts) {
     if (text($(doc, "mic-card-done")) !== "Mic set · Mic X · Change") fail(`member line: ${text($(doc, "mic-card-done"))}`);
     if (gumCalls.length) fail("the member's mic was opened");
     pass("a member with setup and sync from their own DubMate sees only 'Mic set · Mic X · Change'");
+  }
+
+  // 6. Setup done, but the browser can't say whether the mic is allowed (Firefox, some WebViews).
+  {
+    const env = { permission: "unknown", devices: LABELLED };
+    const { doc, app } = await boot({ storage: { dubmate_audio_setup_done: "1" }, env });
+    enterLobby(app);
+    await tick(50);
+    if (visible($(doc, "btn-mic-card-allow"))) fail("a finished setup asks to Allow microphone again");
+    if (!visible($(doc, "mic-card-input"))) fail("a finished but unsynced setup does not start at the devices");
+    pass("a finished setup with an unknown permission goes on to the devices, not Allow microphone");
   }
 
   console.log("ALL LOBBY MIC CARD TESTS PASSED");

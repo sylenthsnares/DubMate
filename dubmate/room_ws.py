@@ -86,6 +86,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 name = identity.clean_name(payload.get("name")) or "Actor"
                 wanted = payload.get("color")
                 color = identity.pick_color(room, wanted, user_id)
+                wanted_hex = identity.normalize_color(wanted)
+                # Only when someone else holds the hue you asked for; a rejoin may simply keep your room colour.
+                wanted_taken_by = identity.holder_name(room, wanted_hex, user_id) if wanted_hex != color else ""
                 first_join = user_id not in room.users
 
                 # Auto-promote user to host if previous host is dummy "host" or offline
@@ -112,7 +115,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 await room.broadcast("user_joined", {
                     "user_id": user_id,
                     "color": color,
-                    "wanted_color": identity.normalize_color(wanted),
+                    "wanted_color": wanted_hex,
+                    "wanted_taken_by": wanted_taken_by,
                     "cast": cast,
                 })
 
@@ -124,7 +128,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     if refusal:
                         await _refuse(websocket, refusal)
                         continue
-                if character in room.role_assignments:
+                valid = (isinstance(character, str) and isinstance(assigned_user_ids, list)
+                         and all(isinstance(uid, str) for uid in assigned_user_ids))
+                if valid and character in room.role_assignments:
                     room.role_assignments[character] = assigned_user_ids
                     await room.broadcast("role_assigned", {"character": character, "user_ids": assigned_user_ids})
 

@@ -22,7 +22,7 @@ from fastapi import WebSocket, HTTPException
 
 import pack_loader
 import audio_processor
-from dubmate import common, packs_cache, vocal_chain
+from dubmate import common, identity, packs_cache, vocal_chain
 
 
 # room_state.json layout. Version 1 (no state_version) kept one take per line index.
@@ -341,7 +341,9 @@ class Room:
             "room_id": self.room_id,
             "pack": self.pack.to_dict(),
             "host_id": self.host_id,
-            "users": self.users,
+            # Colours from older versions stay stored as they were, but show as their hue.
+            "users": {uid: {**u, "color": identity.normalize_color(u.get("color"))} if isinstance(u, dict) else u
+                      for uid, u in self.users.items()},
             "role_assignments": self.role_assignments,
             "voice": {
                 **self.voice,

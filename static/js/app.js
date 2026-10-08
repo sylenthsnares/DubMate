@@ -172,7 +172,8 @@ class DubMateApp {
     if (this.headerUserName) {
       this.headerUserName.textContent = name || 'You';
     }
-    const initial = (Array.from(name)[0] || '?').toUpperCase();
+    // No name yet: a plain colour dot (a '?' would sit beside the header's ? shortcuts button).
+    const initial = (Array.from(name)[0] || '').toUpperCase();
     if (this.headerUserAvatar) {
       this.headerUserAvatar.textContent = initial;
       // In a room, the colour the room gave you (yours may be taken there).
@@ -202,7 +203,7 @@ class DubMateApp {
 
   /**
    * Your own user_joined: keeps the character the room cast you as for the lobby's
-   * notice, and says once per room and colour when your colour was taken there. Your
+   * notice, and says once per room and colour when someone there holds your colour. Your
    * saved colour doesn't change; the room's shows while you're in it.
    */
   noteOwnJoin(payload) {
@@ -210,7 +211,8 @@ class DubMateApp {
     if (payload.cast) this.autoCastNotice = payload.cast;
     const wanted = colorName(payload.wanted_color);
     const given = colorName(payload.color);
-    if (wanted && given && wanted !== given) {
+    // wanted_taken_by: someone else really holds the hue (a rejoin may just keep your room colour).
+    if (wanted && given && wanted !== given && payload.wanted_taken_by) {
       const key = `dubmate_color_notice_${this.roomState?.room_id || ''}`;
       if (sessionStorage.getItem(key) !== payload.color) {
         sessionStorage.setItem(key, payload.color);

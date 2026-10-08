@@ -499,13 +499,15 @@ body::after {
   border-color: var(--primary);
   background: var(--secondary);
 }
-/* In the lobby the pill only shows the code: the title row's Copy invite link copies. */
-.room-badge.is-code-only {
+/* In the lobby the pill only shows the code, as plain text: the title row's Copy invite
+   link copies, and says when the code isn't live yet. */
+.room-badge.is-code-only,
+.room-badge.is-code-only:hover,
+.room-badge.is-code-only.room-badge-unpublished {
   cursor: default;
-}
-.room-badge.is-code-only:hover {
-  border-color: var(--border-wood);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: transparent;
+  opacity: 1;
 }
 .room-badge.is-code-only svg {
   display: none;
@@ -1172,6 +1174,8 @@ body::after {
 }
 .id-swatch input:disabled + .id-swatch-dot {
   box-shadow: inset 0 0 0 2px rgba(18, 16, 14, 0.55);
+  /* Dimmed, so it doesn't read as the chosen hue (which also carries an initial). */
+  opacity: 0.45;
 }
 
 .card-divider {
@@ -1245,6 +1249,7 @@ body::after {
 .btn-big-record:focus-visible,
 .pack-card:focus-visible,
 .id-swatch input:focus-visible + .id-swatch-dot,
+.cast-select:focus-visible,
 .chip-item:focus-visible,
 .actor-hud-char:focus-visible {
   outline: 2px solid var(--accent-brass);
@@ -2441,6 +2446,13 @@ body::after {
 .mic-card-done {
   font-size: 13px;
   color: var(--foreground-muted);
+}
+
+/* Short windows (1280x720): a shorter poster, so the mic card's buttons stay in view. */
+@media (max-height: 760px) {
+  .scene-preview-poster {
+    max-height: 22vh;
+  }
 }
 
 /* Below 1100px the rail goes under the casting card, the preview and the mic card side

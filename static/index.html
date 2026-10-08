@@ -427,7 +427,8 @@
                 <p id="input-join-name-error" class="field-error" hidden></p>
               </div>
               <div id="join-color-palette"></div>
-              <button id="btn-join-card" class="btn btn-primary btn-lg" type="submit" disabled>Join ›</button>
+              <button id="btn-join-card" class="btn btn-primary btn-lg" type="submit">Join ›</button>
+              <p id="btn-join-card-error" class="field-error" hidden></p>
               <p class="form-hint join-hint">You'll check your mic in the room while friends join.</p>
             </form>
 
@@ -581,13 +582,13 @@
               </div>
 
               <!-- The level, live while checking it and while syncing -->
-              <div id="mic-card-meter" class="level-meter-track mic-card-meter" role="meter" aria-label="Microphone level"
+              <div id="mic-card-meter" class="level-meter-track mic-card-meter is-quiet" role="meter" aria-label="Microphone level"
                 aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" hidden>
-                <div id="mic-card-meter-mask" class="level-meter-mask"></div>
+                <div class="level-meter-fill" style="width: 0%;"></div>
               </div>
 
               <div id="mic-card-step-level" class="mic-card-step" hidden>
-                <p id="mic-card-level-hint" class="mic-card-hint">Say your loudest line. Aim for the amber zone.</p>
+                <p id="mic-card-level-hint" class="mic-card-hint">Say your loudest line. Aim for the green band.</p>
                 <div class="mic-card-row">
                   <button id="btn-mic-card-level-next" class="btn btn-secondary mic-card-action" type="button">Next</button>
                 </div>

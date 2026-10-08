@@ -494,9 +494,9 @@ export class LobbyMethods {
   /**
    * Joins a room by code with the saved name and colour. When nobody has the code,
    * onMissing(code) says so where the person asked (a form); without it, a toast and
-   * the home screen.
+   * the home screen. onError(message) does the same for a failed lookup.
    */
-  async joinRoom(roomId, { onMissing } = {}) {
+  async joinRoom(roomId, { onMissing, onError } = {}) {
     this.resetRoomSession();
     const cleanCode = (roomId || '').trim().toUpperCase();
     try {
@@ -515,8 +515,13 @@ export class LobbyMethods {
       }
       this.enterRoom(found.room);
     } catch (err) {
+      const message = this.friendlyError(err, "Couldn't join that room. Try again.");
+      if (onError) {
+        onError(message);
+        return;
+      }
       this.clearRoomQueryParam();
-      this.showToast(this.friendlyError(err, "Couldn't join that room. Try again."));
+      this.showToast(message);
       this.showView('landing');
     }
   }
@@ -704,8 +709,9 @@ export class LobbyMethods {
     // Hues other people hold are taken. With all 8 held, offline people don't count,
     // and with 8 online the server shares the least-used hue (the initial tells them apart).
     const others = users.filter((u) => u && u.id !== this.user.id);
-    let taken = new Map(others.map((u) => [u.color, u]));
-    if (IDENTITY_COLORS.every((c) => taken.has(c.hex))) taken = new Map(others.filter((u) => u.is_online).map((u) => [u.color, u]));
+    // Keyed by hue, as the server counts them: an older version's colour is its hue.
+    let taken = new Map(others.map((u) => [normalizeColor(u.color), u]));
+    if (IDENTITY_COLORS.every((c) => taken.has(c.hex))) taken = new Map(others.filter((u) => u.is_online).map((u) => [normalizeColor(u.color), u]));
     if (IDENTITY_COLORS.every((c) => taken.has(c.hex))) taken = new Map();
     this.joinCardTaken = taken;
     this.joinCardColor = taken.has(this.user.color)
@@ -726,7 +732,8 @@ export class LobbyMethods {
   renderJoinCardIdentity() {
     const name = cleanName(document.getElementById('input-join-name')?.value || '');
     const button = document.getElementById('btn-join-card');
-    button.disabled = !name;
+    // Enabled without a name, so Enter in the empty field submits and says why not.
+    button.disabled = false;
     button.textContent = name ? `Join as ${name} ›` : 'Join ›';
     const palette = document.getElementById('join-color-palette');
     if (palette.contains(document.activeElement)) return;
@@ -753,9 +760,13 @@ export class LobbyMethods {
     this.saveUser();
     this.updateUserUI();
     const button = document.getElementById('btn-join-card');
+    setFieldError(button, '');
     button.disabled = true;
     button.textContent = 'Joining…';
-    await this.joinRoom(this.joinCardCode, { onMissing: (code) => this.showJoinMissing(code) });
+    await this.joinRoom(this.joinCardCode, {
+      onMissing: (code) => this.showJoinMissing(code),
+      onError: (message) => setFieldError(button, message),
+    });
     this.renderJoinCardIdentity();
   }
 
@@ -948,11 +959,10 @@ export class LobbyMethods {
           this.renderScenePreview();
         }
       });
-      tbody.addEventListener('mouseleave', () => {
-        this.lobbyHoverChar = null;
-        this.renderScenePreview();
-      });
+      // The hovered row stays previewed when the pointer leaves the table (Play this line is
+      // in the rail) until another row is hovered, focused or clicked.
       tbody.addEventListener('focusin', (e) => {
+        this.lobbyHoverChar = null;
         this.lobbyFocusChar = rowOf(e.target)?.dataset.character || null;
         this.renderScenePreview();
       });
@@ -969,6 +979,7 @@ export class LobbyMethods {
         if (e.target.closest('.cast-claim')) this.socket.assignRole(char, [this.user.id]);
         else if (e.target.closest('.cast-give-back')) this.socket.assignRole(char, []);
         this.lobbyPinnedChar = char;
+        this.lobbyHoverChar = null;
         this.renderScenePreview();
       });
     }
@@ -1179,7 +1190,7 @@ export class LobbyMethods {
 
   // --- Scene preview (the lobby's rail) ---
 
-  /** The row the preview shows: hovered, else focused, else clicked, else your first character. */
+  /** The row the preview shows: last hovered, else focused, else clicked, else your first character. */
   lobbyPreviewChar() {
     const room = this.roomState;
     const characters = castingOrder(room?.pack);

@@ -30,7 +30,7 @@ Room screens (landing, join card, lobby, You left) use the booth PR's scale with
 - **`static/js/identity.js`** is the single source: `IDENTITY_COLORS` (8 `{ name, hex }` in the order above), `LEGACY_COLORS` (old hex → name), `normalizeColor(hex)`, `NAME_MAX = 24`, `cleanName(s)`, and `renderColorPicker(container, { selected, taken, label })`.
   - The file keeps a fixed literal format. **`dubmate/identity.py` reads the same file** at import and extracts both tables with a strict pattern; it raises if it finds anything but 8 hues. So there is one list, not two kept in step. It finds `static/` with app.py's `find_static_dir` candidate search, moved into `dubmate/common.py` (app.py calls it from there; `dubmate/*` never imports app).
   - Avatars everywhere use `presence.js` `avatarHtml`/`avatarEl` (espresso initial on the colour; 20, 28 and 44 px). The 8 px `.actor-color-dot`, `.join-modal-avatar-preview` and the white-initial variant go.
-- **Legacy map** (fixed table, critique section 4; nearest ΔE2000 except Purple, which goes to Orchid to stay apart from Violet): Amber, Red, Bronze, Yellow → Coral; Gold → Lime; Green and `#25d3a4` → Mint; Violet, `#7c5cff`, `#8a6eff` → Cornflower; Purple → Orchid; Pink → Pink; Cyan → Cyan. Any other valid hex → Coral on the client (the server then makes it unique).
+- **Legacy map** (fixed table, critique section 4; nearest ΔE2000 except Purple, which goes to Orchid to stay apart from Violet): Amber, Red, Bronze, Yellow → Coral; Gold → Lime; Green and `#25d3a4` → Mint; Violet, `#7c5cff`, `#8a6eff` → Cornflower; Purple → Orchid; Pink → Pink; Cyan → Cyan. Any other valid hex → Coral, on the client and the server alike (the server then makes it unique).
 - **Picker:** native `<input type="radio">` in a `fieldset` (one tab stop, arrow keys move, Space selects), each a 28 px swatch with a 40 px hit area, the hue's name as its label. Your own selected swatch shows your initial. A hue someone in the room holds is `disabled`, shows their initial, and reads "Coral, taken by Tani".
 - **Saved identity** (`dubmate_user`): `loadUser()` maps a legacy colour through the table and saves it back (one-time, no toast, nothing else changes). No more random "Actor 393": a first-run name is empty, and Start or Join asks for it inline ("Type your name first", focus moves to the field). The server's last-resort default stays "Actor".
 - **Header identity pill** shows on every screen, the landing included (avatar 22 + name). Display only; its tooltip in a room says "Your name and colour in this room".
@@ -38,14 +38,15 @@ Room screens (landing, join card, lobby, You left) use the booth PR's scale with
 ### Server (colour, names, casting)
 
 - **`pick_color(room, wanted, user_id)`** in `dubmate/identity.py`, used by `create_room`, the socket `join` and nothing else:
-  - `wanted` is normalized (legacy table; invalid or unknown → none).
+  - `wanted` is normalized (legacy table; another hex → Coral; not a colour → none).
   - Taken = colours of other users in the room. Prefer `wanted` if nobody else holds it; else the first palette hue nobody else holds (online or offline).
   - **9th person:** when all 8 are held, offline holders don't count; if still none is free, take the hue held by the fewest online people, earliest in palette order. The initial tells the two apart (C6).
   - A rejoining user keeps their room colour unless an online person took it meanwhile.
 - **Names:** `cleanName` on the server too: strip, collapse whitespace, cut to 24. The handoff accepts up to 40 (older members) and cuts to 24.
-- **`common.sanitize_color` fallbacks** (`#7c5cff`, `#25d3a4`, `#8a6eff`) go; the restored-room path keeps whatever colour is stored (no data loss) until that person joins again.
-- **`join`** broadcasts `user_joined` with `{ user_id, color, wanted_color, cast }`. The joiner's client shows "Coral is taken here, so you're Lime in this room." when `color` differs from what it sent; `cast` drives the one-time casting notice.
+- **`common.sanitize_color` fallbacks** (`#7c5cff`, `#25d3a4`, `#8a6eff`) go; the restored-room path keeps whatever colour is stored (no data loss) until that person joins again. The room state sent to the studio (`to_state_dict`) shows each stored colour as its hue, so an offline member from an older version never shows the old amber or the record red.
+- **`join`** broadcasts `user_joined` with `{ user_id, color, wanted_color, wanted_taken_by, cast }`. `wanted_taken_by` is the name of someone else holding the hue you asked for ("" when nobody does: a rejoin may simply keep your room colour). The joiner's client shows "Coral is taken here, so you're Lime in this room." only when it is set; `cast` drives the one-time casting notice.
 - **Auto-cast:** on a user id's first join of a room while `status == "lobby"`, give them the unassigned character with the most lines (ties: pack order). The room creator gets the same rule in `Room.__init__` (today: `characters[0]`). No auto-cast during recording or premiere, none on a rejoin, none when no character is free.
+- **`assign_role`** ignores a character that isn't a string or `user_ids` that aren't a list of strings, from the host too (an unhashable character used to end the host's socket).
 - **`assign_role` from a non-host:** allowed when `user_ids == [self]` and the character is unassigned (claim), or `user_ids == []` and the character is exactly `[self]` (give back). Anything else keeps `_refuse` ("Mika is voicing Courier now." for a lost race). The host's rules don't change.
 - **`cast_evenly`** (host only, new message): deal every character, most lines first, to the online person with the fewest lines so far (ties: host first, then join order). Unknown to older clients, which never send it.
 
@@ -76,8 +77,9 @@ recent sessions (unchanged, local engine only)
 
 - **A view, not a modal** (`#view-join`), routed on `?room=CODE` without a handoff. `#modal-join-room` is deleted, so nothing can stack.
 - **The code first:** the card opens in "Finding room…", calls `GET /api/rooms/CODE`, then fills in. On 404 it says "Room CODE isn't open. Ask the host for a new link." with a code-or-link field and Join (same form as the landing).
-- **Content, one column of 480:** 16:9 poster (the pack icon, else the video at the first line's start, `preload=metadata`), "Join Tani's room", "Rooftop Standoff · 8 lines · 5 characters", "Here now" with 20 px avatars and names, "Your name" (empty on a first visit, else the saved name), "Your colour" (the picker with taken hues marked; preselected: the saved colour if free, else the first free hue), the amber "Join as Sam ›" (reads "Join ›", disabled, while the name is empty), and one muted line: "You'll check your mic in the room while friends join."
-- Enter submits. Focus starts in the name field. The chosen identity is saved on this origin, so a returning guest needs one click.
+- **Content, one column of 480:** 16:9 poster (the pack icon, else the video at the first line's start, `preload=metadata`), "Join Tani's room", "Rooftop Standoff · 8 lines · 5 characters", "Here now" with 20 px avatars and names, "Your name" (empty on a first visit, else the saved name), "Your colour" (the picker with taken hues marked; preselected: the saved colour if free, else the first free hue), the amber "Join as Sam ›" (reads "Join ›" while the name is empty; pressing it, or Enter, says "Type your name first"), and one muted line: "You'll check your mic in the room while friends join."
+- Enter submits. Focus starts in the name field. The chosen identity is saved on this origin, so a returning guest needs one click. A network error on Join stays on the card, under the button, instead of falling back to the host's home screen.
+- Taken hues are counted as the server counts them: an older version's colour is its hue. A taken swatch is dimmed, so it never reads as the chosen one.
 
 ### Members from their own DubMate
 
@@ -118,7 +120,7 @@ gap 24
 - `initAudioSetupOnBoot` no longer opens Audio settings. It still restores devices and reads the permission. The alert dot on Audio stays.
 - **New `static/js/studio/mic_card.js`**, in the rail under the preview, for anyone whose mic isn't set up, or set up but not synced for the current device pair. Title "Check your mic", one muted line "About a minute. Friends can't hear it." Its button is amber for non-hosts (their only task, so the One Amber Rule holds) and secondary for the host.
   1. **Microphone:** "Allow microphone" (the only cold `getUserMedia`, as in Audio settings). Then the input and output selects (`populateDeviceSelect`, `applyInputDevice`, `applyOutputDevice` reused as they are). Blocked: the denial text plus "Open Audio settings" for the recovery steps.
-  2. **Level:** the live meter (its own loop on `audio.startInputMonitor`/`readInputLevel`, not the modal's) with "Say your loudest line. Aim for the amber zone." and Next.
+  2. **Level:** the live meter (its own loop on `audio.startInputMonitor`/`readInputLevel`, not the modal's) with "Say your loudest line. Aim for the green band." (Audio settings' words) and Next. It is Audio settings' meter: the peak on the same grey / green / red bands, the bar in the colour of the band it reaches.
   3. **Sync:** the PR #19 copy first, "The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic.", then "Play clicks". Runs, failures and the clap fallback are `mic_sync.js`'s (`runMicSync`, `runClapSync`, `PANEL_COPY`); the card renders the same step through one hook in `showMicSyncPanel`. "Skip sync" is a ghost link.
   - **Done:** the card collapses to one line, "Mic set · Blue Yeti · Change" (Change opens Audio settings). Skipped sync: "Mic set · not synced", and the booth's mic-sync hint shows as today.
 - **Members with a handoff** whose setup and sync came along see only the collapsed line.
@@ -242,20 +244,23 @@ Measured with the same drivers, engines, 3 fixture scenes, first-run storage and
 - A pasted link is read as a code when it is a `/join/CODE` path (any host) or a `?room=` link to this page; a `?room=` link to another page opens that page directly. A code is 3 to 16 letters, digits or dashes.
 - The poster on the join card is the video at the first line through a `#t=` media fragment (`preload=metadata`, muted). It is at most 30% of the window's height, so Join stays in view at 960x680.
 - The "You" card stays in view (sticky) while the scenes scroll; the scene bar sticks to the bottom of the window (`overflow: clip` on the panel keeps it sticky).
-- The hero's accent is solid amber (no gradient text) and scene cards no longer lift on hover. The `.tab-pill` styles went with the tabs (nothing else used them), and DESIGN.md's segmented-tabs entry with them.
+- The hero's accent is solid amber (no gradient text) and scene cards no longer lift on hover. The `.tab-pill` styles stay (see G4: the premiere's Mix presets use them).
 
 ### Decided while building G3 (the lobby), revisit
 
 - "Copy invite link" toasts "Invite link copied." whether it copied the public link or the direct one (it never copies a bare code now, so "copied instead" no longer applies). With neither, it copies this page's `?room=` link: "Invite link copied. It works on your network only for now."
-- The header room pill keeps its dashed "code not live yet" look in the lobby, but there it is plain text (no role, no tab stop, no tooltip). On the other room screens Enter and Space now copy too (it was a `role=button` that only answered clicks).
+- The header room pill is plain text in the lobby (no border, no role, no tab stop, no tooltip; the title row's Copy invite link says when the code isn't live). On the other room screens Enter and Space now copy too (it was a `role=button` that only answered clicks).
 - The mic card's button is amber for a friend only while the room is still in the lobby; once recording or the premiere is on, "Back to the booth ›" / "Back to the premiere ›" is the view's amber and the card's button is secondary.
 - The level meter keeps running during the sync step, so the clicks and claps show on it; it closes when the card collapses, when the lobby is left, and while Audio settings is open (that dialog's meter has the mic then). It falls back slowly so a short word reads.
+- A finished setup (remembered) counts as allowed when the browser can't report the permission (Firefox, some WebViews), so the card doesn't ask to Allow again.
+- After a failed click or clap run started from the card, focus goes to the card's Try again / Start clapping.
 - An allowed mic whose device pair is already synced (on the host's computer, or brought along by a member) goes straight to "Mic set · <mic> · Change". Allowed but unsynced starts at the device step, not at Allow.
 - "Skip sync" lasts for the tab (sessionStorage), like the old launch dialog's "Skip for now".
 - Each character's name is a button: clicking it pins the preview (`aria-pressed`), so keyboard users can preview any row, including someone else's character.
+- The last hovered row stays previewed when the pointer leaves the table (Play this line is in the rail), until another row is hovered, focused or clicked.
 - After a pick or Give back redraws a row, keyboard focus stays in that row (on Give back, else I'll voice, else the name).
 - For friends, an offline voice reads "Tani (offline)" in the Voiced by cell; the host's select options say "(offline)" too.
-- The preview poster keeps the whole frame (letterboxed, at most 34% of the window's height). Below 1100 px the preview and the mic card sit side by side under the casting card, and the page scrolls instead of the card.
+- The preview poster keeps the whole frame (letterboxed, at most 34% of the window's height, 22% under 760 px tall so the mic card's buttons stay in view at 1280x720). Below 1100 px the preview and the mic card sit side by side under the casting card, and the page scrolls instead of the card.
 - "Cast evenly" toasts "Characters shared out evenly." when the room confirms.
 - The waiting line reads "Tani starts the recording" ("The host starts the recording" before the host's name is known).
 - G2 follow-up: leaving to You left keeps the logo menu inert; the booth's recording focus had been giving it back as the view changed.

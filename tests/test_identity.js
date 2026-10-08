@@ -227,7 +227,7 @@ async function boot({ storage = {} } = {}) {
       role_assignments: { "Old Man": [me] }, takes: {},
     });
     app.roomState = state(CORAL);
-    app.socket.emit("user_joined", { type: "user_joined", payload: { user_id: me, color: LIME, wanted_color: CORAL, cast: "Old Man" }, state: state(LIME) });
+    app.socket.emit("user_joined", { type: "user_joined", payload: { user_id: me, color: LIME, wanted_color: CORAL, wanted_taken_by: "Tani", cast: "Old Man" }, state: state(LIME) });
     check(toasts.includes("Coral is taken here, so you're Lime in this room."), "the taken colour is explained", toasts);
     check(app.user.color === CORAL && JSON.parse(w.localStorage.getItem("dubmate_user")).color === CORAL, "your saved colour doesn't change");
     const avatar = doc.getElementById("header-user-avatar");
@@ -239,6 +239,21 @@ async function boot({ storage = {} } = {}) {
     check(toasts.length === 0, "a reconnect doesn't repeat it", toasts);
     app.socket.emit("user_joined", { type: "user_joined", payload: { user_id: "tani", color: CORAL, wanted_color: LIME, cast: null }, state: state(LIME) });
     check(toasts.length === 0 && app.autoCastNotice === "Old Man", "someone else's join says nothing to you");
+  }
+
+  // Rejoining with another colour wanted: the room kept yours, and nobody holds the one you asked for.
+  {
+    const { app, toasts } = await boot({ storage: { dubmate_user: JSON.stringify({ id: "u_me", name: "Tani", color: MINT }) } });
+    const me = app.user.id;
+    const state = {
+      state_version: 3, room_id: "ROOM02", host_id: me, status: "lobby",
+      pack: { id: "P", name: "Rooftop", characters: ["Old Man"], lines: [] },
+      users: { [me]: { id: me, name: "Tani", color: CORAL, is_online: true } },
+      role_assignments: { "Old Man": [me] }, takes: {},
+    };
+    app.roomState = state;
+    app.socket.emit("user_joined", { type: "user_joined", payload: { user_id: me, color: CORAL, wanted_color: MINT, wanted_taken_by: "", cast: null }, state });
+    check(!toasts.some((t) => t.includes("taken")), "a rejoin that kept your room colour doesn't say your colour is taken", toasts);
   }
 
   console.log("\nALL IDENTITY TESTS PASSED");

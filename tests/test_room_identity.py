@@ -72,7 +72,10 @@ class TestPalette(unittest.TestCase):
         self.assertEqual(identity.normalize_color(" #b5cf5a "), LIME)
         self.assertEqual(identity.normalize_color("#d97706"), CORAL)
         self.assertEqual(identity.normalize_color("#7C5CFF"), CORNFLOWER)
-        for junk in ("#123abc", "#abc", "red", "", None, 7, "#12", "url(x)", "#f08a6c;background:red"):
+        # Any other colour is Coral, as identity.js normalizeColor has it.
+        self.assertEqual(identity.normalize_color("#123abc"), CORAL)
+        self.assertEqual(identity.normalize_color("#abc"), CORAL)
+        for junk in ("red", "", None, 7, "#12", "url(x)", "#f08a6c;background:red"):
             self.assertEqual(identity.normalize_color(junk), "", junk)
 
     def test_clean_name(self):
@@ -226,13 +229,14 @@ class TestNamesAndColoursOnTheWire(IdentityRoomCase):
                 self.assertEqual(payload["wanted_color"], CORAL)
                 self.assertEqual(room.users["m1"]["color"], LIME)
                 self.assertEqual(payload["cast"], "Courier")
-                self.assertEqual(set(payload), {"user_id", "color", "wanted_color", "cast"})
+                self.assertEqual(payload["wanted_taken_by"], "Tani")
+                self.assertEqual(set(payload), {"user_id", "color", "wanted_color", "wanted_taken_by", "cast"})
 
                 with self.client.websocket_connect(f"/ws/{self.ROOM}/m2") as ws2:
                     self._join(ws2, "", "#ff0000")
                     payload = self._joined(self._frames(ws2), "m2")
                     self.assertEqual(room.users["m2"]["name"], "Actor")
-                    self.assertEqual(payload["wanted_color"], "")
+                    self.assertEqual(payload["wanted_color"], CORAL, "an unknown colour is Coral")
                     self.assertEqual(payload["color"], MINT)
         self.assertEqual(room.users[HOST]["color"], CORAL)
 
@@ -242,8 +246,30 @@ class TestNamesAndColoursOnTheWire(IdentityRoomCase):
             self._join(ws, "Tani", PINK)
             payload = self._joined(self._frames(ws), HOST)
             self.assertEqual(payload["color"], CORAL)
+            self.assertEqual(payload["wanted_taken_by"], "", "nobody holds Pink: the room kept the host's colour")
             self.assertIsNone(payload["cast"])
         self.assertEqual(room.role_assignments["Old Man"], [HOST])
+
+    def test_a_rejoin_with_another_wanted_colour_isnt_called_taken(self):
+        room = self._room()
+        self._user(room, "b", "Bea", MINT, online=False)
+        self._user(room, "c", "Cy", LIME, online=False)
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/b") as ws:
+            self._join(ws, "Bea", PINK)
+            payload = self._joined(self._frames(ws), "b")
+            self.assertEqual((payload["color"], payload["wanted_taken_by"]), (MINT, ""))
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/b") as ws:
+            self._join(ws, "Bea", LIME)
+            payload = self._joined(self._frames(ws), "b")
+            self.assertEqual((payload["color"], payload["wanted_taken_by"]), (MINT, "Cy"), "held offline still counts")
+
+    def test_the_wire_shows_old_colours_as_their_hue(self):
+        room = self._room()
+        self._user(room, "m2", "Sam", "#d97706", online=False)
+        self._user(room, "m3", "Odd", "#dc2626", online=False)
+        users = room.to_state_dict()["users"]
+        self.assertEqual((users["m2"]["color"], users["m3"]["color"]), (CORAL, CORAL))
+        self.assertEqual(room.users["m2"]["color"], "#d97706", "the stored colour is kept")
 
     def test_restored_room_with_old_colours_loads_intact(self):
         users = {
@@ -376,6 +402,18 @@ class TestGuestCasting(IdentityRoomCase):
                 errors = self._errors(self._assign(host_ws, "Old Man", ["m1", HOST]))
                 self.assertEqual(errors, [])
                 self.assertEqual(room.role_assignments["Old Man"], ["m1", HOST])
+
+    def test_the_host_cant_crash_the_socket(self):
+        room = self._room()
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as host_ws:
+            self._join(host_ws, "Tani")
+            _barrier(host_ws)
+            before = json.loads(json.dumps(room.role_assignments))
+            for character, ids in ((["Kid"], [HOST]), ({"a": 1}, [HOST]), ("Kid", "hostT"), ("Kid", [["x"]])):
+                host_ws.send_json({"type": "assign_role", "payload": {"character": character, "user_ids": ids}})
+            frames = self._frames(host_ws)
+            self.assertFalse(any(f.get("type") == "role_assigned" for f in frames), frames)
+            self.assertEqual(room.role_assignments, before)
 
 
 class TestCastEvenly(IdentityRoomCase):

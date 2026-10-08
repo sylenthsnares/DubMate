@@ -7,7 +7,8 @@
  *    fills in: "Join Tani's room", the scene with its lines and characters, who's here,
  *  - a name (empty on a first visit, else the saved one) and a colour (hues other people
  *    in the room hold are disabled; preselected: your saved colour if free, else the
- *    first free hue), and the amber "Join as Sam ›" ("Join ›", disabled, without a name),
+ *    first free hue), and the amber "Join as Sam ›" ("Join ›" without a name, which says
+ *    "Type your name first"); a network error stays on the card,
  *  - Enter submits (a form); focus starts in the name field; the identity is saved,
  *  - a room that isn't open says so, with the same code-or-link form,
  *  - someone the room already knows (a reload) goes straight in,
@@ -160,7 +161,12 @@ const openOverlays = (doc) => Array.from(doc.querySelectorAll(".studio-modal-ove
     const name = $("input-join-name");
     check(name.value === "" && doc.activeElement === name && name.getAttribute("maxlength") === "24", "a first visit starts in an empty name field (24 max)");
     const btn = $("btn-join-card");
-    check(btn.classList.contains("btn-primary") && btn.disabled && btn.textContent.trim() === "Join ›", "Join › waits for a name");
+    check(btn.classList.contains("btn-primary") && !btn.disabled && btn.textContent.trim() === "Join ›", "Join › reads plainly without a name");
+    // Enter in the empty field submits (implicit submission needs an enabled submit button) and says why not.
+    $("join-form").requestSubmit();
+    await tick(30);
+    check(app.currentView === "join" && $("input-join-name-error").textContent === "Type your name first"
+      && name.getAttribute("aria-invalid") === "true" && doc.activeElement === name, "an empty name says Type your name first, in place");
     const radios = Array.from($("join-color-palette").querySelectorAll("input[type=radio]"));
     const byHex = (hex) => radios.find((r) => r.value === hex);
     check(radios.length === 8 && byHex(CORAL).disabled && byHex(CORNFLOWER).disabled && byHex(MINT).disabled, "hues other people hold are taken (offline too)");
@@ -185,6 +191,33 @@ const openOverlays = (doc) => Array.from(doc.querySelectorAll(".studio-modal-ove
     check(saved.name === "Sam" && saved.color === PINK, "the name and colour are saved on this origin", saved);
     check(openOverlays(doc).length === 0, "no modal is open after joining", openOverlays(doc));
     check(w.localStorage.getItem("dubmate_first_room_done") === "1", "joining counts as the first room");
+  }
+
+  // 1b. A network error on Join keeps the guest on the card, with the reason under the button.
+  {
+    const { w, app, $, toasts } = await boot(GUEST);
+    $("input-join-name").value = "Sam";
+    $("input-join-name").dispatchEvent(new w.Event("input", { bubbles: true }));
+    const fetchBefore = w.fetch;
+    w.fetch = (input) => String(input).startsWith("/api/rooms/") ? Promise.reject(new TypeError("Failed to fetch")) : fetchBefore(input);
+    $("join-form").requestSubmit();
+    await tick(120);
+    check(app.currentView === "join" && $("view-join").classList.contains("active") && !$("view-landing").classList.contains("active"),
+      "a network error doesn't drop a link guest on the host's home screen", app.currentView);
+    const error = $("btn-join-card-error");
+    check(visible($("join-form")) && error && !error.hidden && error.textContent.length > 0 && toasts.length === 0, "it says so on the card", error?.textContent, toasts);
+    check(!$("btn-join-card").disabled && $("btn-join-card").textContent.trim() === "Join as Sam ›", "and Join can be pressed again");
+    check(new URL(w.location.href).searchParams.get("room") === CODE, "the link still names the room, so a reload tries again");
+  }
+
+  // 1c. A restored room: someone offline still holds an older version's colour.
+  {
+    const state = room();
+    state.users.u_tani.color = "#d97706";
+    state.users.u_tani.is_online = false;
+    const { $ } = await boot(GUEST, { state });
+    const coral = Array.from($("join-color-palette").querySelectorAll("input")).find((r) => r.value === CORAL);
+    check(coral.disabled && /taken by Tani/.test(coral.getAttribute("aria-label")), "an old colour counts as its hue, as the server counts it");
   }
 
   // 2. A returning guest: their name, their colour when free; the chrome stays out of the way.

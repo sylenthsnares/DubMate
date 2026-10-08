@@ -412,8 +412,9 @@ const stateOf = (app) => ({ ...JSON.parse(JSON.stringify(app.roomState)), state_
     rowFor(doc, "Black Guy 10").dispatchEvent(new w.MouseEvent("mouseover", { bubbles: true }));
     check(text(label) === "Black Guy 10 · 2 lines" && text(line) === "“First.”", "hovering a row previews it", text(label));
     check(rowFor(doc, "Black Guy 10").classList.contains("is-selected") && !rowFor(doc, "Black Guy 2").classList.contains("is-selected"), "only the previewed row is marked");
+    // Play this line sits in the rail, so the pointer leaves the table on its way there.
     tbody.dispatchEvent(new w.MouseEvent("mouseleave"));
-    check(text(label) === "Black Guy 2 · 1 line", "leaving the table goes back to the chosen row", text(label));
+    check(text(label) === "Black Guy 10 · 2 lines" && text(line) === "“First.”", "leaving the table keeps the hovered row, so Play plays its line", text(label));
 
     const boss = rowFor(doc, 'The "Boss"').querySelector(".cast-char");
     check(boss && boss.tagName === "BUTTON", "each character name is a button that pins the preview");

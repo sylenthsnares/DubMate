@@ -67,8 +67,9 @@ PALETTE = [hex_ for _, hex_ in IDENTITY_COLORS]
 
 
 def normalize_color(value: Any) -> str:
-    """A palette hex for a palette hue or an older saved colour; "" for anything else
-    (another colour, junk). The result is safe to put in a style attribute."""
+    """A palette hex for any colour, as identity.js normalizeColor: palette hues stay,
+    older saved colours become their hue, any other colour is Coral; "" when it isn't a
+    colour. The result is safe to put in a style attribute."""
     if not isinstance(value, str):
         return ""
     hex_ = value.strip().lower()
@@ -76,7 +77,7 @@ def normalize_color(value: Any) -> str:
         return ""
     if hex_ in PALETTE:
         return hex_
-    return LEGACY_COLORS.get(hex_, "")
+    return LEGACY_COLORS.get(hex_, PALETTE[0])
 
 
 def clean_name(value: Any) -> str:
@@ -84,6 +85,15 @@ def clean_name(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())[:NAME_MAX].strip()
+
+
+def holder_name(room: Optional[Any], hex_: str, user_id: str) -> str:
+    """The name of someone else in room holding hex_ (online first), or "" when nobody does."""
+    users = getattr(room, "users", None) or {}
+    held = [u for uid, u in users.items()
+            if uid != user_id and isinstance(u, dict) and hex_ and normalize_color(u.get("color")) == hex_]
+    held.sort(key=lambda u: not u.get("is_online"))
+    return (held[0].get("name") or "Someone") if held else ""
 
 
 def pick_color(room: Optional[Any], wanted: Any, user_id: str) -> str:
