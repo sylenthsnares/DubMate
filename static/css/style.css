@@ -3481,8 +3481,90 @@ svg {
   max-height: none !important;
 }
 
-.screening-timeline:empty {
-  display: none;
+/* The timeline: elapsed time, the track (an amber played part, a tick at each line's start
+   in its actor's colour, the thumb), the total. The track is the slider and its hit area. */
+.screening-timeline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.screening-time {
+  flex: none;
+  min-width: 32px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+  font-variant-numeric: tabular-nums;
+}
+#screening-time-total {
+  text-align: right;
+}
+.screening-track {
+  position: relative;
+  flex: 1;
+  height: 20px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+.screening-track:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.screening-track-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 6px;
+  overflow: hidden;
+  background: var(--panel-raised);
+  border-radius: var(--radius-full);
+}
+.screening-track-played {
+  width: 0;
+  height: 100%;
+  background: var(--primary);
+}
+.screening-track-ticks {
+  position: absolute;
+  inset: 0;
+}
+.screening-tick {
+  position: absolute;
+  top: 4px;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  border-radius: 1px;
+  /* A dark edge keeps an amber tick readable over the amber played part */
+  box-shadow: 0 0 0 1px var(--background);
+}
+/* A wider target than the 2px mark: a click near a tick seeks to its line's start. */
+.screening-tick::before {
+  content: '';
+  position: absolute;
+  inset: -4px -4px;
+}
+.screening-tick.is-unassigned,
+.screening-line-dot.is-unassigned {
+  background: var(--foreground-muted);
+}
+.screening-track-thumb {
+  position: absolute;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  pointer-events: none;
+  background: var(--foreground);
+  border: 2px solid var(--primary);
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
 }
 
 .screening-controls-bar {
@@ -3725,7 +3807,21 @@ svg {
   display: none;
 }
 
-/* Mix (and later In this dub): a closed disclosure under the controls */
+/* Mix and In this dub: disclosures under the controls, side by side on wide windows */
+.screening-sections {
+  display: grid;
+  gap: 10px;
+  align-items: start;
+  margin-bottom: 10px;
+}
+.screening-sections > .screening-section {
+  margin-bottom: 0;
+}
+@media (min-width: 1200px) {
+  .screening-sections {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
 .screening-section {
   margin-bottom: 10px;
   background: var(--card);
@@ -3827,6 +3923,92 @@ svg {
 .screening-mix-member-desc {
   font-size: 12px;
   color: var(--foreground-muted);
+}
+
+/* In this dub: one compact row per line; the row plays from the line, Change take sits in
+   its own column so the statuses line up. The list scrolls with the app's scrollbar (no
+   scrollbar-width or scrollbar-color here: in Chromium they bring back the grey bar). */
+.screening-lines-list {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 2px 8px 8px;
+  list-style: none;
+}
+.screening-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+}
+.screening-lines-list.has-change .screening-line {
+  grid-template-columns: minmax(0, 1fr) 92px;
+}
+.screening-line + .screening-line {
+  border-top: 1px solid var(--border-subtle);
+}
+.screening-line-seek {
+  display: grid;
+  /* The status column is as wide as "Original voice · Unrecorded", so every row lines up */
+  grid-template-columns: 8px 30px minmax(0, 1.2fr) minmax(0, 1fr) 168px;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 36px;
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.screening-line-seek:hover {
+  background: var(--muted);
+}
+.screening-line-seek:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.screening-line-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.screening-line-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+  font-variant-numeric: tabular-nums;
+}
+.screening-line-char,
+.screening-line-speaker {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.screening-line-char {
+  font-size: 13px;
+  font-weight: 600;
+}
+.screening-line-speaker {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.screening-line-status {
+  justify-self: end;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.screening-line-status.is-original {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+.screening-line-change {
+  justify-self: end;
 }
 
 .stem-mixer-header {

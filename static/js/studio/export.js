@@ -6,8 +6,8 @@ import { joinLocalPath, openDialog } from '../ui_common.js';
 /** The two video formats a room saves. */
 const EXPORT_ASPECTS = ['16:9', '9:16'];
 
-/** m:ss (0:06), for the export modal's facts. */
-function clockTime(seconds) {
+/** m:ss (0:06), for the export modal's facts and the premiere's timeline. */
+export function clockTime(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

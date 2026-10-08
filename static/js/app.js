@@ -38,6 +38,9 @@ const CONNECTION_COPY = {
   failedTip: "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved.",
 };
 
+// The room messages that change the premiere's In this dub list and timeline ticks.
+const PREMIERE_LINE_EVENTS = ['take_recorded', 'take_picked', 'take_deleted', 'role_assigned'];
+
 class DubMateApp {
   constructor() {
     // Before anything reads localStorage: a member's name and setup from their own DubMate.
@@ -378,6 +381,18 @@ class DubMateApp {
     this.btnScreeningReplay = document.getElementById('btn-screening-replay');
     this.screeningSourceLabel = document.getElementById('screening-source-label');
     this.screeningSourceText = document.getElementById('screening-source-text');
+    // The timeline under the video and In this dub (screening.js)
+    this.screeningTrack = document.getElementById('screening-track');
+    this.screeningTrackPlayed = document.getElementById('screening-track-played');
+    this.screeningTrackThumb = document.getElementById('screening-track-thumb');
+    this.screeningTrackTicks = document.getElementById('screening-track-ticks');
+    this.screeningTimeElapsed = document.getElementById('screening-time-elapsed');
+    this.screeningTimeTotal = document.getElementById('screening-time-total');
+    this.screeningLines = document.getElementById('screening-lines');
+    this.screeningLinesSummary = document.getElementById('screening-lines-summary');
+    this.screeningLinesList = document.getElementById('screening-lines-list');
+    // A drag on the timeline: where the thumb is until it is let go (null when not dragging).
+    this.premiereDragTime = null;
     this.screeningSaveError = document.getElementById('screening-save-error');
     this.screeningSaveErrorText = document.getElementById('screening-save-error-text');
     this.btnSaveRetry = document.getElementById('btn-save-retry');
@@ -863,7 +878,7 @@ class DubMateApp {
     // effects; Esc closes it); the Takes card handles its own arrows, P, Enter and Delete
     // (takes_card.js).
     // The list the user sees is SHORTCUT_GROUPS in shortcuts.js; keep the two in step.
-    // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
+    // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00), ←/→ (5 s), , and . (line starts)
     window.addEventListener('keydown', (e) => {
       // The shortcut sheet, the export modal (or another openDialog window) handles its own keys.
       if (isDialogOpen()) return;
@@ -948,6 +963,17 @@ class DubMateApp {
         } else if (e.code === 'KeyR' || e.key === 'r' || e.key === 'R') {
           e.preventDefault();
           this.handleScreeningReplay();
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.defaultPrevented
+            && !e.target.closest?.('[role="menu"], [role="radiogroup"]')) {
+          // The Save menu and the Mix presets use the arrows themselves.
+          const step = { ArrowLeft: -5, ArrowRight: 5 }[e.key];
+          if (step) {
+            e.preventDefault();
+            this.seekPremiere((this.screeningVideo.currentTime || 0) + step);
+          } else if (e.key === ',' || e.key === '.') {
+            e.preventDefault();
+            this.stepPremiereLine(e.key === ',' ? -1 : 1);
+          }
         }
       }
     });
@@ -1047,6 +1073,8 @@ class DubMateApp {
         }
         this.renderCastActivityHUD();
         this.updateScreeningControls();
+        // In this dub and the timeline's ticks follow takes and casting.
+        if (this.currentView === 'screening' && PREMIERE_LINE_EVENTS.includes(data.type)) this.renderPremiereLines();
       }
     });
 

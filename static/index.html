@@ -1088,8 +1088,20 @@
         </div>
       </div>
 
-      <!-- The timeline under the video (screening.js, step 40c) -->
-      <div id="screening-timeline" class="screening-timeline"></div>
+      <!-- The timeline under the video: a tick at each line's start in its actor's colour.
+           Click or drag to seek; the host's seek moves everyone (screening.js). -->
+      <div id="screening-timeline" class="screening-timeline">
+        <span id="screening-time-elapsed" class="screening-time">0:00</span>
+        <div id="screening-track" class="screening-track" role="slider" tabindex="0" aria-label="Position"
+          aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00 of 0:00">
+          <div class="screening-track-rail">
+            <div id="screening-track-played" class="screening-track-played"></div>
+          </div>
+          <div id="screening-track-ticks" class="screening-track-ticks" aria-hidden="true"></div>
+          <div id="screening-track-thumb" class="screening-track-thumb" aria-hidden="true"></div>
+        </div>
+        <span id="screening-time-total" class="screening-time">0:00</span>
+      </div>
 
       <div class="screening-controls-bar" role="group" aria-label="Premiere controls">
         <button id="btn-screening-play-pause" class="btn btn-primary btn-lg screening-play" type="button">
@@ -1183,75 +1195,92 @@
         <button id="btn-save-retry" class="btn btn-ghost btn-sm" type="button">Try again</button>
       </div>
 
-      <!-- Mix: presets for the host, the host's choice read-only for members -->
-      <details id="screening-mix" class="screening-section screening-mix">
-        <summary class="screening-section-summary">
-          <svg class="screening-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m9 18 6-6-6-6" />
-          </svg>
-          <span class="screening-section-title">Mix</span>
-          <span id="screening-mix-summary" class="screening-section-meta">· Balanced</span>
-        </summary>
-        <div class="screening-section-body">
-          <div id="screening-mix-host">
-            <div class="tab-pill-group mix-presets" role="radiogroup" aria-label="Mix">
-              <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="true" tabindex="0"
-                data-preset="balanced">Balanced</button>
-              <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="false" tabindex="-1"
-                data-preset="voices">Voices forward</button>
-              <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="false" tabindex="-1"
-                data-preset="music">Music forward</button>
+      <!-- Mix and In this dub: side by side on wide windows, stacked below that -->
+      <div class="screening-sections">
+        <!-- Mix: presets for the host, the host's choice read-only for members -->
+        <details id="screening-mix" class="screening-section screening-mix">
+          <summary class="screening-section-summary">
+            <svg class="screening-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            <span class="screening-section-title">Mix</span>
+            <span id="screening-mix-summary" class="screening-section-meta">· Balanced</span>
+          </summary>
+          <div class="screening-section-body">
+            <div id="screening-mix-host">
+              <div class="tab-pill-group mix-presets" role="radiogroup" aria-label="Mix">
+                <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="true" tabindex="0"
+                  data-preset="balanced">Balanced</button>
+                <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="false" tabindex="-1"
+                  data-preset="voices">Voices forward</button>
+                <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="false" tabindex="-1"
+                  data-preset="music">Music forward</button>
+              </div>
+
+              <details id="screening-fine-tune" class="screening-fine-tune">
+                <summary class="screening-fine-tune-summary">
+                  <svg class="screening-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                  <span>Fine-tune</span>
+                </summary>
+                <div class="mix-fine-row">
+                  <div class="stem-mixer-header">
+                    <span class="mix-fine-title">Music and voices</span>
+                    <span id="val-screening-balance" class="stem-val-badge">Even</span>
+                  </div>
+                  <div class="stem-slider-row">
+                    <span class="stem-tag">Music</span>
+                    <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1"
+                      value="50" aria-label="Music and voice balance" aria-valuemin="0" aria-valuemax="100"
+                      aria-valuenow="50" aria-valuetext="50 percent">
+                    <span class="stem-tag">Voices</span>
+                  </div>
+                  <div class="stem-scale-row" aria-hidden="true">
+                    <span>More music</span>
+                    <span>Even</span>
+                    <span>More voice</span>
+                  </div>
+                </div>
+                <div class="mix-fine-row">
+                  <div class="stem-mixer-header">
+                    <span class="mix-fine-title">Dialogue level</span>
+                    <span id="val-dialogue-presence" class="stem-val-badge">0.0 dB (default)</span>
+                  </div>
+                  <div class="stem-slider-row">
+                    <span class="stem-tag">-6 dB</span>
+                    <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5"
+                      value="0" aria-label="Dialogue level (dB)" aria-valuemin="-6" aria-valuemax="8"
+                      aria-valuenow="0" aria-valuetext="0.0 dB, default">
+                    <span class="stem-tag">+8 dB</span>
+                  </div>
+                </div>
+              </details>
             </div>
 
-            <details id="screening-fine-tune" class="screening-fine-tune">
-              <summary class="screening-fine-tune-summary">
-                <svg class="screening-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-                <span>Fine-tune</span>
-              </summary>
-              <div class="mix-fine-row">
-                <div class="stem-mixer-header">
-                  <span class="mix-fine-title">Music and voices</span>
-                  <span id="val-screening-balance" class="stem-val-badge">Even</span>
-                </div>
-                <div class="stem-slider-row">
-                  <span class="stem-tag">Music</span>
-                  <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1"
-                    value="50" aria-label="Music and voice balance" aria-valuemin="0" aria-valuemax="100"
-                    aria-valuenow="50" aria-valuetext="50 percent">
-                  <span class="stem-tag">Voices</span>
-                </div>
-                <div class="stem-scale-row" aria-hidden="true">
-                  <span>More music</span>
-                  <span>Even</span>
-                  <span>More voice</span>
-                </div>
-              </div>
-              <div class="mix-fine-row">
-                <div class="stem-mixer-header">
-                  <span class="mix-fine-title">Dialogue level</span>
-                  <span id="val-dialogue-presence" class="stem-val-badge">0.0 dB (default)</span>
-                </div>
-                <div class="stem-slider-row">
-                  <span class="stem-tag">-6 dB</span>
-                  <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5"
-                    value="0" aria-label="Dialogue level (dB)" aria-valuemin="-6" aria-valuemax="8"
-                    aria-valuenow="0" aria-valuetext="0.0 dB, default">
-                  <span class="stem-tag">+8 dB</span>
-                </div>
-              </div>
-            </details>
+            <p id="screening-mix-member" class="screening-mix-member" hidden>
+              <span id="screening-mix-member-preset" class="screening-mix-member-preset">Balanced</span>
+              <span class="screening-mix-member-desc">The host sets the mix. You hear what the video will sound like.</span>
+            </p>
           </div>
+        </details>
 
-          <p id="screening-mix-member" class="screening-mix-member" hidden>
-            <span id="screening-mix-member-preset" class="screening-mix-member-preset">Balanced</span>
-            <span class="screening-mix-member-desc">The host sets the mix. You hear what the video will sound like.</span>
-          </p>
-        </div>
-      </details>
+        <!-- In this dub: each line's actor and take; a row plays from that line (screening.js).
+             Open for the host, closed for members. -->
+        <details id="screening-lines" class="screening-section screening-lines">
+          <summary class="screening-section-summary">
+            <svg class="screening-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            <span class="screening-section-title">In this dub</span>
+            <span id="screening-lines-summary" class="screening-section-meta"></span>
+          </summary>
+          <ol id="screening-lines-list" class="screening-lines-list"></ol>
+        </details>
+      </div>
     </section>
 
   </main>

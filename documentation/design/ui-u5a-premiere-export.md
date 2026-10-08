@@ -212,6 +212,13 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
 19. **A remote host's "Download 9:16" for a format that isn't saved** makes it in the modal and downloads it as soon as it is ready.
 20. **While saving, focus sits on the modal's title** (there is nothing to press). Done moves it to "Watch the dub", failed to "Try again", timeout to "Keep working".
 21. **Under reduced motion the indeterminate bars stand still at full width** (the modal's and the Save menu's "Making…"), so a parked bar never reads as a percentage.
+22. **A click on (or within 5px of) a timeline tick seeks to that line's start exactly,** not to the pixel under the pointer.
+23. **`,` just after a line's start (within 0.25 s) goes to the line before,** so pressing it while playing walks back instead of sticking on the current line. `.` after the last line does nothing.
+24. **The elapsed and total times both round to the second,** so the end reads "0:06 of 0:06".
+25. **A paused host's seek moves their own thumb at once** (the room's echo sets the same spot). While playing, the host's video moves when the echo arrives, so playback and the live mix restart together for everyone.
+26. **"Change take" focuses the take in the dub inside TAKES** (the card itself is not focusable, and the booth markup stays as it is). A line with no takes yet opens in the booth without moving focus.
+27. **A row's "Take 3 of 5" uses the take's own number,** the one the TAKES card shows, out of the takes the line has now.
+28. **The Mix and In this dub sit side by side from 1200px wide,** stacked below that. Rows keep a fixed status column, and a Change take column only when some row has one, so the statuses line up.
 
 ## Hands-on checks (the owner, with a friend on a tunnel)
 

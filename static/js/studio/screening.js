@@ -1,10 +1,13 @@
 // studio/screening.js - Premiere screening theater: theater source, stem preload,
-// balance/presence mix, host-synced playback and the sample-accurate audio schedule.
+// balance/presence mix, host-synced playback and the sample-accurate audio schedule,
+// the timeline under the video and the In this dub list.
 // Before the exported video is ready, each picked take plays the engine's render of its
 // voice chain (no browser effects); the theater switches to the exported video when ready.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { pickedTake } from './takes.js';
+import { pickedTake, lineTakes } from './takes.js';
 import { resolveChain, levelGain } from './voice.js';
+import { clockTime } from './export.js';
+import { plural } from '../ui_common.js';
 
 /** The Mix presets: balance (0 more music, 50 even, 100 more voice) and dialogue level in dB. */
 const MIX_PRESETS = [
@@ -59,7 +62,57 @@ export class ScreeningMethods {
           this.stopScreeningSyncMonitor();
         }
       });
+      // The timeline follows the video: timeupdate, and every frame while it plays.
+      this.screeningVideo.addEventListener('timeupdate', () => this.renderPremierePosition());
+      this.screeningVideo.addEventListener('play', () => this.startPremiereClock());
+      this.screeningVideo.addEventListener('durationchange', () => this.renderPremiereTimeline());
     }
+
+    this.initPremiereTimeline();
+  }
+
+  /**
+   * The timeline: a click or a drag seeks when let go (until then only the thumb and the
+   * time move); a click on a tick seeks to its line's start. Home and End go to either end;
+   * the arrows and , / . are the premiere's keys (app.js).
+   */
+  initPremiereTimeline() {
+    const track = this.screeningTrack;
+    if (!track) return;
+    const timeAt = (e) => {
+      const r = track.getBoundingClientRect();
+      const share = r.width > 0 ? (e.clientX - r.left) / r.width : 0;
+      return Math.max(0, Math.min(1, share)) * this.premiereDuration();
+    };
+    track.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !this.roomState) return;
+      e.preventDefault();
+      track.focus();
+      try { track.setPointerCapture(e.pointerId); } catch (err) { }
+      const tick = e.target.closest?.('.screening-tick');
+      this.premiereDragTime = tick ? Number(tick.dataset.start) : timeAt(e);
+      this.renderPremierePosition(this.premiereDragTime);
+    });
+    track.addEventListener('pointermove', (e) => {
+      if (this.premiereDragTime === null) return;
+      this.premiereDragTime = timeAt(e);
+      this.renderPremierePosition(this.premiereDragTime);
+    });
+    track.addEventListener('pointerup', () => {
+      if (this.premiereDragTime === null) return;
+      const t = this.premiereDragTime;
+      this.premiereDragTime = null;
+      this.seekPremiere(t);
+    });
+    track.addEventListener('pointercancel', () => {
+      this.premiereDragTime = null;
+      this.renderPremierePosition();
+    });
+    track.addEventListener('keydown', (e) => {
+      if (e.key !== 'Home' && e.key !== 'End') return;
+      e.preventDefault();
+      this.seekPremiere(e.key === 'Home' ? 0 : this.premiereDuration());
+    });
   }
 
   // --- Finale Screening & Host Sync Logic ---
@@ -83,6 +136,10 @@ export class ScreeningMethods {
     }
 
     this.updateScreeningControls();
+    // In this dub starts open for the host, who picks the takes, and closed for members.
+    if (this.screeningLines) this.screeningLines.open = this.isHost({ allowDummy: true });
+    this.premiereDragTime = null;
+    this.renderPremiereLines();
 
     // Preload screening audio in parallel non-blocking queue
     this.preloadScreeningAudio();
@@ -447,6 +504,166 @@ export class ScreeningMethods {
     this.renderMixSummary();
     this.renderSourceLabel();
     this.renderSaveControl();
+  }
+
+  /** The scene's length: the theater's video once it knows, else the pack's. */
+  premiereDuration() {
+    const d = this.screeningVideo?.duration;
+    if (Number.isFinite(d) && d > 0) return d;
+    return Number(this.roomState?.pack?.duration) || 0;
+  }
+
+  /** A line's first cast actor (their colour marks the line), or null when unassigned. */
+  premiereLineActor(line) {
+    const uid = (this.roomState?.role_assignments?.[line.character] || [])[0];
+    return (uid && this.roomState.users?.[uid]) || null;
+  }
+
+  /** A tick or a row's dot in its actor's colour; muted when nobody is cast. */
+  paintLineMark(el, actor) {
+    if (actor?.color) el.style.backgroundColor = actor.color;
+    else el.classList.add('is-unassigned');
+  }
+
+  /** The ticks at each line's start, the total time, then the position. */
+  renderPremiereTimeline() {
+    if (!this.screeningTrack || !this.roomState) return;
+    const duration = this.premiereDuration();
+    const ticks = (this.roomState.pack?.lines || []).map((line) => {
+      const tick = document.createElement('span');
+      tick.className = 'screening-tick';
+      tick.dataset.start = line.start;
+      tick.style.left = `${duration > 0 ? Math.min(100, (line.start / duration) * 100) : 0}%`;
+      this.paintLineMark(tick, this.premiereLineActor(line));
+      return tick;
+    });
+    this.screeningTrackTicks.replaceChildren(...ticks);
+    this.screeningTimeTotal.textContent = clockTime(duration);
+    this.screeningTrack.setAttribute('aria-valuemax', String(Math.round(duration * 10) / 10));
+    this.renderPremierePosition();
+  }
+
+  /** The thumb, the played part and the elapsed time at t (the video's time by default;
+   *  a drag in progress owns them until it is let go). */
+  renderPremierePosition(t = null) {
+    if (!this.screeningTrack) return;
+    if (t === null) {
+      if (this.premiereDragTime !== null) return;
+      t = this.screeningVideo?.currentTime || 0;
+    }
+    const duration = this.premiereDuration();
+    const at = Math.max(0, Math.min(duration, t));
+    const share = duration > 0 ? (at / duration) * 100 : 0;
+    this.screeningTrackPlayed.style.width = `${share}%`;
+    this.screeningTrackThumb.style.left = `${share}%`;
+    this.screeningTimeElapsed.textContent = clockTime(at);
+    this.screeningTrack.setAttribute('aria-valuenow', String(Math.round(at * 10) / 10));
+    this.screeningTrack.setAttribute('aria-valuetext', `${clockTime(at)} of ${clockTime(duration)}`);
+  }
+
+  /** Moves the timeline every frame while the theater plays (timeupdate is only ~4 a second). */
+  startPremiereClock() {
+    cancelAnimationFrame(this.premiereClockRaf);
+    const step = () => {
+      this.renderPremierePosition();
+      this.premiereClockRaf = this.screeningVideo.paused ? null : requestAnimationFrame(step);
+    };
+    this.premiereClockRaf = requestAnimationFrame(step);
+  }
+
+  /**
+   * The one seek for the timeline, the keys and In this dub. The host's moves everyone
+   * (playback carries on from there if it was playing: handleIncomingScreeningSync); a
+   * member's stays on this page.
+   */
+  seekPremiere(t) {
+    if (!this.roomState || !this.screeningVideo) return;
+    const duration = this.premiereDuration();
+    const at = Math.max(0, duration > 0 ? Math.min(duration, Number(t) || 0) : Number(t) || 0);
+    this.renderPremierePosition(at);
+    if (this.isHost({ allowDummy: true })) {
+      // Paused, the thumb stays where it was let go while the room answers.
+      if (this.screeningVideo.paused) this.screeningVideo.currentTime = at;
+      this.socket.send('screening_control', { action: 'seek', timestamp: at });
+      return;
+    }
+    this.screeningVideo.currentTime = at;
+    if (!this.screeningVideo.paused) this.startScreeningPlayback(at);
+  }
+
+  /** , and . : the previous or next line's start. Just after a start, , goes to the one before. */
+  stepPremiereLine(dir) {
+    const t = this.screeningVideo?.currentTime || 0;
+    const starts = (this.roomState?.pack?.lines || []).map((l) => Number(l.start))
+      .filter(Number.isFinite).sort((a, b) => a - b);
+    const target = dir < 0 ? starts.filter((s) => s < t - 0.25).pop() : starts.find((s) => s > t + 0.05);
+    if (target !== undefined) this.seekPremiere(target);
+  }
+
+  /**
+   * In this dub: each line's actor and take ("Take 3 of 5", or the original voice). A row
+   * click seeks there, and Change take shows where this user may pick the take. The summary
+   * counts the lines that use the original voice. The timeline's ticks follow the same casting.
+   */
+  renderPremiereLines() {
+    if (!this.roomState) return;
+    this.renderPremiereTimeline();
+    if (!this.screeningLinesList) return;
+    const lines = this.roomState.pack?.lines || [];
+    const takes = this.roomState.takes;
+    const span = (cls, text) => {
+      const el = document.createElement('span');
+      el.className = cls;
+      el.textContent = text;
+      return el;
+    };
+    let original = 0;
+    const rows = lines.map((line, index) => {
+      const take = pickedTake(takes, line);
+      if (!take) original += 1;
+      const actor = this.premiereLineActor(line);
+      const row = document.createElement('li');
+      row.className = 'screening-line';
+
+      const seek = document.createElement('button');
+      seek.type = 'button';
+      seek.className = 'screening-line-seek';
+      const dot = span('screening-line-dot', '');
+      this.paintLineMark(dot, actor);
+      const status = span('screening-line-status',
+        take ? `Take ${take.number} of ${lineTakes(takes, line).length}` : 'Original voice · Unrecorded');
+      status.classList.toggle('is-original', !take);
+      const speaker = span('screening-line-speaker', actor ? actor.name : 'Unassigned');
+      seek.append(dot, span('screening-line-num', `#${index + 1}`), span('screening-line-char', line.character),
+        speaker, status);
+      seek.addEventListener('click', () => this.seekPremiere(line.start));
+      row.appendChild(seek);
+
+      if (this.canRecordLine(line)) {
+        const change = document.createElement('button');
+        change.type = 'button';
+        change.className = 'btn btn-ghost btn-xs screening-line-change';
+        change.textContent = 'Change take';
+        change.setAttribute('aria-label', `Change take for line ${index + 1}`);
+        change.addEventListener('click', () => this.changePremiereTake(index));
+        row.appendChild(change);
+      }
+      return row;
+    });
+    this.screeningLinesList.replaceChildren(...rows);
+    this.screeningLinesList.classList.toggle('has-change', rows.some((r) => r.childElementCount > 1));
+    const originals = original ? ` · ${original} ${original === 1 ? 'uses' : 'use'} the original voice` : '';
+    this.screeningLinesSummary.textContent = `· ${plural(lines.length, 'line')}${originals}`;
+  }
+
+  /** Change take: that line in the booth, with the take in the dub focused in TAKES. */
+  async changePremiereTake(index) {
+    this.showView('booth');
+    const loading = this.loadBoothLine(index);
+    this.broadcastMyStatus('booth');
+    await loading;
+    const radios = [...document.querySelectorAll('#card-takes [role="radio"]')];
+    (radios.find((r) => r.getAttribute('aria-checked') === 'true') || radios[0])?.focus();
   }
 
   async handleScreeningPlayPause() {

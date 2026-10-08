@@ -273,6 +273,8 @@ const VERIFY = {
     press(env, eventInit(combo));
     return calls.length === 1;
   },
+  "watch-seek": (env, combo, i) => premiereSeek(env, combo, 7) === (i === 0 ? 2 : 12),
+  "watch-line": (env, combo, i) => premiereSeek(env, combo, 3.2) === (i === 0 ? 2.5 : 4),
   "builder-play": (env, combo) => builderCall(env, combo, "togglePlayPause"),
   "builder-in": (env, combo) => builderCall(env, combo, "markInAtPlayhead"),
   "builder-out": (env, combo) => builderCall(env, combo, "markOutAtPlayhead"),
@@ -321,6 +323,26 @@ function takesOnScreen(env) {
 
 const takeRadio = (env, id) => [...env.doc.querySelectorAll("#takes-list .take-row")]
   .find((r) => r.dataset.takeId === id)?.querySelector('[role="radio"]');
+
+/** The premiere as a member (their seeks stay local) at a position; returns where the key moved it. */
+function premiereSeek(env, combo, at) {
+  showView(env, "screening");
+  blur(env);
+  const app = env.app;
+  app.roomState = { state_version: 3, room_id: "R", host_id: "someone-else", users: {}, role_assignments: {}, takes: {},
+    pack: { duration: 20, video_url: "/v.mp4", lines: [
+      { line_id: "t1", index: 0, character: "Ana", start: 1, end: 2, duration: 1 },
+      { line_id: "t2", index: 1, character: "Ana", start: 2.5, end: 3.5, duration: 1 },
+      { line_id: "t3", index: 2, character: "Ana", start: 4, end: 5, duration: 1 },
+    ] } };
+  const video = app.screeningVideo;
+  let position = at;
+  Object.defineProperty(video, "paused", { configurable: true, get: () => true });
+  Object.defineProperty(video, "duration", { configurable: true, get: () => 20 });
+  Object.defineProperty(video, "currentTime", { configurable: true, get: () => position, set: (v) => { position = v; } });
+  press(env, eventInit(combo));
+  return position;
+}
 
 function nudgeBy(env, combo, delta) {
   showView(env, "booth");
