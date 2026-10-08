@@ -298,6 +298,39 @@ class TestTakeChainRoute(RackRoutesCase):
         self.assertNotIn("chain", third)
         self.assertEqual(room.mix_takes()[1]["chain"], vocal_chain.CLEAN)
 
+    def test_upload_with_a_sound_uses_it(self):
+        """A preset picked before the take existed comes with the upload as `chain`."""
+        room = self._rack_room()
+        self._put_chain(self.take["take_id"], PRESET["warm"])
+        sent = json.loads(json.dumps(PRESET["radio"]))
+        sent["nodes"]["pitch"]["semitones"] = 99   # clamped like any other chain
+        second = self._upload("t1000", speech_like(seed=2, duration=2.0, lead=0.3), auto_gain="true",
+                              chain=json.dumps(sent))
+        expected = vocal_chain.normalize_chain(sent)
+        self.assertEqual(second["chain"], expected)
+        self.assertEqual(room.find_take("t1000", second["take_id"])["chain"], expected)
+        self.assertEqual(second["auto_gain_db"], self._render_level(second, expected)["auto_gain_db"])
+        # A first take on a line gets it too.
+        first = self._upload("t3000", speech_like(seed=3, duration=1.0, lead=0.1), chain=json.dumps(PRESET["monster"]))
+        self.assertEqual(first["chain"], PRESET["monster"])
+
+    def test_upload_without_a_sound_keeps_the_picked_take_sound(self):
+        self._rack_room()
+        self._put_chain(self.take["take_id"], PRESET["warm"])
+        second = self._upload("t1000", speech_like(seed=2, duration=2.0, lead=0.3))
+        self.assertEqual(second["chain"], PRESET["warm"])
+
+    def test_upload_with_an_unreadable_sound_is_refused(self):
+        room = self._rack_room()
+        before = len(room.takes["t1000"]["takes"])
+        for bad in ("not json", "[1, 2]", "42"):
+            res = self.client.post(f"/api/rooms/{self.ROOM}/lines/t1000/takes",
+                                   files={"file": ("take.wav", b"RIFF", "audio/wav")},
+                                   data={"user_id": "hostT", "chain": bad})
+            self.assertEqual(res.status_code, 400, bad)
+            self.assertEqual(res.json()["detail"], "That sound couldn't be read.")
+        self.assertEqual(len(room.takes["t1000"]["takes"]), before)
+
     def test_take_levelled_without_effects_is_matched_before_export(self):
         room = self._room()
         with mock.patch.object(vocal_chain, "available", return_value=False):

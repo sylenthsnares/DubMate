@@ -205,8 +205,11 @@ export function initTooltips(root = document) {
   if (typeof MutationObserver !== 'undefined') {
     new MutationObserver((records) => {
       for (const r of records) {
-        if (r.type === 'attributes') describe(r.target);
-        else r.addedNodes.forEach(scan);
+        if (r.type === 'attributes') {
+          describe(r.target);
+          // A control whose tip follows its state (the record button) updates the open tip.
+          if (r.target === current) show(current);
+        } else r.addedNodes.forEach(scan);
       }
     }).observe(root.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-tip'] });
   }

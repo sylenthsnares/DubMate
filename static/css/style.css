@@ -151,6 +151,17 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3e3328;
 }
+/* Firefox draws no ::-webkit-scrollbar, so the sideways strips (the line chips, the cast)
+   get the same thin bar and colours there. Only there: in Chromium/WebView2 a
+   scrollbar-width or scrollbar-color on an element switches the rules above off and
+   brings back the default grey bar. */
+@supports not selector(::-webkit-scrollbar) {
+  .timeline-chips-box,
+  .cast-activity-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-raised) var(--background-darker);
+  }
+}
 
 /* Global Film Grain Overlay (3.8% soft-light, GPU composited) */
 body::after {
@@ -693,7 +704,6 @@ body::after {
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 1px;
-  scrollbar-width: thin;
 }
 
 .actor-hud-chip {
@@ -2127,7 +2137,8 @@ body::after {
   }
 }
 
-@media (max-width: 980px) {
+/* Two columns down to the 960px desktop minimum; stacked only on narrower screens. */
+@media (max-width: 900px) {
   .booth-layout {
     grid-template-columns: 1fr;
   }
@@ -2181,6 +2192,37 @@ body.resizing .video-container {
   aspect-ratio: 16 / 9;
   object-fit: contain;
   display: block;
+}
+
+/* While recording: "● REC · 0.6 s left" in the video's top-left corner */
+.rec-tally {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(12, 10, 9, 0.82);
+  border: 1px solid var(--accent-red-bright);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.rec-tally[hidden] {
+  display: none;
+}
+.rec-tally-dot {
+  color: var(--accent-red-bright);
+  animation: rec-tally-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-tally-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-tally-dot { animation: none; }
 }
 
 .video-overlay {
@@ -2342,20 +2384,11 @@ body.resizing .resize-grip-pill {
   letter-spacing: 0.3px;
 }
 
-.legend-offset-pill {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 800;
-  padding: 1px 6px;
-  background: var(--input);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-sm);
-  color: var(--primary);
-}
-
+/* Two lanes of at least 32px plus the time axis */
 .waveform-canvas-box {
   width: 100%;
   height: 96px;
+  min-height: 82px;
   background-color: #0c0907;
   background-image: radial-gradient(ellipse at 50% 50%, rgba(217, 119, 6, 0.05) 0%, transparent 80%);
   border: 1px solid #3d2b1f;
@@ -2418,11 +2451,16 @@ body.resizing .resize-grip-pill {
   background: var(--secondary);
   color: var(--primary);
 }
+/* "Reset to auto" looks active only while the take sits at its automatic timing */
 .btn-nudge-reset {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+}
+.btn-nudge-reset.is-active {
   background: var(--secondary);
   border-color: var(--primary);
   color: var(--primary);
-  font-weight: 800;
 }
 
 .nudge-slider {
@@ -2443,7 +2481,8 @@ body.resizing .resize-grip-pill {
 }
 
 /* "Lined up automatically": a quiet note by the readout, not a badge */
-.timing-caption {
+.timing-caption,
+.timing-drag-hint {
   font-size: 12px;
   color: var(--foreground-muted);
   white-space: nowrap;
@@ -2464,7 +2503,6 @@ body.resizing .resize-grip-pill {
   background-color: var(--panel-deep);
   border: 1px solid rgba(204, 164, 88, 0.35);
   border-radius: var(--radius-lg);
-  scrollbar-width: thin;
   box-shadow: 0 0 14px rgba(204, 164, 88, 0.15), 0 4px 12px rgba(0, 0, 0, 0.6);
 }
 
@@ -2505,26 +2543,55 @@ body.resizing .resize-grip-pill {
   border-color: var(--accent-teal);
   color: var(--foreground);
 }
-.chip-item.done::after {
-  content: '✓';
+.chip-tick {
   font-size: 11px;
   color: var(--accent-teal);
   font-weight: 900;
+}
+.chip-count {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+/* The line whose take is saving */
+.chip-item.is-saving {
+  border-style: dashed;
+  border-color: var(--primary);
+}
+.chip-saving {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
 }
 
 /* ------------------------------------------------------------- */
 /* RIGHT COLUMN: VINTAGE HARDWARE CONSOLE RACK                   */
 /* ------------------------------------------------------------- */
 
+/* One stacked column: the record deck (pinned), a scrolling middle (Takes, Voice,
+   Monitor), and the line navigation (pinned). */
 .booth-controls {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 10px;
   min-height: 0;
   height: 100%;
   overflow: hidden;
   position: relative;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.booth-column-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.booth-column-scroll > * {
+  flex-shrink: 0;
 }
 
 .booth-controls .panel-header-sm {
@@ -2537,236 +2604,18 @@ body.resizing .resize-grip-pill {
   letter-spacing: 0.6px;
 }
 
-/* Deck 1: Studio Monitoring & Headphone Deck (Rich Vintage Console) */
-.control-card {
-  padding: 0;
-  overflow: hidden;
-  flex: 1.15 1 0;
-  min-height: 170px;
+/* Row 1: the record deck */
+.record-deck-body {
+  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.lamp-indicator-gold {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--accent-brass);
-  background: rgba(204, 164, 88, 0.15);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(204, 164, 88, 0.35);
-  box-shadow: 0 0 8px rgba(204, 164, 88, 0.2);
-  letter-spacing: 0.5px;
-}
-
-/* Iconic VOX Brown Diamond Grille Cloth (shared by the monitoring deck and the Voice panel) */
-.monitoring-deck-grid,
-.voice-main {
-  background-color: var(--panel-deep);
-  background-image:
-    radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.14) 0%, transparent 75%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'%3E%3Cpath d='M12 0 L24 18 L12 36 L0 18 Z' fill='%2316120e' stroke='%232e2218' stroke-width='1'/%3E%3Cpath d='M12 4 L20 18 L12 32 L4 18 Z' fill='none' stroke='%23cca458' stroke-width='0.6' stroke-opacity='0.22' stroke-dasharray='2,2'/%3E%3Cline x1='12' y1='0' x2='12' y2='36' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3Cline x1='0' y1='18' x2='24' y2='18' stroke='%23cca458' stroke-width='0.5' stroke-opacity='0.12'/%3E%3C/svg%3E");
-  background-size: auto, 24px 36px;
-}
-
-/* 3-Column Balanced Amp Section: Backing Dial | Click Rocker | Guide Rocker */
-.monitoring-deck-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  align-items: center;
-  justify-items: center;
-  padding: 10px 8px 12px;
-  flex: 1 1 auto;
-  gap: 4px;
-}
-
-/* Analog Rocker Switch Channel Column */
-.analog-rocker-channel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-  z-index: 3;
-}
-
-.analog-rocker-unit {
-  cursor: pointer;
-  user-select: none;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-}
-
-.analog-rocker-input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* Recessed Outer Bezel */
-.analog-rocker-housing {
-  width: 32px;
-  height: 48px;
-  background: #080605;
-  border: 1.5px solid #4a3826;
-  border-radius: 4px;
-  padding: 2px;
-  box-shadow:
-    inset 0 2px 5px rgba(0, 0, 0, 0.9),
-    0 1px 0 rgba(255, 235, 175, 0.15),
-    0 2px 4px rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  perspective: 200px;
-}
-
-/* 3D Tactile Rocker Paddle */
-.rocker-paddle {
-  width: 100%;
-  height: 100%;
-  border-radius: 2px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 0;
-  background: linear-gradient(180deg, #181410 0%, #241d17 50%, #332920 100%);
-  box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.8), 0 1px 3px rgba(0, 0, 0, 0.7);
-  transform: rotateX(12deg);
-  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease, box-shadow 0.15s ease;
-  position: relative;
-}
-
-.rocker-divider {
-  width: 75%;
-  height: 2px;
-  background: #0d0a08;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  margin: 1px 0;
-}
-
-.rocker-symbol {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: 0.5px;
-  transition: all 0.15s ease;
-}
-
-.rocker-i {
-  color: #4a3e35;
-  transform: translateY(1px);
-}
-
-.rocker-o {
-  color: #e2d8ce;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-  transform: translateY(-1px);
-}
-
-/* WHEN SWITCH IS ACTIVE (CHECKED = I PRESSED) */
-.analog-rocker-input:checked + .analog-rocker-housing .rocker-paddle,
-.analog-rocker-unit:has(.analog-rocker-input:checked) .rocker-paddle {
-  transform: rotateX(-12deg);
-  background: linear-gradient(180deg, #3d2b16 0%, #20160b 50%, #100b06 100%);
-  box-shadow:
-    inset 0 3px 6px rgba(245, 158, 11, 0.4),
-    0 -1px 3px rgba(0, 0, 0, 0.8),
-    0 0 12px rgba(245, 158, 11, 0.2);
-}
-
-.analog-rocker-input:checked + .analog-rocker-housing .rocker-i,
-.analog-rocker-unit:has(.analog-rocker-input:checked) .rocker-i {
-  color: #fef08a;
-  text-shadow: 0 0 6px var(--primary-hover), 0 0 12px rgba(245, 158, 11, 0.9);
-}
-
-.analog-rocker-input:checked + .analog-rocker-housing .rocker-o,
-.analog-rocker-unit:has(.analog-rocker-input:checked) .rocker-o {
-  color: #4a3e35;
-  text-shadow: none;
-}
-
-.rocker-status-tag {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--accent-brass);
-  background: #0f0c09;
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-panel);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
-  letter-spacing: 0.5px;
-}
-
-.control-card .ab-switch-box {
-  padding: 6px 12px 8px;
-  background-color: var(--input);
-  border-top: 1px solid #7a5c1e; /* Gold piping divider */
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
-  flex-shrink: 0;
-}
-
-.btn-ab {
-  width: 100%;
-  height: 28px;
-  background: linear-gradient(180deg, var(--secondary) 0%, var(--panel-shade) 100%);
-  border: 1px solid #8c6a28;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  color: var(--foreground);
-  transition: all var(--duration-fast);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-}
-.btn-ab:hover {
-  background: linear-gradient(180deg, var(--secondary-hover) 0%, #1e1914 100%);
-  border-color: var(--border-gold);
-  color: var(--white);
-  box-shadow: 0 0 12px rgba(204, 164, 88, 0.35);
-}
-
-/* Deck 2: Master Hardware Record Console (Broadcast Deck Surface) */
-.record-btn-container {
-  padding: 12px 16px 14px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  flex: 1.25 1 0;
-  min-height: 185px;
-  background: linear-gradient(180deg, #1b1713 0%, var(--panel-deep) 50%, #0d0a08 100%);
-  border: 1.5px solid rgba(204, 164, 88, 0.42);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    0 10px 28px -4px rgba(0, 0, 0, 0.95),
-    0 0 16px rgba(204, 164, 88, 0.15),
-    inset 0 1px 0 rgba(255, 235, 175, 0.25),
-    inset 0 0 20px rgba(0, 0, 0, 0.8);
-  position: relative;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.record-console-header {
+.record-deck-main {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 2px 4px 6px;
-  border-bottom: 1px solid rgba(204, 164, 88, 0.18);
+  gap: 14px;
 }
 
 .record-track-tag {
@@ -2792,11 +2641,23 @@ body.resizing .resize-grip-pill {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
+  letter-spacing: 0.6px;
   color: var(--accent-brass);
   background: rgba(204, 164, 88, 0.12);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(204, 164, 88, 0.3);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(204, 164, 88, 0.4);
+  text-shadow: none;
+}
+.record-mode-badge.is-rec {
+  color: var(--white);
+  background: var(--accent-red);
+  border-color: var(--accent-red-bright);
+}
+.record-mode-badge.is-warn {
+  color: var(--accent-red-soft);
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.5);
 }
 
 .record-bezel-wrapper {
@@ -2804,13 +2665,13 @@ body.resizing .resize-grip-pill {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 0;
+  flex-shrink: 0;
 }
 
 .record-halo-ring {
   position: absolute;
-  width: 86px;
-  height: 86px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(239, 68, 68, 0.18) 0%, transparent 70%);
   pointer-events: none;
@@ -2823,8 +2684,8 @@ body.resizing .resize-grip-pill {
 }
 
 .btn-big-record {
-  width: 68px;
-  height: 68px;
+  width: 62px;
+  height: 62px;
   border-radius: 50%;
   background: radial-gradient(circle at 38% 32%, #ff4d4d 0%, var(--accent-red) 50%, #881313 100%);
   border: 4px solid #33261c;
@@ -2834,7 +2695,7 @@ body.resizing .resize-grip-pill {
     inset 0 2px 6px rgba(255, 255, 255, 0.55),
     inset 0 -3px 6px rgba(0, 0, 0, 0.6);
   color: var(--white);
-  font-size: 24px;
+  font-size: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2862,145 +2723,364 @@ body.resizing .resize-grip-pill {
   50% { box-shadow: 0 0 24px rgba(220, 38, 38, 0.9); }
 }
 
-.record-status-label {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--accent-brass);
-  text-align: center;
-  letter-spacing: 0.8px;
-  padding: 4px 10px;
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(204, 164, 88, 0.25);
-  width: 100%;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8);
-}
-
-/* Take history under the record status: a popover, so opening it doesn't squeeze the booth */
-.take-history {
-  position: relative;
-  align-self: stretch;
-  display: flex;
-  justify-content: center;
-}
-.take-history-panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: 20;
+/* What Space does next, beside the button */
+.record-next-action {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 160px;
-  overflow-y: auto;
-  padding: 4px;
-  background: var(--panel-deep);
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-sm);
 }
-.take-history-row {
+.record-status-label {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.record-status-sub {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
+/* "▶ Original | ▶ Take 3": one segmented transport */
+.transport-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--input);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+}
+.transport-seg-btn {
+  height: 34px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.transport-seg-btn + .transport-seg-btn {
+  border-left: 1px solid var(--border-wood);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.transport-seg-btn:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.transport-seg-btn:hover:not(:disabled) {
+  background: var(--secondary-hover);
+}
+.transport-seg-btn[aria-pressed="true"] {
+  background: var(--secondary);
+  color: var(--primary-hover);
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+.transport-seg-btn:disabled {
+  color: var(--foreground-dim);
+  cursor: not-allowed;
+}
+.transport-seg-btn:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+/* The mic-sync advice, under the transport */
+.mic-sync-hint {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 8px 10px;
+  background: var(--input);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+}
+.mic-sync-hint-text {
+  flex: 1 1 100%;
+  font-size: 12px;
+  color: var(--foreground);
+}
+.mic-sync-hint-close {
+  margin-left: auto;
+  font-size: 14px;
+}
+
+/* Row 2: Takes. One row per take, newest first; the green row is in the dub. */
+.takes-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.takes-key-hint {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--foreground-muted);
+}
+.takes-key-hint[hidden] {
+  display: none;
+}
+.record-status-sub kbd,
+.takes-key-hint kbd,
+.take-menu-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground);
+  padding: 0 5px;
+  border: 1px solid var(--border-wood);
+  border-bottom-width: 2px;
   border-radius: var(--radius-sm);
+  background: var(--input);
 }
-.take-history-row.picked {
-  background: var(--border-gold-glow);
+.takes-card-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
-.take-history-label {
+.takes-empty,
+.takes-hint {
+  margin: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.takes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.takes-list:empty {
+  display: none;
+}
+.take-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+  padding: 0 4px 0 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+.take-row:hover {
+  background: var(--secondary);
+}
+.take-row.picked {
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(34, 197, 94, 0.45);
+}
+.take-pick {
   flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.take-pick:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.takes-list[aria-readonly="true"] .take-pick {
+  cursor: default;
+}
+.take-radio {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--foreground-muted);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.take-row.picked .take-radio {
+  border-color: var(--accent-green-bright);
+  background: radial-gradient(circle, var(--accent-green-bright) 0 3.5px, transparent 4px);
+}
+.take-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.take-dur {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.take-by {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+}
+.take-sync {
+  margin-left: auto;
+  white-space: nowrap;
+}
+/* The best-timed take's sync, lightly lifted */
+.take-sync.best {
+  color: var(--accent-brass);
+  font-weight: 700;
+}
+.take-in-dub {
+  font-weight: 700;
+  color: var(--accent-green-light);
+  white-space: nowrap;
+}
+.take-use {
+  flex-shrink: 0;
+}
+.take-more {
+  flex-shrink: 0;
+  min-width: 28px;
+  padding-left: 6px;
+  padding-right: 6px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+.take-more[aria-expanded="true"] {
+  background: var(--secondary);
   color: var(--foreground);
 }
-.take-history-picked {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-brass);
-  white-space: nowrap;
+/* The ⋯ menu: a tray under its row, inside the card */
+.take-menu {
+  flex-basis: 100%;
+  margin: 0 0 6px 32px;
+  padding: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: var(--popover);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
 }
-.take-history-timing {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-muted);
-  white-space: nowrap;
+.take-menu[hidden] {
+  display: none;
 }
-/* The best-timed take's figure, lightly lifted */
-.take-history-timing.best {
-  color: var(--accent-brass);
-  font-weight: 700;
-}
-
-/* A small chevron on the Takes button; it turns up while the history is open */
-.take-history-chevron {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-left: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: translateY(-2px) rotate(45deg);
-  transition: transform 0.15s ease;
-}
-#btn-take-history[aria-expanded="true"] .take-history-chevron {
-  transform: translateY(1px) rotate(-135deg);
-}
-
-/* The open take history hangs over the cards below it */
-.record-btn-container.take-history-open {
-  overflow: visible;
-  z-index: 5;
-}
-
-/* Full-Width Record Console Transport */
-.full-width-transport {
-  display: grid !important;
-  grid-template-columns: 1fr 1fr !important;
-  gap: 8px !important;
-  width: 100% !important;
-  height: 34px !important;
-}
-
-.btn-transport-full {
-  width: 100% !important;
-  height: 100% !important;
-  background: linear-gradient(180deg, var(--panel-raised) 0%, var(--panel-shade) 100%);
-  border: 1px solid #73572c;
+.take-menu-item {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
   border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.take-menu-item:hover,
+.take-menu-item:focus {
+  background: var(--secondary);
+}
+.take-menu-item:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.take-menu-key {
+  color: var(--foreground-muted);
+}
+.take-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* A take saving, or waiting to upload: a dashed row above the takes */
+.take-row.is-pending {
+  min-height: 36px;
+  padding-left: 10px;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  border-style: dashed;
+  border-color: var(--border-wood);
+}
+.take-row.is-pending:hover {
+  background: transparent;
+}
+.take-pending-spin {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(217, 119, 6, 0.3);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.take-pending-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--foreground);
+}
+.take-row.is-deleted {
+  min-height: 36px;
+  padding-left: 10px;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  border-style: dashed;
+  border-color: var(--border-wood);
+}
+
+/* Monitor: one row for the backing level, one for the two switches */
+.monitor-strip {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.monitor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.monitor-label {
+  min-width: 56px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.monitor-slider {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.monitor-readout {
+  min-width: 36px;
+  text-align: right;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  color: var(--foreground-ivory);
+  color: var(--foreground);
+}
+.monitor-switches {
+  justify-content: space-between;
+}
+.monitor-switch {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: all var(--duration-fast);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  cursor: pointer;
 }
-.btn-transport-full:hover {
-  background: linear-gradient(180deg, #382e25 0%, #201a14 100%);
-  border-color: var(--border-gold);
-  color: var(--white);
-  box-shadow: 0 0 10px rgba(204, 164, 88, 0.35);
-}
-
-.btn-transport-full.btn-primary {
-  background: linear-gradient(180deg, #9a3412 0%, #7c2d12 50%, #431407 100%);
-  border-color: var(--primary-hover);
-}
-.btn-transport-full.btn-primary:hover {
-  background: linear-gradient(180deg, #c2410c 0%, #9a3412 50%, #571909 100%);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
-}
-
 /* ------------------------------------------------------------- */
 /* ANALOG GUITAR AMP DIALS (VOICE DSP RACK)                      */
 /* ------------------------------------------------------------- */
@@ -3009,10 +3089,8 @@ body.resizing .resize-grip-pill {
   padding: 0;
   overflow: hidden;
   flex: 0 0 auto;
-  min-height: 148px;
   display: flex;
   flex-direction: column;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Universal VOX Amplifier Faceplate Header */
@@ -3020,7 +3098,7 @@ body.resizing .resize-grip-pill {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  padding: 8px 18px 8px 24px !important;
+  padding: 8px 12px !important;
   height: 36px !important;
   background: linear-gradient(180deg,
     #380d17 0%, #240810 45%, #18050a 100%
@@ -3040,60 +3118,13 @@ body.resizing .resize-grip-pill {
   stroke: var(--accent-brass) !important;
   opacity: 0.9 !important;
 }
-.amp-advanced-btn {
-  color: var(--accent-brass) !important;
-  opacity: 0.9;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 2px 6px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(204, 164, 88, 0.3);
-  border-radius: var(--radius-sm);
-  transition: all var(--duration-fast);
-}
-.amp-advanced-btn:hover {
-  background: rgba(204, 164, 88, 0.25) !important;
-  color: var(--white) !important;
-}
-
-/* Polished Hardware Screws on VOX Faceplate */
-.amp-screw {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #e2d2b5 0%, #9e825a 50%, #4a3620 100%);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), inset 0 0 1px rgba(0, 0, 0, 0.6);
-  z-index: 2;
-}
-.amp-screw::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 18%;
-  right: 18%;
-  height: 1.5px;
-  background: rgba(0, 0, 0, 0.65);
-  transform: translateY(-50%);
-  border-radius: 1px;
-}
-.amp-screw-tl { left: 8px; }
-.amp-screw-tr { right: 8px; }
-
-/* Voice panel: preset chips, then Level and the output meter */
+/* Voice card: preset chips, then For and Level */
 .voice-main {
-  padding: 10px 10px 12px;
+  padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-bottom: 1.5px solid var(--panel-edge);
   position: relative;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85);
-  flex-shrink: 0;
 }
 
 .dsp-dial-channel {
@@ -3106,63 +3137,22 @@ body.resizing .resize-grip-pill {
 }
 
 .dsp-channel-title {
-  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 800;
-  color: var(--foreground-ivory); /* VOX vintage ivory screen-print */
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  font-weight: 600;
+  color: var(--foreground-ivory);
+  white-space: nowrap;
 }
 
 .dsp-channel-readout {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
-  color: var(--accent-brass); /* VOX vintage gold */
+  color: var(--foreground-ivory);
   background: #0f0c09;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-panel);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
-}
-
-/* WHEN DSP AMPLIFIER IS EXPANDED TO FILL COMPLETE VERTICAL ROOM DOWN TO BOTTOM BUTTONS */
-.booth-controls.fx-expanded .control-card {
-  flex: 0 0 auto;
-  min-height: 90px;
-}
-.booth-controls.fx-expanded .control-card .monitoring-deck-grid {
-  padding: 6px 8px;
-  gap: 4px;
-}
-.booth-controls.fx-expanded .control-card .ab-switch-box {
-  padding: 4px 10px 6px;
-}
-
-.booth-controls.fx-expanded .record-btn-container {
-  flex: 0 0 auto;
-  min-height: 120px;
-  padding: 8px 12px;
-  gap: 6px;
-}
-.booth-controls.fx-expanded .btn-big-record {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
-}
-.booth-controls.fx-expanded .listen-btn-group {
-  height: 28px;
-}
-
-.booth-controls.fx-expanded .fx-panel {
-  flex: 1 1 0;
-  min-height: 270px;
-}
-
-.booth-controls.fx-expanded .advanced-rack-box {
-  max-height: 100%;
-  flex: 1 1 auto;
 }
 
 /* Studio Ambient Neon Glow on SVG Icons */
@@ -3311,37 +3301,6 @@ svg {
   box-shadow: 0 0 3px rgba(255, 255, 255, 0.8);
 }
 
-/* Advanced Vocal Rack (Matching VOX Amp Cabinet & Gold Piping) */
-.advanced-rack-box {
-  display: none;
-  overflow: hidden;
-  padding: 10px 14px 12px;
-  background-color: #14100d;
-  background-image:
-    radial-gradient(circle at 50% 0%, rgba(204, 164, 88, 0.05) 0%, transparent 60%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2314100d'/%3E%3Cpath d='M0 8 L8 0 L16 8 L8 16 Z' fill='none' stroke='%232b2118' stroke-width='0.6'/%3E%3C/svg%3E");
-  border-top: 1px solid #8c6a28; /* Gold piping divider */
-  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.7);
-}
-.advanced-rack-box.open {
-  display: block;
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.advanced-rack-inner {
-  padding: 10px 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.advanced-rack-box .form-label {
-  color: #e5ded4;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
 .switch-checkbox {
   /* CSS-only custom toggle switch — matches knob aesthetic */
   appearance: none;
@@ -3391,16 +3350,49 @@ svg {
   outline-offset: 2px;
 }
 
-/* Booth Navigation */
+/* Row 3: line navigation, pinned */
 .booth-nav-group {
   display: flex;
   gap: 8px;
-  flex-shrink: 0;
 }
 .booth-nav-group .btn {
-  height: 34px;
-  font-size: 12px;
+  height: 36px;
+  font-size: 13px;
   font-weight: 700;
+}
+.booth-nav-prev {
+  flex: 1;
+}
+.booth-nav-next {
+  flex: 2;
+}
+
+/* Done on the last line with lines left: asked here, not in a toast */
+.booth-done-ask {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1.5px solid rgba(204, 164, 88, 0.42);
+  border-radius: var(--radius-md);
+}
+.booth-done-ask-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.booth-done-ask-actions {
+  display: flex;
+  gap: 8px;
+}
+.booth-done-ask-actions .btn {
+  flex: 1;
+}
+
+#view-booth [hidden] {
+  display: none !important;
 }
 
 /* ------------------------------------------------------------- */
@@ -3782,43 +3774,46 @@ svg {
   }
 }
 
+/* Short windows (1366x768, 1280x720): a smaller record button and tighter column. */
+@media (max-height: 800px) and (min-width: 901px) {
+  .btn-big-record {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+  .record-halo-ring {
+    width: 64px;
+    height: 64px;
+  }
+  .record-deck-body {
+    padding: 8px 12px 10px;
+    gap: 8px;
+  }
+  .booth-controls,
+  .booth-column-scroll {
+    gap: 8px;
+  }
+  .monitor-strip {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+}
+
+/* Below 1400px the drag hint would wrap the timing row onto a second line and take
+   height from the video; the timing slider's tooltip says the same. */
+@media (max-width: 1399px) {
+  .timing-drag-hint {
+    display: none;
+  }
+}
+
 /* Compact Laptop Screens (e.g. 1366x768 / 1280x800 with browser bars) */
 @media (max-height: 720px) and (min-width: 901px) {
   .video-container {
     height: var(--video-h, clamp(130px, 20vh, 180px));
   }
   .waveform-canvas-box {
-    height: 40px;
-  }
-  .btn-big-record {
-    width: 42px;
-    height: 42px;
-  }
-  .record-btn-container {
-    padding: 4px 8px;
-    gap: 4px;
-  }
-}
-
-/* Finished Dialogue State Button Glow */
-.btn-finished-pulse {
-  background: linear-gradient(135deg, var(--accent-teal) 0%, var(--accent-green-deep) 100%) !important;
-  color: var(--white) !important;
-  border-color: rgba(34, 197, 94, 0.4) !important;
-  box-shadow: 0 0 14px rgba(22, 163, 74, 0.45);
-  font-weight: 700 !important;
-  letter-spacing: 0.02em;
-  animation: finishedPulse 2s ease-in-out infinite;
-}
-
-@keyframes finishedPulse {
-  0%, 100% {
-    box-shadow: 0 0 10px rgba(22, 163, 74, 0.4);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 18px rgba(34, 197, 94, 0.7);
-    transform: scale(1.02);
+    height: 82px;
   }
 }
 
@@ -4192,69 +4187,6 @@ svg {
   justify-content: center;
   flex-wrap: wrap;
   animation: studioFadeIn 300ms ease;
-}
-
-/* Booth Voice Take Processing & Lockout Overlay */
-.booth-processing-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 1500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(12, 10, 9, 0.78);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: var(--radius-lg);
-  animation: studioFadeIn 150ms ease forwards;
-  pointer-events: all;
-  user-select: none;
-}
-
-.booth-processing-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  background: linear-gradient(180deg, var(--muted) 0%, var(--panel-shade) 100%);
-  border: 1px solid var(--primary);
-  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.8), 0 0 24px var(--accent-amber-glow);
-  padding: 18px 24px;
-  border-radius: var(--radius-xl);
-  max-width: 420px;
-}
-
-.processing-spinner-ring {
-  width: 32px;
-  height: 32px;
-  border: 3px solid rgba(217, 119, 6, 0.25);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spinSpinner 0.8s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes spinSpinner {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.processing-content {
-  text-align: left;
-}
-
-.processing-title {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--foreground);
-  margin-bottom: 3px;
-}
-
-.processing-sub {
-  font-size: 12px;
-  color: var(--foreground-muted);
-  line-height: 1.35;
 }
 
 /* Interaction Lock Class Utilities */
@@ -5061,6 +4993,16 @@ svg {
   text-align: left;
 }
 
+.go-premiere-card {
+  max-width: 400px;
+  text-align: left;
+}
+.go-premiere-card .modal-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .share-pack-path {
   width: 100%;
   margin-top: 14px;
@@ -5149,58 +5091,215 @@ span.voice-chip {
   cursor: default;
 }
 
-.voice-level-row {
+/* Header: "VOICE" and "All effects › · 4 on"; with the rack open, "‹ Back · VOICE · Custom · 4 on" */
+.voice-card-title {
   display: flex;
   align-items: center;
-  gap: 12px;
-  position: relative;
-  z-index: 3;
+  gap: 8px;
 }
-.voice-level-row .dsp-dial-channel {
-  flex: 0 0 auto;
-  min-width: 96px;
+.voice-all-effects,
+.voice-back {
+  min-height: 28px;
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+  text-shadow: none;
 }
-
-.voice-meter {
-  flex: 1 1 auto;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: #0f0c09;
-  border: 1px solid var(--border-panel);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
+.voice-on-count {
+  color: var(--foreground-muted);
+  font-weight: 500;
 }
-.voice-meter-fill {
-  width: 0;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent-brass) 0%, var(--primary) 85%, #dc2626 100%);
+.voice-page-summary {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--primary);
 }
 
+/* "For" and "Level": a label column, then the control */
+.voice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+.voice-row-label {
+  flex: 0 0 40px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+}
+.voice-scope-select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 30px;
+  padding-left: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background-position: right 10px center;
+}
+.voice-scope-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  background: var(--input);
+}
+.voice-scope-ask-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground);
+}
+.voice-scope-ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.voice-scope-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-teal);
+}
+
+.voice-level-take {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.voice-level-take .btn-auto-match {
+  margin-left: auto;
+}
+.voice-level-matched {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-teal);
+  white-space: nowrap;
+}
+.voice-level-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+}
+
+/* All effects: the column's page, on the plain card surface. An effect that's on shows its
+   dials; one that's off is a single row: switch, name, "off". */
+.voice-rack {
+  display: none;
+  flex-direction: column;
+  background: var(--card);
+  border-top: 1px solid var(--border-wood);
+}
+.voice-rack.open {
+  display: flex;
+}
 .voice-fx {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed rgba(204, 164, 88, 0.25);
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.voice-fx:last-child {
+  border-bottom: none;
 }
 .voice-fx-head {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  align-self: flex-start;
-  font-size: 11.5px;
+  gap: 10px;
+  font-size: 13px;
   font-weight: 600;
-  color: #e5ded4;
+  color: var(--foreground);
   cursor: pointer;
+}
+.voice-fx.is-off .voice-fx-head {
+  color: var(--foreground-muted);
+}
+.voice-fx.is-off .voice-fx-head::after {
+  content: 'off';
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+}
+.voice-fx.is-off .voice-fx-dials,
+.voice-fx.is-off .voice-tone-curve {
+  display: none;
 }
 .voice-fx-dials {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: 6px 8px;
 }
-.voice-fx.is-off .voice-fx-dials,
-.voice-fx.is-off .voice-tone-curve {
-  opacity: 0.55;
+.voice-rack .dsp-channel-readout {
+  padding: 1px 4px;
+}
+/* A 36-40px dial inside a 44px hit area */
+.voice-rack .analog-dial-wrapper,
+.voice-level-take .analog-dial-wrapper {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+.voice-rack .switch-checkbox {
+  width: 40px;
+  height: 22px;
+}
+.voice-rack .switch-checkbox::before {
+  width: 16px;
+  height: 16px;
+}
+.voice-rack .switch-checkbox:checked::before {
+  transform: translateX(18px);
+}
+
+/* With the rack open the column is the voice page: Takes, Monitor and the presets hide,
+   and the record deck shrinks to one row (Space still records). */
+.booth-controls.rack-open #card-takes,
+.booth-controls.rack-open #card-studio-monitoring,
+.booth-controls.rack-open .mic-sync-hint,
+.booth-controls.rack-open .voice-presets,
+.booth-controls.rack-open #btn-play-orig {
+  display: none;
+}
+.booth-controls.rack-open .record-deck-body {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+}
+.booth-controls.rack-open .record-deck-main {
+  flex: 1;
+  min-width: 0;
+  gap: 10px;
+}
+.booth-controls.rack-open .btn-big-record {
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+  border-width: 3px;
+}
+.booth-controls.rack-open .record-halo-ring {
+  width: 52px;
+  height: 52px;
+}
+.booth-controls.rack-open .record-status-label {
+  font-size: 13px;
+}
+.booth-controls.rack-open .transport-seg {
+  display: flex;
+  flex: 0 0 auto;
+}
+.booth-controls.rack-open #btn-preview-take {
+  border-left: none;
+  border-radius: var(--radius-md);
+  padding: 0 12px;
 }
 
 .voice-tone-curve {
@@ -5212,24 +5311,17 @@ span.voice-chip {
   border-radius: var(--radius-sm);
 }
 
-.voice-apply-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 /* Under reduced motion the dot stays still (the media query below also stops it). */
 .voice-status-dot.is-still {
   animation: none;
 }
 
 /* Reduced motion: the looping pulses stop. What they signal stays visible
-   through colour, ring and text (the red record button, the halo, the Finish
-   glow, the connection dot, the export reel and its ring). */
+   through colour, ring and text (the red record button, the halo, the connection
+   dot, the export reel and its ring). */
 @media (prefers-reduced-motion: reduce) {
   .record-halo-ring,
   .btn-big-record.recording,
-  .btn-finished-pulse,
   .connection-dot,
   .reel-core,
   .reel-pulse-ring {

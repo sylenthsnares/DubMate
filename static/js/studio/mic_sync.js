@@ -140,15 +140,23 @@ export class MicSyncMethods {
 
   // The toast after a take saves: once per unsynced pair per tab session, and only on
   // the host's computer (a guest's sync is lost whenever the host restarts DubMate).
-  takeSavedMessage() {
-    const plain = 'Take saved';
-    if (!this.isEngineLocal() || this.currentLatencyMs() !== null) return plain;
+  shouldOfferMicSync() {
+    if (!this.isEngineLocal() || this.currentLatencyMs() !== null) return false;
     const asked = MIC_SYNC_ASKED_KEY + this.currentDevicePairKey();
     if (!this.micSyncAsked) this.micSyncAsked = new Set();
-    if (this.micSyncAsked.has(asked) || safeStorageGet(webStorage('sessionStorage'), asked) === '1') return plain;
+    if (this.micSyncAsked.has(asked) || safeStorageGet(webStorage('sessionStorage'), asked) === '1') return false;
     this.micSyncAsked.add(asked);
     safeStorageSet(webStorage('sessionStorage'), asked, '1');
-    return 'Take saved. Sync your mic in Audio settings so takes line up on their own.';
+    return true;
+  }
+
+  /** The booth's inline mic-sync advice under the transport ("Audio settings" or ×). */
+  showMicSyncHint() {
+    if (this.micSyncHint) this.micSyncHint.hidden = false;
+  }
+
+  hideMicSyncHint() {
+    if (this.micSyncHint) this.micSyncHint.hidden = true;
   }
 
   // --- Timing row in Audio settings ---

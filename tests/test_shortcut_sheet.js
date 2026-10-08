@@ -113,6 +113,11 @@ const NAMED = {
   Esc: { key: "Escape", code: "Escape" },
   Space: { key: " ", code: "Space" },
   "←": { key: "ArrowLeft", code: "ArrowLeft" },
+  "↑": { key: "ArrowUp", code: "ArrowUp" },
+  "↓": { key: "ArrowDown", code: "ArrowDown" },
+  Enter: { key: "Enter", code: "Enter" },
+  ",": { key: ",", code: "Comma" },
+  ".": { key: ".", code: "Period" },
   "→": { key: "ArrowRight", code: "ArrowRight" },
   Delete: { key: "Delete", code: "Delete" },
   Backspace: { key: "Backspace", code: "Backspace" },
@@ -193,6 +198,67 @@ const VERIFY = {
   "rec-nudge": (env, combo) => nudgeBy(env, combo, -25),
   "rec-nudge-later": (env, combo) => nudgeBy(env, combo, 25),
   "rec-nudge-big": (env, combo, i) => nudgeBy(env, combo, i === 0 ? -100 : 100),
+  "rec-switch": (env, combo) => {
+    showView(env, "booth");
+    blur(env);
+    const calls = spy(env.app, "switchTransportSide");
+    press(env, eventInit(combo));
+    return calls.length === 1;
+  },
+  "line-prev": (env, combo) => {
+    showView(env, "booth");
+    blur(env);
+    const calls = spy(env.app, "stepLine");
+    press(env, eventInit(combo));
+    return calls.length === 1 && calls[0][0] === -1;
+  },
+  "line-next": (env, combo) => {
+    showView(env, "booth");
+    blur(env);
+    const calls = spy(env.app, "stepLine");
+    press(env, eventInit(combo));
+    return calls.length === 1 && calls[0][0] === 1;
+  },
+  "takes-focus": (env, combo) => {
+    takesOnScreen(env);
+    blur(env);
+    press(env, eventInit(combo));
+    return env.doc.activeElement === takeRadio(env, "b2");
+  },
+  "takes-move": (env, combo, i) => {
+    takesOnScreen(env);
+    takeRadio(env, i === 0 ? "a1" : "b2").focus();
+    press(env, eventInit(combo));
+    return env.doc.activeElement === takeRadio(env, i === 0 ? "b2" : "a1");
+  },
+  "takes-play": (env, combo) => {
+    takesOnScreen(env);
+    takeRadio(env, "a1").focus();
+    const calls = spy(env.app, "playHistoryTake");
+    press(env, eventInit(combo));
+    return calls.length === 1 && calls[0][0].take_id === "a1";
+  },
+  "takes-use": (env, combo) => {
+    takesOnScreen(env);
+    takeRadio(env, "a1").focus();
+    const calls = spy(env.app, "pickTake");
+    press(env, eventInit(combo));
+    return calls.length === 1 && calls[0][0].take_id === "a1";
+  },
+  "takes-delete": (env, combo) => {
+    takesOnScreen(env);
+    takeRadio(env, "a1").focus();
+    const calls = spy(env.app, "deleteTake");
+    press(env, eventInit(combo));
+    return calls.length === 1 && calls[0][0].take_id === "a1";
+  },
+  "rack-toggle": (env, combo) => {
+    showView(env, "booth");
+    blur(env);
+    const calls = spy(env.app, "toggleAllEffects");
+    press(env, eventInit(combo));
+    return calls.length === 1;
+  },
   "watch-play": (env, combo) => {
     showView(env, "screening");
     blur(env);
@@ -241,6 +307,21 @@ const VERIFY = {
   },
 };
 
+/** The booth with two takes on line 1 in the Takes card, newest (b2, in the dub) first. */
+function takesOnScreen(env) {
+  showView(env, "booth");
+  const app = env.app;
+  const take = (id, number) => ({ take_id: id, number, user_id: app.user.id, duration: 0.8, url: `/t/${id}` });
+  app.roomState = { state_version: 3, room_id: "R", host_id: app.user.id, users: {}, role_assignments: {},
+    pack: { lines: [{ line_id: "t1", index: 0, character: "Ana", start: 0, end: 1, duration: 1 }] },
+    takes: { t1: { picked: "b2", next_number: 3, takes: [take("a1", 1), take("b2", 2)] } } };
+  app.currentLineIndex = 0;
+  app.renderTakesCard();
+}
+
+const takeRadio = (env, id) => [...env.doc.querySelectorAll("#takes-list .take-row")]
+  .find((r) => r.dataset.takeId === id)?.querySelector('[role="radio"]');
+
 function nudgeBy(env, combo, delta) {
   showView(env, "booth");
   blur(env);
@@ -267,7 +348,7 @@ async function verifyItems(env, groups) {
       if (!run) fail(`shortcut "${item.id}" has no entry in the VERIFY table`);
       item.keys.forEach((combo, i) => {
         // ASCII only: the test runner reads output in the console code page.
-        const name = combo.map((k) => ({ "←": "Left", "→": "Right" }[k] || k)).join("+");
+        const name = combo.map((k) => ({ "←": "Left", "→": "Right", "↑": "Up", "↓": "Down" }[k] || k)).join("+");
         check(run(env, combo, i) === true, `${env.page}: ${name} does "${item.label}" (${item.id})`);
       });
     }

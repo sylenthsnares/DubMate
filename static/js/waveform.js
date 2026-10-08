@@ -9,6 +9,16 @@ export class WaveformRenderer {
     this.offsetMs = 0;
     this.playheadProgress = null;
     this.totalDuration = 3.0;
+    // Where the line ends (s): the "end" mark, and the tail after it hatched.
+    this.lineEnd = null;
+    // While recording: [[progress 0-1, level 0-1], ...] drawn in the take lane instead of a take.
+    this.liveTrace = null;
+    // "Saving…" over the take lane while that line's take saves.
+    this.takeLaneNote = null;
+    // The take lane is dimmed while the room is offline.
+    this.takeLaneDimmed = false;
+    // What the empty take lane says; the booth drops "Press Space" on lines you can't record.
+    this.emptyTakeText = 'No takes yet. Press Space to record.';
     this._rafId = null;
 
     // Callbacks
@@ -58,7 +68,8 @@ export class WaveformRenderer {
     };
 
     const startDrag = (e) => {
-      if (!this.takePeaks || this.takePeaks.length === 0) return;
+      // A take lane with a note ("Saving…") is locked: its line's take is saving.
+      if (!this.takePeaks || this.takePeaks.length === 0 || this.takeLaneNote) return;
       this.isDragging = true;
       this.dragStartX = getCanvasX(e);
       this.dragStartOffset = this.offsetMs;
@@ -131,11 +142,12 @@ export class WaveformRenderer {
     });
   }
 
-  setData({ origPeaks = null, takePeaks = null, offsetMs = null, totalDuration = null } = {}) {
+  setData({ origPeaks = null, takePeaks = null, offsetMs = null, totalDuration = null, lineEnd = null } = {}) {
     if (origPeaks !== null && origPeaks !== undefined) this.origPeaks = origPeaks;
     if (takePeaks !== null && takePeaks !== undefined) this.takePeaks = takePeaks;
     if (offsetMs !== null && offsetMs !== undefined) this.offsetMs = offsetMs;
     if (totalDuration !== null && totalDuration !== undefined) this.totalDuration = Math.max(0.5, totalDuration);
+    if (lineEnd !== null && lineEnd !== undefined) this.lineEnd = lineEnd;
     if (this.canvas) {
       this.canvas.style.cursor = (this.takePeaks && this.takePeaks.length > 0) ? 'grab' : 'default';
     }
@@ -148,6 +160,36 @@ export class WaveformRenderer {
     } else {
       this.playheadProgress = Math.max(0, Math.min(1.0, progress));
     }
+    this.requestRender();
+  }
+
+  /** The live input trace: start it empty, push the mic level each frame, end it. */
+  startLiveTrace() {
+    this.liveTrace = [];
+    this.requestRender();
+  }
+
+  pushLiveLevel(progress, level) {
+    if (!this.liveTrace) return;
+    this.liveTrace.push([Math.max(0, Math.min(1, progress)), Math.max(0, Math.min(1, level || 0))]);
+    this.requestRender();
+  }
+
+  endLiveTrace() {
+    if (!this.liveTrace) return;
+    this.liveTrace = null;
+    this.requestRender();
+  }
+
+  setTakeLaneNote(note) {
+    if ((note || null) === this.takeLaneNote) return;
+    this.takeLaneNote = note || null;
+    this.requestRender();
+  }
+
+  setTakeLaneDimmed(dimmed) {
+    if (!!dimmed === this.takeLaneDimmed) return;
+    this.takeLaneDimmed = !!dimmed;
     this.requestRender();
   }
 
@@ -247,7 +289,7 @@ export class WaveformRenderer {
     ctx.strokeStyle = 'rgba(244, 237, 228, 0.05)';
     ctx.lineWidth = 1;
     ctx.fillStyle = 'rgba(168, 159, 149, 0.6)';
-    ctx.font = '600 9px "JetBrains Mono", monospace';
+    ctx.font = '600 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
 
     const tickInterval = this.totalDuration > 6.0 ? 1.0 : (this.totalDuration > 3.0 ? 0.5 : 0.25);
@@ -350,7 +392,7 @@ export class WaveformRenderer {
       ctx.stroke();
     } else {
       ctx.fillStyle = 'rgba(168, 159, 149, 0.4)';
-      ctx.font = '500 10.5px "Plus Jakarta Sans", sans-serif';
+      ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText('Loading original…', 110, lane1MidY + 3);
     }
@@ -359,7 +401,15 @@ export class WaveformRenderer {
     // 6. Render Track 2: User Recorded Take (Bottom Lane)
     // -------------------------------------------------------------
     const hasTake = this.takePeaks && this.takePeaks.length > 0;
-    if (hasTake) {
+    if (this.liveTrace) {
+      // Recording: the mic's level as it comes in, from the lane's left edge.
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+      const barW = Math.max(1.5, w / 240);
+      for (const [progress, level] of this.liveTrace) {
+        const amp = Math.max(1, Math.min(1, level * 1.6) * lane2Amp);
+        ctx.fillRect(progress * w - barW / 2, lane2MidY - amp, barW, amp * 2);
+      }
+    } else if (hasTake) {
       const offsetFraction = (this.offsetMs / 1000.0) / this.totalDuration;
       const pixelOffset = offsetFraction * w;
 
@@ -425,12 +475,63 @@ export class WaveformRenderer {
       ctx.lineTo(pixelOffset + 0.5, lane2Bottom);
       ctx.stroke();
       ctx.setLineDash([]);
-    } else {
+    } else if (!this.takeLaneNote) {
       // Empty Take Placeholder in Lane 2
       ctx.fillStyle = 'rgba(168, 159, 149, 0.5)';
       ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('No take yet. Press Space to record.', 110, lane2MidY + 3);
+      ctx.fillText(this.emptyTakeText, 110, lane2MidY + 3);
+    }
+
+    // The line's end, and the tail recorded after it (hatched), on every take.
+    if (this.lineEnd !== null && this.lineEnd > 0 && this.lineEnd < this.totalDuration) {
+      const endX = Math.round((this.lineEnd / this.totalDuration) * w) + 0.5;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(endX, 0, w - endX, tracksTotalHeight);
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(244, 237, 228, 0.07)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = endX - tracksTotalHeight; x < w; x += 7) {
+        ctx.moveTo(x, tracksTotalHeight);
+        ctx.lineTo(x + tracksTotalHeight, 0);
+      }
+      ctx.stroke();
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(244, 237, 228, 0.45)';
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(endX, 0);
+      ctx.lineTo(endX, tracksTotalHeight);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(244, 237, 228, 0.7)';
+      ctx.font = '600 11px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('end', endX + 4, 4);
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // Offline: the take lane is dimmed (takes wait to upload).
+    if (this.takeLaneDimmed) {
+      ctx.fillStyle = 'rgba(12, 10, 9, 0.6)';
+      ctx.fillRect(0, lane2Top, w, lane2Bottom - lane2Top);
+    }
+
+    // "Saving…" over the take lane while this line's take saves.
+    if (this.takeLaneNote) {
+      ctx.font = '600 12px "Plus Jakarta Sans", sans-serif';
+      const noteW = ctx.measureText(this.takeLaneNote).width + 20;
+      const noteX = Math.max(100, (w - noteW) / 2);
+      ctx.fillStyle = 'rgba(20, 17, 14, 0.9)';
+      ctx.fillRect(noteX, lane2MidY - 11, noteW, 22);
+      ctx.fillStyle = '#f4ede4';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(this.takeLaneNote, noteX + 10, lane2MidY);
+      ctx.textBaseline = 'alphabetic';
     }
 
     // -------------------------------------------------------------
@@ -450,7 +551,7 @@ export class WaveformRenderer {
       ctx.strokeRect(6, lane1Top + 4, 88, 18);
     }
     ctx.fillStyle = '#cca458';
-    ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('ORIGINAL', 50, lane1Top + 13);
@@ -469,7 +570,7 @@ export class WaveformRenderer {
       ctx.strokeRect(6, lane2Top + 4, 88, 18);
     }
     ctx.fillStyle = hasTake ? '#f59e0b' : 'rgba(168, 159, 149, 0.6)';
-    ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('YOUR TAKE', 50, lane2Top + 13);
@@ -489,53 +590,6 @@ export class WaveformRenderer {
         ctx.stroke();
         ctx.setLineDash([]);
       }
-    }
-
-    // -------------------------------------------------------------
-    // 9. Dragging Delta HUD Overlay Badge
-    // -------------------------------------------------------------
-    if (this.isDragging || Math.abs(this.offsetMs) > 1) {
-      const offsetFraction = (this.offsetMs / 1000.0) / this.totalDuration;
-      const pixelOffset = offsetFraction * w;
-      const badgeX = Math.max(90, Math.min(w - 90, pixelOffset + w / 2));
-      const badgeY = lane2Top + 13;
-      const sign = this.offsetMs > 0 ? '+' : '';
-      const text = `OFFSET: ${sign}${this.offsetMs} ms (${(this.offsetMs / 1000).toFixed(2)}s)`;
-
-      ctx.fillStyle = this.isDragging ? 'rgba(217, 119, 6, 0.95)' : 'rgba(35, 28, 22, 0.92)';
-      ctx.strokeStyle = this.isDragging ? '#f59e0b' : 'rgba(217, 119, 6, 0.4)';
-      ctx.lineWidth = 1;
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-      ctx.shadowBlur = 8;
-
-      const badgeW = 148;
-      const badgeH = 22;
-      ctx.beginPath();
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH, 5);
-      } else {
-        ctx.rect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH);
-      }
-      ctx.fill();
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, badgeX, badgeY);
-    }
-
-    // -------------------------------------------------------------
-    // 10. Drag-to-Sync Hint (Top Right)
-    // -------------------------------------------------------------
-    if (hasTake && !this.isDragging) {
-      ctx.fillStyle = 'rgba(217, 119, 6, 0.85)';
-      ctx.font = '600 9.5px "Plus Jakarta Sans", sans-serif';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('Drag or press [ ] to adjust timing', w - 10, lane2Top + 13);
     }
 
     // -------------------------------------------------------------

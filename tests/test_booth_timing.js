@@ -3,7 +3,7 @@
  *
  * Automatic timing in the booth (static/js/studio/booth.js): the "Lined up
  * automatically" caption by the timing readout until the take is nudged, the fitted
- * caption and Original speed, the Auto reset, "Timing N%" in the Takes panel, and a
+ * caption and Original speed, the Auto reset, sync in words in the Takes card, and a
  * fitted take never previewing the local recording, and guide_voice following the
  * checkbox as it was when the take started recording. Socket and fetch are stubbed.
  */
@@ -21,7 +21,7 @@ const { JSDOM, VirtualConsole } = jsdom;
 const LINED_UP = "Lined up automatically";
 const FITTED = "Lined up and fitted to the line";
 const CAPTION_TIP = "DubMate matched this take to the original line. Use [ and ] to adjust it.";
-const SCORE_TIP = "How closely this take follows the original line's timing";
+const SCORE_TIP = "how closely this take follows the original line's timing";
 
 function fail(msg) {
   console.error("FAIL: " + msg);
@@ -94,6 +94,7 @@ async function boot() {
   env.sent = [];
   app.showToast = (msg) => env.toasts.push(msg);
   app.user = { id: "u1", name: "Ana" };
+  app.currentView = "booth";
   app.socket.send = () => {};
   app.socket.updateTakeParams = (lineId, takeId, params) => env.sent.push({ lineId, takeId, ...params });
   env.loaded = [];
@@ -125,14 +126,14 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
   const btnSpeed = $(env, "btn-original-speed");
   const auto = env.w.document.querySelector(".btn-nudge-reset");
 
-  // 0. Markup: Auto replaces "0 ms"; caption and Original speed start hidden.
+  // 0. Markup: "Reset to auto" replaces "0 ms"; caption and Original speed start hidden.
   {
-    if (auto.textContent.trim() !== "Auto") fail(`reset label: ${auto.textContent}`);
+    if (auto.textContent.trim() !== "Reset to auto") fail(`reset label: ${auto.textContent}`);
     if (auto.dataset.tip !== "Back to the automatic timing") fail(`reset tip: ${auto.dataset.tip}`);
     if (shown(caption) || shown(btnSpeed)) fail("caption or Original speed shown at boot");
     if (caption.dataset.tip !== CAPTION_TIP) fail(`caption tip: ${caption.dataset.tip}`);
     if (btnSpeed.dataset.tip !== "Play this take at the speed you recorded it") fail(`speed tip: ${btnSpeed.dataset.tip}`);
-    console.log("PASS: the reset button reads Auto; caption and Original speed start hidden");
+    console.log("PASS: the reset button reads Reset to auto; caption and Original speed start hidden");
   }
 
   // 1. An aligned, unnudged take shows the caption; a 25 ms nudge hides it; Auto brings it back.
@@ -182,7 +183,8 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     const put = env.calls.find((c) => c.method === "PUT" && c.url === "/api/rooms/R1/lines/t1000/takes/p1/chain");
     if (!put) fail("pitch change did not save the take's sound");
     const body = JSON.parse(put.body);
-    if (body.user_id !== "u1" || body.chain?.nodes?.pitch?.on !== true || body.chain.nodes.pitch.semitones !== 2) {
+    // The dial sets the shift; it doesn't switch Pitch on (that's its switch's job).
+    if (body.user_id !== "u1" || body.chain?.nodes?.pitch?.on !== false || body.chain.nodes.pitch.semitones !== 2) {
       fail(`pitch change saved ${put.body}`);
     }
     if (env.sent.length !== sentBefore) fail(`pitch change sent timing: ${JSON.stringify(env.sent.slice(sentBefore))}`);
@@ -234,36 +236,36 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     console.log("PASS: fitted caption, Original speed visibility, its POST and its error toast");
   }
 
-  // 6. Takes panel: "Timing 82%" with a tooltip, best highlighted, nothing for null.
+  // 6. Takes card: sync in words with "Timing 82%: …" as the tooltip, the best-timed take
+  //    lifted, "–" for an unmeasured take.
   {
     await showLine(env, [
       mk("h1", 1, { timing_score: 0.64 }),
       mk("h2", 2, { timing_score: 0.82 }),
       mk("h3", 3, { timing_score: null }),
     ], "h3");
-    $(env, "btn-take-history").click();
-    const rows = [...$(env, "take-history-panel").querySelectorAll(".take-history-row")];
-    if (rows.length !== 3) fail(`rows: ${rows.length}`);
-    const scores = rows.map((r) => r.querySelector(".take-history-timing"));
-    if (scores[0]?.textContent !== "Timing 64%" || scores[1]?.textContent !== "Timing 82%") {
+    const syncOf = () => [...$(env, "takes-list").querySelectorAll('[role="radio"]')]
+      .map((r) => r.querySelector(".take-sync"));
+    // Newest first: take 3, 2, 1.
+    const scores = syncOf();
+    if (scores.length !== 3) fail(`rows: ${scores.length}`);
+    if (scores[2]?.textContent !== "Good sync" || scores[1]?.textContent !== "Tight sync") {
       fail(`scores: ${scores.map((s) => s && s.textContent)}`);
     }
-    if (scores[2]) fail("a score shown for an unmeasured take");
-    if (scores[1].dataset.tip !== SCORE_TIP) fail(`score tip: ${scores[1].dataset.tip}`);
-    if (!scores[1].classList.contains("best") || scores[0].classList.contains("best")) fail("best-timed take not highlighted alone");
-    console.log("PASS: Takes panel shows Timing N%, highlights the best, nothing for null");
+    if (scores[0].textContent !== "–") fail(`an unmeasured take: ${scores[0].textContent}`);
+    if (scores[1].dataset.tip !== `Timing 82%: ${SCORE_TIP}`) fail(`score tip: ${scores[1].dataset.tip}`);
+    if (!scores[1].classList.contains("best") || scores[2].classList.contains("best")) fail("best-timed take not highlighted alone");
+    console.log("PASS: Takes card says the sync in words, highlights the best, '–' for null");
 
     await showLine(env, [
       mk("z1", 1, { timing_score: -0.06 }),
       mk("z2", 2, { timing_score: 0 }),
     ], "z2");
-    if (!env.app.takeHistoryOpen) $(env, "btn-take-history").click();
-    const zRows = [...$(env, "take-history-panel").querySelectorAll(".take-history-row")];
-    const zScores = zRows.map((r) => r.querySelector(".take-history-timing"));
-    if (zScores[0]) fail("a negative score shown");
-    if (zScores[1]?.textContent !== "Timing 0%") fail(`zero score: ${zScores[1] && zScores[1].textContent}`);
-    if (zScores[1].classList.contains("best")) fail("a 0% take highlighted as best");
-    console.log("PASS: Takes panel hides negative scores and never highlights 0%");
+    const zScores = syncOf();
+    if (zScores[1].textContent !== "–") fail(`a negative score shown: ${zScores[1].textContent}`);
+    if (zScores[0].textContent !== "Loose sync") fail(`zero score: ${zScores[0].textContent}`);
+    if (zScores[0].classList.contains("best")) fail("a 0% take highlighted as best");
+    console.log("PASS: Takes card hides negative scores and never highlights 0%");
   }
 
   // 7. Upload: a fitted take never reuses the local recording; an unfitted one does.

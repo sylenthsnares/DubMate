@@ -60,10 +60,8 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         for el_id in required_export_ids:
             self.assertIn(f'id="{el_id}"', html, f"Missing element id: {el_id} in index.html")
 
-        # Booth Processing Overlay
-        self.assertIn('id="booth-processing-overlay"', html)
-        self.assertIn('class="booth-processing-card"', html)
-        self.assertIn('class="processing-spinner-ring"', html)
+        # A take saves in the background (UI pass U2): no booth-wide overlay.
+        self.assertNotIn('id="booth-processing-overlay"', html)
 
         # Pack Import Loading Modal
         self.assertIn('id="modal-import-loading"', html)
@@ -87,9 +85,6 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
             ".modal-step-item",
             ".modal-progress-track",
             ".modal-progress-fill",
-            ".booth-processing-overlay",
-            ".booth-processing-card",
-            ".processing-spinner-ring",
             ".ui-interaction-locked",
         ]
         for cls in required_classes:
@@ -101,7 +96,6 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
             "@keyframes studioScaleUp",
             "@keyframes spinFilmReel",
             "@keyframes pulseReelRing",
-            "@keyframes spinSpinner",
         ]
         for kf in keyframes:
             self.assertIn(kf, css, f"Missing keyframe: {kf} in style.css")

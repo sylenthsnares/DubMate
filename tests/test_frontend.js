@@ -282,6 +282,9 @@ try {
         takes: { t1200: { picked: "old1", next_number: 2, takes: [{ ...prevTake }] } }, users: {} });
 
       // Slider still shows the previous take's auto gain: the new take must get its own.
+      // The booth is on that line, so the saved take loads into it.
+      app.currentView = "booth";
+      app.currentLineIndex = 0;
       app.roomState = roomB3();
       app.sliderGain.value = "6";
       await app.uploadTake(0, new dom.window.Blob(["x"]));
@@ -329,7 +332,7 @@ try {
       console.log("PASS: B3 re-takes get their own auto gain and the preview plays the engine's render!");
     }
 
-    // Test 4: Dialogue completion & "I'm Finished" button state
+    // Test 4: the last line's footer reads "Done ›" (the amber primary)
     app.roomState = {
       room_id: "TEST12",
       host_id: app.user.id,
@@ -346,10 +349,10 @@ try {
 
     await app.loadBoothLine(1); // Last line of mockPack
     const lastText = btnNext.textContent || btnNext.innerHTML;
-    if (lastText.includes("Finish ✓") && btnNext.classList.contains("btn-finished-pulse")) {
-      console.log("PASS: Last line correctly transforms to 'Finish ✓'!");
+    if (lastText.trim() === "Done ›" && btnNext.classList.contains("btn-primary")) {
+      console.log("PASS: Last line correctly transforms to 'Done ›'!");
     } else {
-      console.error("FAIL: Last line did not transform to 'Finish ✓':", lastText);
+      console.error("FAIL: Last line did not transform to 'Done ›':", lastText);
       process.exit(1);
     }
 
@@ -596,92 +599,33 @@ try {
       console.log("PASS: a tab from another DubMate version stops applying state and asks for a reload!");
     }
 
-    // Test 8e: take history in the booth. "Takes (N)" shows from the first take on a line
-    // you can record; Escape inside it closes it and returns to the button; rows list takes oldest first; Use picks, delete confirms, Play
-    // plays the engine's render of the take's own sound and leaves the controls alone.
+    // Test 8e: Play this take, from a row's ⋯ menu in the Takes card, plays the engine's
+    // render of the take's own sound at its own timing and level, and leaves the controls
+    // alone. The rest of the card is tests/test_takes_card.js.
     {
       const doc = dom.window.document;
-      const btnTakes = doc.getElementById("btn-take-history");
-      const takesBox = doc.getElementById("take-history");
-      const panel = doc.getElementById("take-history-panel");
       const realFetch = dom.window.fetch;
-      const realConfirm = dom.window.confirm;
       const realToast = app.showToast;
       const realLoad = app.audio.loadAudioBuffer;
       const realPreview = app.audio.previewTakeIsolated;
-      const fail = (msg, ...rest) => { console.error("FAIL: take history:", msg, ...rest); process.exit(1); };
+      const fail = (msg, ...rest) => { console.error("FAIL: take play:", msg, ...rest); process.exit(1); };
       const mk = (id, number, name, extra = {}) => ({ take_id: id, number, user_id: app.user.id, user_name: name,
         duration: 2.41, url: `/api/rooms/TH/lines/t1200/takes/${id}/audio?v=1`,
         offset_ms: 0, pitch_semitones: 0, reverb_wet: 0, gain_db: 0, ...extra });
-      const roomWith = (takes, extra = {}) => ({ state_version: 3, room_id: "TH", host_id: app.user.id,
-        pack: mockPacks[0], users: {}, role_assignments: {}, takes, ...extra });
-      const toasts = [];
-      app.showToast = (m) => toasts.push(m);
+      app.showToast = () => {};
       app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
 
-      const btnLabel = () => btnTakes.textContent.trim();
-      // No takes: no button.
-      app.roomState = roomWith({});
-      await app.loadBoothLine(0);
-      if (takesBox.style.display !== "none") fail("button shown with no takes");
-
-      // One take on your line: "Takes (1)", with a chevron the screen reader skips.
-      const one = () => ({ t1200: { picked: "a1", next_number: 2, takes: [mk("a1", 1, "Ana")] } });
-      app.roomState = roomWith(one());
-      await app.loadBoothLine(0);
-      if (takesBox.style.display === "none" || btnLabel() !== "Takes (1)") fail("button not shown with one take", btnLabel());
-      if (!btnTakes.classList.contains("btn-secondary")) fail("button not in the secondary style", btnTakes.className);
-      if (btnTakes.querySelector(".take-history-chevron")?.getAttribute("aria-hidden") !== "true") fail("chevron missing or read aloud");
-
-      // Escape inside the open history closes it, focuses the button, and leaves an open
-      // settings panel alone.
-      btnTakes.click();
-      if (panel.style.display === "none" || btnTakes.getAttribute("aria-expanded") !== "true") fail("one take: panel did not open");
-      const realSettingsOpen = app.isAudioSettingsOpen;
-      const realCloseSettings = app.closeAudioSettings;
-      let settingsClosed = false;
-      app.isAudioSettingsOpen = () => true;
-      app.closeAudioSettings = () => { settingsClosed = true; };
-      panel.querySelector(".take-history-play").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      app.isAudioSettingsOpen = realSettingsOpen;
-      app.closeAudioSettings = realCloseSettings;
-      if (panel.style.display !== "none" || app.takeHistoryOpen || btnTakes.getAttribute("aria-expanded") !== "false") fail("Escape did not close the history");
-      if (doc.activeElement !== btnTakes) fail("Escape did not return focus to the button", doc.activeElement?.id);
-      if (settingsClosed) fail("Escape in the take history also closed the settings");
-
-      // One take on a line someone else is cast for: no button.
-      app.roomState = roomWith(one(), { host_id: "someone", role_assignments: { Deku: ["u9"] } });
-      await app.loadBoothLine(0);
-      if (takesBox.style.display !== "none") fail("button shown with one take on a line you can't record");
-
-      // Two takes on a line someone else is cast for: no button.
       const a1Chain = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1.0, semitones: 2 } } };
-      const two = () => ({ t1200: { picked: "b2", next_number: 4, takes: [
-        mk("a1", 1, "Ana", { offset_ms: 120, chain: a1Chain, gain_db: -5 }),
-        mk("b2", 3, "Ben", { duration: 1.96 })] } });
-      app.roomState = roomWith(two(), { host_id: "someone", role_assignments: { Deku: ["u9"] } });
+      app.roomState = { state_version: 3, room_id: "TH", host_id: app.user.id, pack: mockPacks[0], users: {}, role_assignments: {},
+        takes: { t1200: { picked: "b2", next_number: 4, takes: [
+          mk("a1", 1, "Ana", { offset_ms: 120, chain: a1Chain, gain_db: -5 }),
+          mk("b2", 3, "Ben", { duration: 1.96 })] } } };
       await app.loadBoothLine(0);
-      if (takesBox.style.display !== "none") fail("button shown on a line you can't record");
+      const rows = [...doc.querySelectorAll("#takes-list .take-row")];
+      if (rows.map((r) => r.dataset.takeId).join() !== "b2,a1") fail("rows", rows.map((r) => r.dataset.takeId));
 
-      // Two takes on your line: button shown, panel opens with rows oldest first.
-      app.roomState = roomWith(two());
-      await app.loadBoothLine(0);
-      if (takesBox.style.display === "none" || btnLabel() !== "Takes (2)") fail("button not shown with 2 takes", btnLabel());
-      if (btnTakes.dataset.tip !== "Listen to your takes and choose the one used in the dub") fail("button tooltip");
-      if (panel.style.display !== "none") fail("panel open before the button is clicked");
-      btnTakes.click();
-      const rows = [...panel.querySelectorAll(".take-history-row")];
-      const labels = rows.map((r) => r.querySelector(".take-history-label").textContent);
-      if (labels.join("|") !== "Take 1 · Ana · 2.4s|Take 3 · Ben · 2.0s") fail("rows", labels);
-      if (rows[0].querySelector(".take-history-picked") || !rows[0].querySelector(".take-history-use")
-          || rows[1].querySelector(".take-history-picked")?.textContent !== "In the dub"
-          || rows[1].querySelector(".take-history-use")) fail("picked row not marked, or Use shown on it");
-      if (rows[0].querySelector(".take-history-use").dataset.tip !== "Use this take in the dub") fail("Use tooltip");
-
-      // Play: the engine renders the take's own sound, and that render plays at the take's
-      // timing and level; the controls don't move.
       const sliders = () => [app.sliderNudge.value, app.sliderGain.value,
-        ...[...dom.window.document.querySelectorAll("#voice-rack [data-voice-param], #voice-rack [data-voice-on]")].map((el) => el.value + el.checked)].join(",");
+        ...[...doc.querySelectorAll("#voice-rack [data-voice-param], #voice-rack [data-voice-on]")].map((el) => el.value + el.checked)].join(",");
       const slidersBefore = sliders();
       let previewArgs = null;
       let renderBody = null;
@@ -696,7 +640,10 @@ try {
         }
         return realFetch(url, opts);
       };
-      rows[0].querySelector(".take-history-play").click();
+      rows[1].querySelector(".take-more").click();
+      const play = [...rows[1].querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.includes("Play this take"));
+      if (!play) fail("no Play this take in the menu");
+      play.click();
       await new Promise((r) => setTimeout(r, 20));
       dom.window.fetch = realFetch;
       if (JSON.stringify(renderBody?.chain) !== JSON.stringify(a1Chain) || !renderBody.client_id) fail("Play asked for the wrong sound", renderBody);
@@ -704,49 +651,13 @@ try {
           || previewArgs.offsetMs !== 120 || previewArgs.gainDb !== -5) fail("Play used the wrong settings", previewArgs);
       if (sliders() !== slidersBefore) fail("Play moved the sliders", slidersBefore, sliders());
       app.stopBoothPlayback();
-      app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
 
-      // Use: POST pick, toast, the picked row moves.
-      let sent = null;
-      dom.window.fetch = (url, opts) => {
-        if (String(url).includes("/takes/a1") && opts && opts.method) {
-          sent = { url: String(url), opts };
-          const line = { ...two().t1200, picked: "a1" };
-          return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok", line_id: "t1200", line }) });
-        }
-        return realFetch(url, opts);
-      };
-      rows[0].querySelector(".take-history-use").click();
-      await new Promise((r) => setTimeout(r, 20));
-      if (sent?.url !== "/api/rooms/TH/lines/t1200/takes/a1/pick" || sent.opts.method !== "POST"
-          || JSON.parse(sent.opts.body).user_id !== app.user.id) fail("Use did not send the pick", sent);
-      if (!toasts.includes("Take 1 is in the dub") || app.takeForLine(0).take_id !== "a1") fail("pick not applied", toasts);
-
-      // Delete: asks first; cancel sends nothing, OK sends DELETE.
-      app.roomState = roomWith(two());
-      await app.loadBoothLine(0);
-      // The history stays open after a pick on the same line.
-      if (panel.style.display === "none") fail("history closed after picking a take");
-      const asked = [];
-      sent = null;
-      dom.window.confirm = (m) => { asked.push(m); return false; };
-      panel.querySelector(".take-history-row .take-history-delete").click();
-      await new Promise((r) => setTimeout(r, 20));
-      if (asked[0] !== "Delete take 1? This can't be undone." || sent) fail("delete without a confirm", asked, sent);
-      dom.window.confirm = () => true;
-      panel.querySelector(".take-history-row .take-history-delete").click();
-      await new Promise((r) => setTimeout(r, 20));
-      if (sent?.url !== `/api/rooms/TH/lines/t1200/takes/a1?user_id=${encodeURIComponent(app.user.id)}`
-          || sent.opts.method !== "DELETE") fail("delete did not send DELETE", sent);
-
-      dom.window.fetch = realFetch;
-      dom.window.confirm = realConfirm;
       app.showToast = realToast;
       app.audio.loadAudioBuffer = realLoad;
       app.audio.previewTakeIsolated = realPreview;
       delete app.syncVideoSeek;
       app.leaveRoom();
-      console.log("PASS: take history shows on your lines from the first take, Escape closes it, and Play, Use and delete work!");
+      console.log("PASS: Play this take plays the engine's render of the take's own sound and leaves the controls alone!");
     }
 
     // Test 8f: the room refuses a change. A page that still thinks you are the host (the host

@@ -222,7 +222,9 @@ Rounded rectangles on the ShadCN scale: 6px (`--radius-sm`) for small buttons, t
 
 ### Analog Dials (`AnalogKnob`)
 - A 270° sweep with a calibrated tick ring, a knurled skirt and an ivory indicator notch.
-- Vertical mouse drag (the usual DAW feel), the scroll wheel and the keyboard all adjust it, and it stays in sync with the live voice effects.
+- Vertical mouse drag (the usual DAW feel) and the keyboard adjust it, and the scroll wheel adjusts a focused dial (click or Tab to it first; otherwise the wheel scrolls the page). It stays in sync with the live voice effects.
+- Wheel and arrow-key steps save once, 400 ms after the last step, like a drag saves when let go.
+- A locked dial (the line is saving, or effects aren't available) is `aria-disabled`, out of the tab order, and ignores the wheel, keys and dragging.
 
 ### Header
 - Room screens keep a "Leave room" action and a way back to choosing a scene in the header.

@@ -183,7 +183,7 @@ function checkReducedMotion(file, blocks, css, names) {
   }
 }
 checkReducedMotion("static/css/style.css", styleBlocks, styleCss,
-  ["pulse-halo", "pulse-recording", "finishedPulse", "connection-pulse", "spinFilmReel", "pulseReelRing"]);
+  ["pulse-halo", "pulse-recording", "connection-pulse", "spinFilmReel", "pulseReelRing"]);
 checkReducedMotion("static/css/builder.css", builderBlocks, builderCss, ["pulse-halo"]);
 
 // Disabled buttons and the danger variant.
@@ -224,6 +224,38 @@ if (!/@media \(max-width: 1279px\) \{\s*\.app-header\.in-room \.logo-title,\s*\.
   fail("in a room below 1280px the logo should drop to its icon");
 }
 
+// Sideways scrollers keep the studio's scrollbar. In Chromium/WebView2 a scrollbar-width or
+// scrollbar-color on an element switches ::-webkit-scrollbar off and brings back the default
+// grey bar (the line chips under the takes had it), so those two only appear in the
+// Firefox-only @supports not selector(::-webkit-scrollbar) block.
+const FIREFOX_ONLY = /@supports\s+not\s+selector\(::-webkit-scrollbar\)\s*\{/g;
+function firefoxOnlySelectors(css) {
+  const text = stripComments(css);
+  const out = new Set();
+  let outside = text;
+  for (const m of text.matchAll(FIREFOX_ONLY)) {
+    let depth = 1, i = m.index + m[0].length;
+    const start = i;
+    while (depth && i < text.length) { if (text[i] === "{") depth += 1; else if (text[i] === "}") depth -= 1; i += 1; }
+    for (const b of cssBlocks(text.slice(start, i - 1))) {
+      if (/scrollbar-color\s*:\s*var\(--panel-raised\) var\(--background-darker\)/.test(b.body)) selectorList(b).forEach((s) => out.add(s));
+    }
+    outside = outside.slice(0, m.index) + " ".repeat(i - m.index) + outside.slice(i);
+  }
+  return { out, outside };
+}
+if (!/::-webkit-scrollbar\s*\{[^}]*height\s*:\s*8px/.test(stripComments(styleCss))) fail("style.css lost its shared ::-webkit-scrollbar rule");
+const firefoxOnly = firefoxOnlySelectors(styleCss);
+for (const b of cssBlocks(firefoxOnly.outside)) {
+  if (!/overflow(-x)?\s*:\s*(auto|scroll)/.test(b.body)) continue;
+  if (/scrollbar-(width|color)\s*:/.test(b.body)) {
+    fail(`style.css:${b.line} ${b.selector}: a sideways scroller sets scrollbar-width/color outside the Firefox-only block; Chromium then draws the default bar`);
+  }
+}
+for (const sel of [".timeline-chips-box", ".cast-activity-list"]) {
+  if (!firefoxOnly.out.has(sel)) fail(`${sel} needs the studio scrollbar colours in the Firefox-only @supports block`);
+}
+
 // The parser must actually be reading the files, and exemptions must not go stale.
 if (focusRules < 8) fail(`only ${focusRules} :focus-visible rules found; the CSS parser is probably broken`);
 if (checkedSizes < 150) fail(`only ${checkedSizes} px font sizes found; the CSS parser is probably broken`);
@@ -238,4 +270,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`PASS: ${checkedSizes} font sizes at or above ${FLOOR_PX}px (${EXEMPT.length} exempt), no text meta on --foreground-dim`);
-console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled`);
+console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled, sideways scrollers on the studio scrollbar`);

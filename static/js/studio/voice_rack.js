@@ -1,9 +1,9 @@
-// studio/voice_rack.js - The booth's Voice panel: presets first, the full rack one click away
-// (documentation/design/effects-rack.md, "What changes for the user"). Every control changes
-// the take's voice chain on screen at once and asks the engine for its render; the take keeps
-// playing the last real render until the new one crossfades in.
+// studio/voice_rack.js - The booth's Voice card: presets, "For" and Level first; All effects turns
+// the column's middle into the full rack (documentation/design/effects-rack.md, "What changes for
+// the user"; ui-u2-booth.md, "VOICE card"). Every control changes the sound on screen at once and
+// asks the engine for the take's render; the take keeps playing the last real render until the
+// new one crossfades in. "For" says where an edit goes: the take, its character, or every line.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { AudioEngine } from '../audio_engine.js';
 import { lineTakes } from './takes.js';
 import { CLEAN_CHAIN, resolveChain, editChain, presetLabel, eqCurveDb, createRenderScheduler } from './voice.js';
 
@@ -19,6 +19,15 @@ const PRESET_TIPS = {
 };
 
 const copyChain = (chain) => JSON.parse(JSON.stringify(chain));
+
+// "For", narrowest first: choosing a wider one asks; a narrower one copies the sound there.
+const SCOPE_WIDTH = { take: 0, character: 1, session: 2 };
+
+/** How many of the chain's effects are on. */
+function effectsOn(chain) {
+  const nodes = chain?.nodes || {};
+  return Object.keys(CLEAN_CHAIN.nodes).filter((name) => ({ ...CLEAN_CHAIN.nodes[name], ...nodes[name] }).on).length;
+}
 
 /** The two chains set the same sound (key order and 80 vs 80.0 don't matter). */
 function sameChain(a, b) {
@@ -51,53 +60,76 @@ function prefersReducedMotion() {
 
 export class VoiceRackMethods {
   initVoiceRackEvents() {
-    this.voicePanel = document.getElementById('card-voice-dsp');
-    this.voicePresets = document.getElementById('voice-presets');
-    this.voicePresetCustom = document.getElementById('voice-preset-custom');
-    this.btnVoiceAllEffects = document.getElementById('btn-voice-all-effects');
-    this.voiceRack = document.getElementById('voice-rack');
-    this.voiceToneCurve = document.getElementById('voice-tone-curve');
-    this.voiceMeterFill = document.getElementById('voice-meter-fill');
-    this.btnVoiceUseCharacter = document.getElementById('btn-voice-use-character');
-    this.btnVoiceUseSession = document.getElementById('btn-voice-use-session');
-    this.voiceStatusDot = document.getElementById('voice-status-dot');
-    this.voiceEffectsNote = document.getElementById('voice-effects-note');
+    const $ = (id) => document.getElementById(id);
+    this.voicePanel = $('card-voice-dsp');
+    this.voicePresets = $('voice-presets');
+    this.voicePresetCustom = $('voice-preset-custom');
+    this.btnVoiceAllEffects = $('btn-voice-all-effects');
+    this.btnVoiceBack = $('btn-voice-back');
+    this.voiceOnCount = $('voice-on-count');
+    this.voicePageSummary = $('voice-page-summary');
+    this.voiceRack = $('voice-rack');
+    this.voiceToneCurve = $('voice-tone-curve');
+    this.voiceScopeSelect = $('voice-scope');
+    this.voiceScopeAsk = $('voice-scope-ask');
+    this.voiceScopeAskText = $('voice-scope-ask-text');
+    this.btnVoiceScopeYes = $('btn-voice-scope-yes');
+    this.voiceScopeStatus = $('voice-scope-status');
+    this.voiceLevelTake = $('voice-level-take');
+    this.voiceLevelNote = $('voice-level-note');
+    this.voiceStatusDot = $('voice-status-dot');
+    this.voiceEffectsNote = $('voice-effects-note');
+    // The sound picked on a line before its first take, by line id; sent with that take's upload.
+    this.pendingNextTakeChain = {};
+    this.voiceScope = 'take';
 
     this.voicePresets?.addEventListener('click', (e) => {
       const chip = e.target.closest('[data-preset]');
       if (chip && !chip.disabled) this.pickVoicePreset(chip.dataset.preset);
     });
-    this.btnVoiceAllEffects?.addEventListener('click', () => this.toggleAllEffects());
+    this.btnVoiceAllEffects?.addEventListener('click', () => this.toggleAllEffects(true));
+    this.btnVoiceBack?.addEventListener('click', () => this.toggleAllEffects(false));
+    this.voiceScopeSelect?.addEventListener('change', () => this.chooseVoiceScope(this.voiceScopeSelect.value));
+    this.btnVoiceScopeYes?.addEventListener('click', () => this.confirmVoiceScope());
+    $('btn-voice-scope-cancel')?.addEventListener('click', () => this.cancelVoiceScope());
 
-    // Each effect: an on/off switch and dials. A dial turned on an effect that's off turns it on.
+    // Each effect: an on/off switch and dials. A dial on an effect that's off leaves it off.
     for (const fx of this.voiceRack?.querySelectorAll('[data-node]') || []) {
       const name = fx.dataset.node;
       const toggle = fx.querySelector('[data-voice-on]');
       toggle?.addEventListener('change', () => {
-        this.editTakeVoice(name, { on: toggle.checked });
+        this.editVoice(name, { on: toggle.checked });
         this.flushVoiceSave();
       });
       for (const dial of fx.querySelectorAll('[data-voice-param]')) {
         const param = dial.dataset.voiceParam;
         dial.addEventListener('input', () => {
           const raw = parseFloat(dial.value);
-          this.editTakeVoice(name, { on: true, [param]: param === 'mix' ? raw / 100 : raw });
+          this.editVoice(name, { [param]: param === 'mix' ? raw / 100 : raw });
         });
         dial.addEventListener('change', () => this.flushVoiceSave());
       }
     }
-
-    this.btnVoiceUseCharacter?.addEventListener('click', () => this.useVoiceOn('character'));
-    this.btnVoiceUseSession?.addEventListener('click', () => this.useVoiceOn('session'));
   }
 
-  toggleAllEffects() {
-    if (!this.voiceRack) return;
-    const open = !this.voiceRack.classList.contains('open');
+  isAllEffectsOpen() {
+    return !!this.voiceRack?.classList.contains('open');
+  }
+
+  /** All effects: the column's middle becomes the rack (Takes and Monitor hide, the record
+   *  deck goes compact). Closing gives focus back to the All effects button. */
+  toggleAllEffects(open = !this.isAllEffectsOpen(), { focus = true } = {}) {
+    if (!this.voiceRack || open === this.isAllEffectsOpen()) return;
+    if (open && this.voicePanel?.style.display === 'none') return;
     this.voiceRack.classList.toggle('open', open);
-    document.getElementById('booth-controls-panel')?.classList.toggle('fx-expanded', open);
+    document.getElementById('booth-controls-panel')?.classList.toggle('rack-open', open);
     this.btnVoiceAllEffects.setAttribute('aria-expanded', open ? 'true' : 'false');
-    this.btnVoiceAllEffects.innerText = open ? 'All effects ▴' : 'All effects ▾';
+    this.btnVoiceAllEffects.hidden = open;
+    if (this.btnVoiceBack) this.btnVoiceBack.hidden = !open;
+    if (this.voicePageSummary) this.voicePageSummary.hidden = !open;
+    const scroller = document.getElementById('booth-column-scroll');
+    if (open && scroller) scroller.scrollTop = 0;
+    if (focus) (open ? this.btnVoiceBack : this.btnVoiceAllEffects)?.focus();
   }
 
   // --- The take's sound: rendered by the engine, the same render the export uses ---
@@ -146,8 +178,16 @@ export class VoiceRackMethods {
     this.voiceScheduler = null;
     this.voiceRender = null;
     this.releaseVoiceWaiters();
-    this.voiceChain = resolveChain(this.roomState?.voice, line.character, take);
+    const pending = take ? null : this.pendingNextTakeChain[line.line_id];
+    this.voiceChain = pending ? copyChain(pending) : resolveChain(this.roomState?.voice, line.character, take);
+    this.voiceScope = this.voiceSourceScope(line, take);
+    this.hideVoiceScopeAsk();
+    if (this.voiceScopeStatus) {
+      this.voiceScopeStatus.hidden = true;
+      this.voiceScopeStatus.textContent = '';
+    }
     this.renderVoicePresets();
+    this.renderVoiceScope(line, take);
     this.showVoiceChain(this.voiceChain);
     if (take && take.url) {
       const roomId = this.roomState.room_id;
@@ -165,6 +205,7 @@ export class VoiceRackMethods {
   /** Saves any pending edit and stops asking for renders (leaving the room). */
   stopTakeVoice() {
     this.flushVoiceSave();
+    this.pendingNextTakeChain = {};   // line ids repeat from room to room
     if (this.voiceScheduler) this.voiceScheduler.dispose();
     this.voiceScheduler = null;
     this.voiceRender = null;
@@ -244,6 +285,9 @@ export class VoiceRackMethods {
       chip.setAttribute('aria-pressed', active ? 'true' : 'false');
     }
     if (this.voicePresetCustom) this.voicePresetCustom.style.display = custom ? '' : 'none';
+    const on = effectsOn(chain);
+    if (this.voiceOnCount) this.voiceOnCount.textContent = `· ${on} on`;
+    if (this.voicePageSummary) this.voicePageSummary.textContent = `${presetLabel(chain, presets)} · ${on} on`;
 
     for (const fx of this.voiceRack?.querySelectorAll('[data-node]') || []) {
       const node = { ...CLEAN_CHAIN.nodes[fx.dataset.node], ...nodes[fx.dataset.node] };
@@ -291,28 +335,31 @@ export class VoiceRackMethods {
     ctx.stroke();
   }
 
-  /** The panel shows on a line you can record that has a take. Effect controls work once
-   *  voice effects are installed. A dot pulses while the sound catches up; the note says
-   *  why effects are off. */
+  /** The card shows on every line you can record, before its first take too. Effect controls
+   *  work once voice effects are installed; Level once there's a take. A dot pulses while the
+   *  sound catches up; the note says why effects are off. */
   refreshVoiceControls() {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const take = line && this.takeForLine(this.currentLineIndex);
-    const mine = !!take && this.canRecordLine(line);
+    const mine = !!line && this.canRecordLine(line);
     if (this.voicePanel) this.voicePanel.style.display = mine ? '' : 'none';
+    if (!mine) this.toggleAllEffects(false, { focus: false });
+    if (this.voiceLevelTake) this.voiceLevelTake.hidden = !take;
+    if (this.voiceLevelNote) this.voiceLevelNote.hidden = !!take;
 
-    const enabled = mine && !this.isProcessingTake && !this.voiceUnavailable;
-    const controls = this.voicePanel?.querySelectorAll('[data-preset], [data-voice-on], [data-voice-param], .voice-apply-row button') || [];
+    // Locked while this line's take saves; other lines stay usable.
+    const saving = !!this.savingTake(line);
+    const enabled = mine && !saving && !this.voiceUnavailable;
+    const controls = this.voicePanel?.querySelectorAll('[data-preset], [data-voice-on], [data-voice-param], #voice-scope, .voice-scope-ask button') || [];
     for (const el of controls) {
       el.disabled = !enabled;
       (el.closest('.dsp-dial-channel') || el).classList.toggle('ui-interaction-locked', !enabled);
     }
-
-    if (this.btnVoiceUseCharacter) {
-      this.btnVoiceUseCharacter.style.display = mine ? '' : 'none';
-      if (line) this.btnVoiceUseCharacter.textContent = `Use on all of ${line.character}'s lines`;
-    }
-    if (this.btnVoiceUseSession) {
-      this.btnVoiceUseSession.style.display = mine && this.isHost({ allowDummy: true }) ? '' : 'none';
+    // Level and the timing don't need voice effects: they lock only while the line saves.
+    for (const el of [this.sliderGain, this.btnAutoMatchGain, this.sliderNudge, ...document.querySelectorAll('.btn-nudge')]) {
+      if (!el) continue;
+      el.disabled = saving;
+      (el.closest('.analog-dial-wrapper') || el).classList.toggle('ui-interaction-locked', saving);
     }
 
     const state = this.voiceScheduler?.state;
@@ -324,17 +371,7 @@ export class VoiceRackMethods {
       this.voiceEffectsNote.textContent = this.voiceUnavailable ? (this.voiceEffectsMessage || EFFECTS_MISSING_MESSAGE) : '';
       this.voiceEffectsNote.style.display = this.voiceUnavailable ? '' : 'none';
     }
-  }
-
-  /** The take's output level on the small meter while it plays. */
-  startVoiceMeter() {
-    if (this.voiceMeterRaf || !this.voiceMeterFill) return;
-    const step = () => {
-      const db = this.audio.takeOutputDb();
-      this.voiceMeterFill.style.width = `${db === null ? 0 : AudioEngine.dbToMeterPercent(db)}%`;
-      this.voiceMeterRaf = db === null ? null : requestAnimationFrame(step);
-    };
-    this.voiceMeterRaf = requestAnimationFrame(step);
+    this.updateKnobsVisuals();   // a locked dial leaves the tab order
   }
 
   // --- Changing the sound ---
@@ -355,35 +392,88 @@ export class VoiceRackMethods {
     else this.voiceSaveTimer = setTimeout(() => this.flushVoiceSave(), VOICE_SAVE_QUIET_MS);
   }
 
+  /** The sound on the controls changed: it goes where "For" points. Before the line's first
+   *  take, "Your next take" keeps it in memory for that take's upload. */
+  setVoice(chain, { saveNow = false } = {}) {
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (!line || !this.canRecordLine(line)) return;
+    if (this.voiceScope !== 'take') {
+      this.setSharedVoice(chain, { saveNow });
+    } else if (this.takeForLine(this.currentLineIndex)) {
+      this.setTakeVoice(chain, { saveNow });
+    } else {
+      this.pendingNextTakeChain[line.line_id] = chain;
+      this.voiceChain = chain;
+      this.showVoiceChain(chain);
+    }
+  }
+
+  /** The character's sound ("All of NAME's lines") or the room's ("Every line") becomes
+   *  `chain`: shown and rendered now, saved once things are quiet. The engine then gives every
+   *  line it covers that sound (their own take sounds are cleared). Resolves true once saved. */
+  setSharedVoice(chain, { saveNow = false } = {}) {
+    const line = this.roomState.pack.lines[this.currentLineIndex];
+    const take = this.takeForLine(this.currentLineIndex);
+    const voice = this.roomState.voice || (this.roomState.voice = {});
+    if (this.voiceScope === 'session') {
+      voice.session = chain;
+      voice.characters = {};
+    } else {
+      voice.characters = { ...(voice.characters || {}), [line.character]: chain };
+    }
+    if (take) delete take.chain;
+    this.voiceChain = chain;
+    this.showVoiceChain(chain);
+    if (this.voiceScheduler && !this.voiceUnavailable) this.voiceScheduler.want(chain, this.voicePlayState());
+    clearTimeout(this.voiceSaveTimer);
+    this.voiceSavePending = { roomId: this.roomState.room_id, scope: this.voiceScope, character: line.character, chain };
+    if (saveNow) return this.flushVoiceSave();
+    this.voiceSaveTimer = setTimeout(() => this.flushVoiceSave(), VOICE_SAVE_QUIET_MS);
+    return Promise.resolve(true);
+  }
+
   /** One effect changed: the sound becomes Custom. */
-  editTakeVoice(name, params) {
-    this.setTakeVoice(editChain(this.voiceChain, name, params));
+  editVoice(name, params) {
+    this.setVoice(editChain(this.voiceChain, name, params));
   }
 
   pickVoicePreset(id) {
     const preset = (this.roomState?.voice?.presets || []).find((p) => p.id === id);
-    if (preset) this.setTakeVoice(copyChain(preset.chain), { saveNow: true });
+    if (preset) this.setVoice(copyChain(preset.chain), { saveNow: true });
   }
 
-  /** Saves the take's edited sound now (a dial was let go, or the line is changing). */
+  /** Saves the edited sound now (a dial was let go, or the line is changing): the take's own
+   *  (PUT …/chain) or the character's or room's (PUT /voice). Resolves true once saved. */
   flushVoiceSave() {
     clearTimeout(this.voiceSaveTimer);
     this.voiceSaveTimer = null;
     const pending = this.voiceSavePending;
     this.voiceSavePending = null;
-    if (!pending) return Promise.resolve();
+    if (!pending) return Promise.resolve(true);
     this.voiceSavesInFlight = (this.voiceSavesInFlight || 0) + 1;
-    return fetch(`/api/rooms/${pending.roomId}/lines/${pending.lineId}/takes/${pending.takeId}/chain`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: this.user.id, chain: pending.chain }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const shared = !pending.takeId;
+    const body = { user_id: this.user.id, chain: pending.chain };
+    if (shared) body.scope = pending.scope;
+    if (shared && pending.scope === 'character') body.character = pending.character;
+    const url = shared ? `/api/rooms/${pending.roomId}/voice`
+      : `/api/rooms/${pending.roomId}/lines/${pending.lineId}/takes/${pending.takeId}/chain`;
+    return fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(async (res) => {
+        if (!res.ok) {
+          let detail = '';
+          try { detail = (await res.json())?.detail || ''; } catch (e) { }
+          throw new Error(detail || `HTTP ${res.status}`);
+        }
         return res.json();
       })
-      .then((data) => this.applySavedTakeLevel(pending, data && data.take))
-      .catch((err) => this.showToast(this.friendlyError(err, "Your take's sound wasn't saved. Try again.")))
+      .then((data) => {
+        if (!shared) this.applySavedTakeLevel(pending, data && data.take);
+        return true;
+      })
+      .catch((err) => {
+        this.showToast(this.friendlyError(err, shared ? "That sound wasn't applied. Try again." : "Your take's sound wasn't saved. Try again."));
+        return false;
+      })
       .finally(() => { this.voiceSavesInFlight -= 1; });
   }
 
@@ -399,49 +489,122 @@ export class VoiceRackMethods {
     if (line.index === this.currentLineIndex && take === this.takeForLine(this.currentLineIndex)) this.showTakeLevel(take);
   }
 
-  /** "Use on all of NAME's lines" (scope "character") or "Use on every line" (scope "session"):
-   *  asks first, then makes this sound the character's or the room's. */
-  async useVoiceOn(scope) {
+  // --- "For": where changes to the sound go ---
+
+  /** Where the line's sound comes from (resolveChain's order): the take's own chain (or the
+   *  next take's), the character's, or the room's; "take" when none is set. A guest can't
+   *  change the room's sound, so for them it starts on the take. */
+  voiceSourceScope(line, take) {
+    if (take ? take.chain : this.pendingNextTakeChain[line.line_id]) return 'take';
+    const voice = this.roomState?.voice || {};
+    if (voice.characters?.[line.character]) return 'character';
+    if (voice.session && this.isHost({ allowDummy: true })) return 'session';
+    return 'take';
+  }
+
+  /** The select's words for this line; "Every line" is the host's. */
+  renderVoiceScope(line, take) {
+    const select = this.voiceScopeSelect;
+    if (!select) return;
+    const option = (value) => select.querySelector(`option[value="${value}"]`);
+    option('take').textContent = take ? 'This take' : 'Your next take';
+    option('character').textContent = `All of ${line.character}'s lines`;
+    const host = this.isHost({ allowDummy: true });
+    option('session').hidden = !host;
+    option('session').disabled = !host;
+    select.value = this.voiceScope;
+  }
+
+  /** "Radio", or "this sound" for a custom one. */
+  voiceSoundName() {
+    const name = presetLabel(this.voiceChain, this.roomState?.voice?.presets || []);
+    return name === 'Custom' ? 'this sound' : name;
+  }
+
+  chooseVoiceScope(scope) {
+    if (!(scope in SCOPE_WIDTH) || scope === this.voiceScope) {
+      this.hideVoiceScopeAsk();
+      return;
+    }
+    if (SCOPE_WIDTH[scope] > SCOPE_WIDTH[this.voiceScope]) {
+      this.askVoiceScope(scope);
+      return;
+    }
+    // Narrower: the sound you hear is copied there; nothing else changes, so no question.
+    this.hideVoiceScopeAsk();
+    this.voiceScope = scope;
+    this.setVoice(this.voiceChain, { saveNow: true });
+  }
+
+  /** A wider scope changes other lines too, so it asks first, in the card. */
+  askVoiceScope(scope) {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    if (!line || !this.voiceChain) return;
-    const question = scope === 'session'
-      ? 'Use this sound on every line? Lines and characters with their own sound will switch too.'
-      : `Use this sound on all of ${line.character}'s lines? Lines you changed by hand will switch too.`;
-    if (!confirm(question)) return;
+    if (!line || !this.voiceScopeAsk) return;
+    const sound = this.voiceSoundName();
+    this.voiceScopeAskText.textContent = scope === 'session'
+      ? `Use ${sound} on every line? Lines and characters with their own sound switch too.`
+      : `Use ${sound} on all of ${line.character}'s lines? Lines with their own sound switch too.`;
+    this.btnVoiceScopeYes.textContent = scope === 'session' ? 'Use on every line' : 'Use on all their lines';
+    this.voiceScopeAsking = scope;
+    this.voiceScopeAsk.hidden = false;
+    if (this.voiceScopeStatus) this.voiceScopeStatus.hidden = true;
+    this.btnVoiceScopeYes.focus();
+  }
+
+  hideVoiceScopeAsk() {
+    this.voiceScopeAsking = null;
+    if (this.voiceScopeAsk) this.voiceScopeAsk.hidden = true;
+  }
+
+  cancelVoiceScope() {
+    this.hideVoiceScopeAsk();
+    if (this.voiceScopeSelect) {
+      this.voiceScopeSelect.value = this.voiceScope;
+      this.voiceScopeSelect.focus();
+    }
+  }
+
+  /** Yes: this sound becomes the character's or the room's now, and the card says so until
+   *  the next line loads. If it can't be saved, "For" goes back. */
+  async confirmVoiceScope() {
+    const scope = this.voiceScopeAsking;
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    this.hideVoiceScopeAsk();
+    if (!scope || !line) return;
+    const previous = this.voiceScope;
+    const sound = this.voiceSoundName();
     // The take follows the new sound, so an unsaved edit of its own sound is dropped.
     clearTimeout(this.voiceSaveTimer);
     this.voiceSavePending = null;
-    const body = { user_id: this.user.id, scope, chain: this.voiceChain };
-    if (scope === 'character') body.character = line.character;
-    try {
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/voice`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let detail = '';
-        try { detail = (await res.json())?.detail || ''; } catch (e) { }
-        throw new Error(detail || `HTTP ${res.status}`);
-      }
-      this.showToast(scope === 'session' ? 'Every line uses this sound' : `All of ${line.character}'s lines use this sound`);
-    } catch (err) {
-      this.showToast(this.friendlyError(err, "That sound wasn't applied. Try again."));
+    this.voiceScope = scope;
+    const saved = await this.setSharedVoice(this.voiceChain, { saveNow: true });
+    if (line !== this.roomState?.pack?.lines?.[this.currentLineIndex]) return;
+    if (!saved) {
+      this.voiceScope = previous;
+      if (this.voiceScopeSelect) this.voiceScopeSelect.value = previous;
+      return;
+    }
+    if (this.voiceScopeStatus) {
+      this.voiceScopeStatus.textContent = scope === 'session'
+        ? `✓ Every line uses ${sound}` : `✓ All of ${line.character}'s lines use ${sound}`;
+      this.voiceScopeStatus.hidden = false;
     }
   }
 
   /** The room's sounds changed (voice_updated) or a take's did (take_params_updated): the
-   *  current take plays whatever now resolves for it, unless you're still editing it. */
+   *  line shows whatever now resolves for it, unless you're still editing it or picked a
+   *  sound for its next take. */
   onRoomVoiceChanged() {
-    if (this.currentView !== 'booth' || !this.voiceScheduler || this.voiceSavePending || this.voiceSavesInFlight) return;
+    if (this.currentView !== 'booth' || this.voiceSavePending || this.voiceSavesInFlight) return;
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    const take = line && this.takeForLine(this.currentLineIndex);
-    if (!take) return;
+    if (!line) return;
+    const take = this.takeForLine(this.currentLineIndex);
+    if (take ? !this.voiceScheduler : this.pendingNextTakeChain[line.line_id]) return;
     this.renderVoicePresets();
     const chain = resolveChain(this.roomState.voice, line.character, take);
     if (sameChain(chain, this.voiceChain)) return;
     this.voiceChain = chain;
     this.showVoiceChain(chain);
-    this.voiceScheduler.want(chain, this.voicePlayState());
+    if (this.voiceScheduler) this.voiceScheduler.want(chain, this.voicePlayState());
   }
 }
