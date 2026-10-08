@@ -648,18 +648,12 @@ export class LobbyMethods {
 
   toggleMyReadiness() {
     this.isReadyForScreening = !this.isReadyForScreening;
-    if (this.isReadyForScreening) {
-      if (this.labelReadyState) this.labelReadyState.innerText = "Ready";
-      this.btnToggleReady.className = "btn btn-success btn-sm btn-ready-toggle ready";
-      this.showToast("You're marked ready");
-    } else {
-      if (this.labelReadyState) this.labelReadyState.innerText = "Mark ready";
-      this.btnToggleReady.className = "btn btn-secondary btn-sm btn-ready-toggle";
-    }
+    if (this.isReadyForScreening) this.showToast("You're marked ready");
     if (this.roomState && this.roomState.users && this.roomState.users[this.user.id]) {
       this.roomState.users[this.user.id].is_ready = this.isReadyForScreening;
       this.renderCastActivityHUD();
     }
+    this.renderBoothToolbar();
     this.broadcastMyStatus('booth');
   }
 
@@ -675,9 +669,10 @@ export class LobbyMethods {
   }
 
   renderCastActivityHUD() {
-    if (!this.roomState || !this.castActivityList) return;
+    if (!this.roomState) return;
+    this.renderBoothToolbar();
+    if (!this.castActivityList) return;
     const users = Object.values(this.roomState.users || {}).filter(u => u.is_online);
-    const isHost = this.isHost();
     // The lobby is for casting: who is here and their roles, without progress or ready counts.
     const inLobby = this.currentView === 'lobby';
 
@@ -725,16 +720,6 @@ export class LobbyMethods {
     if (this.premiereStatusSummary) {
       this.premiereStatusSummary.textContent = `${readyCount}/${users.length} ready`;
       this.premiereStatusSummary.hidden = inLobby;
-    }
-
-    // Host Premiere Button Visibility
-    if (this.btnLaunchPremiere) {
-      if (isHost) {
-        this.btnLaunchPremiere.style.display = 'inline-flex';
-        this.btnLaunchPremiere.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> <span>Start premiere (${readyCount}/${users.length} ready) ›</span>`;
-      } else {
-        this.btnLaunchPremiere.style.display = 'none';
-      }
     }
   }
 

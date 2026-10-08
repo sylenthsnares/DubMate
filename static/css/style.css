@@ -3207,6 +3207,30 @@ svg {
   flex: 2;
 }
 
+/* Done on the last line with lines left: asked here, not in a toast */
+.booth-done-ask {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1.5px solid rgba(204, 164, 88, 0.42);
+  border-radius: var(--radius-md);
+}
+.booth-done-ask-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.booth-done-ask-actions {
+  display: flex;
+  gap: 8px;
+}
+.booth-done-ask-actions .btn {
+  flex: 1;
+}
+
 #view-booth [hidden] {
   display: none !important;
 }
@@ -3630,28 +3654,6 @@ svg {
   }
   .waveform-canvas-box {
     height: 82px;
-  }
-}
-
-/* Finished Dialogue State Button Glow */
-.btn-finished-pulse {
-  background: linear-gradient(135deg, var(--accent-teal) 0%, var(--accent-green-deep) 100%) !important;
-  color: var(--white) !important;
-  border-color: rgba(34, 197, 94, 0.4) !important;
-  box-shadow: 0 0 14px rgba(22, 163, 74, 0.45);
-  font-weight: 700 !important;
-  letter-spacing: 0.02em;
-  animation: finishedPulse 2s ease-in-out infinite;
-}
-
-@keyframes finishedPulse {
-  0%, 100% {
-    box-shadow: 0 0 10px rgba(22, 163, 74, 0.4);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 18px rgba(34, 197, 94, 0.7);
-    transform: scale(1.02);
   }
 }
 
@@ -4894,6 +4896,16 @@ svg {
   text-align: left;
 }
 
+.go-premiere-card {
+  max-width: 400px;
+  text-align: left;
+}
+.go-premiere-card .modal-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .share-pack-path {
   width: 100%;
   margin-top: 14px;
@@ -5057,12 +5069,11 @@ span.voice-chip {
 }
 
 /* Reduced motion: the looping pulses stop. What they signal stays visible
-   through colour, ring and text (the red record button, the halo, the Finish
-   glow, the connection dot, the export reel and its ring). */
+   through colour, ring and text (the red record button, the halo, the connection
+   dot, the export reel and its ring). */
 @media (prefers-reduced-motion: reduce) {
   .record-halo-ring,
   .btn-big-record.recording,
-  .btn-finished-pulse,
   .connection-dot,
   .reel-core,
   .reel-pulse-ring {

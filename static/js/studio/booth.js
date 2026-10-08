@@ -2,6 +2,7 @@
 // waveform/nudge, A/B preview and noise reduction.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { WaveformRenderer } from '../waveform.js';
+import { openDialog, plural } from '../ui_common.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
 import { micErrorMessage } from './audio_setup.js';
@@ -63,6 +64,13 @@ export class BoothMethods {
   nextTakeNumber(line) {
     const entry = line ? this.roomState?.takes?.[line.line_id] : undefined;
     return entry?.next_number || takeCount(this.roomState?.takes, line) + 1;
+  }
+
+  /** The lines you can record, and how many of them have a take. */
+  myLineProgress() {
+    const lines = (this.roomState?.pack?.lines || []).filter((l) => this.canRecordLine(l));
+    const recorded = lines.filter((l) => takeCount(this.roomState.takes, l) > 0).length;
+    return { recorded, total: lines.length };
   }
 
   getMyAssignedCharacters() {
@@ -166,6 +174,7 @@ export class BoothMethods {
     this.stageCaptionText.innerText = lineCap ? `“${lineCap}”` : `(${line.character}, no subtitle)`;
 
     const take = pickedTake(this.roomState.takes, line);
+    this.hideDoneAsk();
     this.setNudgeValue(take ? (take.offset_ms || 0) : 0, false);
     const gainDb = take ? (parseFloat(take.gain_db) || 0) : 0;
     this.sliderGain.value = gainDb;
@@ -270,16 +279,11 @@ export class BoothMethods {
     if (this.btnPrevLine) this.btnPrevLine.disabled = isFirst;
 
     if (this.btnNextLine) {
-      if (isLast) {
-        this.btnNextLine.innerHTML = '<span>Finish ✓</span>';
-        this.btnNextLine.className = 'btn btn-success btn-sm btn-finished-pulse';
-        this.btnNextLine.dataset.tip = "Marks you ready for the premiere";
-      } else {
-        this.btnNextLine.innerHTML = '<span>Next line ›</span>';
-        this.btnNextLine.className = 'btn btn-primary btn-sm';
-        this.btnNextLine.removeAttribute('data-tip');
-      }
+      this.btnNextLine.textContent = isLast ? 'Done ›' : 'Next line ›';
+      if (isLast) this.btnNextLine.dataset.tip = "Marks you ready for the premiere";
+      else this.btnNextLine.removeAttribute('data-tip');
     }
+    this.renderBoothToolbar();
   }
 
   prefetchAdjacentLines(currentIndex) {
@@ -1168,25 +1172,90 @@ export class BoothMethods {
     this.loadBoothLine(target);
   }
 
+  /** Done on your last line, for host and guests alike: with every line you can record
+   *  taken it marks you ready; otherwise it asks first, inline in the footer. */
   handleUserFinishedAllLines() {
     if (this.isProcessingTake) return;
+    const { recorded, total } = this.myLineProgress();
+    if (recorded < total) {
+      this.showDoneAsk(recorded, total);
+      return;
+    }
+    this.finishMyLines();
+  }
+
+  showDoneAsk(recorded, total) {
+    if (!this.boothDoneAsk) return;
+    this.boothDoneAskText.textContent = `${recorded} of ${plural(total, 'line')} recorded. Mark ready anyway?`;
+    this.boothDoneAsk.hidden = false;
+    this.btnPrevLine.hidden = true;
+    this.btnNextLine.hidden = true;
+    document.getElementById('btn-done-mark-ready')?.focus();
+  }
+
+  hideDoneAsk({ focusNext = false } = {}) {
+    if (!this.boothDoneAsk || this.boothDoneAsk.hidden) return;
+    this.boothDoneAsk.hidden = true;
+    this.btnPrevLine.hidden = false;
+    this.btnNextLine.hidden = false;
+    if (focusNext) this.btnNextLine.focus();
+  }
+
+  /** Marks you ready. The host is then asked whether to go to the premiere. */
+  finishMyLines() {
     if (!this.isReadyForScreening) {
       this.toggleMyReadiness();
     } else {
       this.showToast("You're marked ready");
     }
-
-    const isHost = this.isHost({ allowDummy: true });
-    if (isHost) {
-      const users = Object.values(this.roomState?.users || {}).filter(u => u.is_online);
-      const readyCount = users.filter(u => u.is_ready).length;
-      if (confirm(`All your lines are done. ${readyCount} of ${users.length} actors are ready.\n\nGo to the premiere now?`)) {
-        this.showView('screening');
-        this.setupScreeningView();
-        this.broadcastMyStatus('screening');
-      }
-    } else {
+    if (!this.isHost({ allowDummy: true })) {
       this.showToast("All your lines are done. The host will start the premiere.");
+      return;
+    }
+    const overlay = document.getElementById('modal-go-premiere');
+    if (!overlay) return;
+    const users = Object.values(this.roomState?.users || {}).filter(u => u.is_online);
+    const readyCount = users.filter(u => u.is_ready).length;
+    document.getElementById('go-premiere-text').textContent = `${readyCount} of ${users.length} ready.`;
+    const close = openDialog(overlay, { returnFocus: this.btnNextLine });
+    document.getElementById('btn-go-premiere-cancel').onclick = () => close();
+    document.getElementById('btn-go-premiere').onclick = () => {
+      close();
+      this.cancelCurrentCountdown();
+      this.showView('screening');
+      this.setupScreeningView();
+      this.broadcastMyStatus('screening');
+    };
+  }
+
+  /** The stage bar's actions. The host's one primary is Start premiere; guests get
+   *  "Back to the premiere" while it's on, and Mark ready turns into "All recorded ·
+   *  Mark ready" once every line they can record has a take (their primary). */
+  renderBoothToolbar() {
+    if (!this.roomState) return;
+    const isHost = this.isHost();
+    const users = Object.values(this.roomState.users || {}).filter(u => u.is_online);
+    const readyCount = users.filter(u => u.is_ready).length;
+    const screening = this.roomState.status === 'screening';
+    const { recorded, total } = this.myLineProgress();
+    const allRecorded = total > 0 && recorded === total;
+
+    if (this.btnLaunchPremiere) {
+      this.btnLaunchPremiere.style.display = isHost ? 'inline-flex' : 'none';
+      const label = document.getElementById('label-launch-premiere');
+      if (label) label.textContent = `Start premiere · ${readyCount}/${users.length} ready`;
+    }
+    if (this.btnJumpScreening) this.btnJumpScreening.hidden = isHost || !screening;
+    if (this.btnToggleReady) {
+      let label = 'Ready';
+      let cls = 'btn btn-success btn-sm btn-ready-toggle ready';
+      if (!this.isReadyForScreening) {
+        label = allRecorded ? 'All recorded · Mark ready' : 'Mark ready';
+        const primary = allRecorded && !isHost && !screening;
+        cls = `btn ${primary ? 'btn-primary' : 'btn-secondary'} btn-sm btn-ready-toggle`;
+      }
+      if (this.labelReadyState) this.labelReadyState.textContent = label;
+      this.btnToggleReady.className = cls;
     }
   }
 

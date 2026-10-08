@@ -352,6 +352,8 @@ class DubMateApp {
     // Navigation buttons
     this.btnPrevLine = document.getElementById('btn-prev-line');
     this.btnNextLine = document.getElementById('btn-next-line');
+    this.boothDoneAsk = document.getElementById('booth-done-ask');
+    this.boothDoneAskText = document.getElementById('booth-done-ask-text');
     this.btnJumpScreening = document.getElementById('btn-jump-screening');
     this.btnBackLobby = document.getElementById('btn-back-lobby');
 
@@ -797,6 +799,11 @@ class DubMateApp {
 
     this.btnPrevLine.addEventListener('click', () => this.stepLine(-1));
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
+    document.getElementById('btn-done-keep-recording')?.addEventListener('click', () => this.hideDoneAsk({ focusNext: true }));
+    document.getElementById('btn-done-mark-ready')?.addEventListener('click', () => {
+      this.hideDoneAsk();
+      this.finishMyLines();
+    });
     this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
     // Escape inside the take history closes it and returns to the button, and nothing else.
     this.btnTakeHistory.parentElement.addEventListener('keydown', (e) => {

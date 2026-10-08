@@ -620,14 +620,14 @@
             </svg>
             <span id="label-ready-state">Mark ready</span>
           </button>
-          <button id="btn-jump-screening" class="btn btn-primary btn-sm">
+          <button id="btn-jump-screening" class="btn btn-primary btn-sm" hidden>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <rect width="20" height="15" x="2" y="3" rx="2" />
               <polyline points="12 18 12 22" />
               <path d="M8 22h8" />
             </svg>
-            <span>Premiere ›</span>
+            <span>Back to the premiere</span>
           </button>
           <button id="btn-launch-premiere" class="btn btn-primary btn-sm" style="display: none;"
             data-tip="Renders the dub and plays it for everyone in the room">
@@ -635,7 +635,7 @@
               stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
-            <span id="label-launch-premiere">Start premiere ›</span>
+            <span id="label-launch-premiere">Start premiere</span>
           </button>
         </div>
       </div>
@@ -1089,6 +1089,13 @@
             <button id="btn-prev-line" class="btn btn-secondary btn-sm booth-nav-prev" type="button"
               aria-label="Previous line">‹ Prev</button>
             <button id="btn-next-line" class="btn btn-primary btn-sm booth-nav-next" type="button">Next line ›</button>
+            <div id="booth-done-ask" class="booth-done-ask" role="group" aria-labelledby="booth-done-ask-text" hidden>
+              <span id="booth-done-ask-text" class="booth-done-ask-text"></span>
+              <div class="booth-done-ask-actions">
+                <button id="btn-done-keep-recording" class="btn btn-secondary btn-sm" type="button">Keep recording</button>
+                <button id="btn-done-mark-ready" class="btn btn-primary btn-sm" type="button">Mark ready</button>
+              </div>
+            </div>
           </div>
 
         </div>
@@ -1503,6 +1510,19 @@
       <div class="modal-actions share-pack-actions">
         <button id="btn-share-pack-copy" class="btn btn-secondary btn-md" type="button">Copy</button>
         <button id="btn-share-pack-done" class="btn btn-primary btn-md" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The host's question after their last line -->
+  <div id="modal-go-premiere" class="studio-modal-overlay" role="dialog" aria-modal="true"
+    aria-labelledby="go-premiere-title" aria-describedby="go-premiere-text" hidden>
+    <div class="studio-modal-card go-premiere-card">
+      <h3 id="go-premiere-title" class="modal-title">Go to the premiere now?</h3>
+      <p id="go-premiere-text" class="modal-status-text"></p>
+      <div class="modal-actions">
+        <button id="btn-go-premiere-cancel" class="btn btn-secondary btn-md" type="button">Not yet</button>
+        <button id="btn-go-premiere" class="btn btn-primary btn-md" type="button">Go to the premiere</button>
       </div>
     </div>
   </div>

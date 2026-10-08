@@ -4,8 +4,9 @@
  * The booth's right column (UI pass U2, group 1): the record deck's state badge and
  * next-action lines (READY, COUNT-IN, REC, SAVING, NO MIC, OFFLINE, someone else's
  * line), the segmented transport (Take N disabled until a take exists, the live A/B
- * switch while a take plays), the mic-sync hint, the stage bar copy, and the Level
- * badge read from the take's real values. Socket and fetch are stubbed.
+ * switch while a take plays), the mic-sync hint, the Done footer with its inline ask
+ * and the host's premiere dialog, the toolbar per role, the stage bar copy, and the
+ * Level badge read from the take's real values. Socket and fetch are stubbed.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -324,6 +325,85 @@ async function show(env, state, index = 0) {
     if (!last || last.gain_db !== 1.87) fail(`Auto sent ${JSON.stringify(last)}`);
     if (!visible(matchBadge) || text(matchBadge) !== "✓ Matched") fail("badge not back after Auto");
     console.log("PASS: ✓ Matched follows take.gain_db against take.auto_gain_db, and Auto sends the exact auto gain");
+  }
+
+  // 6. Toolbar per role.
+  {
+    const ready = $(env, "btn-toggle-ready");
+    const start = $(env, "btn-launch-premiere");
+    const jump = $(env, "btn-jump-screening");
+    // Host, lines left to record.
+    await show(env, room(oneTake()));
+    app.renderCastActivityHUD();
+    if (!visible(start) || text(start) !== "Start premiere · 0/2 ready" || !start.classList.contains("btn-primary")) {
+      fail(`host start: ${visible(start)} ${text(start)} ${start.className}`);
+    }
+    if (visible(jump)) fail("host sees Premiere ›");
+    if (text(ready) !== "Mark ready" || !ready.classList.contains("btn-secondary")) fail(`host ready: ${text(ready)} ${ready.className}`);
+    // Host, every line recorded: still secondary.
+    const allMine = { ...oneTake(), t2000: { picked: "c1", next_number: 2, takes: [mk("c1", 1)] } };
+    await show(env, room(allMine));
+    app.renderCastActivityHUD();
+    if (text(ready) !== "All recorded · Mark ready" || !ready.classList.contains("btn-secondary")) fail(`host all recorded: ${text(ready)} ${ready.className}`);
+    if (doc.querySelectorAll("#view-booth .stage-top-bar .btn-primary:not([hidden])").length !== 1) fail("host toolbar has more than one primary");
+
+    // Guest: no Start; Back to the premiere only while it's on; All recorded is the primary.
+    await show(env, room(allMine, { host_id: "u9" }));
+    app.renderCastActivityHUD();
+    if (visible(start)) fail("guest sees Start premiere");
+    if (visible(jump)) fail("guest sees the premiere button while recording");
+    if (text(ready) !== "All recorded · Mark ready" || !ready.classList.contains("btn-primary")) fail(`guest all recorded: ${text(ready)} ${ready.className}`);
+    await show(env, room(oneTake(), { host_id: "u9" }));
+    app.renderCastActivityHUD();
+    if (text(ready) !== "Mark ready" || !ready.classList.contains("btn-secondary")) fail(`guest with lines left: ${text(ready)} ${ready.className}`);
+    await show(env, room(oneTake(), { host_id: "u9", status: "screening" }));
+    app.renderCastActivityHUD();
+    if (!visible(jump) || text(jump) !== "Back to the premiere") fail(`guest during the premiere: ${visible(jump)} ${text(jump)}`);
+    console.log("PASS: the host has one primary, Start premiere · 0/2 ready; guests get Back to the premiere and All recorded · Mark ready");
+  }
+
+  // 7. Done: the last line asks inline when lines have no take; the host then gets a dialog.
+  {
+    const next = $(env, "btn-next-line");
+    const ask = $(env, "booth-done-ask");
+    await show(env, room(oneTake()), 0);
+    if (text(next) !== "Next line ›") fail(`first line footer: ${text(next)}`);
+    if ($(env, "btn-clear-take")) fail("the trash button is still in the footer");
+    await show(env, room(oneTake()), 1);
+    if (text(next) !== "Done ›" || !next.classList.contains("btn-primary")) fail(`last line footer: ${text(next)} ${next.className}`);
+    next.click();
+    if (!visible(ask) || text($(env, "booth-done-ask-text")) !== "1 of 2 lines recorded. Mark ready anyway?") {
+      fail(`inline ask: ${visible(ask)} ${text(ask)}`);
+    }
+    if (app.isReadyForScreening) fail("marked ready before answering");
+    if (visible(next)) fail("Done still shown under the ask");
+    $(env, "btn-done-keep-recording").click();
+    if (visible(ask) || !visible(next) || app.isReadyForScreening) fail("Keep recording did not put the footer back");
+
+    const views = [];
+    const realShowView = app.showView;
+    const realSetup = app.setupScreeningView;
+    app.showView = (v) => views.push(v);
+    app.setupScreeningView = () => {};
+    next.click();
+    $(env, "btn-done-mark-ready").click();
+    if (!app.isReadyForScreening) fail("Mark ready did not mark you ready");
+    const dialog = $(env, "modal-go-premiere");
+    if (dialog.hidden || text($(env, "go-premiere-title")) !== "Go to the premiere now?" || text($(env, "go-premiere-text")) !== "1 of 2 ready.") {
+      fail(`host dialog: ${dialog.hidden} ${text(dialog)}`);
+    }
+    $(env, "btn-go-premiere").click();
+    if (views.join() !== "screening" || !dialog.hidden) fail(`Go to the premiere: ${views} ${dialog.hidden}`);
+
+    // A guest with every line recorded: Done marks ready at once, no ask, no dialog.
+    app.isReadyForScreening = false;
+    const allMine = { ...oneTake(), t2000: { picked: "c1", next_number: 2, takes: [mk("c1", 1)] } };
+    await show(env, room(allMine, { host_id: "u9" }), 1);
+    next.click();
+    if (visible(ask) || !app.isReadyForScreening || !dialog.hidden) fail(`guest done: ask ${visible(ask)} ready ${app.isReadyForScreening} dialog ${!dialog.hidden}`);
+    app.showView = realShowView;
+    app.setupScreeningView = realSetup;
+    console.log("PASS: Done marks you ready, asks inline when lines are missing, and the host's premiere question is a dialog");
   }
 
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);

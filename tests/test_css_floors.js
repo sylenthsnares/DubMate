@@ -183,7 +183,7 @@ function checkReducedMotion(file, blocks, css, names) {
   }
 }
 checkReducedMotion("static/css/style.css", styleBlocks, styleCss,
-  ["pulse-halo", "pulse-recording", "finishedPulse", "connection-pulse", "spinFilmReel", "pulseReelRing"]);
+  ["pulse-halo", "pulse-recording", "connection-pulse", "spinFilmReel", "pulseReelRing"]);
 checkReducedMotion("static/css/builder.css", builderBlocks, builderCss, ["pulse-halo"]);
 
 // Disabled buttons and the danger variant.
