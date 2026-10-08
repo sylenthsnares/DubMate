@@ -66,6 +66,7 @@
 ### Fixed
 - **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.
 - **Premiere Dialogue Level**: the premiere's video now uses the room's Dialogue level, like every other export.
+- **Premiere Mix Reaches the Video**: the premiere's Mix slider (more music or more voice) now changes the video you save, the stems and the premiere video, not just what you hear. Moving it switches the final video back to the live mix so you hear the change. The host's setting is the room's and everyone hears it.
 - **Export Folder Cleanup**: creating a room no longer deletes earlier renders and ZIPs from your export folder.
 - **Outdated Link Importer**: when a link import fails because the downloader is out of date, Pack Builder says so and shows how to update it.
 - **Wrong Background Track in the Next Scene**: after recording one scene, the next scene could play the previous scene's backing track.

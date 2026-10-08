@@ -153,6 +153,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                             audio_processor.export_dub_video,
                             room.pack, takes, out_path,
                             master_dialogue_presence_db=room.master_dialogue_presence_db,
+                            mix_balance=room.master_mix_balance,
                         )
                         room.exported_video_path = out_path
                         room.export_status["16:9"] = "ready"
@@ -191,6 +192,24 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 room.invalidate_exports()
                 await room.broadcast("dialogue_presence_sync", {
                     "presence_db": room.master_dialogue_presence_db,
+                    "triggered_by": user_id
+                })
+
+            elif msg_type == "set_mix_balance":
+                if not _is_host(room, user_id):
+                    await _refuse(websocket, "Only the host can change the mix.")
+                    continue
+                try:
+                    balance = float(payload.get("balance", 50.0))
+                except (TypeError, ValueError) as ex:
+                    print(f"[WS] {room_id}/{user_id} ignored bad balance: {ex!r}")
+                    continue
+                if balance != balance:  # NaN
+                    continue
+                room.master_mix_balance = max(0.0, min(100.0, balance))
+                room.invalidate_exports()
+                await room.broadcast("mix_balance_sync", {
+                    "balance": room.master_mix_balance,
                     "triggered_by": user_id
                 })
 

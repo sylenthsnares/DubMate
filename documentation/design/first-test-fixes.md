@@ -176,6 +176,17 @@ Found by the UI critique (ui-plan "Guests can move the whole room", routed here 
 - A member's own place in the room is unchanged: `set_user_status` (line, location, ready) stays open to everyone. The studio no longer sends `set_status` from a member's Start (it just opens their booth) or `set_dialogue_presence` from a member's slider (the change stays in their own preview).
 - Not guarded: `GET …/export/download` and `…/export/video`, which members use to get the finished video. A member's download can still start a render when none is ready; the premiere rework (ui-plan 40b) owns that.
 
+## Premiere mix reaches the export
+
+Found by the UI critique (premiere P0, ui-plan step 40b): the premiere's **Mix** slider only moved two Web Audio gains, so the video, the stems and the premiere's own render kept the default balance, and while the final video played the slider did nothing at all.
+
+- The balance is the room's, like the dialogue level: `Room.master_mix_balance` (0 more music, 50 even, 100 more voice; default 50), saved in `room_state.json`, clamped on load, and sent in the room state.
+- New socket message `set_mix_balance {balance}`, host only (same check as above). It clamps, invalidates the renders and broadcasts `mix_balance_sync {balance, triggered_by}`. A member's slider stays in their own preview.
+- `audio_processor.mix_balance_gains(balance)` returns the (backing, voices) multipliers: the premiere's own curve (`getScreeningStemGains`, backing 0.65 and voices 0.95 at 50) divided by its value at 50, so an even mix renders exactly as before. `_mix_buses` applies them, so `_mix_scene`, `render_dub_mix`, `export_dub_video` and `build_stems_zip` take `mix_balance`, and the premiere render, `POST /export`, the download and the stems pass the room's. The project ZIP keeps its raw stems.
+- `POST /export` also takes `balance`, the value the host hears, in case `set_mix_balance` hasn't landed; a change invalidates older renders.
+- The studio: on arrival the slider shows the room's balance; a sync moves it without sending. Any mix change (balance or dialogue level, local or synced) drops the out-of-date final video and switches the theater to the live mix (`dropStaleExport`), so the change is heard. Switching rewinds to the start, as switching sources already did.
+- Not changed: the live mix and the export still differ by the master stage (loudness and limiter), and voices sit 0.95 to 1 against the backing at 50 (the live mix's fixed bus level, kept so existing exports don't move). A render already running when the mix changes still finishes with the old mix and is offered as ready; the premiere rework (40b) owns that.
+
 ## Desktop
 
 - New `tauri/src-tauri/src/mic_permission.rs`:

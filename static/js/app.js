@@ -1038,6 +1038,14 @@ class DubMateApp {
       this.masterDialoguePresence = pres;
       this.renderPresenceUI(pres);
       this.applyScreeningPresence();
+      this.dropStaleExport();
+    });
+
+    this.socket.on('mix_balance_sync', (data) => {
+      const balance = Number(data.payload?.balance ?? 50);
+      if (this.roomState) this.roomState.master_mix_balance = balance;
+      this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);
+      this.dropStaleExport();
     });
   }
 

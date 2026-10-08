@@ -907,7 +907,8 @@ async def get_take_audio(room_id: str, line_id: str, take_id: str, request: Requ
 
 
 @router.post("/api/rooms/{room_id}/export")
-async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0, user_id: str = ""):
+async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0, user_id: str = "",
+                          balance: Optional[float] = None):
     """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously. Host only."""
     room = rooms.room_or_404(room_id)
     _require_host(room, user_id, "Only the host can make the video.")
@@ -915,6 +916,13 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
 
     presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
     room.master_dialogue_presence_db = presence_val
+    # The Mix the host hears, sent along in case its set_mix_balance hasn't landed yet.
+    if balance is not None and balance == balance:
+        new_balance = max(0.0, min(100.0, float(balance)))
+        if new_balance != room.master_mix_balance:
+            room.master_mix_balance = new_balance
+            room.invalidate_exports()
+    mix_balance = room.master_mix_balance
 
     is_9_16 = (aspect_ratio == "9:16")
     out_path = room.export_out_path(aspect_ratio)
@@ -953,7 +961,8 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
                 takes,
                 out_path,
                 aspect_ratio="9:16" if is_9_16 else "16:9",
-                master_dialogue_presence_db=presence_val
+                master_dialogue_presence_db=presence_val,
+                mix_balance=mix_balance,
             )
             if is_9_16:
                 room.exported_video_9_16_path = out_path
@@ -1032,6 +1041,7 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
                 room.pack, takes, out_path,
                 aspect_ratio="9:16" if is_9_16 else "16:9",
                 master_dialogue_presence_db=room.master_dialogue_presence_db,
+                mix_balance=room.master_mix_balance,
             )
         except audio_processor.EffectsUnavailable as ex:
             raise HTTPException(status_code=503, detail=str(ex))
@@ -1094,6 +1104,7 @@ async def download_room_stems(room_id: str, user_id: str = ""):
                 output_zip_path=zip_path,
                 presence_db=room.master_dialogue_presence_db,
                 room_id=room.room_id,
+                mix_balance=room.master_mix_balance,
             )
         )
     except BaseException as ex:

@@ -255,7 +255,9 @@ export class ExportMethods {
     try {
       const presenceParam = encodeURIComponent(this.masterDialoguePresence || 0.0);
       const userParam = encodeURIComponent(this.user?.id || '');
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${aspectRatio}&presence=${presenceParam}&user_id=${userParam}`, {
+      // The Mix the host hears, in case its set_mix_balance hasn't reached the room yet.
+      const balanceParam = encodeURIComponent(this.screeningBalance ?? 50);
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${aspectRatio}&presence=${presenceParam}&balance=${balanceParam}&user_id=${userParam}`, {
         method: 'POST',
       });
 

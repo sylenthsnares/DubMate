@@ -55,6 +55,19 @@ LUFS_FLOOR = -70.0                   # silence; also BS.1770's absolute gate
 # Mix levels shared by render_dub_mix and build_project_zip.
 BACKING_TRACK_LEVEL = 0.65  # backing music & SFX under the dialogue (calibrated DAW level)
 ORIGINAL_LINE_LEVEL = 0.90  # unrecorded lines fall back to the original reference audio at this level
+MIX_BALANCE_EVEN = 50.0     # the premiere's Mix slider: 0 = more music, 50 = even, 100 = more voice
+
+
+def mix_balance_gains(balance: float) -> Tuple[float, float]:
+    """(backing, voices) multipliers for the premiere's Mix slider, relative to an even mix,
+    so 50 changes nothing. The same curve the premiere plays (getScreeningStemGains in
+    static/js/studio/screening.js: backing 0.65 and voices 0.95 at 50), divided by its value at 50."""
+    n = (max(0.0, min(100.0, float(balance))) - MIX_BALANCE_EVEN) / MIX_BALANCE_EVEN
+    if n <= 0:
+        backing, voices = 0.65 + (-n) * 0.35, 0.95 * (1.0 + n * 0.80)
+    else:
+        backing, voices = 0.65 * (1.0 - n * 0.75), 0.95 + n * 0.35
+    return backing / 0.65, voices / 0.95
 
 # Noise reduction. DeepFilterNet's attenuation limit in dB: 100 is maximum suppression and
 # removes breaths and whispers, so takes are cleaned more gently by default.
@@ -1729,13 +1742,15 @@ def _mix_buses(
     sr: int = SR,
     presence_db: float = 0.0,
     by_character: bool = False,
+    balance: float = MIX_BALANCE_EVEN,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     The scene's unmastered mono mix, split into buses: (backing, voices). backing is the
     backing track x BACKING_TRACK_LEVEL; voices holds each take at its offset with its
     effects, gain and presence_db, and the original voice (x ORIGINAL_LINE_LEVEL, plus
     presence_db) for lines without a take. Voices go into voices["dialogue"], or with
-    by_character into voices[<character>]. Every buffer is _timeline_samples long; a voice
+    by_character into voices[<character>]. Both are then scaled by mix_balance_gains(balance).
+    Every buffer is _timeline_samples long; a voice
     bus exists only once a line lands in it. takes_dict format (Room.mix_takes):
     {line_index: {"wav_path": str, "render_dir": str, "offset_ms": int, "gain_db": float, "chain": dict}}
     """
@@ -1785,6 +1800,12 @@ def _mix_buses(
                 except Exception as ex:
                     print(f"Error loading original audio for line {idx}: {ex}")
 
+    backing_gain, voices_gain = mix_balance_gains(balance)
+    if backing_gain != 1.0:
+        backing *= np.float32(backing_gain)
+    if voices_gain != 1.0:
+        for buf in voices.values():
+            buf *= np.float32(voices_gain)
     return backing, voices
 
 
@@ -1793,15 +1814,17 @@ def _mix_scene(
     takes_dict: Dict[int, Dict[str, Any]],
     sr: int = SR,
     presence_db: float = 0.0,
+    balance: float = MIX_BALANCE_EVEN,
 ) -> np.ndarray:
     """
     The scene's unmastered mono mix: backing x BACKING_TRACK_LEVEL, each take at its
     offset with its effects, gain and presence_db, and the original voice
-    (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take (_mix_buses, summed).
+    (x ORIGINAL_LINE_LEVEL, plus presence_db) for lines without a take, at the Mix
+    balance (_mix_buses, summed).
     takes_dict format (Room.mix_takes): {line_index: {"wav_path": str, "render_dir": str,
     "offset_ms": int, "gain_db": float, "chain": dict}}
     """
-    mix_buffer, voices = _mix_buses(pack, takes_dict, sr, presence_db)
+    mix_buffer, voices = _mix_buses(pack, takes_dict, sr, presence_db, balance=balance)
     for buf in voices.values():
         mix_buffer += buf
     return mix_buffer
@@ -1813,12 +1836,13 @@ def render_dub_mix(
     output_wav: str,
     sr: int = SR,
     master_dialogue_presence_db: float = 0.0,
+    mix_balance: float = MIX_BALANCE_EVEN,
 ) -> str:
     """
-    Renders the scene mix (_mix_scene, with master dialogue presence) through the master
-    stage (-16 LUFS, -1 dBTP) into output_wav.
+    Renders the scene mix (_mix_scene, with master dialogue presence and the Mix balance)
+    through the master stage (-16 LUFS, -1 dBTP) into output_wav.
     """
-    master_mix, info = master_stage(_mix_scene(pack, takes_dict, sr, master_dialogue_presence_db), sr)
+    master_mix, info = master_stage(_mix_scene(pack, takes_dict, sr, master_dialogue_presence_db, mix_balance), sr)
     print(f"[render_dub_mix] Master: {info['lufs_in']} LUFS in, {info['gain_db']:+} dB, {info['true_peak_db']} dBTP out.")
     write_wav_mono(output_wav, master_mix, sr)
     return output_wav
@@ -1830,13 +1854,15 @@ def export_dub_video(
     output_mp4: str,
     aspect_ratio: str = "16:9",
     master_dialogue_presence_db: float = 0.0,
+    mix_balance: float = MIX_BALANCE_EVEN,
 ) -> str:
     """Combines final mixed audio with scene video into a high quality MP4 (16:9 or 9:16 letterboxed)."""
     pack.ensure_web_ready()
     fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
-        render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db)
+        render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db,
+                       mix_balance=mix_balance)
 
         ffmpeg = get_ffmpeg_path()
         os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)
@@ -2264,17 +2290,19 @@ def build_stems_zip(
     presence_db: float = 0.0,
     room_id: str = "",
     sr: int = SR,
+    mix_balance: float = MIX_BALANCE_EVEN,
 ) -> str:
     """
     Writes the scene's stems to output_zip_path, under DubMate_Stems_<Pack>_<ROOM>/:
     Dialogue.wav (every voice), Music_and_Effects.wav (the backing at its mix level) and
-    Characters/<Character>.wav (one per character with a line; they add up to Dialogue).
+    Characters/<Character>.wav (one per character with a line; they add up to Dialogue),
+    at the room's Mix balance (mix_balance) like the video.
     Mono 32-bit float WAVs, all _timeline_samples long and starting with the scene.
     Every file gets the master stage's start gain (toward -16 LUFS, measured on the
     unlimited mix), nothing after it: Dialogue + Music_and_Effects is the video's mix
     before its limiter, at -16 LUFS, with its peaks kept. EffectsUnavailable is raised.
     """
-    backing, voices = _mix_buses(pack, takes_dict, sr, presence_db, by_character=True)
+    backing, voices = _mix_buses(pack, takes_dict, sr, presence_db, by_character=True, balance=mix_balance)
     dialogue = np.zeros(len(backing), dtype=np.float32)
     for buf in voices.values():
         dialogue += buf
