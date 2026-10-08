@@ -4,7 +4,7 @@
 // set. The sync runs are mic_sync.js's; showMicSyncPanel() redraws this card as they go.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { AudioEngine } from '../audio_engine.js';
-import { AUDIO_SETUP_DONE_KEY, micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.js';
+import { AUDIO_SETUP_DONE_KEY, TAKES_GUEST_PRIVACY, micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.js';
 import { PANEL_COPY, START_LABEL, chosenDevice } from './mic_sync.js';
 import { levelHint, levelZone } from './level_target.js';
 
@@ -70,6 +70,13 @@ export class MicCardMethods {
       const label = chosenDevice(this.audioSetup.devices?.inputs, this.audioSetup.inputId)?.label || '';
       $('mic-card-done-text').textContent = synced ? ['Mic set', label].filter(Boolean).join(' · ') : 'Mic set · not synced';
       return;
+    }
+
+    // Someone else's room: where the takes go, in Audio settings' words.
+    const guestPrivacy = $('mic-card-guest-privacy');
+    if (guestPrivacy) {
+      guestPrivacy.textContent = TAKES_GUEST_PRIVACY;
+      guestPrivacy.hidden = this.isEngineLocal();
     }
 
     const step = this.micCardStep || 'mic';

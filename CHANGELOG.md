@@ -52,6 +52,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **In This Dub**: the premiere lists every line with who voices it and the take in the dub, or "Original voice". Click a line and playback jumps there for everyone. Change take opens the line in the booth.
 - **Mix Presets**: the premiere's Mix has Balanced, Voices forward and Music forward, with the music and dialogue sliders under Fine-tune. Friends see the host's mix and hear what the video will sound like.
 - **Open Download Page**: when DubMate is missing voice effects or the stronger noise cleanup, Open download page takes you to the DubMate download page. In a browser it's a link. A desktop app older than 2.0 can't open it, so there the button is Copy download link: it copies the link for you to paste into your browser.
+- **About DubMate, Privacy and Licence Notices**: About DubMate, in the logo menu and the ? sheet, shows your version and links to the source code, the licence, the third-party notices, the privacy notice and how to report a security problem. On your own computer it lists the folders where DubMate keeps your work, with Open folder; in someone else's room it shows none of the host's folders. PRIVACY.md says what goes online, where your files are and how to delete them; THIRD_PARTY_NOTICES.md lists the projects DubMate is built on, with their licences. The Pack Builder's link import says to import only videos you have the right to use.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -120,6 +121,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **Lobby**: the scene's name and who's here sit at the top, with Copy invite link and Start recording. On the right, a preview of the scene shows the selected character's first line; "▶ Play this line" plays it. Point at a character to preview theirs.
 - **Mic Check in the Lobby**: the mic set-up moved from the dialog at launch to a "Check your mic" card in the lobby, done while friends join: allow the mic, choose devices, check your level, then sync (take your earbuds out first; the clicks are loud). Skip it and the booth shows NO MIC as before.
 - **Leaving Asks in the App**: Leave asks "Leave the room?" in the studio instead of a browser dialog. Esc or Stay keeps you in.
+- **Audio Settings Says Where Your Takes Go**: on your own computer it says your takes are saved on this computer. In someone else's room, Audio settings and the lobby's Check your mic card say your takes are sent to the host's computer, and the host can export and share them.
 
 ### Removed
 - **Lobby Extras**: the lobby's noise reduction card (the switch is in All effects in the booth) and its Cast list (the avatars at the top show who's here).

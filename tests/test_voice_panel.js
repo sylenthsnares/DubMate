@@ -554,7 +554,7 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     const pad = /padding:\s*(\d+)(?:px)?\s+(\d+)px\s+(\d+)px\s*;/.exec(rule(".voice-effects-note"));
     if (!pad || Number(pad[2]) !== 12 || Number(pad[3]) < 8) fail(`.voice-effects-note padding: ${pad && pad[0]}`);
     if (!/justify-content:\s*center/.test(rule(".voice-effects-note .download-page-control"))) fail("the note's control isn't centred");
-    if (!/overflow-wrap:\s*anywhere/.test(rule(".download-page-hint.is-address"))) fail("the address doesn't wrap");
+    if (!/overflow-wrap:\s*anywhere/.test(rule(".external-link-hint.is-address"))) fail("the address doesn't wrap");
     console.log("PASS: the note sits in the card's padding with its control centred, and the address wraps");
   }
 

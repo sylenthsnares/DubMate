@@ -18,6 +18,7 @@ import { SessionMethods } from './studio/sessions.js';
 import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
 import { UpdateNoticeMethods } from './studio/update_notice.js';
+import { AboutMethods } from './studio/about.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff, FIRST_ROOM_KEY } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 import { IDENTITY_COLORS, normalizeColor, cleanName, colorName, renderColorPicker } from './identity.js';
@@ -373,6 +374,7 @@ class DubMateApp {
     this.audioSetupTitle = document.getElementById('audio-setup-title');
     this.audioSetupSubtitle = document.getElementById('audio-setup-subtitle');
     this.audioIntroPrivacy = document.getElementById('audio-intro-privacy');
+    this.audioGuestPrivacy = document.getElementById('audio-guest-privacy');
     this.audioIntroAsker = document.getElementById('audio-intro-asker');
     this.audioStepIntro = document.getElementById('audio-setup-step-intro');
     this.audioStepDenied = document.getElementById('audio-setup-step-denied');
@@ -619,10 +621,14 @@ class DubMateApp {
     initShortcutSheet({
       opener: document.getElementById('btn-shortcuts'),
       // Mid-take the sheet would sit over the take, and Space couldn't stop it.
+      // On the join card and You left with no DubMate of your own, ? is hidden (showView).
       isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport
-        || this.recordState === 'countdown' || this.recordState === 'recording',
+        || this.recordState === 'countdown' || this.recordState === 'recording'
+        || document.body.classList.contains('no-home-chrome'),
       getView: () => this.currentView,
+      onAbout: (returnFocus) => this.openAbout(returnFocus),
     });
+    this.initAbout();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
@@ -1950,6 +1956,7 @@ class DubMateApp {
           this.confirmLeaveRoom();
         }
       },
+      onAboutClick: (opener) => this.openAbout(opener),
     });
   }
 
@@ -1977,7 +1984,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, MicCardMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, MicCardMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods, AboutMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

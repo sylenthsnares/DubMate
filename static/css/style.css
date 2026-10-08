@@ -325,6 +325,36 @@ body::after {
   border-color: var(--border-wood);
 }
 
+.mode-dropdown-item:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+/* About is a button, not a link: the same row, without the button chrome. */
+button.mode-dropdown-item {
+  width: 100%;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-dropdown-divider {
+  height: 1px;
+  margin: 2px var(--space-1);
+  background: var(--border);
+}
+
+/* As wide as the emoji above it, so the titles line up. */
+#mode-opt-about .mode-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  color: var(--foreground-muted);
+}
+
 .mode-dropdown-item.active {
   background: rgba(217, 119, 6, 0.12);
   border-color: var(--accent-amber-glow);
@@ -2417,6 +2447,11 @@ body::after {
 .mic-card-lede {
   margin-top: calc(-1 * var(--space-2));
   font-size: 13px;
+  color: var(--foreground-muted);
+}
+.mic-card-note {
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--foreground-muted);
 }
 .mic-card-devices .form-label {
@@ -4635,20 +4670,20 @@ svg {
   }
 }
 
-/* "Open download page", and what happened when the app couldn't open it */
-.download-page-control {
+/* A link out of DubMate (Open download page, About's links), and what happened when the app couldn't open it */
+.external-link-control {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px 8px;
   vertical-align: middle;
 }
-.download-page-hint {
+.external-link-hint {
   font-size: 12px;
   line-height: 1.4;
   color: var(--foreground-muted);
 }
-.download-page-hint.is-address {
+.external-link-hint.is-address {
   min-width: 0;
   color: var(--foreground);
   user-select: all;
@@ -5752,6 +5787,13 @@ body.no-home-chrome .logo-with-dropdown {
   margin-bottom: 5px;
 }
 
+.audio-setup-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
 .audio-intro-desc {
   font-size: 12.5px;
   line-height: 1.55;
@@ -6427,6 +6469,153 @@ body.no-home-chrome .logo-with-dropdown {
 .shortcut-more .shortcut-label,
 .shortcut-more .shortcut-keys kbd {
   color: var(--foreground-muted);
+}
+
+/* The studio's sheet ends with a way to About DubMate. */
+.shortcut-sheet-footer {
+  display: flex;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* The ghost button's label lines up with the sheet's left edge (btn-sm pads 12px). */
+.shortcut-sheet-footer .btn-ghost {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* ------------------------------------------------------------- */
+/* ABOUT DUBMATE                                                 */
+/* ------------------------------------------------------------- */
+
+.about-card {
+  max-width: 560px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  text-align: left;
+  padding: 28px 28px var(--space-5);
+}
+
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* Clear of the close button. */
+  padding-right: 40px;
+}
+
+.about-logo {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.about-head .modal-title {
+  margin: 0;
+}
+
+.about-meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
+.about-licence {
+  margin: var(--space-4) 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.about-section {
+  margin-top: 20px;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.about-section-title {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.about-text {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
+.about-text.about-meta {
+  margin: var(--space-3) 0 0;
+  color: var(--foreground-muted);
+}
+
+.about-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Name and Open folder on one line, the path under them, full width. */
+.about-folder {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+}
+
+.about-folder-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.about-folder-missing {
+  /* As tall as Open folder, so every row is spaced the same. */
+  line-height: 24px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
+.about-folder-path {
+  grid-column: 1 / -1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+  user-select: text;
+  /* A path has few spaces: it wraps instead of running out of the card. */
+  overflow-wrap: anywhere;
+}
+
+/* A folder you chose: About's note doesn't tell you to delete it. */
+.about-folder-shared {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
+.about-folder-error,
+#about-folders-error {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--accent-red-soft);
 }
 
 .share-pack-card {
