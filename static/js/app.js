@@ -622,8 +622,10 @@ class DubMateApp {
     initShortcutSheet({
       opener: document.getElementById('btn-shortcuts'),
       // Mid-take the sheet would sit over the take, and Space couldn't stop it.
+      // On the join card and You left with no DubMate of your own, ? is hidden (showView).
       isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport
-        || this.recordState === 'countdown' || this.recordState === 'recording',
+        || this.recordState === 'countdown' || this.recordState === 'recording'
+        || document.body.classList.contains('no-home-chrome'),
       getView: () => this.currentView,
       onAbout: (returnFocus) => this.openAbout(returnFocus),
     });

@@ -24,7 +24,8 @@ export class AboutMethods {
   /** Opens About; focus goes back to returnFocus when it closes. */
   openAbout(returnFocus = document.activeElement) {
     const overlay = document.getElementById('modal-about');
-    if (!overlay || isDialogOpen()) return;
+    // Not on the join card or You left without a DubMate of your own: the logo menu and ? are off there.
+    if (!overlay || isDialogOpen() || document.body.classList.contains('no-home-chrome')) return;
     document.getElementById('about-links').replaceChildren(...ABOUT_LINKS.map((link) => this.externalLinkControl(link)));
     this.renderAboutVersion();
     this.renderAboutFolders();

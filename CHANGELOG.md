@@ -120,7 +120,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **Lobby**: the scene's name and who's here sit at the top, with Copy invite link and Start recording. On the right, a preview of the scene shows the selected character's first line; "▶ Play this line" plays it. Point at a character to preview theirs.
 - **Mic Check in the Lobby**: the mic set-up moved from the dialog at launch to a "Check your mic" card in the lobby, done while friends join: allow the mic, choose devices, check your level, then sync (take your earbuds out first; the clicks are loud). Skip it and the booth shows NO MIC as before.
 - **Leaving Asks in the App**: Leave asks "Leave the room?" in the studio instead of a browser dialog. Esc or Stay keeps you in.
-- **Audio Settings Says Where Your Takes Go**: on your own computer it says your takes are saved on this computer. In someone else's room it says your takes are sent to the host's computer, and the host can export and share them.
+- **Audio Settings Says Where Your Takes Go**: on your own computer it says your takes are saved on this computer. In someone else's room, Audio settings and the lobby's Check your mic card say your takes are sent to the host's computer, and the host can export and share them.
 
 ### Removed
 - **Lobby Extras**: the lobby's noise reduction card (the switch is in All effects in the booth) and its Cast list (the avatars at the top show who's here).

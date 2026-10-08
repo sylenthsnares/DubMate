@@ -203,6 +203,21 @@ function enterLobby(app, opts) {
     app.renderLobbyState();
     if (allow.classList.contains("btn-primary") || !allow.classList.contains("btn-secondary")) fail("the host's mic card button is amber");
     pass("the host's mic card button is secondary");
+    if (visible($(doc, "mic-card-guest-privacy"))) fail("the mic card tells someone on their own computer that takes go to the host");
+    pass("on this computer the mic card has no line about the host's computer");
+  }
+
+  // 1b. In someone else's room the card says where the takes go, in Audio settings' words.
+  {
+    const env = { permission: "prompt", devices: UNLABELLED };
+    const { doc, app } = await boot({ url: TUNNEL_URL, env });
+    enterLobby(app);
+    const line = $(doc, "mic-card-guest-privacy");
+    const audioLine = text($(doc, "audio-guest-privacy"));
+    if (!line || !visible(line)) fail("a guest's mic card does not say where the takes go");
+    if (text(line) !== "Your takes are sent to the host's computer, and the host can export and share them.") fail(`guest privacy: ${text(line)}`);
+    if (text(line) !== audioLine) fail(`the mic card and Audio settings disagree: "${text(line)}" / "${audioLine}"`);
+    pass("a guest's mic card says the takes go to the host's computer, as Audio settings does");
   }
 
   // 2. Allow, devices, level, sync; Play clicks; a failure; Clap instead; success.
