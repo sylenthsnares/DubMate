@@ -40,6 +40,7 @@ export class BoothMethods {
       takePeaks,
       offsetMs: take ? (take.offset_ms || 0) : 0,
       totalDuration: (line.duration || 3.0) + 0.8,
+      lineEnd: line.duration || 3.0,
     });
   }
 
@@ -101,6 +102,7 @@ export class BoothMethods {
       this.audio.stopRecording().catch(() => { });
     }
     this.recordState = 'idle';
+    this.endRecordingFeedback();
     if (this.videoOverlay) {
       this.videoOverlay.classList.add('hidden');
       const circle = this.videoOverlay.querySelector('.countdown-circle');
@@ -1000,15 +1002,20 @@ export class BoothMethods {
     const recordingDurationSec = line.duration + 0.8;
     const recStartTime = performance.now();
 
-    // Live playhead animation synced with voice recording duration
+    // Each frame: the playhead, the time left on the REC tally and the mic's level in the take lane.
+    this.waveform.startLiveTrace();
+    if (this.recTally) this.recTally.hidden = false;
     const animRecordPlayhead = () => {
       if (this.recordState !== 'recording' || this.countdownSessionId !== sessionId) {
-        this.waveform.setPlayhead(-1);
+        this.endRecordingFeedback();
         return;
       }
       const elapsed = (performance.now() - recStartTime) / 1000.0;
       const progress = Math.min(1.0, elapsed / recordingDurationSec);
       this.waveform.setPlayhead(progress);
+      if (this.recTallyLeft) this.recTallyLeft.textContent = `${Math.max(0, recordingDurationSec - elapsed).toFixed(1)} s left`;
+      const level = this.audio.readInputLevel();
+      if (level) this.waveform.pushLiveLevel(progress, level.peak);
       if (progress < 1.0) {
         requestAnimationFrame(animRecordPlayhead);
       } else {
@@ -1022,6 +1029,13 @@ export class BoothMethods {
         this.finishRecording();
       }
     }, recordingDurationSec * 1000);
+  }
+
+  /** The playhead, the REC tally and the live trace go when recording ends or is cancelled. */
+  endRecordingFeedback() {
+    this.waveform.setPlayhead(-1);
+    this.waveform.endLiveTrace();
+    if (this.recTally) this.recTally.hidden = true;
   }
 
   setBoothProcessing(isProcessing) {
@@ -1082,7 +1096,7 @@ export class BoothMethods {
     // The line and the sound picked for its next take, as they are when recording stops.
     const lineIndex = this.currentLineIndex;
     const chain = this.pendingNextTakeChain?.[this.roomState.pack.lines[lineIndex].line_id] || null;
-    this.waveform.setPlayhead(-1);
+    this.endRecordingFeedback();
     if (this.recordingTimeout) {
       clearTimeout(this.recordingTimeout);
       this.recordingTimeout = null;

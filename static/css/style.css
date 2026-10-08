@@ -2184,6 +2184,37 @@ body.resizing .video-container {
   display: block;
 }
 
+/* While recording: "● REC · 0.6 s left" in the video's top-left corner */
+.rec-tally {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(12, 10, 9, 0.82);
+  border: 1px solid var(--accent-red-bright);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.rec-tally[hidden] {
+  display: none;
+}
+.rec-tally-dot {
+  color: var(--accent-red-bright);
+  animation: rec-tally-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-tally-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-tally-dot { animation: none; }
+}
+
 .video-overlay {
   position: absolute;
   inset: 0;

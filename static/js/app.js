@@ -63,7 +63,9 @@ class DubMateApp {
     this.origBuffer = null;
 
     // Countdown & Recording Mutex
-    this.recordState = 'idle'; // 'idle' | 'countdown' | 'recording' | 'processing'
+    // 'stopping' only while the recorder hands over the take; then it's idle again and the
+    // take saves in the background (savingLines).
+    this.recordState = 'idle'; // 'idle' | 'countdown' | 'recording' | 'stopping'
     this.recordingGuideVoice = false; // guide-voice checkbox as it was when the current take started
     this.countdownSessionId = 0;
     this.recordingTimeout = null;
@@ -227,6 +229,8 @@ class DubMateApp {
     this.videoOverlay = document.getElementById('video-overlay');
     this.overlayCountdown = document.getElementById('overlay-countdown');
     this.overlayStatusText = document.getElementById('overlay-status-text');
+    this.recTally = document.getElementById('rec-tally');
+    this.recTallyLeft = document.getElementById('rec-tally-left');
     this.boothLineIndicator = document.getElementById('booth-line-indicator');
     this.boothTimeBadge = document.getElementById('booth-time-badge');
     this.stageCaptionCard = document.getElementById('stage-caption-card');

@@ -9,6 +9,14 @@ export class WaveformRenderer {
     this.offsetMs = 0;
     this.playheadProgress = null;
     this.totalDuration = 3.0;
+    // Where the line ends (s): the "end" mark, and the tail after it hatched.
+    this.lineEnd = null;
+    // While recording: [[progress 0-1, level 0-1], ...] drawn in the take lane instead of a take.
+    this.liveTrace = null;
+    // "Saving…" over the take lane while that line's take saves.
+    this.takeLaneNote = null;
+    // The take lane is dimmed while the room is offline.
+    this.takeLaneDimmed = false;
     this._rafId = null;
 
     // Callbacks
@@ -131,11 +139,12 @@ export class WaveformRenderer {
     });
   }
 
-  setData({ origPeaks = null, takePeaks = null, offsetMs = null, totalDuration = null } = {}) {
+  setData({ origPeaks = null, takePeaks = null, offsetMs = null, totalDuration = null, lineEnd = null } = {}) {
     if (origPeaks !== null && origPeaks !== undefined) this.origPeaks = origPeaks;
     if (takePeaks !== null && takePeaks !== undefined) this.takePeaks = takePeaks;
     if (offsetMs !== null && offsetMs !== undefined) this.offsetMs = offsetMs;
     if (totalDuration !== null && totalDuration !== undefined) this.totalDuration = Math.max(0.5, totalDuration);
+    if (lineEnd !== null && lineEnd !== undefined) this.lineEnd = lineEnd;
     if (this.canvas) {
       this.canvas.style.cursor = (this.takePeaks && this.takePeaks.length > 0) ? 'grab' : 'default';
     }
@@ -148,6 +157,36 @@ export class WaveformRenderer {
     } else {
       this.playheadProgress = Math.max(0, Math.min(1.0, progress));
     }
+    this.requestRender();
+  }
+
+  /** The live input trace: start it empty, push the mic level each frame, end it. */
+  startLiveTrace() {
+    this.liveTrace = [];
+    this.requestRender();
+  }
+
+  pushLiveLevel(progress, level) {
+    if (!this.liveTrace) return;
+    this.liveTrace.push([Math.max(0, Math.min(1, progress)), Math.max(0, Math.min(1, level || 0))]);
+    this.requestRender();
+  }
+
+  endLiveTrace() {
+    if (!this.liveTrace) return;
+    this.liveTrace = null;
+    this.requestRender();
+  }
+
+  setTakeLaneNote(note) {
+    if ((note || null) === this.takeLaneNote) return;
+    this.takeLaneNote = note || null;
+    this.requestRender();
+  }
+
+  setTakeLaneDimmed(dimmed) {
+    if (!!dimmed === this.takeLaneDimmed) return;
+    this.takeLaneDimmed = !!dimmed;
     this.requestRender();
   }
 
@@ -359,7 +398,15 @@ export class WaveformRenderer {
     // 6. Render Track 2: User Recorded Take (Bottom Lane)
     // -------------------------------------------------------------
     const hasTake = this.takePeaks && this.takePeaks.length > 0;
-    if (hasTake) {
+    if (this.liveTrace) {
+      // Recording: the mic's level as it comes in, from the lane's left edge.
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+      const barW = Math.max(1.5, w / 240);
+      for (const [progress, level] of this.liveTrace) {
+        const amp = Math.max(1, Math.min(1, level * 1.6) * lane2Amp);
+        ctx.fillRect(progress * w - barW / 2, lane2MidY - amp, barW, amp * 2);
+      }
+    } else if (hasTake) {
       const offsetFraction = (this.offsetMs / 1000.0) / this.totalDuration;
       const pixelOffset = offsetFraction * w;
 
@@ -425,12 +472,63 @@ export class WaveformRenderer {
       ctx.lineTo(pixelOffset + 0.5, lane2Bottom);
       ctx.stroke();
       ctx.setLineDash([]);
-    } else {
+    } else if (!this.takeLaneNote) {
       // Empty Take Placeholder in Lane 2
       ctx.fillStyle = 'rgba(168, 159, 149, 0.5)';
       ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText('No take yet. Press Space to record.', 110, lane2MidY + 3);
+    }
+
+    // The line's end, and the tail recorded after it (hatched), on every take.
+    if (this.lineEnd !== null && this.lineEnd > 0 && this.lineEnd < this.totalDuration) {
+      const endX = Math.round((this.lineEnd / this.totalDuration) * w) + 0.5;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(endX, 0, w - endX, tracksTotalHeight);
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(244, 237, 228, 0.07)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = endX - tracksTotalHeight; x < w; x += 7) {
+        ctx.moveTo(x, tracksTotalHeight);
+        ctx.lineTo(x + tracksTotalHeight, 0);
+      }
+      ctx.stroke();
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(244, 237, 228, 0.45)';
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(endX, 0);
+      ctx.lineTo(endX, tracksTotalHeight);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(244, 237, 228, 0.7)';
+      ctx.font = '600 11px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('end', endX + 4, 4);
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // Offline: the take lane is dimmed (takes wait to upload).
+    if (this.takeLaneDimmed) {
+      ctx.fillStyle = 'rgba(12, 10, 9, 0.6)';
+      ctx.fillRect(0, lane2Top, w, lane2Bottom - lane2Top);
+    }
+
+    // "Saving…" over the take lane while this line's take saves.
+    if (this.takeLaneNote) {
+      ctx.font = '600 12px "Plus Jakarta Sans", sans-serif';
+      const noteW = ctx.measureText(this.takeLaneNote).width + 20;
+      const noteX = Math.max(100, (w - noteW) / 2);
+      ctx.fillStyle = 'rgba(20, 17, 14, 0.9)';
+      ctx.fillRect(noteX, lane2MidY - 11, noteW, 22);
+      ctx.fillStyle = '#f4ede4';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(this.takeLaneNote, noteX + 10, lane2MidY);
+      ctx.textBaseline = 'alphabetic';
     }
 
     // -------------------------------------------------------------

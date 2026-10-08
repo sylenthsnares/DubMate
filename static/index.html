@@ -654,6 +654,8 @@
               </div>
               <div id="overlay-status-text" class="overlay-status-text">GET READY</div>
             </div>
+            <!-- While recording: the time left. The record badge says REC to screen readers. -->
+            <div id="rec-tally" class="rec-tally" aria-hidden="true" hidden><span class="rec-tally-dot">●</span> REC · <span id="rec-tally-left">0.0 s left</span></div>
             <button id="btn-expand-video" class="btn-video-expand" data-tip="Expand video"
               aria-pressed="false">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
