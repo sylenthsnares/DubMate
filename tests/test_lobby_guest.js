@@ -4,6 +4,9 @@
  * The lobby for guests and for the host (UI pass U1, step 5):
  *  - only the host sees "Start recording"; a guest sees "Waiting for {host} to start
  *    recording", or "Back to the booth" once recording is on, which only moves them,
+ *    or "Back to the premiere" while the premiere is on,
+ *  - the waiting line follows the room's status while the guest is on another screen,
+ *  - the header is marked in-room (it compacts so its Leave stays in view),
  *  - only the host gets the casting selects; a guest sees who voices each character as text,
  *  - characters in natural order, "1 line" / "2 lines", "Original voice", "Your role",
  *  - a character name with a quote still finds its row on an in-place update,
@@ -19,6 +22,9 @@ const { buildStudioBundle } = require("./helpers/studio_dom");
 const PROJECT_ROOT = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(PROJECT_ROOT, "static", "index.html"), "utf8");
 const bundle = buildStudioBundle();
+// A socket message's state must carry this page's state version to be applied.
+const STATE_VERSION = Number(fs.readFileSync(path.join(PROJECT_ROOT, "static", "js", "studio", "takes.js"), "utf8")
+  .match(/TAKE_STATE_VERSION = (\d+)/)[1]);
 const { JSDOM, VirtualConsole } = jsdom;
 
 function fail(msg, ...rest) {
@@ -138,6 +144,66 @@ const text = (el) => (el ? el.textContent.replace(/\s+/g, " ").trim() : "");
     await tick(20);
     check(app.currentView === "booth" && booth.length === 1 && booth[0] === 2, "Back to the booth opens the guest's first line", app.currentView, booth);
     check(!sent.some((m) => m.type === "set_status"), "Back to the booth sends no set_status", sent);
+  }
+
+  // A guest who stepped back to the lobby during the premiere: Back to the premiere.
+  {
+    const { doc, app, sent } = await boot();
+    let premieres = 0;
+    app.setupScreeningView = () => { premieres += 1; };
+    app.roomState = room(app, { status: "screening" });
+    app.showView("lobby");
+    const back = doc.getElementById("btn-back-to-premiere");
+    check(visible(back) && /Back to the premiere/.test(back.textContent), "a guest sees Back to the premiere while the premiere is on");
+    check(!visible(doc.getElementById("btn-back-to-booth")) && !visible(doc.getElementById("btn-start-session")),
+      "and no Back to the booth or Start recording");
+    check(!visible(doc.getElementById("lobby-waiting")) && doc.getElementById("lobby-waiting").textContent === "", "and no waiting line");
+    sent.length = 0;
+    back.click();
+    await tick(20);
+    check(app.currentView === "screening" && premieres === 1, "Back to the premiere opens the premiere", app.currentView);
+    check(sent.some((m) => m.type === "set_user_status" && m.payload.location === "screening") && !sent.some((m) => m.type === "set_status"),
+      "it says where the guest is and sends no set_status", sent);
+
+    // Recording or lobby: no Back to the premiere; the host never gets it.
+    app.roomState.status = "recording";
+    app.renderLobbyState();
+    check(!visible(back), "no Back to the premiere while recording");
+    const host = await boot();
+    host.app.roomState = room(host.app, { hostId: host.app.user.id, status: "screening" });
+    host.app.showView("lobby");
+    check(!visible(host.doc.getElementById("btn-back-to-premiere")), "the host gets no Back to the premiere");
+  }
+
+  // The host starts recording while the guest waits: the guest moves to the booth and
+  // the lobby's waiting line doesn't stay behind.
+  {
+    const { doc, app } = await boot();
+    app.roomState = room(app);
+    app.showView("lobby");
+    const waiting = doc.getElementById("lobby-waiting");
+    check(visible(waiting), "the guest is waiting");
+    const next = { ...room(app, { status: "recording" }), state_version: STATE_VERSION };
+    app.socket.emit("status_changed", { type: "status_changed", payload: { status: "recording" }, state: next });
+    await tick(20);
+    check(app.currentView === "booth", "recording starting moves the guest to the booth", app.currentView);
+    check(!visible(waiting) && waiting.textContent === "", "the waiting line is cleared", waiting.textContent);
+    check(visible(doc.getElementById("btn-back-to-booth")), "the lobby is ready with Back to the booth");
+  }
+
+  // The header knows when it is in a room, so it can keep its Leave in view.
+  {
+    const { doc, app } = await boot();
+    const header = doc.querySelector(".app-header");
+    check(!header.classList.contains("in-room"), "the home screen header is not in-room");
+    app.roomState = room(app);
+    app.showView("lobby");
+    check(header.classList.contains("in-room"), "the lobby header is in-room");
+    app.showView("booth");
+    check(header.classList.contains("in-room"), "the booth header is in-room");
+    app.roomState = null;
+    app.showView("landing");
+    check(!header.classList.contains("in-room"), "leaving the room clears in-room");
   }
 
   // The host: Start recording and the selects.

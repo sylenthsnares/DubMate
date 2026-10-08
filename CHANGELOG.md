@@ -59,10 +59,10 @@
 - **Reduced Motion**: if your computer is set to reduce motion, pulsing and spinning animations stop. Recording and connection states still show through colour and text.
 - **Disabled Buttons Look Disabled**: buttons you can't use yet are dimmed. In Pack Builder, "Process video" no longer looks ready before you choose a video. Remove in the Remove Pack Builder confirmation is red.
 - **Calmer Notifications**: notifications appear at the bottom of the screen, three at most. Errors stay until you close them, and screen readers read each notification on its own.
-- **Only the Host Starts Recording**: guests see who voices each character instead of the casting dropdowns, and "Waiting for the host to start recording" instead of the Start button. If recording has already started, "Back to the booth" takes them there.
+- **Only the Host Starts Recording**: guests see who voices each character instead of the casting dropdowns, and "Waiting for the host to start recording" instead of the Start button. If recording has already started, "Back to the booth" takes them there; during the premiere, "Back to the premiere".
 - **Casting Table**: characters are listed in natural order (Guy 2 before Guy 10), counts read "1 line" or "2 lines", and an uncast character reads "Original voice".
 - **Calmer Cast Strip**: in the lobby the cast strip shows who is here and their roles. Someone with several characters shows "2 roles", with the names in a tooltip. Screen readers hear each join, leave and "is ready" once.
-- **Reconnecting**: when the connection drops, the header says "Lost the room. Reconnecting…" with Retry now. If the room can't be reached after about a minute, or the host has closed it, it stops trying and offers Try again or Leave room. Changes that couldn't be sent are reported instead of lost silently.
+- **Reconnecting**: when the connection drops, the header says "Lost the room. Reconnecting…" with Retry now. If a room on someone else's DubMate can't be reached after about a minute, or the host has closed it, it stops trying and offers Try again or Leave room; on your own DubMate it keeps trying until DubMate is back. Changes that couldn't be sent are reported instead of lost silently, and the room hears where you are and whether you're ready again once you're back. The header's Leave stays in view in a window 960px wide.
 - **Shortcut Sheet by Screen**: the ? sheet shows the keys for the screen you're on first, then the ones that work everywhere, with the other screens' keys one click away.
 
 ### Removed

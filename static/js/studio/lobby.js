@@ -596,11 +596,13 @@ export class LobbyMethods {
     }
 
     // Only the host starts recording and casts. Guests wait for the host, or go back
-    // to the booth if recording has already started.
+    // to the booth if recording has already started, or to the premiere once it's on.
     const runsRoom = this.isHost({ allowDummy: true });
     const recording = this.roomState.status === 'recording';
+    const screening = this.roomState.status === 'screening';
     if (this.btnStartSession) this.btnStartSession.hidden = !runsRoom;
     if (this.btnBackToBooth) this.btnBackToBooth.hidden = runsRoom || !recording;
+    if (this.btnBackToPremiere) this.btnBackToPremiere.hidden = runsRoom || !screening;
     if (this.lobbyWaiting) {
       const waiting = !runsRoom && this.roomState.status === 'lobby';
       this.lobbyWaiting.hidden = !waiting;

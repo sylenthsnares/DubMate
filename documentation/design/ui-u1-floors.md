@@ -22,26 +22,26 @@ U1 still keeps away from the takes button, the Audio settings mic-sync and room-
 | Toasts appear at the bottom centre, at most 420px wide, with at most 3 at once (the oldest goes). Error toasts stay until closed, have a Close button and are announced at once. Each toast is read out alone. | Everywhere | Only when it happens |
 | Your own take no longer says "Take saved" twice. Other people's takes still show "Mika recorded line 2". | Booth | Only when it happens |
 | When the room refuses something (for example a guest's casting change), a toast says why. The page then reloads the room's real state instead of showing a change that didn't happen. | Lobby, booth | Only when it happens |
-| Guests no longer see "Start recording". In the lobby they see "Waiting for Tani to start recording". If recording has already started, they see "Back to the booth", which only moves them. | Lobby | Default (guests) |
+| Guests no longer see "Start recording". In the lobby they see "Waiting for Tani to start recording". If recording has already started, they see "Back to the booth", which only moves them; while the premiere is on, "Back to the premiere". The waiting line and these buttons follow the room's status even while the guest is on another screen. | Lobby | Default (guests) |
 | Guests see who voices each character as text (colour dot and name) instead of a dropdown. Only the host gets the dropdowns. | Lobby | Default |
 | The casting table lists characters in natural order (Black Guy 2 before Black Guy 10). Counts read "1 line" / "2 lines", and the empty choice reads "Original voice". The dropdown fills its column. | Lobby | Default |
-| The lobby's "LOBBY" badge and its second "Leave room" button are gone; the header's Leave stays. All 13 lobby classes that had no styles get real ones: "Your role", the You tag, the online pills and dots, the line count, and the character badges. The Host tag uses a new `.tag-host`. | Lobby | Default |
+| The lobby's "LOBBY" badge and its second "Leave room" button are gone; the header's Leave stays, and stays in the window down to 960px: in a room below 1280px the logo shows only its icon, and while the connection pill asks for attention the room code and your name step aside. The pill's sentence is the only thing that shrinks (with an ellipsis). All 13 lobby classes that had no styles get real ones: "Your role", the You tag, the online pills and dots, the line count, and the character badges. The Host tag uses a new `.tag-host`. | Lobby | Default |
 | In the lobby, the cast strip shows who is here and their roles, without progress or ready counts. Someone with several characters shows "2 roles", with the names in a tooltip that also opens on keyboard focus. | Cast strip | Default; names in a tooltip |
 | Screen readers hear joins, leaves, "is ready" and connection changes once each, instead of every rewrite of the cast strip. | Hidden live region | Assistive tech only |
-| Losing the connection shows an amber pill, "Lost the room. Reconnecting…", with a "Retry now" button. After 5 failed tries (30 to 60 seconds), or straight away if the engine says the room is gone, it stops. It then shows a red "Can't reach the room. The host may have closed it." with "Try again" and "Leave room". Below 1280px wide, the amber pill shortens to "Reconnecting…" with the full sentence in its tooltip. | Header | Only when it happens |
+| Losing the connection shows an amber pill, "Lost the room. Reconnecting…", with a "Retry now" button. After 5 failed tries (30 to 60 seconds), or straight away if the engine says the room is gone, it stops. The host's own page (served by this machine's engine) keeps trying every 15 to 30 seconds instead, because that engine comes back after a restart however long it takes; only "room is gone" stops it. It then shows a red "Can't reach the room. The host may have closed it." with "Try again" and "Leave room". Below 1280px wide, the amber pill shortens to "Reconnecting…" with the full sentence in its tooltip; the long sentences (gave up, dropped changes, updated) shorten below 1440px. After any reconnect the page sends where you are and whether you're ready again, because the engine's join forgets them. | Header | Only when it happens |
 | If changes made while offline overflow the queue, the pill says "Some changes from the last minute didn't reach the room." The same line stays as a toast after reconnecting. | Header, toast | Only when it happens |
 | The stale-tab notice ("DubMate was updated…") gets a "Reload" button. "Back online" uses the token green. | Header | Only when it happens |
 | The `?` sheet shows the current screen's keys first, then Everywhere, then a closed "On other screens" section. Groups are named after the screens: "Choose a scene", "Booth", "Premiere", and "In the editor" in Pack Builder. Nudge rows say what moves: "Move my take 25 ms earlier" / "later", and "Same, by 100 ms". Key caps are bigger, with a visible edge. | `?` sheet | One key away; other screens one click inside it |
 
 Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new strings are:
 
-- **Lobby:** "Waiting for {host} to start recording" ("the host" when the name is unknown), "Back to the booth", "Original voice", "Your role", "{n} roles".
+- **Lobby:** "Waiting for {host} to start recording" ("the host" when the name is unknown), "Back to the booth", "Back to the premiere", "Original voice", "Your role", "{n} roles".
 - **Connection:** "Lost the room. Reconnecting…", "Reconnecting…", "Retry now", "Can't reach the room. The host may have closed it.", "Try again", "Leave room", "Some changes from the last minute didn't reach the room.", "Reload", "Close".
 - **Announcements:** "{name} joined", "{name} left", "{name} is ready".
 - **`?` sheet:** "On other screens", "These work once your video is in the editor.", and the sheet labels above.
 - **Tooltips:**
   - Amber pill: "Casting and ready changes are sent when it's back. Wait for it before you record."
-  - Red pill: "Changes you made since it dropped are sent if Try again reconnects."
+  - Red pill: "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved."
 
 ## Data shapes, on-disk layout, API and WebSocket
 
@@ -53,10 +53,10 @@ Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new 
 - **Client-only additions:**
   - **`ui_common.js`:** `showToast(message, { tone })` (`tone: 'error'`), `plural(n, word)`, `announce(text)`.
   - **`room_socket.js`:**
-    - A `'failed'` connection state after `MAX_RECONNECT_ATTEMPTS = 5`, or at once on a connect-time error.
+    - A `'failed'` connection state after `MAX_RECONNECT_ATTEMPTS = 5`, or at once on a connect-time error. A page on a loopback host (`isOwnEngine()`: localhost, 127.0.0.1, [::1]) never reaches the attempt limit; only the connect-time error ends its retries.
     - `retryNow()`.
     - A `queue_overflow` event, emitted once per outage when the 50-message cap drops one.
-    - `pendingMessages` are kept in `'failed'`. Try again (`retryNow()`) flushes them on open. Leave calls `disconnect()`, which drops them deliberately, as today. Sends made while in `'failed'` take today's `send_failed` path ("You're offline. That change wasn't saved.").
+    - `pendingMessages` are kept in `'failed'`. Try again (`retryNow()`) flushes them on open. Leave calls `disconnect()`, which drops them deliberately, as today. Sends made while in `'failed'` take today's `send_failed` path ("You're offline. That change wasn't saved."), except `broadcastMyStatus()`, which skips the send: app.js sends where you are and whether you're ready again on every reconnect.
   - **`shortcuts.js`:**
     - Each group gets a `view` field (`landing`, `lobby`, `booth`, `screening`, `editor`, `any`) **alongside** the existing `page` field, which `test_shortcut_sheet.js` filters on.
     - `initShortcutSheet` takes `getView()`, and the sheet's content is rebuilt each time it opens.

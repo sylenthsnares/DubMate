@@ -207,6 +207,7 @@ class DubMateApp {
     this.castOnlineCount = document.getElementById('cast-online-count');
     this.btnStartSession = document.getElementById('btn-start-session');
     this.btnBackToBooth = document.getElementById('btn-back-to-booth');
+    this.btnBackToPremiere = document.getElementById('btn-back-to-premiere');
     this.lobbyWaiting = document.getElementById('lobby-waiting');
     this.btnCopyInvite = document.getElementById('btn-copy-invite');
     this.btnGetScene = document.getElementById('btn-get-scene');
@@ -657,6 +658,14 @@ class DubMateApp {
         this.loadBoothLine(this.findFirstAssignedLine());
       });
     }
+    // The same while the premiere is on: back to it, as the Premiere step does.
+    if (this.btnBackToPremiere) {
+      this.btnBackToPremiere.addEventListener('click', () => {
+        this.showView('screening');
+        this.setupScreeningView();
+        this.broadcastMyStatus('screening');
+      });
+    }
 
     // Studio Breadcrumbs Navigation
     if (this.navStepLobby) {
@@ -1051,6 +1060,9 @@ class DubMateApp {
     this.socket.on('status_changed', (data) => {
       if (!this.applyIncomingState(data)) return;
       const newStatus = data.payload?.status || data.status;
+      // The lobby's waiting line and Back buttons follow the room's status, even while
+      // this page is on another screen.
+      this.renderLobbyState();
       if (newStatus === 'recording' && this.currentView === 'lobby') {
         this.showView('booth');
         this.loadBoothLine(this.findFirstAssignedLine());
@@ -1121,13 +1133,6 @@ class DubMateApp {
   }
 
   /**
-   * Merges a socket message's room state into this.roomState. Local take peaks
-   * are kept when the incoming take carries none, and the local line is always
-   * kept. Safe to call more than once for the same message.
-   * Returns false, and changes nothing, when the state comes from a different
-   * DubMate version than this page (a tab left open across an update).
-   */
-  /**
    * Reads out a change to someone else in the room, once: "{name} joined", "{name} left",
    * "{name} is ready". before is the users map from before the message was merged; with
    * none (this page's own first state) nothing is read.
@@ -1144,6 +1149,13 @@ class DubMateApp {
     }
   }
 
+  /**
+   * Merges a socket message's room state into this.roomState. Local take peaks
+   * are kept when the incoming take carries none, and the local line is always
+   * kept. Safe to call more than once for the same message.
+   * Returns false, and changes nothing, when the state comes from a different
+   * DubMate version than this page (a tab left open across an update).
+   */
   applyIncomingState(data) {
     if (!data || !data.state) return false;
     const incoming = data.state;
