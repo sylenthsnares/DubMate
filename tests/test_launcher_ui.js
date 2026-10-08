@@ -441,6 +441,19 @@ function deferredUpdate() {
     check("a finished update opens the studio", t.entered.length === 1, JSON.stringify(t.entered));
     t.close();
   }
+  {
+    const t = await boot({
+      health: true,
+      handlers: { get_packbuilder_status: () => ({ opted_in: true, installed: false, writable: true }) },
+    });
+    await t.emit("update-status", { status: "UpdateAvailable", data: { ...UPDATE, first_download: true } });
+    await t.emit("update-complete", null);
+    await t.clock.advance(600);
+    check("after the first download, an opted-in Pack Builder starts installing",
+      t.invoked("start_packbuilder_install").length === 1);
+    check("and the studio still opens", t.entered.length === 1);
+    t.close();
+  }
 
   console.log("\n  [+] Launcher: entering the studio, and Pack Builder in the background");
   {

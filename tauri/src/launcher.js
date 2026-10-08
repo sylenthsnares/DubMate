@@ -415,9 +415,12 @@ async function listenToRust() {
   listen("update-progress", (event) => renderUpdateProgress(event.payload));
   listen("update-stage", (event) => renderUpdateStage(event.payload));
 
-  // Rust restarted the engine on the new files before sending this.
-  listen("update-complete", () => {
+  // Rust restarted the engine on the new files before sending this. DubMate is now up
+  // to date, so this is also the moment for an opted-in Pack Builder (a first download
+  // never gets an "up to date" update-status).
+  listen("update-complete", async () => {
     setProgressText("Restarting");
+    await startPackBuilderIfWanted(invoke);
     openStudioWithoutUpdate();
   });
 }
