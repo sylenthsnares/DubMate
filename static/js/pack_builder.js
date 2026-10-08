@@ -22,6 +22,23 @@ const HERO_LINES = {
   neither: 'Add a clip and a subtitle file. DubMate turns them into a scene you can dub.',
 };
 
+// The processing screen's rows, in order: the engine's stage key, the status while it
+// runs, the headline while it runs and the headline when it fails.
+const PROCESS_STAGES = [
+  { key: 'upload', status: 'uploading', active: 'Uploading the video', failed: "The upload didn't finish" },
+  { key: 'audio_extraction', status: 'extracting_audio', active: 'Reading the audio', failed: "Couldn't read the audio" },
+  { key: 'stem_separation', status: 'separating_stems', active: 'Separating the voices', failed: "Couldn't separate the voices" },
+  { key: 'transcription', status: 'transcribing', active: 'Writing out the lines', failed: "Couldn't write out the lines" },
+  { key: 'speakers', status: 'detecting_speakers', active: 'Detecting who speaks', failed: "Couldn't detect who speaks" },
+];
+// Failures before the engine runs: the subtitles show on the lines row, a refused start on the first stage.
+const PROCESS_FAILURES = {
+  subtitles: { row: 'transcription', headline: "Couldn't read the subtitles" },
+  start: { row: 'audio_extraction', headline: "Processing didn't start" },
+};
+const ICON_TICK = '<svg class="icon-tick" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const ICON_ALERT = '<svg class="icon-alert" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+
 const PALETTE = [
   '#d97706', // Vintage Amber
   '#cca458', // Walnut Gold
@@ -51,6 +68,14 @@ export class PackBuilderApp {
     this.characterColors = new Map();
     this.currentStep = 'upload';
     this.currentIngestTab = 'file'; // 'file' | 'url'
+
+    // Processing: each run gets a number, so a cancelled run's late callbacks are ignored.
+    this.processRun = 0;
+    this.processState = null; // the last state renderProcessState() drew
+    this.uploadInRun = false; // the run started with a file to upload (shows the Upload row)
+    this.uploadXhr = null;
+    this.progressSource = null;
+    this.progressPoll = null;
 
     // Waveform & Timeline Engine State
     this.waveformPeaks = [];
@@ -259,15 +284,20 @@ export class PackBuilderApp {
     this.labelStartProcess = document.getElementById('label-start-process');
 
     // Step 2: Processing progress elements
+    this.processCard = document.getElementById('process-card');
+    this.processRadar = document.getElementById('process-radar');
     this.processHeadline = document.getElementById('process-headline');
     this.processSubtext = document.getElementById('process-subtext');
+    this.processProgress = document.getElementById('process-progress');
     this.builderProgressFill = document.getElementById('builder-progress-fill');
     this.processStageText = document.getElementById('process-stage-text');
     this.processPercentText = document.getElementById('process-percent-text');
-    this.stageExtract = document.getElementById('stage-extract');
-    this.stageStems = document.getElementById('stage-stems');
-    this.stageWhisper = document.getElementById('stage-whisper');
-    this.stageSpeakers = document.getElementById('stage-speakers');
+    this.processRows = new Map(PROCESS_STAGES.map((s) => [s.key, document.querySelector(`.pipeline-item[data-stage="${s.key}"]`)]));
+    this.processActions = document.getElementById('process-actions');
+    this.btnProcessRetry = document.getElementById('btn-process-retry');
+    this.btnProcessWrite = document.getElementById('btn-process-write');
+    this.btnProcessBack = document.getElementById('btn-process-back');
+    this.btnProcessCancel = document.getElementById('btn-process-cancel');
 
     // Step 3: Editor elements
     this.editorVideo = document.getElementById('editor-video');
@@ -447,6 +477,10 @@ export class PackBuilderApp {
 
     // 4. Start AI processing button
     this.btnStartProcess.addEventListener('click', () => this.startProcessingPipeline());
+    this.btnProcessRetry.addEventListener('click', () => this.retryProcessing());
+    this.btnProcessWrite.addEventListener('click', () => this.writeLinesMyself());
+    this.btnProcessBack.addEventListener('click', () => this.backToVideo());
+    this.btnProcessCancel.addEventListener('click', () => this.cancelProcessing());
 
     // 5. Video player controls
     this.btnPlayPause.addEventListener('click', () => this.togglePlayPause());
@@ -907,36 +941,18 @@ export class PackBuilderApp {
 
   async startProcessingPipeline() {
     if (!this.videoFile && !this.sessionId) return;
-
+    const run = ++this.processRun;
+    this.stopProgressUpdates();
+    this.uploadInRun = !this.sessionId;
     this.setStep('process');
-    this.processHeadline.innerText = 'Preparing your video';
-    this.processSubtext.innerText = '';
-    this.builderProgressFill.style.width = '10%';
-    this.processPercentText.innerText = '10%';
+    this.renderProcessState({ status: 'starting', progress: 0, message: 'Starting' });
 
     try {
-      // If local file was selected and session hasn't been created yet
-      if (this.videoFile && !this.sessionId) {
-        this.processHeadline.innerText = 'Uploading';
-        this.processSubtext.innerText = '';
-
-        const formData = new FormData();
-        formData.append('file', this.videoFile);
-
-        const uploadRes = await fetch('/api/builder/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!uploadRes.ok) {
-          const err = await uploadRes.json().catch(() => ({}));
-          throw new Error(detailText(err, "The upload didn't finish. Try again."));
-        }
-
-        const uploadData = await uploadRes.json();
-        this.sessionId = uploadData.session_id;
-        this.duration = uploadData.duration;
-
+      if (!this.sessionId) {
+        const uploaded = await this.uploadVideo(run);
+        if (run !== this.processRun) return;
+        this.sessionId = uploaded.session_id;
+        this.duration = uploaded.duration;
       }
 
       if (this.coverFile) {
@@ -946,6 +962,7 @@ export class PackBuilderApp {
           method: 'POST',
           body: coverData,
         });
+        if (run !== this.processRun) return;
         if (!coverRes.ok) {
           this.showToast("The cover image didn't upload. You can build the pack without it.");
         }
@@ -958,10 +975,11 @@ export class PackBuilderApp {
           method: 'POST',
           body: subData,
         });
+        if (run !== this.processRun) return;
         // Never fall through to transcription when the chosen subtitles didn't arrive.
         if (!subRes.ok) {
           const err = await subRes.json().catch(() => ({}));
-          throw new Error(detailText(err, "Couldn't read the subtitles. Check the file and try again."));
+          throw this.processError('subtitles', detailText(err, 'Check the file and try again.'));
         }
         const subJson = await subRes.json();
         if (subJson.segments && subJson.segments.length > 0) {
@@ -969,95 +987,307 @@ export class PackBuilderApp {
         }
       }
 
-      const lang = this.selectTranscribeLang.value;
-      const body = { language: lang, whisper_model: 'base' };
-      if (!this.willWriteLines()) body.transcribe = false;
-      const processRes = await fetch(`/api/builder/${this.sessionId}/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!processRes.ok) {
-        const err = await processRes.json().catch(() => ({}));
-        throw new Error(detailText(err, "Processing didn't start. Try again."));
-      }
-
-      this.listenToProgressSSE();
-
+      await this.requestProcessing(run);
     } catch (ex) {
-      this.processHeadline.innerText = 'Processing stopped';
-      this.processSubtext.innerText = ex.message;
-      this.showToast(ex.message);
+      this.failProcessing(run, ex);
+    }
+  }
+
+  /** An error that names where it stopped: 'upload', 'subtitles', 'start' or an engine stage. */
+  processError(stage, message) {
+    const err = new Error(message);
+    err.stage = stage;
+    return err;
+  }
+
+  /** Shows a failure the page found itself, unless that run was cancelled. */
+  failProcessing(run, ex) {
+    if (run !== this.processRun) return;
+    console.warn('[PackBuilder] Processing stopped:', ex);
+    const last = this.processState || {};
+    this.renderProcessState({
+      status: 'error',
+      progress: 0,
+      stage: ex.stage || last.stage || 'start',
+      error: ex.message || "Processing didn't finish. Try again.",
+      skipped: last.skipped || [],
+    });
+  }
+
+  /** Uploads the chosen video with progress. Resolves the engine's answer, or null when cancelled. */
+  uploadVideo(run) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      this.uploadXhr = xhr;
+      const size = this.videoFile.size;
+      xhr.upload.onprogress = (e) => {
+        if (run !== this.processRun) return;
+        this.renderProcessState({ status: 'uploading', progress: 0, upload: { loaded: e.loaded, total: e.lengthComputable ? e.total : size } });
+      };
+      xhr.onload = () => {
+        this.uploadXhr = null;
+        let body = {};
+        try { body = JSON.parse(xhr.responseText || '{}'); } catch (e) { body = {}; }
+        if (xhr.status >= 200 && xhr.status < 300 && body.session_id) resolve(body);
+        else reject(this.processError('upload', detailText(body, 'Try again.')));
+      };
+      xhr.onerror = () => {
+        this.uploadXhr = null;
+        reject(this.processError('upload', 'Check that DubMate is still running, then try again.'));
+      };
+      xhr.onabort = () => {
+        this.uploadXhr = null;
+        resolve(null);
+      };
+      const form = new FormData();
+      form.append('file', this.videoFile);
+      xhr.open('POST', '/api/builder/upload');
+      this.renderProcessState({ status: 'uploading', progress: 0, upload: { loaded: 0, total: size } });
+      xhr.send(form);
+    });
+  }
+
+  /** POSTs /process for this session, then follows its progress. */
+  async requestProcessing(run) {
+    const lang = this.selectTranscribeLang.value;
+    const body = { language: lang, whisper_model: 'base' };
+    if (!this.willWriteLines()) body.transcribe = false;
+    this.renderProcessState({ status: 'queued', progress: 0, message: 'Starting' });
+    const processRes = await fetch(`/api/builder/${this.sessionId}/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (run !== this.processRun) return;
+    if (!processRes.ok) {
+      const err = await processRes.json().catch(() => ({}));
+      throw this.processError('start', detailText(err, 'Try again.'));
+    }
+    this.listenToProgressSSE();
+  }
+
+  /** Try again: re-POSTs /process for the same session. Only a failed upload or subtitle import starts over. */
+  async retryProcessing() {
+    const stage = this.processState && this.processState.stage;
+    if (!this.sessionId || stage === 'upload' || stage === 'subtitles') {
+      this.startProcessingPipeline();
+      return;
+    }
+    const run = ++this.processRun;
+    try {
+      await this.requestProcessing(run);
+    } catch (ex) {
+      this.failProcessing(run, ex);
+    }
+  }
+
+  /** Cancel: stops the upload, or asks the engine to stop, and returns to Video at once with everything kept. */
+  cancelProcessing() {
+    this.processRun++;
+    if (this.uploadXhr) {
+      this.uploadXhr.abort();
+    } else if (this.sessionId) {
+      // The engine stops at its next stage boundary; a new run waits for it.
+      fetch(`/api/builder/${this.sessionId}/cancel`, { method: 'POST' })
+        .catch((e) => console.warn('[PackBuilder] Cancel not sent:', e));
+    }
+    this.stopProgressUpdates();
+    this.setStep('upload');
+  }
+
+  /** Back to video after a failure: the file, chips, pack name and language are kept. */
+  backToVideo() {
+    this.processRun++;
+    this.stopProgressUpdates();
+    this.setStep('upload');
+  }
+
+  /** Write the lines myself: the editor with no lines, on the voice track when separation finished. */
+  writeLinesMyself() {
+    const state = this.processState || {};
+    this.processRun++;
+    this.stopProgressUpdates();
+    this.openEditor({ segments: [], voices_separated: state.voices_separated });
+  }
+
+  stopProgressUpdates() {
+    if (this.progressSource) {
+      this.progressSource.close();
+      this.progressSource = null;
+    }
+    if (this.progressPoll) {
+      clearInterval(this.progressPoll);
+      this.progressPoll = null;
     }
   }
 
   listenToProgressSSE() {
+    this.stopProgressUpdates();
+    const run = this.processRun;
     const sse = new EventSource(`/api/builder/${this.sessionId}/progress`);
+    this.progressSource = sse;
 
     sse.onmessage = (event) => {
+      if (run !== this.processRun) {
+        sse.close();
+        return;
+      }
+      let data;
       try {
-        const data = JSON.parse(event.data);
-        const pct = Math.round((data.progress || 0.0) * 100);
-        this.builderProgressFill.style.width = `${pct}%`;
-        this.processPercentText.innerText = `${pct}%`;
-        this.processStageText.innerText = data.message || 'Processing';
-
-        const status = data.status;
-        this.stageExtract.classList.toggle('active', status === 'extracting_audio');
-        this.stageStems.classList.toggle('active', status === 'separating_stems');
-        this.stageWhisper.classList.toggle('active', status === 'transcribing');
-        this.stageSpeakers.classList.toggle('active', status === 'detecting_speakers');
-
-        if (status === 'transcribed') {
-          sse.close();
-          setTimeout(() => this.openEditor(data), 600);
-        } else if (status === 'error') {
-          sse.close();
-          this.processHeadline.innerText = 'Processing stopped';
-          this.processSubtext.innerText = data.error || "Processing didn't finish. Try again.";
-          this.showToast(data.error || "Processing didn't finish. Try again.");
-        }
+        data = JSON.parse(event.data);
       } catch (e) {
         console.error('Error parsing SSE event:', e);
+        return;
       }
+      this.applyEngineState(run, data);
     };
 
     sse.onerror = () => {
       sse.close();
-      this.pollProgressStatus();
+      if (run === this.processRun && this.progressSource === sse) {
+        this.progressSource = null;
+        this.pollProgressStatus();
+      }
     };
   }
 
-  async pollProgressStatus() {
-    const interval = setInterval(async () => {
+  pollProgressStatus() {
+    const run = this.processRun;
+    this.progressPoll = setInterval(async () => {
       try {
         const res = await fetch(`/api/builder/${this.sessionId}/status`);
-        if (!res.ok) throw new Error("Lost track of processing. Reload the page and try again.");
+        if (run !== this.processRun) return;
+        if (!res.ok) throw new Error('Lost track of processing. Try again.');
         const data = await res.json();
-        const pct = Math.round((data.progress || 0.0) * 100);
-        this.builderProgressFill.style.width = `${pct}%`;
-        this.processPercentText.innerText = `${pct}%`;
-        this.processStageText.innerText = data.message || 'Processing';
-        this.stageExtract.classList.toggle('active', data.status === 'extracting_audio');
-        this.stageStems.classList.toggle('active', data.status === 'separating_stems');
-        this.stageWhisper.classList.toggle('active', data.status === 'transcribing');
-        this.stageSpeakers.classList.toggle('active', data.status === 'detecting_speakers');
-
-        if (data.status === 'transcribed') {
-          clearInterval(interval);
-          this.openEditor(data);
-        } else if (data.status === 'error') {
-          clearInterval(interval);
-          this.processHeadline.innerText = 'Processing stopped';
-          this.processSubtext.innerText = data.error || "Processing didn't finish. Try again.";
-        }
+        if (run !== this.processRun) return;
+        this.applyEngineState(run, data);
       } catch (e) {
-        clearInterval(interval);
-        this.processHeadline.innerText = 'Processing stopped';
-        this.processSubtext.innerText = e.message;
-        this.showToast(e.message);
+        this.stopProgressUpdates();
+        this.failProcessing(run, e);
       }
     }, 1000);
+  }
+
+  /** One engine status (from the stream or /status) onto the screen; the editor opens when the lines are ready. */
+  applyEngineState(run, data) {
+    this.renderProcessState(data);
+    const status = data.status;
+    if (status === 'transcribed') {
+      this.stopProgressUpdates();
+      setTimeout(() => {
+        if (run === this.processRun) this.openEditor(data);
+      }, 600);
+    } else if (status === 'error') {
+      this.stopProgressUpdates();
+    } else if (status === 'cancelled') {
+      this.stopProgressUpdates();
+      this.setStep('upload');
+    }
+  }
+
+  /**
+   * The only writer of the processing screen. state: status, stage, progress,
+   * message, skipped, error_code, error, and upload ({loaded, total}) while uploading.
+   */
+  renderProcessState(state) {
+    this.processState = state;
+    const status = state.status;
+    const failed = status === 'error';
+    const finished = status === 'transcribed' || status === 'done';
+    const rows = PROCESS_STAGES.filter((s) => s.key !== 'upload' || this.uploadInRun);
+    const failure = failed ? (PROCESS_FAILURES[state.stage] || null) : null;
+
+    // The row that is running, or that failed. Rows before it are finished.
+    let current;
+    if (failed) {
+      current = rows.findIndex((s) => s.key === (failure ? failure.row : state.stage));
+      if (current < 0) current = rows.findIndex((s) => s.key !== 'upload');
+    } else if (finished) {
+      current = rows.length;
+    } else {
+      current = rows.findIndex((s) => s.status === status);
+    }
+    // Before the engine's first stage, a finished upload is already ticked.
+    const uploaded = this.uploadInRun && !!this.sessionId && status !== 'uploading';
+    const skipped = new Set(state.skipped || []);
+    const message = (state.error || state.message || '').trim();
+
+    PROCESS_STAGES.forEach((stage) => {
+      const row = this.processRows.get(stage.key);
+      const i = rows.indexOf(stage);
+      row.hidden = i < 0;
+      if (i < 0) return;
+      let kind = 'pending';
+      if (failed && i === current) kind = 'failed';
+      else if (skipped.has(stage.key)) kind = 'skipped';
+      else if (i < current || (stage.key === 'upload' && uploaded)) kind = 'done';
+      else if (i === current) kind = 'active';
+      row.classList.toggle('active', kind === 'active');
+      row.classList.toggle('is-done', kind === 'done');
+      row.classList.toggle('is-skipped', kind === 'skipped');
+      row.classList.toggle('is-failed', kind === 'failed');
+      if (kind === 'active') row.setAttribute('aria-current', 'step');
+      else row.removeAttribute('aria-current');
+      const icon = row.querySelector('.stage-icon');
+      if (kind === 'done') icon.innerHTML = ICON_TICK;
+      else if (kind === 'failed') icon.innerHTML = ICON_ALERT;
+      else icon.textContent = String(i + 1);
+      const desc = row.querySelector('.stage-desc');
+      if (kind === 'failed') desc.textContent = message || "Processing didn't finish. Try again.";
+      else if (kind === 'skipped') desc.textContent = 'Skipped';
+      else desc.textContent = desc.dataset.desc || '';
+    });
+
+    // The headline: the active stage as a sentence, or the stage that failed.
+    let headline = 'Starting';
+    if (failed) headline = failure ? failure.headline : rows[current].failed;
+    else if (finished) headline = 'Opening the editor';
+    else if (rows[current]) headline = rows[current].active;
+
+    // On a failure the radar stops, and the message shows only in the failed row.
+    if (failed) this.processCard.setAttribute('role', 'alert');
+    else this.processCard.removeAttribute('role');
+    this.processRadar.classList.toggle('is-stopped', failed);
+    this.processHeadline.textContent = headline;
+    this.processSubtext.hidden = failed;
+    this.processProgress.hidden = failed;
+
+    if (!failed) {
+      const up = status === 'uploading' ? state.upload : null;
+      const fraction = up ? (up.total ? up.loaded / up.total : 0) : (state.progress || 0);
+      const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+      this.builderProgressFill.style.width = `${pct}%`;
+      this.processPercentText.textContent = `${pct}%`;
+      this.processStageText.textContent = up
+        ? `Uploading · ${this.formatMegabytes(up.loaded, up.total)} of ${this.formatMegabytes(up.total, up.total)} MB`
+        : (state.message || 'Starting');
+    }
+
+    // Cancel while it runs; when it fails, a way forward with the primary first.
+    this.btnProcessCancel.hidden = failed || finished;
+    let order = [];
+    if (failed && state.stage === 'transcription') {
+      order = state.error_code === 'pipeline_missing'
+        ? [this.btnProcessWrite, this.btnProcessBack]
+        : [this.btnProcessRetry, this.btnProcessWrite, this.btnProcessBack];
+    } else if (failed) {
+      order = [this.btnProcessRetry, this.btnProcessBack];
+    }
+    [this.btnProcessRetry, this.btnProcessWrite, this.btnProcessBack].forEach((btn) => {
+      btn.hidden = !order.includes(btn);
+      btn.classList.toggle('btn-primary', btn === order[0]);
+      btn.classList.toggle('btn-secondary', btn !== order[0]);
+    });
+    if (failed) {
+      this.processActions.prepend(...order);
+      order[0].focus();
+    }
+  }
+
+  /** Megabytes for the upload caption: whole numbers from 10 MB, one decimal below. */
+  formatMegabytes(bytes, total) {
+    const mb = bytes / (1024 * 1024);
+    return total >= 10 * 1024 * 1024 ? String(Math.round(mb)) : mb.toFixed(1);
   }
 
   /** Opens the editor on finished processing: lines, the server's notice and a result toast. */
@@ -1070,6 +1300,8 @@ export class PackBuilderApp {
     this.editorNotice.hidden = !notice;
     this.setStep('editor');
     const total = this.segments.length;
+    // With no lines, the Lines column says what to do instead.
+    if (!total) return;
     const noWords = this.segments.filter(s => s.nonverbal).length;
     let summary = `Found ${total} line${total === 1 ? '' : 's'}`;
     if (noWords) summary += `, ${noWords} without words`;
@@ -1497,6 +1729,20 @@ export class PackBuilderApp {
     const container = this.segmentsListContainer;
     container.innerHTML = '';
     this.labelCueCount.innerText = `${this.segments.length} line${this.segments.length === 1 ? '' : 's'}`;
+    // aria-disabled rather than disabled, so the tooltip still says why.
+    if (this.segments.length) {
+      this.btnProceedToCompile.removeAttribute('aria-disabled');
+      delete this.btnProceedToCompile.dataset.tip;
+    } else {
+      this.btnProceedToCompile.setAttribute('aria-disabled', 'true');
+      this.btnProceedToCompile.dataset.tip = 'Add a line first';
+      container.innerHTML = `
+        <div class="lines-empty">
+          <p class="lines-empty-title">No lines yet</p>
+          <p class="lines-empty-hint">Play the video and press N, or Add line, where someone speaks.</p>
+        </div>`;
+      return;
+    }
 
     const allCast = Array.from(new Set([
       ...this.characterColors.keys(),
@@ -2422,7 +2668,7 @@ export class PackBuilderApp {
 
   goToCompileStep() {
     if (this.segments.length === 0) {
-      this.showToast('Add at least one line before building.');
+      this.showToast('Add a line first.');
       return;
     }
 

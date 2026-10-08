@@ -85,9 +85,21 @@ async function boot(caps = ALL, opts = {}) {
     const own = opts.fetch && opts.fetch(u, init, json);
     if (own) return own;
     if (u === "/api/builder/capabilities") return json(queue.length > 1 ? queue.shift() : queue[0]);
-    if (u === "/api/builder/upload") return json({ session_id: "sess1", duration: 10, device_info: { cuda_available: true } });
     if (u.includes("/waveform")) return json({ peaks: [], duration: 10 });
     return json({});
+  };
+  // The video uploads through XMLHttpRequest (for its progress); this one answers at once.
+  w.XMLHttpRequest = class {
+    constructor() { this.upload = {}; }
+    open(method, url) { this.url = url; }
+    send() {
+      setTimeout(() => {
+        this.status = 200;
+        this.responseText = JSON.stringify({ session_id: "sess1", duration: 10, device_info: { cuda_available: true } });
+        this.onload();
+      }, 0);
+    }
+    abort() {}
   };
   w.EventSource = class { constructor(url) { this.url = url; } close() {} };
 

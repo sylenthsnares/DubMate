@@ -78,9 +78,21 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     // opts.fetch(url, json) answers a request first when it returns a promise.
     const own = opts.fetch && opts.fetch(u, json);
     if (own) return own;
-    if (u === "/api/builder/upload") return json({ session_id: "sess1", duration: 10 });
     if (u.includes("/waveform")) return json({ peaks: [[-0.5, 0.5]], duration: 10 });
     return json({});
+  };
+  // The video uploads through XMLHttpRequest (for its progress); this one answers at once.
+  w.XMLHttpRequest = class {
+    constructor() { this.upload = {}; }
+    open(method, url) { this.url = url; }
+    send() {
+      setTimeout(() => {
+        this.status = 200;
+        this.responseText = JSON.stringify({ session_id: "sess1", duration: 10 });
+        this.onload();
+      }, 0);
+    }
+    abort() {}
   };
   const sources = [];
   w.EventSource = class {

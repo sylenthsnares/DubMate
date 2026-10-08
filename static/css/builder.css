@@ -104,6 +104,7 @@
 /* Elements the page hides with the hidden attribute, whatever display their class sets. */
 .builder-device-pill[hidden],
 #view-step-upload [hidden],
+#view-step-process [hidden],
 #view-step-editor [hidden] {
   display: none;
 }
@@ -603,6 +604,28 @@ body:has(#view-step-editor.active) .builder-main-container {
   }
 }
 
+/* Processing failed: the radar stops and the centre shows a still alert. */
+.process-radar.is-stopped .radar-pulse {
+  animation: none;
+  display: none;
+}
+
+.radar-icon-alert,
+.process-radar.is-stopped .radar-icon-live {
+  display: none;
+}
+
+.process-radar.is-stopped .radar-icon-alert {
+  display: block;
+}
+
+.process-radar.is-stopped .radar-center {
+  background: var(--panel-deep);
+  border: 1.5px solid var(--accent-red-bright);
+  color: var(--accent-red-bright);
+  box-shadow: none;
+}
+
 .radar-center {
   width: 54px;
   height: 54px;
@@ -619,6 +642,11 @@ body:has(#view-step-editor.active) .builder-main-container {
   font-size: 20px;
   font-weight: 800;
   margin-bottom: 8px;
+}
+
+/* A failure hides the sub-line and the bar; the headline keeps its distance from the stages. */
+.builder-process-card[role="alert"] .process-title {
+  margin-bottom: 24px;
 }
 
 .process-subtitle {
@@ -653,9 +681,21 @@ body:has(#view-step-editor.active) .builder-main-container {
 .builder-progress-meta {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
-  font-family: var(--font-mono);
+  align-items: baseline;
+  gap: 12px;
   color: var(--foreground-muted);
+}
+
+/* The engine's message is a sentence; only the percentage is a readout. */
+.process-caption {
+  font-size: 12px;
+  text-align: left;
+}
+
+.process-percent {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .pipeline-stages {
@@ -684,24 +724,105 @@ body:has(#view-step-editor.active) .builder-main-container {
   background: rgba(217, 119, 6, 0.08);
 }
 
+.pipeline-item.is-done {
+  opacity: 1;
+}
+
+.pipeline-item.is-failed {
+  opacity: 1;
+  border-color: var(--accent-red-bright);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+/* Pending and skipped rows: a number in a neutral circle. */
 .stage-icon {
-  font-size: 14px;
-  font-weight: 800;
-  color: var(--primary);
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
   width: 22px;
   height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+  border: 1px solid var(--border-wood);
+  background: var(--panel-deep);
+}
+
+.pipeline-item.active .stage-icon {
+  color: var(--primary);
+  border-color: rgba(217, 119, 6, 0.5);
   background: rgba(217, 119, 6, 0.15);
+}
+
+.pipeline-item.is-done .stage-icon {
+  color: var(--accent-brass);
+  border-color: rgba(204, 164, 88, 0.45);
+  background: rgba(204, 164, 88, 0.12);
+}
+
+.pipeline-item.is-failed .stage-icon {
+  color: var(--accent-red-bright);
+  border-color: var(--accent-red-bright);
+  background: rgba(220, 38, 38, 0.12);
 }
 
 .stage-title {
   display: block;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--foreground);
+}
+
+.pipeline-item.is-failed .stage-desc {
+  color: var(--accent-red-soft);
+}
+
+/* Cancel while it runs; Try again, Write the lines myself and Back to video when it fails. */
+.process-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+/* Short windows (1280x720, 960x680): the whole card, Cancel included, stays on screen. */
+@media (max-height: 780px) {
+  .builder-process-card {
+    margin: 16px auto;
+    padding: 24px 32px;
+  }
+
+  .process-radar {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 14px;
+  }
+
+  .radar-center {
+    width: 44px;
+    height: 44px;
+  }
+
+  .process-subtitle,
+  .builder-progress-container {
+    margin-bottom: 18px;
+  }
+
+  .pipeline-stages {
+    gap: 8px;
+  }
+
+  .pipeline-item {
+    padding: 7px 14px;
+  }
+
+  .process-actions {
+    margin-top: 16px;
+  }
 }
 
 .stage-desc {
@@ -1561,6 +1682,27 @@ body.resizing-timeline * {
   flex-direction: column;
   gap: 10px;
   padding: 12px 4px 12px 0;
+}
+
+/* The editor with no lines: what to do, in place of the list. */
+.lines-empty {
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.lines-empty-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.lines-empty-hint {
+  margin: 0 auto;
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground-muted);
 }
 
 .builder-cue-card {
