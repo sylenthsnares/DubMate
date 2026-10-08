@@ -106,10 +106,10 @@ Never removed: the packs folder, a configured export folder outside `DubMate\dat
 
 ### 5. Release workflow (`release.yml`)
 
-- **Version check:** a release counts as published only when `gh release view v<V> --json isDraft` says `false`. A leftover draft (an installer job failed) means "not released yet": the next run rebuilds and reuses that draft.
-- **bundle job:** `softprops/action-gh-release` with `draft: true`, `make_latest: false`, `target_commitish: ${{ github.sha }}`. Its `id` output becomes the job output `release_id`. Same gate as today; `build_only` still skips it.
-- **installers job:** `tauri-action` gets `releaseId: ${{ needs.bundle.outputs.release_id }}` instead of finding the release by tag (a draft isn't found by tag), and `releaseDraft: true`. The build_only steps are unchanged.
-- **Windows generated-template check** (both modes, after the build): the generated `target/release/nsis/x64/installer.nsi` contains the `/KEEPDATA` switch, the upgrade default and the guarded hook. This catches Tauri dropping or rewriting the custom template.
+- **Version check:** a release counts as published only when `gh release view v<V> --json isDraft` says `false`. A leftover draft (an installer job failed) means "not released yet": the next run rebuilds and reuses that draft. Only "release not found" counts as new; any other `gh` error stops the run, because guessing "new" would turn a published release back into a draft.
+- **bundle job:** `softprops/action-gh-release` with `draft: ${{ steps.check.outputs.is_new == 'true' }}` (a draft for a new version or a leftover draft; a manual rebuild of an already published version stays published, as before, instead of disappearing for the length of the build), `make_latest: false`, `target_commitish: ${{ github.sha }}`. Its `id` output becomes the job output `release_id`. Same gate as today; `build_only` still skips it.
+- **installers job:** `tauri-action` gets `releaseId: ${{ needs.bundle.outputs.release_id }}` and no `tagName` (a draft isn't found by tag, so a tag would make it create a second, public release), and `releaseDraft: true`. With a `releaseId`, tauri-action leaves the release's name and body alone; `releaseBody` still feeds the updater's `latest.json`. The build_only steps are unchanged.
+- **Windows generated-template check** (both modes, after the build): the generated `target/release/nsis/x64/installer.nsi` contains the `/KEEPDATA` switch, the upgrade default (`${If} $ReinstallPageCheck = 0`) and the label "Also remove Pack Builder and my DubMate data"; the test checks the same three strings are in `installer.nsi`. This catches Tauri dropping or rewriting the custom template.
 - **New `publish` job:** `needs: [bundle, installers]`, `if: needs.installers.result == 'success' && !inputs.build_only && needs.bundle.outputs.release_id != ''`. It checks the release has an `app-bundle-*.zip`, a `*-setup.exe` and a `.dmg`, then `gh release edit v<V> --draft=false --latest`. If either installer job fails, the release stays a draft and the run fails visibly. 1.x apps never see a draft (`/releases/latest` skips drafts).
 
 ## Implementation groups (build order)
@@ -162,7 +162,7 @@ Never removed: the packs folder, a configured export folder outside `DubMate\dat
 6. The tick-box also removes `~/.dubmate` (settings, mic sync) and the default export folder inside DubMate's own folder; it never removes packs or a chosen export folder.
 7. New uninstaller switch `/KEEPDATA` for the reinstall flow.
 8. `DUBMATE_DATA_DIR` is the one override (env only, no UI).
-9. A leftover draft counts as unreleased; `publish` checks all three assets before flipping.
+9. A leftover draft counts as unreleased; `publish` checks all three assets before flipping. A manual rebuild of a published version isn't turned into a draft.
 10. Merge order: `fix/v2-notices` before this PR.
 
 ## Hands-on checks (owner)
