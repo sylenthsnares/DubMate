@@ -11,6 +11,7 @@
  *  - the looping pulses (and the line card's fade-in) stop under prefers-reduced-motion,
  *  - .btn:disabled looks disabled, and .btn-danger exists and is used by the
  *    Remove Pack Builder confirm.
+ *  - the Pack Builder's Lines list is a width container, never a size container.
  *
  * Anything that stays small is named in EXEMPT with its reason.
  */
@@ -287,6 +288,16 @@ for (const b of cssBlocks(firefoxOnly.outside)) {
 }
 for (const sel of [".timeline-chips-box", ".cast-activity-list"]) {
   if (!firefoxOnly.out.has(sel)) fail(`${sel} needs the studio scrollbar colours in the Firefox-only @supports block`);
+}
+
+// The Pack Builder's Lines list is a width container only. As a size container (for cqh
+// units) every layout in the editor cost about 5x more, measured in Chromium
+// (documentation/design/pb-lines-expand.md, Measured).
+const builderText = stripComments(builderCss);
+if (/container-type\s*:\s*size/.test(builderText)) fail("builder.css: no size containers (container-type: size makes every editor layout slower)");
+if (/\d(cqh|cqb|cqmin|cqmax)\b/.test(builderText)) fail("builder.css: cqh/cqb/cqmin/cqmax need a size container; use the window height instead");
+if (!/\.segments-list-container\s*\{[^}]*container-type\s*:\s*inline-size/.test(builderText)) {
+  fail("the Lines list should stay a width container (container-type: inline-size) for the narrow-column card");
 }
 
 // The parser must actually be reading the files, and exemptions must not go stale.

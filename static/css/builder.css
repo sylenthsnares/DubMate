@@ -1737,16 +1737,17 @@ body.resizing-timeline * {
 
 /* Rows stack in block flow: a change in one row then lays out that row, where a flex
    column would measure every row again (about 3x the time with 40 lines). The padding
-   leaves room for a row's focus ring. The list is a size container: the card's text is
-   capped by the list's height (cqh) and the card narrows in a narrow column. Its size
-   comes from the column (flex: 1), not from its rows. pack_builder.js keeps the clicked
-   line in place itself, so the browser's scroll anchoring is off. */
+   leaves room for a row's focus ring. The list is a width container, so the card narrows
+   in a narrow column. Not a size container: size containment made every editor frame's
+   layout about 5x slower (3 to 4 ms instead of 0.6, measured while selecting and dragging).
+   pack_builder.js keeps the clicked line in place itself, so the browser's scroll
+   anchoring is off. */
 .segments-list-container {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-anchor: none;
-  container-type: size;
+  container-type: inline-size;
   margin: 0 -4px;
   padding: 4px;
 }
@@ -2000,13 +2001,15 @@ body.resizing-timeline * {
   margin-top: 8px;
 }
 
-/* The whole text, sized to it: up to 10 lines or the room the card has in the list, then it scrolls. */
+/* The whole text, sized to it: up to 10 lines or the room the card has in the list, then it
+   scrolls. With the timeline at its default height the list is the window's height less
+   456px, and the card's header, footer and padding take 114px of it; at least 3 lines show. */
 .cue-text-input.form-input {
   flex: 1;
   min-width: 0;
   height: auto;
   min-height: 32px;
-  max-height: min(212px, calc(100cqh - 114px));
+  max-height: min(212px, max(72px, calc(100vh - 570px)));
   padding: 5px 10px;
   font-size: 14px;
   line-height: 20px;
