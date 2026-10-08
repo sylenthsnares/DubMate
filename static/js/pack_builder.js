@@ -2,6 +2,7 @@
 // Handles Video Ingestion, Demucs/Whisper Progress SSE, Interactive Timeline & Cue Editor, and Pack Assembly
 import { escapeHtml, showToast, initModeDropdown, initTooltips, isDialogOpen } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
+import { packLanes } from './builder_lanes.js';
 
 // The engine's error body is {detail: "..."} or {detail: {code, message}}.
 function detailText(body, fallback) {
@@ -187,13 +188,14 @@ export class PackBuilderApp {
     this.canvasWaveform = document.getElementById('canvas-waveform');
     this.timelineSegmentsOverlay = document.getElementById('timeline-segments-overlay');
     this.timelinePlayhead = document.getElementById('timeline-playhead');
+    this.dawChannelColumn = document.getElementById('daw-channel-column');
     this.dawChannelStrips = document.getElementById('daw-channel-strips');
     this.labelDawChannelCount = document.getElementById('label-daw-channel-count');
     this.timelineChannelGuides = document.getElementById('timeline-channel-guides');
     this.timelineSplitterHandle = document.getElementById('timeline-splitter-handle');
     this.editorBottomTimelinePanel = document.querySelector('.editor-bottom-timeline-panel');
-    this.btnAddAudioTrack = document.getElementById('btn-add-audio-track');
-    this.tracks = ['Audio Track 1'];
+    // Tracks follow overlapping lines (builder_lanes.js); nothing about them is saved.
+    this.laneCount = 1;
 
     // Sidebar & Cues
     this.labelCueCount = document.getElementById('label-cue-count');
@@ -347,11 +349,28 @@ export class PackBuilderApp {
         const factor = e.deltaY < 0 ? 1.15 : 0.87;
         this.setZoom(this.pixelsPerSecond * factor);
       } else {
-        // Horizontal pan
-        const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        // Horizontal pan; a sideways trackpad swipe pans by its own distance.
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
         this.timelineScrollWrap.scrollLeft += delta;
       }
     }, { passive: false });
+
+    // The track numbers scroll with the tracks, and a wheel over them scrolls the tracks
+    // up and down. The page keeps the wheel once the tracks can't move that way.
+    this.timelineScrollWrap.addEventListener('scroll', () => {
+      if (this.dawChannelStrips) this.dawChannelStrips.scrollTop = this.timelineScrollWrap.scrollTop;
+    });
+    if (this.dawChannelColumn) {
+      this.dawChannelColumn.addEventListener('wheel', (e) => {
+        const wrap = this.timelineScrollWrap;
+        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+        const maxTop = wrap.scrollHeight - wrap.clientHeight;
+        if ((dy < 0 && wrap.scrollTop > 0) || (dy > 0 && wrap.scrollTop < maxTop)) {
+          e.preventDefault();
+          wrap.scrollTop = Math.max(0, Math.min(maxTop, wrap.scrollTop + dy));
+        }
+      }, { passive: false });
+    }
 
     // 10. Timeline Canvas Pan (Grab to Pan & Click to Seek). Pointer Events
     // cover mouse, touch and pen with one path.
@@ -361,9 +380,17 @@ export class PackBuilderApp {
       if (e.target.closest('.builder-segment-handle') || e.target.closest('.builder-segment-block') || e.target.closest('.segment-inline-delete-btn') || e.target.closest('button') || e.target.closest('input')) {
         return;
       }
+      // A press on a scrollbar scrolls; it is neither a pan nor a seek.
+      const wrap = this.timelineScrollWrap;
+      const box = wrap.getBoundingClientRect();
+      const onSideBar = wrap.offsetWidth > wrap.clientWidth && e.clientX - box.left - wrap.clientLeft >= wrap.clientWidth;
+      const onBottomBar = wrap.offsetHeight > wrap.clientHeight && e.clientY - box.top - wrap.clientTop >= wrap.clientHeight;
+      if (onSideBar || onBottomBar) return;
       this.isPanning = true;
       this.panStartX = e.clientX;
+      this.panStartY = e.clientY;
       this.panScrollLeft = this.timelineScrollWrap.scrollLeft;
+      this.panScrollTop = this.timelineScrollWrap.scrollTop;
       this.hasMovedPastThreshold = false;
       this.timelineScrollWrap.classList.add('panning');
       document.body.style.userSelect = 'none';
@@ -381,11 +408,6 @@ export class PackBuilderApp {
     // 13. Proceed to compile
     this.btnProceedToCompile.addEventListener('click', () => this.goToCompileStep());
     this.btnExecuteCompile.addEventListener('click', () => this.executePackCompilation());
-
-    // 14. Add Audio Track button
-    if (this.btnAddAudioTrack) {
-      this.btnAddAudioTrack.addEventListener('click', () => this.addAudioTrack());
-    }
 
     // 15. Playtest button
     this.btnPlaytestNow.addEventListener('click', () => this.launchPlaytestSession());
@@ -952,22 +974,13 @@ export class PackBuilderApp {
     this.labelZoom.innerText = `${pct}%`;
   }
 
-  updateTrackButtonsState() {
-    if (this.btnAddAudioTrack) {
-      const isMax = this.tracks.length >= 5;
-      this.btnAddAudioTrack.disabled = isMax;
-      this.btnAddAudioTrack.dataset.tip = isMax ? 'You can have up to 5 tracks' : 'Add a track (up to 5)';
-    }
-  }
-
   getLaneDimensions() {
-    const numLanes = Math.max(1, Math.min(5, this.tracks.length));
+    const numLanes = this.laneCount || 1;
     const containerHeight = Math.max(160, this.timelineScrollWrap?.clientHeight || 200);
     const TOTAL_HEIGHT = Math.max(140, containerHeight - 24);
 
-    // Keep individual tracks sleek and compact:
-    // When 1 track: ~68px (well-proportioned, not a giant full-height block)
-    // When 2-5 tracks: scales dynamically (~38px - 64px) to fit up to 5 tracks inside the panel
+    // One track: ~50-70px (well-proportioned, not a giant full-height block).
+    // More: they share the panel (38-64px each); past that the timeline scrolls vertically.
     let laneHeight;
     if (numLanes === 1) {
       laneHeight = Math.min(70, Math.max(50, Math.floor(TOTAL_HEIGHT * 0.45)));
@@ -978,60 +991,28 @@ export class PackBuilderApp {
     return { numLanes, laneHeight, totalHeight, TOTAL_HEIGHT };
   }
 
-  renderChannelStrips(activeLanes = []) {
+  /** Track numbers A1..An and the lane guides. Rebuilt only when the count or height changes. */
+  renderChannelStrips() {
     if (!this.dawChannelStrips) return;
+    const { numLanes, laneHeight } = this.getLaneDimensions();
+    const key = `${numLanes}x${laneHeight}`;
+    if (this._channelStripsKey === key) return;
+    this._channelStripsKey = key;
+
     this.dawChannelStrips.innerHTML = '';
     if (this.timelineChannelGuides) this.timelineChannelGuides.innerHTML = '';
     if (this.labelDawChannelCount) {
-      this.labelDawChannelCount.innerText = `${this.tracks.length} track${this.tracks.length === 1 ? '' : 's'}`;
+      this.labelDawChannelCount.innerText = `${numLanes} track${numLanes === 1 ? '' : 's'}`;
     }
-    this.updateTrackButtonsState();
 
-    const { numLanes, laneHeight } = this.getLaneDimensions();
-
-    this.tracks.forEach((trackName, idx) => {
+    for (let idx = 0; idx < numLanes; idx++) {
       const header = document.createElement('div');
       header.className = 'daw-channel-header';
       header.style.height = `${laneHeight}px`;
-      header.dataset.channel = idx;
-
-      const isActive = activeLanes.includes(idx);
-      const canDelete = this.tracks.length > 1;
-
-      header.innerHTML = `
-        <div class="channel-id-badge">A${idx + 1}</div>
-        <div class="channel-info">
-          <input type="text" class="channel-title-input" value="${escapeHtml(trackName)}" data-channel="${idx}" aria-label="Track ${idx + 1} name" maxlength="24">
-        </div>
-        <div class="channel-header-actions">
-          <div class="channel-indicator ${isActive ? 'active' : ''}" aria-hidden="true"></div>
-          ${canDelete ? `
-            <button type="button" class="btn-del-track" data-channel="${idx}" aria-label="Delete track A${idx + 1}" data-tip="Delete track">
-              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" style="pointer-events: none;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-          ` : ''}
-        </div>
-      `;
-
-      const input = header.querySelector('.channel-title-input');
-      input.addEventListener('change', (e) => {
-        const val = e.target.value.trim();
-        this.tracks[idx] = val || `Audio Track ${idx + 1}`;
-        e.target.value = this.tracks[idx];
-        this.showToast(`Track renamed to "${this.tracks[idx]}"`);
-      });
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') input.blur();
-      });
-
-      const delBtn = header.querySelector('.btn-del-track');
-      if (delBtn) {
-        delBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.deleteAudioTrack(idx);
-        });
-      }
-
+      const badge = document.createElement('div');
+      badge.className = 'channel-id-badge';
+      badge.textContent = `A${idx + 1}`;
+      header.appendChild(badge);
       this.dawChannelStrips.appendChild(header);
 
       if (this.timelineChannelGuides) {
@@ -1040,33 +1021,25 @@ export class PackBuilderApp {
         guide.style.height = `${laneHeight}px`;
         this.timelineChannelGuides.appendChild(guide);
       }
-    });
+    }
+    this.dawChannelStrips.scrollTop = this.timelineScrollWrap.scrollTop;
   }
 
-  addAudioTrack() {
-    if (this.tracks.length >= 5) {
-      this.showToast('You can have up to 5 tracks.');
-      return;
-    }
-    const nextNum = this.tracks.length + 1;
-    this.tracks.push(`Audio Track ${nextNum}`);
-    this.renderWaveformCanvas();
-    this.renderTimelineSegments();
-    this.updateTrackButtonsState();
-    this.showToast(`Track ${nextNum} added`);
-  }
-
-  deleteAudioTrack(idx) {
-    if (this.tracks.length <= 1) {
-      this.showToast('A pack needs at least one track.');
-      return;
-    }
-    const removedName = this.tracks[idx];
-    this.tracks.splice(idx, 1);
-    this.renderWaveformCanvas();
-    this.renderTimelineSegments();
-    this.updateTrackButtonsState();
-    this.showToast(`${removedName} deleted`);
+  /**
+   * Tracks while a line is dragged: the other lines stay where they were at drag start,
+   * and the dragged line takes the lowest track free at its current time, or a new one (up to 5).
+   */
+  lanesDuringDrag() {
+    const { lane: frozen, count: frozenCount } = this.dragLanes;
+    const idx = this.dragSegmentIndex;
+    const seg = this.segments[idx];
+    const lane = frozen.slice();
+    const busy = (l) => this.segments.some((o, j) =>
+      j !== idx && lane[j] === l && o.end > seg.start + 0.05 && seg.end > o.start + 0.05);
+    let free = 0;
+    while (free < 5 && busy(free)) free++;
+    lane[idx] = free < 5 ? free : frozen[idx];
+    return { lane, count: Math.max(frozenCount, lane[idx] + 1) };
   }
 
   renderWaveformCanvas() {
@@ -1163,37 +1136,15 @@ export class PackBuilderApp {
     const overlay = this.timelineSegmentsOverlay;
     overlay.innerHTML = '';
 
+    // Overlapping lines get their own track, up to 5.
+    const dragging = this.isDragging && this.dragLanes && this.segments[this.dragSegmentIndex];
+    const { lane: segmentLanes, count } = dragging ? this.lanesDuringDrag() : packLanes(this.segments);
+    if (count !== this.laneCount) {
+      this.laneCount = count;
+      this.renderWaveformCanvas();
+    }
     const { numLanes, laneHeight, totalHeight } = this.getLaneDimensions();
-
-    // Compute collision lanes for overlapping segments constrained to numLanes
-    const laneEndTimes = new Array(numLanes).fill(0);
-    const segmentLanes = [];
-
-    this.segments.forEach((seg, idx) => {
-      let placedLane = -1;
-      for (let l = 0; l < numLanes; l++) {
-        if (laneEndTimes[l] <= seg.start + 0.05) {
-          placedLane = l;
-          laneEndTimes[l] = seg.end;
-          break;
-        }
-      }
-      if (placedLane === -1) {
-        placedLane = 0;
-        let minEnd = laneEndTimes[0];
-        for (let l = 1; l < numLanes; l++) {
-          if (laneEndTimes[l] < minEnd) {
-            minEnd = laneEndTimes[l];
-            placedLane = l;
-          }
-        }
-        laneEndTimes[placedLane] = seg.end;
-      }
-      segmentLanes[idx] = placedLane;
-    });
-
-    const activeLanes = Array.from(new Set(segmentLanes));
-    this.renderChannelStrips(activeLanes);
+    this.renderChannelStrips();
 
     this.timelineViewport.style.height = `${totalHeight}px`;
 
@@ -1206,6 +1157,17 @@ export class PackBuilderApp {
 
       const blockHeight = Math.max(24, laneHeight - 8);
       const topPos = lane * laneHeight + 4;
+
+      // A dragged line moving into a track that is scrolled out of sight brings it into view
+      // (the 24px ruler stays on top of the tracks).
+      if (dragging && idx === this.dragSegmentIndex) {
+        const wrap = this.timelineScrollWrap;
+        if (topPos < wrap.scrollTop) {
+          wrap.scrollTop = topPos - 4;
+        } else if (24 + topPos + blockHeight > wrap.scrollTop + wrap.clientHeight) {
+          wrap.scrollTop = 24 + topPos + blockHeight + 4 - wrap.clientHeight;
+        }
+      }
 
       const block = document.createElement('div');
       block.className = `builder-segment-block ${isSelected ? 'selected' : ''}`;
@@ -1529,6 +1491,7 @@ export class PackBuilderApp {
     this.dragStartY = clientY;
     this.dragOrigStart = this.segments[segmentIndex].start;
     this.dragOrigEnd = this.segments[segmentIndex].end;
+    this.dragLanes = packLanes(this.segments);
     this.hasMovedPastThreshold = false;
     document.body.style.userSelect = 'none';
   }
@@ -1573,13 +1536,15 @@ export class PackBuilderApp {
       return;
     }
 
-    // 1. Handle Canvas Grab Panning
+    // 1. Handle Canvas Grab Panning (both ways)
     if (this.isPanning) {
       const deltaX = e.clientX - this.panStartX;
-      if (Math.abs(deltaX) > 4) {
+      const deltaY = e.clientY - this.panStartY;
+      if (Math.hypot(deltaX, deltaY) > 4) {
         this.hasMovedPastThreshold = true;
       }
       this.timelineScrollWrap.scrollLeft = this.panScrollLeft - deltaX;
+      this.timelineScrollWrap.scrollTop = this.panScrollTop - deltaY;
       return;
     }
 
@@ -1664,6 +1629,7 @@ export class PackBuilderApp {
       this.isDragging = false;
       this.dragSegmentIndex = null;
       this.dragType = null;
+      this.dragLanes = null;
       document.body.style.userSelect = '';
 
       if (hadMovement) {

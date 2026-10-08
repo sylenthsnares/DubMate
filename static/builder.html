@@ -474,19 +474,18 @@
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
                 TIMELINE
               </span>
-              <span id="label-daw-channel-count" class="daw-channel-badge">1 track</span>
-              <button id="btn-add-audio-track" class="btn btn-secondary btn-xs" data-tip="Add a track (up to 5)">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span>Add track</span>
-              </button>
+              <span id="label-daw-channel-count" class="daw-channel-badge" tabindex="0" data-tip="Lines that overlap get their own track. A line's character decides who voices it.">1 track</span>
             </div>
             <span class="timeline-hint">Drag to pan · drag a line's edges to trim · click a line to jump to it</span>
           </div>
 
           <div class="daw-timeline-container" id="daw-timeline-container">
-            <!-- Left: Audio Channel Header Strips (A1 - A5) with Editable Track Names & Delete -->
-            <div class="daw-channel-strips" id="daw-channel-strips">
-              <!-- Dynamically populated / synced channel strips -->
+            <!-- Left: track numbers (A1 - A5). Tracks follow overlapping lines; the list scrolls with the timeline. -->
+            <div class="daw-channel-strips" id="daw-channel-column" data-tip="Lines that overlap get their own track. A line's character decides who voices it.">
+              <div class="daw-channel-spacer" aria-hidden="true"></div>
+              <div class="daw-channel-list" id="daw-channel-strips">
+                <!-- Dynamically populated track numbers -->
+              </div>
             </div>
 
             <!-- Right: Multi-Track Waveform Viewport with Parallel Lanes -->

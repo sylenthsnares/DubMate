@@ -446,6 +446,176 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     ed.w.close();
   }
 
+  // (j) tracks follow overlapping lines, and the timeline scrolls vertically.
+  {
+    const TIP = "Lines that overlap get their own track. A line's character decides who voices it.";
+    const textOf = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent);
+    const ed = await bootEditor({ segments: [
+      { start: 1, end: 3, text: "A", character: "Speaker 1" },
+      { start: 1.2, end: 2.8, text: "B", character: "Speaker 2" },
+      { start: 1.4, end: 3.5, text: "C", character: "Speaker 3" },
+      { start: 5, end: 6, text: "D", character: "Speaker 1" },
+    ] });
+    const { w, doc, app } = ed;
+    const pointer = (target, type, x, y = 50) => {
+      const ev = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+      Object.defineProperty(ev, "pointerId", { value: 1 });
+      Object.defineProperty(ev, "pointerType", { value: "mouse" });
+      Object.defineProperty(ev, "isPrimary", { value: true });
+      target.dispatchEvent(ev);
+    };
+    const blocks = () => Array.from(doc.querySelectorAll("#timeline-segments-overlay .builder-segment-block"));
+    const tops = () => blocks().map((b) => b.style.top);
+    const badge = doc.getElementById("label-daw-channel-count");
+    const headers = () => Array.from(doc.querySelectorAll("#daw-channel-strips .daw-channel-header"));
+    const column = doc.getElementById("daw-channel-column");
+
+    check(!doc.getElementById("btn-add-audio-track"), "there is no Add track button");
+    check(textOf(badge) === "3 tracks", "three lines at once make the badge read '3 tracks'");
+    check(badge.getAttribute("data-tip") === TIP, "the track badge explains automatic tracks in a tooltip");
+    check(!!column && column.getAttribute("data-tip") === TIP, "the track column carries the same tooltip");
+    check(new Set(tops().slice(0, 3)).size === 3, "three overlapping lines sit in three different tracks");
+    check(tops()[3] === tops()[0], "a later line that overlaps nothing goes back to the first track");
+    check(headers().map(textOf).join(",") === "A1,A2,A3", "the track column shows A1 to A3");
+    check(!doc.querySelector("#daw-channel-strips input, #daw-channel-strips button, #daw-channel-strips .channel-indicator"),
+      "tracks have no name field, delete button or activity dot");
+    check(!("tracks" in app) && typeof app.addAudioTrack === "undefined" && typeof app.deleteAudioTrack === "undefined",
+      "the app keeps no manual track list");
+
+    app.segments = [{ start: 1, end: 2, text: "Solo", character: "Speaker 1" }];
+    app.renderTimelineSegments();
+    check(textOf(badge) === "1 track" && headers().length === 1, "a single line shows '1 track'");
+    const headerNode = headers()[0];
+    app.renderTimelineSegments();
+    check(headers()[0] === headerNode, "the track column isn't rebuilt when the track count stays the same");
+
+    // A drag keeps the other lines in their tracks; the drop packs again.
+    app.duration = 10;
+    app.pixelsPerSecond = 100;
+    app.segments = [
+      { start: 0, end: 2, text: "A", character: "Speaker 1" },
+      { start: 3, end: 5, text: "B", character: "Speaker 2" },
+      { start: 3.5, end: 4.5, text: "C", character: "Speaker 3" },
+    ];
+    app.renderTimelineSegments();
+    const wrap = doc.getElementById("timeline-scroll-wrap");
+    const start = tops();
+    check(start[0] === start[1] && start[2] !== start[1], "before the drag, C sits in its own track");
+    pointer(blocks()[1], "pointerdown", 400);
+    pointer(wrap, "pointermove", 150); // B moves to 0.5 s, over A
+    const mid = tops();
+    check(app.segments[1].start === 0.5, "the drag moved B to 0.5 s");
+    check(mid[0] === start[0] && mid[2] === start[2], "while dragging, the other lines keep their tracks");
+    check(mid[1] !== mid[0] && mid[1] === start[2], "the dragged line takes the lowest track free at its time");
+    pointer(wrap, "pointerup", 150);
+    const end = tops();
+    check(end[0] !== end[1] && end[2] === end[0], "dropping packs the lines again");
+
+    // A drag over a full stack opens a new track.
+    app.segments = [
+      { start: 1, end: 3, text: "A", character: "Speaker 1" },
+      { start: 1.2, end: 2.8, text: "B", character: "Speaker 2" },
+      { start: 5, end: 6, text: "D", character: "Speaker 3" },
+    ];
+    app.renderTimelineSegments();
+    check(textOf(badge) === "2 tracks", "two lines at once make two tracks");
+    pointer(blocks()[2], "pointerdown", 550);
+    pointer(wrap, "pointermove", 200); // D to 1.5 s
+    check(textOf(badge) === "3 tracks" && new Set(tops()).size === 3, "dragging a line over two others opens a third track");
+    pointer(wrap, "pointerup", 200);
+
+    // The track column follows the timeline's vertical scroll.
+    const list = doc.getElementById("daw-channel-strips");
+    wrap.scrollTop = 40;
+    wrap.dispatchEvent(new w.Event("scroll"));
+    check(list.scrollTop === 40, "the track column scrolls with the timeline");
+
+    // Wheel over the track column scrolls the timeline up and down.
+    Object.defineProperty(wrap, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(wrap, "clientHeight", { configurable: true, value: 150 });
+    const wheel = (target, opts) => {
+      const ev = new w.WheelEvent("wheel", { bubbles: true, cancelable: true, ...opts });
+      target.dispatchEvent(ev);
+      return ev;
+    };
+    wrap.scrollTop = 0;
+    let ev = wheel(headers()[0], { deltaY: 60 });
+    check(wrap.scrollTop === 60 && ev.defaultPrevented, "a wheel over the track column scrolls the timeline down");
+    wrap.scrollTop = 150;
+    ev = wheel(column, { deltaY: 60 });
+    check(wrap.scrollTop === 150 && !ev.defaultPrevented, "at the bottom the wheel is left to the page");
+    wrap.scrollTop = 0;
+    ev = wheel(column, { deltaY: -60 });
+    check(wrap.scrollTop === 0 && !ev.defaultPrevented, "at the top a wheel up is left to the page");
+
+    // Wheel over the tracks still pans sideways or zooms.
+    wrap.scrollTop = 20;
+    wrap.scrollLeft = 0;
+    wheel(wrap, { deltaY: 50 });
+    check(wrap.scrollLeft === 50 && wrap.scrollTop === 20, "a plain wheel over the tracks pans sideways");
+    wheel(wrap, { deltaX: 30, deltaY: 5 });
+    check(wrap.scrollLeft === 80, "a sideways trackpad swipe pans by its sideways distance");
+    const pps = app.pixelsPerSecond;
+    wheel(wrap, { deltaY: -50, ctrlKey: true });
+    check(app.pixelsPerSecond > pps, "Ctrl + wheel still zooms");
+    app.pixelsPerSecond = 100;
+
+    // Dragging empty timeline pans both ways; a click still seeks.
+    wrap.scrollLeft = 100;
+    wrap.scrollTop = 50;
+    ed.video.currentTime = 7;
+    pointer(wrap, "pointerdown", 500, 100);
+    pointer(wrap, "pointermove", 480, 70);
+    check(wrap.scrollLeft === 120 && wrap.scrollTop === 80, "dragging empty timeline pans sideways and up and down");
+    pointer(wrap, "pointerup", 480, 70);
+    check(ed.video.currentTime === 7, "a pan doesn't seek");
+    pointer(wrap, "pointerdown", 500, 100);
+    pointer(wrap, "pointermove", 500, 90);
+    pointer(wrap, "pointerup", 500, 90);
+    check(ed.video.currentTime === 7, "an up-and-down pan doesn't seek either");
+    pointer(wrap, "pointerdown", 500, 100);
+    pointer(wrap, "pointermove", 502, 102);
+    pointer(wrap, "pointerup", 502, 102);
+    check(Math.abs(ed.video.currentTime - 5.02) < 1e-9, "a click with a tiny wobble still seeks");
+
+    // Pressing the timeline's scrollbars scrolls; it neither pans nor seeks.
+    Object.defineProperty(wrap, "offsetWidth", { configurable: true, value: 808 });
+    Object.defineProperty(wrap, "clientWidth", { configurable: true, value: 800 });
+    Object.defineProperty(wrap, "offsetHeight", { configurable: true, value: 158 });
+    pointer(wrap, "pointerdown", 804, 60);
+    check(!app.isPanning, "pressing the up-and-down scrollbar doesn't start a pan");
+    pointer(wrap, "pointerup", 804, 60);
+    check(Math.abs(ed.video.currentTime - 5.02) < 1e-9, "releasing the scrollbar doesn't seek");
+    pointer(wrap, "pointerdown", 300, 154);
+    check(!app.isPanning, "pressing the sideways scrollbar doesn't start a pan");
+    pointer(wrap, "pointerup", 300, 154);
+    pointer(wrap, "pointerdown", 300, 60);
+    pointer(wrap, "pointerup", 300, 60);
+    check(Math.abs(ed.video.currentTime - 3) < 1e-9, "a click inside the tracks still seeks with scrollbars showing");
+
+    // A line dragged into a track below the visible ones scrolls into view.
+    app.segments = [
+      { start: 1, end: 3, text: "A", character: "Speaker 1" },
+      { start: 1.1, end: 3, text: "B", character: "Speaker 2" },
+      { start: 1.2, end: 3, text: "C", character: "Speaker 3" },
+      { start: 1.3, end: 3, text: "D", character: "Speaker 1" },
+      { start: 5, end: 6, text: "E", character: "Speaker 2" },
+    ];
+    app.renderTimelineSegments();
+    wrap.scrollLeft = 0;
+    wrap.scrollTop = 0;
+    pointer(blocks()[4], "pointerdown", 550, 60);
+    pointer(wrap, "pointermove", 400, 60); // E to 3.5 s: still track 1
+    check(wrap.scrollTop === 0, "a drag within the visible tracks doesn't scroll");
+    pointer(wrap, "pointermove", 200, 60); // E to 1.5 s: a fifth track, below the fold
+    const dragged = blocks()[4];
+    const bottom = 24 + parseFloat(dragged.style.top) + parseFloat(dragged.style.height);
+    check(textOf(badge) === "5 tracks" && bottom <= wrap.scrollTop + 150 && wrap.scrollTop > 0, "the dragged line's new track scrolls into view");
+    pointer(wrap, "pointerup", 200, 60);
+    await tick(50);
+    w.close();
+  }
+
   console.log("All Pack Builder editor playback and timeline checks passed.");
   process.exit(0);
 })().catch((err) => fail(err && err.stack || err));

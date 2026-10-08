@@ -86,7 +86,8 @@ rest. The likely costs are:
     lines that overlap at one moment, which is the minimum possible.
 - **During a drag**, the other lines keep their tracks (frozen at drag start). The dragged line
   takes the lowest track that is free at its current time, and a new track appears if none is
-  (up to 5). On drop everything is packed again. Nothing jumps under the pointer.
+  (up to 5). On drop everything is packed again. Nothing jumps under the pointer. If the
+  dragged line's track is scrolled out of sight, the timeline scrolls it into view.
 - **Track heights.**
   - One track: as today (50 to 70 px).
   - More than one: `clamp(floor(available / count), 38, 64)`.
@@ -106,7 +107,8 @@ rest. The likely costs are:
 
 - `.timeline-canvas-scroll-container` becomes `overflow: auto`.
 - The ruler is `position: sticky; top: 0` above the blocks, so time labels stay visible.
-- The playhead spans the full height of all tracks.
+- The playhead spans the full height of all tracks and draws over the ruler. Its tag is
+  `position: sticky` inside the playhead, so it stays in the ruler while the tracks scroll.
 - Track column structure:
   - a fixed 24 px spacer, level with the ruler;
   - under it, a list with `overflow: hidden` whose `scrollTop` is copied from the timeline's
@@ -119,6 +121,7 @@ rest. The likely costs are:
   - **Dragging empty timeline space:** pans both ways with mouse, touch and pen. The 4 px
     threshold uses both axes, and a click without movement still seeks.
   - **Vertical scrollbar:** visible on the timeline, styled like the studio's thin scrollbars.
+    Pressing either scrollbar scrolls only: it no longer starts a pan or seeks on release.
 - These keep working, because they use `clientX` and the viewport's bounding box:
   - seek x position;
   - segment drag and trim;
