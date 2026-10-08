@@ -379,7 +379,6 @@ class DubMateApp {
     this.boothDoneAsk = document.getElementById('booth-done-ask');
     this.boothDoneAskText = document.getElementById('booth-done-ask-text');
     this.btnJumpScreening = document.getElementById('btn-jump-screening');
-    this.btnBackLobby = document.getElementById('btn-back-lobby');
 
     // Screening elements
     this.screeningVideo = document.getElementById('screening-video');
@@ -546,7 +545,9 @@ class DubMateApp {
     initTooltips();
     initShortcutSheet({
       opener: document.getElementById('btn-shortcuts'),
-      isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
+      // Mid-take the sheet would sit over the take, and Space couldn't stop it.
+      isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport
+        || this.recordState === 'countdown' || this.recordState === 'recording',
       getView: () => this.currentView,
     });
     this.initJoinModal();
@@ -771,12 +772,6 @@ class DubMateApp {
       });
     }
 
-    this.btnBackLobby.addEventListener('click', () => {
-      this.cancelCurrentCountdown();
-      this.showView('lobby');
-      this.broadcastMyStatus('lobby');
-    });
-
     this.btnJumpScreening.addEventListener('click', () => {
       this.cancelCurrentCountdown();
       this.showView('screening');
@@ -884,7 +879,8 @@ class DubMateApp {
     this.initRoomCheckEvents();
 
     // Studio & Screening Keyboard Shortcuts
-    // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift most layouts report { / }.
+    // Booth: Space (Record), Esc (cancel the count-in), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift
+    // most layouts report { / }.
     // T (the take in the dub), A (switch Original/Take), , and . (previous/next line), E (All
     // effects; Esc closes it); the Takes card handles its own arrows, P, Enter and Delete
     // (takes_card.js).
@@ -898,6 +894,13 @@ class DubMateApp {
       if (e.key === 'Escape') {
         if (this.isAudioSettingsOpen()) {
           this.closeAudioSettings();
+          return;
+        }
+        // Esc cancels the count-in. While recording it does nothing: a stray Esc never loses a take.
+        if (this.views.booth.classList.contains('active')
+            && (this.recordState === 'countdown' || this.recordState === 'recording')) {
+          e.preventDefault();
+          if (this.recordState === 'countdown') this.cancelCurrentCountdown();
           return;
         }
         // The inline questions (For's wider scope, Done with lines left) answer Esc as Cancel.
@@ -943,21 +946,22 @@ class DubMateApp {
       if (this.views.booth.classList.contains('active')) {
         // A take's timing doesn't change while its line saves (the nudges are locked too).
         const lineSaving = !!this.savingTake(this.roomState?.pack?.lines?.[this.currentLineIndex]);
-        // Counting in or recording, the single-letter keys would stop the take and lose it.
+        // Counting in or recording, the single-letter keys would stop the take and lose it,
+        // and the timing row is inert.
         const taking = this.recordState === 'countdown' || this.recordState === 'recording';
         if (e.code === 'Space') {
-          // Space presses a focused Undo, Use or answer button instead of recording.
-          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button')) return;
+          // Space presses a focused ▶, ⋯, Undo, answer or who's-here button instead of recording.
+          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button, .presence-stack')) return;
           e.preventDefault();
           this.toggleRecording();
         } else if (e.key === '[' || e.key === '{') {
           e.preventDefault();
           const delta = e.shiftKey ? -100 : -25;
-          if (!lineSaving) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+          if (!lineSaving && !taking) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
         } else if (e.key === ']' || e.key === '}') {
           e.preventDefault();
           const delta = e.shiftKey ? 100 : 25;
-          if (!lineSaving) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+          if (!lineSaving && !taking) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
         } else if (!taking && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('.analog-dial-wrapper')) {
           const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
           const action = { t: () => this.focusPickedTake(), a: () => this.switchTransportSide(),
@@ -1572,7 +1576,8 @@ class DubMateApp {
     const inRoom = viewName !== 'landing' && !!this.roomState;
     document.querySelector('.app-header')?.classList.toggle('in-room', inRoom);
     if (this.castActivityBar) {
-      this.castActivityBar.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';
+      // The booth bar says who's here, so the booth has no cast strip.
+      this.castActivityBar.style.display = (viewName === 'landing' || viewName === 'booth' || !this.roomState) ? 'none' : 'flex';
       // The strip shows progress and ready counts everywhere but the lobby.
       if (this.roomState) this.renderCastActivityHUD();
     }

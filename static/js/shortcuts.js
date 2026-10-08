@@ -17,6 +17,7 @@ export const SHORTCUT_GROUPS = [
   {
     id: 'recording', title: 'Booth', page: 'studio', view: 'booth', items: [
       { id: 'rec-toggle', keys: [['Space']], label: 'Record, or stop recording' },
+      { id: 'rec-cancel', keys: [['Esc']], label: 'Cancel the count-in' },
       { id: 'rec-nudge', keys: [['[']], label: 'Move my take 25 ms earlier' },
       { id: 'rec-nudge-later', keys: [[']']], label: 'Move my take 25 ms later' },
       { id: 'rec-nudge-big', keys: [['Shift', '['], ['Shift', ']']], label: 'Same, by 100 ms' },

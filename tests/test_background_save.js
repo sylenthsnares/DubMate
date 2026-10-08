@@ -190,7 +190,7 @@ function beforeUnloadBlocked(env) {
     if (!/saving a take/.test(chip(env, 0).getAttribute("aria-label"))) fail(`chip 1 name: ${chip(env, 0).getAttribute("aria-label")}`);
     if (!presets(env).length || presets(env).some((b) => !b.disabled)) fail("line 1's Voice controls aren't locked while it saves");
     if (!beforeUnloadBlocked(env)) fail("leaving the page isn't guarded while a take saves");
-    for (const id of ["btn-next-line", "btn-prev-line", "btn-play-orig", "btn-back-lobby"]) {
+    for (const id of ["btn-next-line", "btn-prev-line", "btn-play-orig", "nav-step-lobby"]) {
       if ($(env, id).disabled && id !== "btn-prev-line") fail(`#${id} is locked while the take saves`);
     }
     if ($(env, "timeline-chips").classList.contains("ui-interaction-locked")) fail("the line chips are locked");
@@ -325,8 +325,8 @@ function beforeUnloadBlocked(env) {
     console.log("PASS: a failed take is kept, retried on 'open' and by Retry, dropped by Discard, and guards leaving");
   }
 
-  // 6. On a saving line the takes can't change: Use and Delete are off, and the ⋯ menu's
-  //    arrows skip the locked Delete.
+  // 6. On a saving line the takes can't change: no "Use this take" cue, a row click picks
+  //    nothing, and ⋯ (Delete) is off; ▶ still plays.
   {
     const t = mk("t1000", "k1", 1);
     const t2 = mk("t1000", "k2", 2);
@@ -335,15 +335,19 @@ function beforeUnloadBlocked(env) {
     app.savingLines.t1000 = { roomId: "R1", lineId: "t1000", number: 3, noiseReduction: false };
     app.renderTakesCard();
     const row = $(env, "takes-list").querySelector('[data-take-id="k1"]');
-    if (!row.querySelector(".take-use").disabled) fail("Use works on a saving line");
+    if (row.querySelector(".take-use-cue")) fail("the Use this take cue shows on a saving line");
     if (text(pendingRows(env)[0]) !== "Take 3 · Saving…") fail(`saving row without cleanup: ${text(pendingRows(env)[0])}`);
-    row.querySelector(".take-more").click();
-    const [play, del] = row.querySelectorAll('[role="menuitem"]');
-    if (!del.disabled || w.document.activeElement !== play) fail("Delete isn't locked, or Play isn't focused");
-    play.dispatchEvent(new w.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
-    if (w.document.activeElement !== play) fail("the arrows landed on the locked Delete");
+    const picks = env.calls.filter((c) => /\/pick$/.test(c.url)).length;
+    row.querySelector('[role="radio"]').click();
+    await tick();
+    if (env.calls.filter((c) => /\/pick$/.test(c.url)).length !== picks) fail("a row click picked a take while the line saves");
+    const more = row.querySelector(".take-more");
+    if (!more.disabled) fail("⋯ (Delete) works on a saving line");
+    if (row.querySelector(".take-play").disabled) fail("▶ is off while the line saves");
     delete app.savingLines.t1000;
-    console.log("PASS: a saving line's takes are locked, and the menu skips the locked Delete");
+    app.renderTakesCard();
+    if ($(env, "takes-list").querySelector('[data-take-id="k1"] .take-more').disabled) fail("⋯ stayed off after the save");
+    console.log("PASS: a saving line's takes are locked: no Use cue, no pick, ⋯ off; ▶ still plays");
   }
 
   // 7. On a saving line, Level, Auto and the timing are locked too, [ and ] included: they'd
