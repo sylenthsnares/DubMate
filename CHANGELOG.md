@@ -99,6 +99,7 @@
 - **Settings Locked to the Host Machine**: `POST /api/config` (packs folder, export folder) now refuses requests that arrive through the public Cloudflare tunnel.
 - **Room Registry Hardening**: the worker answers a malformed room-create request with a 400 instead of a server error.
 - **The Host's Folders Stay Private**: people in a room no longer see the host's folders or settings. On a host's page, Audio settings shows only your own audio, and the host's folders can only be changed on the host's computer.
+- **Only the Host Runs the Room**: only the host can move everyone to recording, change the room's dialogue level, make the video, or get the stems and project files. Members who try are told only the host can do it, and their Start just takes them to the booth.
 
 ### Changed
 - **Engine Layout**: the backend routes moved from `app.py` into the `dubmate/` package, and the studio frontend was split into `static/js/studio/` modules and `static/css/builder.css`. No behaviour change.

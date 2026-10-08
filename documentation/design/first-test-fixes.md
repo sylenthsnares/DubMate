@@ -167,6 +167,15 @@ After the first round the owner asked for louder sync clicks ("otherwise small e
   - A tick that lines up with every beat (a clock, or the beat leaking from speakers) is refused when it also falls between the beats. A sound only on the beat still passes, as a perfect clapper would.
 - **Headless check.** `scripts/headless_mic_check.py` also checks that the click loop (two ticks per beat) is refused, and adds a run with a room-noise WAV (hiss, knocks, swells) that must not pass. Result: all passed, and the noise run came back `noisy` (5 hits, 4 agreeing, 5 strays), so the old rule would have saved it.
 
+## Host-only room actions
+
+Found by the UI critique (ui-plan "Guests can move the whole room", routed here because it is a correctness and security bug, not UI). Members could move every screen and throw away or start renders on the host's computer.
+
+- The room socket refuses `set_status` and `set_dialogue_presence` from anyone but the host, with the same `{"type": "error", "payload": {"message": …}}` reply `assign_role` already sends ("Only the host can move the room." / "Only the host can change the mix."). The check is the one `assign_role` uses, now `room_ws._is_host`: the user id the socket was opened with equals `room.host_id`, or the room is solo (`host_id == "host"`).
+- `POST /api/rooms/{room}/export`, `GET …/export/stems` and `GET …/export/project_zip` take `user_id` (query) and answer 403 with a plain line ("Only the host can make the video." / "… get the stems." / "… get the project files.") before anything is claimed or rendered. Same rule, `rooms_api._require_host`, like `_require_line_actor` and `PUT /voice` already do. The studio sends `user_id` on all three.
+- A member's own place in the room is unchanged: `set_user_status` (line, location, ready) stays open to everyone. The studio no longer sends `set_status` from a member's Start (it just opens their booth) or `set_dialogue_presence` from a member's slider (the change stays in their own preview).
+- Not guarded: `GET …/export/download` and `…/export/video`, which members use to get the finished video. A member's download can still start a render when none is ready; the premiere rework (ui-plan 40b) owns that.
+
 ## Desktop
 
 - New `tauri/src-tauri/src/mic_permission.rs`:

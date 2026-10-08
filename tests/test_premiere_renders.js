@@ -178,6 +178,21 @@ const db = (x) => Math.pow(10, x / 20);
   if (effectNodes.length) fail(`browser effect nodes created: ${effectNodes}`);
   console.log("PASS: presence follows live; a replay reuses renders and retries the unavailable one");
 
+  // A member's presence and Start stay on their own page: the engine refuses them anyway.
+  app.user = { id: "u2", name: "Ben" };
+  sent.length = 0;
+  app.setMasterDialoguePresence(-3);
+  app.btnStartSession.click();
+  if (sent.some((m) => m.type === "set_dialogue_presence" || m.type === "set_status")) {
+    fail(`a member sent host-only messages: ${JSON.stringify(sent)}`);
+  }
+  app.user = { id: "u1", name: "Ana" };
+  sent.length = 0;
+  app.showView("lobby");
+  app.btnStartSession.click();
+  if (!sent.some((m) => m.type === "set_status" && m.payload.status === "recording")) fail("the host's Start did not move the room");
+  console.log("PASS: a member's presence and Start are not sent to the room; the host's are");
+
   if (errors.length) fail(`console errors: ${errors.join("\n")}`);
   console.log("ALL PREMIERE RENDER TESTS PASSED");
   process.exit(0);

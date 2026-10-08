@@ -222,6 +222,12 @@ def _require_line_actor(room, line, user_id: str) -> None:
         )
 
 
+def _require_host(room, user_id: str, detail: str) -> None:
+    """403 unless user_id is the host. In a solo room (host_id "host") everyone counts as host."""
+    if user_id != room.host_id and room.host_id != "host":
+        raise HTTPException(status_code=403, detail=detail)
+
+
 def _take_or_404(room, line_id: str, take_id: str):
     """(line, take) for a take of a line in the current pack, or 404."""
     line = room.find_line(line_id)
@@ -901,9 +907,10 @@ async def get_take_audio(room_id: str, line_id: str, take_id: str, request: Requ
 
 
 @router.post("/api/rooms/{room_id}/export")
-async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0):
-    """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously."""
+async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: float = 0.0, user_id: str = ""):
+    """Renders the final dubbed scene into MP4 (16:9 cinema or 9:16 shorts) asynchronously. Host only."""
     room = rooms.room_or_404(room_id)
+    _require_host(room, user_id, "Only the host can make the video.")
     _refuse_during_cleanup_refresh(room)
 
     presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
@@ -1064,11 +1071,12 @@ class _FileResponseThen(FileResponse):
 
 
 @router.get("/api/rooms/{room_id}/export/stems")
-async def download_room_stems(room_id: str):
-    """The scene's stems (dialogue, music & effects, one file per character) as a zip. One request
-    per room at a time; the claim in export_status also holds off Refresh older takes until the
-    file is sent."""
+async def download_room_stems(room_id: str, user_id: str = ""):
+    """The scene's stems (dialogue, music & effects, one file per character) as a zip. Host only.
+    One request per room at a time; the claim in export_status also holds off Refresh older takes
+    until the file is sent."""
     room = rooms.room_or_404(room_id)
+    _require_host(room, user_id, "Only the host can get the stems.")
     _refuse_during_cleanup_refresh(room)
     if room.export_status.get("stems") == "processing":
         raise HTTPException(status_code=409, detail="Someone is already getting the stems. Try again in a moment.")
@@ -1112,11 +1120,13 @@ async def download_room_stems(room_id: str):
 
 
 @router.get("/api/rooms/{room_id}/export/project_zip")
-async def download_room_project_zip(room_id: str):
+async def download_room_project_zip(room_id: str, user_id: str = ""):
     """
     Assembles and streams a complete multi-track NLE project ZIP containing stems, video, markers.
+    Host only.
     """
     room = rooms.room_or_404(room_id)
+    _require_host(room, user_id, "Only the host can get the project files.")
     _refuse_during_cleanup_refresh(room)
 
     zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"

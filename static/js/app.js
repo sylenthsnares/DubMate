@@ -633,7 +633,8 @@ class DubMateApp {
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
     this.btnStartSession.addEventListener('click', () => {
-      this.socket.setStatus('recording');
+      // The host moves everyone; a member just goes to the booth themselves.
+      if (this.isHost({ allowDummy: true })) this.socket.setStatus('recording');
       this.showView('booth');
       this.loadBoothLine(this.findFirstAssignedLine());
     });

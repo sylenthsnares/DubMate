@@ -340,7 +340,7 @@ class StemsRouteCase(RoomCase):
         return mock.patch.object(audio_processor, "render_take_cached", side_effect=_identity_render)
 
     def _get(self, status=200):
-        res = self.client.get(f"/api/rooms/{self.ROOM}/export/stems")
+        res = self.client.get(f"/api/rooms/{self.ROOM}/export/stems?user_id=hostT")
         self.assertEqual(res.status_code, status, res.text)
         return res
 
@@ -409,7 +409,7 @@ class TestStemsRoute(StemsRouteCase):
             return {"type": "http.request"}
 
         with self._identity():
-            response = asyncio.run(rooms_api.download_room_stems(self.ROOM))
+            response = asyncio.run(rooms_api.download_room_stems(self.ROOM, user_id="hostT"))
         self.assertEqual(self.room.export_status.get("stems"), "processing")
         seen = []
 
@@ -423,7 +423,7 @@ class TestStemsRoute(StemsRouteCase):
         self.assertNotIn("stems", self.room.export_status)
 
         with self._identity():
-            response = asyncio.run(rooms_api.download_room_stems(self.ROOM))
+            response = asyncio.run(rooms_api.download_room_stems(self.ROOM, user_id="hostT"))
         self.assertEqual(self.room.export_status.get("stems"), "processing")
 
         async def broken_send(message):

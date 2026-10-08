@@ -291,7 +291,8 @@ export class ScreeningMethods {
       if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
     }
 
-    if (this.socket) {
+    // The room's level is the host's; a member's change stays in their own preview.
+    if (this.socket && this.isHost({ allowDummy: true })) {
       this.socket.send('set_dialogue_presence', {
         presence_db: this.masterDialoguePresence
       });

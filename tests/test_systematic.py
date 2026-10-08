@@ -276,7 +276,7 @@ class TestSystematicDualEngine(unittest.TestCase):
             self.assertEqual(res_take.status_code, 200)
 
             # Test GET /api/rooms/{room_id}/export/project_zip
-            res_zip = self.client.get(f"/api/rooms/{room_id}/export/project_zip")
+            res_zip = self.client.get(f"/api/rooms/{room_id}/export/project_zip?user_id={user_id}")
             self.assertEqual(res_zip.status_code, 200)
             self.assertIn("application/zip", res_zip.headers.get("content-type", ""))
             self.assertIn(".zip", res_zip.headers.get("content-disposition", ""))
@@ -375,9 +375,10 @@ class TestSystematicDualEngine(unittest.TestCase):
         })
         self.assertEqual(res_room.status_code, 200)
         room_id = res_room.json()["room_id"]
+        host_id = res_room.json()["user_id"]
 
         # 1. Test POST /api/rooms/{room_id}/export (16:9)
-        res_exp_16 = self.client.post(f"/api/rooms/{room_id}/export?aspect_ratio=16:9")
+        res_exp_16 = self.client.post(f"/api/rooms/{room_id}/export?aspect_ratio=16:9&user_id={host_id}")
         self.assertEqual(res_exp_16.status_code, 200)
         data_16 = res_exp_16.json()
         self.assertIn(data_16["status"], ("ok", "ready", "processing"))

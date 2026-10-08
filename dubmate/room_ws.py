@@ -19,6 +19,15 @@ from dubmate import common, rooms, rooms_api
 router = APIRouter()
 
 
+def _is_host(room, user_id: str) -> bool:
+    """The room's host; in a solo room (host_id "host") everyone counts as host."""
+    return user_id == room.host_id or room.host_id == "host"
+
+
+async def _refuse(websocket: WebSocket, message: str) -> None:
+    await websocket.send_json({"type": "error", "payload": {"message": message}})
+
+
 async def _wait_for_cleanup_refresh(room) -> None:
     """Returns once no Refresh older takes is running or about to start its task (a request
     still planning holds its claim in room.cleanup_refreshing before the task exists)."""
@@ -81,11 +90,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 await room.broadcast("user_joined", {"user_id": user_id})
 
             elif msg_type == "assign_role":
-                if user_id != room.host_id and room.host_id != "host":
-                    await websocket.send_json({
-                        "type": "error",
-                        "payload": {"message": "Only the host can assign roles."},
-                    })
+                if not _is_host(room, user_id):
+                    await _refuse(websocket, "Only the host can assign roles.")
                     continue
                 character = payload.get("character")
                 assigned_user_ids = payload.get("user_ids", [])
@@ -94,6 +100,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     await room.broadcast("role_assigned", {"character": character, "user_ids": assigned_user_ids})
 
             elif msg_type == "set_status":
+                # Moves everyone; a member's own place is set_user_status.
+                if not _is_host(room, user_id):
+                    await _refuse(websocket, "Only the host can move the room.")
+                    continue
                 new_status = payload.get("status", "lobby")
                 if new_status in ("lobby", "recording", "screening"):
                     room.status = new_status
@@ -169,6 +179,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     })
 
             elif msg_type == "set_dialogue_presence":
+                if not _is_host(room, user_id):
+                    await _refuse(websocket, "Only the host can change the mix.")
+                    continue
                 try:
                     presence_db = float(payload.get("presence_db", 0.0))
                 except (TypeError, ValueError) as ex:
