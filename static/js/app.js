@@ -1374,7 +1374,10 @@ class DubMateApp {
       this.renderTimelineChips();
     }
 
-    // Toggle HUD & Breadcrumbs visibility
+    // Toggle HUD & Breadcrumbs visibility. In a room the header compacts on narrow
+    // windows so its Leave button stays in view (style.css .app-header.in-room).
+    const inRoom = viewName !== 'landing' && !!this.roomState;
+    document.querySelector('.app-header')?.classList.toggle('in-room', inRoom);
     if (this.castActivityBar) {
       this.castActivityBar.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';
       // The strip shows progress and ready counts everywhere but the lobby.

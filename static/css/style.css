@@ -556,6 +556,39 @@ body::after {
   }
 }
 
+/* The header's Leave is the way out of a room on every screen, so it must stay in
+   the window down to the 960px desktop minimum, with or without the pill. The
+   sides keep their size; only the pill's sentence gives way (with an ellipsis). */
+.header-left,
+.header-status {
+  flex-shrink: 0;
+}
+.connection-banner {
+  min-width: 0;
+}
+.connection-banner #connection-banner-text,
+.connection-banner .connection-banner-short {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.connection-banner .btn {
+  flex-shrink: 0;
+}
+/* While the pill asks for attention, the invite code and your name step aside:
+   neither helps while the room is out of reach. "Back online" leaves them be. */
+.app-header:has(> .connection-banner:not([style*="none"]):not(.is-recovered)) #header-room-badge,
+.app-header:has(> .connection-banner:not([style*="none"]):not(.is-recovered)) #header-user-pill {
+  display: none !important; /* app.js shows both with an inline display */
+}
+/* In a room below 1280px the logo keeps its icon (and still opens the switcher). */
+@media (max-width: 1279px) {
+  .app-header.in-room .logo-title,
+  .app-header.in-room .logo-badge {
+    display: none;
+  }
+}
+
 /* The code exists locally but is not resolvable by guests yet -- usually the
    public tunnel is still coming up. Hovering explains it. */
 .room-badge.room-badge-unpublished {

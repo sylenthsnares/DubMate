@@ -205,6 +205,25 @@ const indexHtml = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
 const removeBtn = indexHtml.match(/<button[^>]*id="btn-confirm-remove-packbuilder"[^>]*>/);
 if (!removeBtn || !/class="[^"]*\bbtn-danger\b/.test(removeBtn[0])) fail("#btn-confirm-remove-packbuilder should be a .btn-danger");
 
+// The header's Leave stays in the window at 960px (measured in Chromium for the PR):
+// the two sides never shrink, only the pill's sentence does; while the pill asks for
+// attention the invite code and name step aside; in a room below 1280px the logo is
+// its icon.
+const bodiesFor = (sel) => styleBlocks.filter((b) => selectorList(b).includes(sel)).map((b) => b.body).join(" ");
+for (const sel of [".header-left", ".header-status"]) {
+  if (!/flex-shrink\s*:\s*0/.test(bodiesFor(sel))) fail(`${sel} needs flex-shrink: 0 so the header's Leave is never pushed out`);
+}
+if (!/min-width\s*:\s*0/.test(bodiesFor(".connection-banner #connection-banner-text"))) {
+  fail("the pill's sentence needs min-width: 0 so it can give way with an ellipsis");
+}
+const pillShowing = '.app-header:has(> .connection-banner:not([style*="none"]):not(.is-recovered))';
+for (const id of ["#header-room-badge", "#header-user-pill"]) {
+  if (!/display\s*:\s*none/.test(bodiesFor(`${pillShowing} ${id}`))) fail(`${id} should step aside while the pill shows`);
+}
+if (!/@media \(max-width: 1279px\) \{\s*\.app-header\.in-room \.logo-title,\s*\.app-header\.in-room \.logo-badge \{\s*display: none;/.test(styleCss)) {
+  fail("in a room below 1280px the logo should drop to its icon");
+}
+
 // The parser must actually be reading the files, and exemptions must not go stale.
 if (focusRules < 8) fail(`only ${focusRules} :focus-visible rules found; the CSS parser is probably broken`);
 if (checkedSizes < 150) fail(`only ${checkedSizes} px font sizes found; the CSS parser is probably broken`);
