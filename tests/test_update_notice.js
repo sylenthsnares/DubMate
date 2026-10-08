@@ -4,8 +4,11 @@
  * Where to get DubMate 2.0 (documentation/design/v2-update-path.md, section 2;
  * static/js/studio/update_notice.js):
  *  - "Open download page": in the desktop app it asks the app to open the releases page;
- *    an older app refuses, so it copies the address and says so, or shows the address
- *    when the copy fails too; in a browser it is a plain link to a new tab;
+ *    an app older than 2.0 refuses, so there the button is "Copy download link" (known
+ *    from its refusal of get_packbuilder_install at boot, or of the first click): it copies
+ *    the address and says so, or shows the address when the copy fails too; in a browser it
+ *    is a plain link to a new tab, and says so to a screen reader;
+ *  - a source install is told to run its update script, with no download control;
  *  - the premiere notice is the host's, once per engine version and missing set, until
  *    Got it; its copy names what is missing and where to get it;
  *  - the room check row says when stronger cleanup needs the installer.
@@ -23,8 +26,10 @@ const BUNDLE = buildStudioBundle();
 
 const URL = "https://github.com/sylenthsnares/DubMate/releases/latest";
 const EFFECTS_COPY = "This DubMate saves videos, stems and projects without voice effects. "
-  + "Install DubMate 2.0 from github.com/sylenthsnares/DubMate/releases to add them";
-const CLEANUP_COPY = "Install DubMate 2.0 from github.com/sylenthsnares/DubMate/releases for stronger noise cleanup.";
+  + "Run the DubMate 2.0 installer from github.com/sylenthsnares/DubMate/releases to add them";
+const CLEANUP_COPY = "For stronger noise cleanup, run the DubMate 2.0 installer from github.com/sylenthsnares/DubMate/releases.";
+const SOURCE_COPY = "This DubMate saves videos, stems and projects without voice effects. "
+  + "Run update.bat or update.sh again to add them.";
 const ROOM_CHECK_COPY = "Stronger cleanup needs the DubMate 2.0 installer.";
 
 function fail(msg) {
@@ -121,14 +126,19 @@ const roomState = (extra = {}) => ({
     await tick();
     if (copied.join() !== URL) fail(`copied ${copied}`);
     if (!isShown(hint) || norm(hint) !== "Link copied. Paste it into your browser.") fail(`refusal hint: ${norm(hint)}`);
-    console.log("PASS: a refused call copies the link and says so");
+    if (norm(btn) !== "Copy download link") fail(`after a refusal the button reads ${norm(btn)}`);
+    if (hint.getAttribute("role") !== "status") fail("the hint isn't announced");
+    console.log("PASS: a refused call copies the link, says so, and the button becomes Copy download link");
 
-    // The copy fails too: the address itself, as selectable text.
+    // The copy fails too: the address itself, as selectable text. The app isn't asked again.
     copyFails = true;
+    const asked = invokes.length;
     ({ btn, hint } = control());
+    if (norm(btn) !== "Copy download link") fail(`a new button after a refusal reads ${norm(btn)}`);
     btn.click();
     await tick();
-    if (!isShown(hint) || norm(hint) !== URL) fail(`copy-failed hint: ${norm(hint)}`);
+    if (invokes.length !== asked) fail(`an older app was asked again: ${invokes}`);
+    if (!isShown(hint) || norm(hint) !== URL || !hint.classList.contains("is-address")) fail(`copy-failed hint: ${norm(hint)}`);
     console.log("PASS: when the copy fails too, the hint shows the address");
 
     // A browser on this computer: a link that opens a new tab.
@@ -139,8 +149,51 @@ const roomState = (extra = {}) => ({
     if (btn.getAttribute("href") !== URL || btn.getAttribute("target") !== "_blank"
         || btn.getAttribute("rel") !== "noopener noreferrer") fail(`link attributes: ${btn.outerHTML}`);
     if (norm(btn) !== "Open download page" || btn.getAttribute("data-tip") !== URL) fail(`link text or tip: ${btn.outerHTML}`);
-    console.log("PASS: in a browser, Open download page is a link to a new tab");
+    if (btn.getAttribute("aria-label") !== "Open download page (opens in a new tab)") fail(`link name: ${btn.getAttribute("aria-label")}`);
+    console.log("PASS: in a browser, Open download page is a link to a new tab, and says so");
     if (env.errors.length) fail(`console errors: ${env.errors.join(" | ")}`);
+  }
+
+  // The studio learns the app is older than 2.0 before any click: at boot it asks for the
+  // Pack Builder install, which a 2.0 app answers and a 1.1.3 app refuses.
+  {
+    const env = await boot("http://127.0.0.1:8000/", { version: "2.0.0", missing: [] });
+    const { w, app } = env;
+    const invokes = [];
+    let refuse = true;
+    w.__TAURI__ = { core: { invoke: (cmd) => {
+      invokes.push(cmd);
+      if (refuse) return Promise.reject("Command get_packbuilder_install not allowed");
+      return Promise.resolve(cmd === "get_packbuilder_install" ? { state: "done" } : null);
+    } } };
+    const copied = [];
+    Object.defineProperty(w.navigator, "clipboard", { configurable: true,
+      value: { writeText: (t) => { copied.push(t); return Promise.resolve(); } } });
+    const early = app.downloadPageControl();   // made before the answer: relabelled with it
+    w.document.body.appendChild(early);
+    await app.pollPackBuilderInstall();
+    clearTimeout(app.pbInstallTimer);
+    const wrap = app.downloadPageControl();
+    w.document.body.appendChild(wrap);
+    const btn = wrap.querySelector("button");
+    if (norm(btn) !== "Copy download link") fail(`older app: the button reads ${norm(btn)}`);
+    if (norm(early.querySelector("button")) !== "Copy download link") fail(`older app: an earlier button reads ${norm(early.querySelector("button"))}`);
+    btn.click();
+    await tick();
+    if (invokes.includes("open_download_page")) fail(`an older app was asked to open the page: ${invokes}`);
+    if (copied.join() !== URL || norm(wrap.querySelector(".download-page-hint")) !== "Link copied. Paste it into your browser.") fail("older app: the link wasn't copied");
+    console.log("PASS: an app older than 2.0 gets Copy download link from the start, and is never asked to open the page");
+
+    // A 2.0 app answers: Open download page.
+    const env2 = await boot("http://127.0.0.1:8000/", { version: "2.0.0", missing: [] });
+    refuse = false;
+    env2.w.__TAURI__ = w.__TAURI__;
+    await env2.app.pollPackBuilderInstall();
+    clearTimeout(env2.app.pbInstallTimer);
+    const btn2 = env2.app.downloadPageControl().querySelector("button");
+    if (norm(btn2) !== "Open download page") fail(`2.0 app: the button reads ${norm(btn2)}`);
+    console.log("PASS: a 2.0 app keeps Open download page");
+    if (env.errors.length || env2.errors.length) fail(`console errors: ${[...env.errors, ...env2.errors].join(" | ")}`);
   }
 
   // A page reached over the network never asks the desktop app, even inside it.
@@ -157,7 +210,10 @@ const roomState = (extra = {}) => ({
     const env = await boot("http://127.0.0.1:8000/", { version: "2.0.0", missing: ["voice_effects", "strong_cleanup"] });
     const { w, app, $ } = env;
     const notice = $("screening-update-notice");
-    if (!notice || !notice.classList.contains("update-notice") || notice.getAttribute("role") !== "status") fail("no #screening-update-notice status row");
+    if (!notice || !notice.classList.contains("update-notice")) fail("no #screening-update-notice row");
+    // Only the text is a live region: the controls aren't read out with it, and the
+    // download hint isn't a live region inside another.
+    if (notice.hasAttribute("role") || notice.querySelector(".update-notice-text")?.getAttribute("role") !== "status") fail("the notice's text isn't its only status region");
     if (notice.previousElementSibling?.id !== "screening-save-error") fail("the notice isn't right after the save error row");
     if (!notice.hidden) fail("the notice shows before a room");
     const text = () => norm(notice.querySelector(".update-notice-text"));
@@ -178,13 +234,15 @@ const roomState = (extra = {}) => ({
     if (env.calls.filter((c) => c.url === "/health").length !== 1) fail("the engine version wasn't read once from /health");
     console.log("PASS: the host sees the notice with what's missing, where to get it, and the download control");
 
+    gotIt().focus();
     gotIt().click();
     if (isShown(notice)) fail("Got it didn't hide the notice");
+    if (w.document.activeElement !== w.document.querySelector("#screening-mix > summary")) fail(`focus after Got it: ${w.document.activeElement && w.document.activeElement.outerHTML.slice(0, 80)}`);
     if (w.localStorage.getItem("dubmate_update_notice") !== "2.0.0|voice_effects,strong_cleanup") fail(`stored key: ${w.localStorage.getItem("dubmate_update_notice")}`);
     app.updateScreeningControls();
     await tick();
     if (isShown(notice)) fail("the notice came back for the same version and set");
-    console.log("PASS: Got it hides it and stores the version and set; it stays away for the same ones");
+    console.log("PASS: Got it hides it, moves focus on to Mix, and stores the version and set; it stays away for the same ones");
 
     // Another set of missing parts: once more, with the copy for it.
     app.roomState = roomState({ engine_missing: ["voice_effects"] });
@@ -195,7 +253,22 @@ const roomState = (extra = {}) => ({
     app.updateScreeningControls();
     await tick();
     if (!isShown(notice) || text() !== CLEANUP_COPY) fail(`cleanup-only copy: ${text()}`);
+    if (norm(notice.querySelector(".update-notice-lead")) !== "For stronger noise cleanup,") fail("cleanup-only lead");
     console.log("PASS: a different set shows again, with the effects-only and the cleanup-only copy");
+
+    // A source install: its update script adds them; there's nothing to download.
+    app.roomState = roomState({ engine_missing: ["voice_effects"], engine_bundled: false });
+    app.updateScreeningControls();
+    await tick();
+    if (!isShown(notice) || text() !== SOURCE_COPY) fail(`source install copy: ${text()}`);
+    if (notice.querySelector(".download-page-control")) fail("a source install got the download control");
+    if (!gotIt()) fail("no Got it for a source install");
+    app.roomState = roomState({ engine_missing: ["strong_cleanup"] });
+    app.updateScreeningControls();
+    await tick();
+    if (notice.querySelectorAll(".download-page-control").length !== 1) fail("the download control didn't come back once");
+    if (notice.querySelector(".update-notice-actions").lastElementChild !== gotIt()) fail("Got it isn't last");
+    console.log("PASS: a source install is told to run its update script, without the download control");
 
     // Nothing missing, or not the host: no notice.
     app.roomState = roomState({ engine_missing: [] });

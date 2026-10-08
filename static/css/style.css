@@ -4000,8 +4000,11 @@ svg {
   color: var(--foreground-muted);
 }
 .download-page-hint.is-address {
+  min-width: 0;
   color: var(--foreground);
   user-select: all;
+  /* An address has no spaces: it wraps instead of running out of its card. */
+  overflow-wrap: anywhere;
 }
 
 /* Mix and In this dub: disclosures under the controls, side by side on wide windows */
@@ -5720,12 +5723,22 @@ svg {
   50% { opacity: 0.45; }
 }
 
+/* Inside the card's padding, with room under the button for its focus ring (.fx-panel clips) */
 .voice-effects-note {
-  margin: 6px 0 0;
+  margin: 0;
+  padding: 0 12px 12px;
   font-size: 12px;
   line-height: 1.4;
   color: var(--foreground-muted);
   text-align: center;
+}
+.voice-effects-note-text {
+  margin: 0;
+}
+.voice-effects-note .download-page-control {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
 }
 
 @media (prefers-reduced-motion: reduce) {

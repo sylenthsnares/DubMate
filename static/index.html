@@ -864,7 +864,7 @@
               </div>
             </div>
 
-            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
+            <div id="voice-effects-note" class="voice-effects-note" style="display: none;"><p class="voice-effects-note-text" role="status"></p></div>
 
             <!-- All effects: fixed order, each with an on/off switch; an effect that's off is one row -->
             <div id="voice-rack" class="voice-rack">
@@ -1221,14 +1221,14 @@
       </div>
       <!-- What only the DubMate 2.0 installer brings, and where to get it (host only, once).
            Filled by UpdateNoticeMethods in studio/update_notice.js. -->
-      <div id="screening-update-notice" class="update-notice" role="status" hidden>
+      <div id="screening-update-notice" class="update-notice" hidden>
         <svg class="update-notice-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10" />
           <line x1="12" x2="12" y1="8" y2="12" />
           <line x1="12" x2="12.01" y1="16" y2="16" />
         </svg>
-        <p class="update-notice-text"></p>
+        <p class="update-notice-text" role="status"></p>
         <div class="update-notice-actions"></div>
       </div>
 

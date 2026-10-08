@@ -27,9 +27,11 @@ After this PR, a 1.1.3 user who only took the update can record, preview and sav
 - `audio_processor.missing_parts() -> List[str]`, in this order:
   - `"voice_effects"` when `vocal_chain.available()` is False;
   - `"strong_cleanup"` when `_noise_reduction_engine() == "fallback"` **and** the engine runs from the desktop app's bundled runtime (`python-runtime` is in the path of `sys.executable`). Source installs on macOS and Linux never had DeepFilterNet, so they aren't nagged.
+  - Worked out once per engine run (`_missing_parts`), like `vocal_chain.available()`: the room state carries it on every broadcast, and only an installer adds these parts, which restarts the engine.
+- `audio_processor.bundled_runtime()`: that `python-runtime` check on its own.
 - `DOWNLOAD_PAGE_URL = "https://github.com/sylenthsnares/DubMate/releases/latest"`, in `dubmate/common.py`, the one engine constant.
 - `EFFECTS_MISSING_MESSAGE` becomes "Voice effects need the DubMate 2.0 installer. Get it from github.com/sylenthsnares/DubMate/releases." This is what the 503 from the render route and the logs carry.
-- `/health` adds `"missing": [...]`. `Room.to_state_dict()` adds `"engine_missing": [...]`, the host engine's list, so the studio knows without an extra request.
+- `/health` adds `"missing": [...]`. `Room.to_state_dict()` adds `"engine_missing": [...]`, the host engine's list, so the studio knows without an extra request, and `"engine_bundled"` (`bundled_runtime()`), so a source install is told to run `update.bat` / `update.sh` again instead of an installer it doesn't use.
 - **Dry renders.** When `EffectsUnavailable` is raised, `_render_take` reads the take's own audio and applies the same clamped level (`gain_db`, which already holds the auto gain measured on the raw take when effects are missing: `_rematch_level`). It doesn't raise any more. This covers `render_dub_mix`, `export_dub_video` (Save video, the premiere's video, 9:16), `build_stems_zip` and `build_project_zip`. The master stage, mix balance and presence are unchanged; none of them needs pedalboard.
 - Logged **once per engine run**: `[Effects] Voice effects aren't installed; videos, stems and projects are saved without them.` No log line per take.
 - Project ZIP when dry: the manifest's `master` gets `"voice_effects": false`, and the cue sheet's sound line reads `Sound: none (voice effects not installed)` instead of a preset name it didn't apply.
@@ -43,21 +45,25 @@ New module `static/js/studio/update_notice.js` (methods mixed in like the other 
 
 - `DOWNLOAD_PAGE_URL` (the same address) and `DOWNLOAD_PAGE_LABEL = "github.com/sylenthsnares/DubMate/releases"`.
 - `downloadPageControl({ size })` returns one control:
-  - **Desktop app** (`window.__TAURI__?.core?.invoke` and the engine is this computer's, `isEngineLocal()`): a `button.btn.btn-secondary.btn-sm` "Open download page". It calls `invoke('open_download_page')`. If the app refuses the call (a launcher older than 2.0, which is every 1.1.3 user here), it copies the address to the clipboard and replaces the hint text beside it with "Link copied. Paste it into your browser." If the copy fails too, the hint shows the address as selectable text.
-  - **Browser:** `a.btn.btn-secondary.btn-sm` with `href=DOWNLOAD_PAGE_URL`, `target="_blank"` and `rel="noopener noreferrer"`. The text is the same.
+  - **Desktop app** (`window.__TAURI__?.core?.invoke` and the engine is this computer's, `isEngineLocal()`): a `button.btn.btn-secondary.btn-sm` "Open download page". It calls `invoke('open_download_page')`. A launcher older than 2.0 (every 1.1.3 user here) refuses it, and the studio knows before any click: at boot it asks `get_packbuilder_install`, which the 2.0 studio capability allows and 1.1.3 refuses (`noteOlderDesktopApp()`). On such a launcher the button reads "Copy download link" and doesn't ask the app: it copies the address to the clipboard and the hint beside it says "Link copied. Paste it into your browser." If the copy fails too, the hint shows the address as selectable text that wraps. A refused click on "Open download page" does the same and relabels every download button.
+  - **Browser:** `a.btn.btn-secondary.btn-sm` with `href=DOWNLOAD_PAGE_URL`, `target="_blank"` and `rel="noopener noreferrer"`. The text is the same; its accessible name adds "(opens in a new tab)".
 - Both get `data-tip` set to the address, so it is visible on hover and focus.
+- The hint is `role="status"`. The control is never inside another live region: in the premiere notice and the Voice card note only the sentence is the status region.
 
-**The premiere notice (host only, once).** It's a row in `#view-screening` right after `#screening-save-error`, in the same slot and with the same width as that row: `<div id="screening-update-notice" class="update-notice" role="status" hidden>`.
+**The premiere notice (host only, once).** It's a row in `#view-screening` right after `#screening-save-error`, in the same slot and with the same width as that row: `<div id="screening-update-notice" class="update-notice" hidden>`, whose text `<p class="update-notice-text" role="status">` is the live region.
 - It is shown when the user is the host, `roomState.engine_missing` isn't empty, and it hasn't been dismissed for this engine version and this list. The localStorage key is `dubmate_update_notice` = `"<version>|<missing joined by ,>"`, using the version from `/health`, which the lobby already reads.
 - **Copy**, plain and short, one sentence, then the controls:
-  - effects missing (with or without cleanup): "This DubMate saves videos, stems and projects without voice effects. Install DubMate 2.0 from github.com/sylenthsnares/DubMate/releases to add them{ and stronger noise cleanup}."
-  - cleanup only: "Install DubMate 2.0 from github.com/sylenthsnares/DubMate/releases for stronger noise cleanup."
-  - controls: the download control, then `button.btn.btn-ghost.btn-sm` "Got it", which hides the row and stores the key.
+  - effects missing (with or without cleanup): "This DubMate saves videos, stems and projects without voice effects. Run the DubMate 2.0 installer from github.com/sylenthsnares/DubMate/releases to add them{ and stronger noise cleanup}."
+  - effects missing on a source install (`engine_bundled` false): "This DubMate saves videos, stems and projects without voice effects. Run update.bat or update.sh again to add them." No download control.
+  - cleanup only: "For stronger noise cleanup, run the DubMate 2.0 installer from github.com/sylenthsnares/DubMate/releases."
+  - controls: the download control, then `button.btn.btn-ghost.btn-sm` "Got it", which hides the row and stores the key. If it had focus, focus moves on to the Mix summary.
 - **Look:** walnut control surface (`--secondary`), 1px `--border-wood`, `--radius-md`, 10px 14px padding, an info-circle SVG in `--accent-brass` (14px, the stroke icon the export modal's reassurance row uses), 12px text in `--foreground-muted` with the first clause in `--foreground`. Controls sit on the right on wide windows and wrap under the text below 1100px. No amber: Play stays the one primary. No red: nothing failed. At 960x680 the theater keeps its height; the row pushes the sections down, as the save-error row does.
 - A save that ran dry shows nothing else. The notice is the one place this is said, so no toast per export.
 
 **Voice card note** (`#voice-effects-note`, existing element, booth layout unchanged):
-- On the host's own engine: "Voice effects need the DubMate 2.0 installer, from the download page on GitHub. Takes play without them until then." Then the download control (small) inline after the text.
+- The element is a `div` holding `<p class="voice-effects-note-text" role="status">` (the sentence) and, below it, the download control, centred. The note has the card's 12px side padding and 12px under the control, so the focus ring isn't clipped by `.fx-panel`'s `overflow: hidden`.
+- On the host's own engine: "Voice effects need the DubMate 2.0 installer, from the download page on GitHub. Takes play without them until then." Then the download control.
+- On a source install's own engine: "Voice effects aren't installed. Run update.bat or update.sh again to add them. Takes play without them until then." No control.
 - A member on someone else's engine (`!isEngineLocal()`): "Voice effects aren't installed on the host's DubMate. Takes play without them." There's no control, because the member can't fix the host's install.
 - The engine's 503 message is no longer copied verbatim into the note. The note is built from `voiceUnavailable` and `isEngineLocal()`.
 
@@ -76,16 +82,17 @@ New module `static/js/studio/update_notice.js` (methods mixed in like the other 
 
 In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_processor.migrate_legacy_take_files`:
 
-- **Backup first.** Before the first migration save of a room whose `state_version` is missing or 1, copy the original `room_state.json` byte for byte to `room_state.v1-backup.json` in the same folder. An existing backup is never overwritten. If the backup can't be written, the room loads in memory but **isn't saved**: it's logged and retried next start.
+- **Backup first.** Before the first migration save of a room whose `state_version` is missing or 1, copy the original `room_state.json` byte for byte to `room_state.v1-backup.json` in the same folder. An existing backup is never overwritten: if it holds other bytes (the room went back to 1.1.3 from its backup, was recorded in again, and was updated again), this one is `room_state.v1-backup-2.json`, then `-3` and so on; the same bytes aren't written twice. If the backup can't be written, the room loads in memory but **isn't saved**: it's logged and retried on every save and the next start.
 - **Never delete original take audio.** `migrate_legacy_take_files` **copies** `take_line_<i>{,_raw,_denoised*}.wav` to `takes/<line_id>/<take_id>…` (copy to a temp name, then `os.replace` into place) and leaves the originals. Rollback removes only the copies it made. A rerun finds the copies in place. Disk for old rooms doubles; that's the price of a way back.
 - **Never on a wrong line.** Old state has no line text, start or filename, only `recorded_at`. So a v1 take is placed on the line at its old index only when the pack can't have changed since that take was recorded:
   - every line audio file at index ≤ the take's index has an mtime ≤ `recorded_at` + 2 s, so nothing was inserted or rebuilt at or before it;
   - and the pack folder's own mtime is ≤ `recorded_at` + 2 s, so no line file was removed.
   
-  A take that fails either check, or has no usable `recorded_at`, is **unplaced**. Its old entry goes to `room.unplaced_v1_takes` (`{old_index: entry}`, saved in `room_state.json`), and its files stay where they are, untouched. It is logged: `take for old line N kept aside: the scene changed after it was recorded`. This PR adds no UI to place them. The backup and the files keep that possible.
+  A take that fails either check, or has no usable `recorded_at`, is **unplaced**. Its old entry goes to `room.unplaced_v1_takes` (`{old_index: entry}`, saved in `room_state.json`), and its files stay where they are, untouched. It is logged with the reason (`take for old line N kept aside: the scene changed after it was recorded`, `…: it has no recording time to check the scene against`, `…: the scene has only M lines now`) and the files' names. This PR adds no UI to place them. The backup and the files keep that possible.
 - The engineer confirms that nothing in 2.0 writes into a pack folder on load, or the folder-mtime check would misfire. Covers and caches go to `data/`.
   - Confirmed (G3): loading a pack writes only a missing `_captions.json` or `_TIMESTAMPS.txt`, and 1.1.3 already wrote both the first time it loaded the pack, before any take. A pack loaded by 1.1.3 and then by 2.0 keeps its folder and file times (checked on the real 1.1.3 code).
   - Adding or removing any line file moves the folder's time, so in practice any edit of the pack after recording keeps all of that room's v1 takes aside, not only the ones after the edit. The line-file rule still guards against a file replaced in place.
+  - So does anything else that adds a file to the folder after recording (Finder's `.DS_Store`, Explorer's `desktop.ini`, a sync tool). That can't be told from a removed line file, since old state has no line list to compare, so those takes are kept aside too. 1.1.3's `data/pack_index.json` isn't used instead: 2.0 rewrites it on its first scan and it reflects 1.1.3's last scan, not the scene at recording time. The files stay, named in the log, and the CHANGELOG says where they are.
   - Files kept aside are `take_line_<i>*.wav`; the room's `unplaced_v1_takes` names them by old index. A kept-aside take counts as a take for the Continue list, so session pruning keeps the room.
 - `pending_v1_takes` (a copy that failed, retried next start) keeps working as today.
 
@@ -95,7 +102,7 @@ In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_proces
   1. "Using the DubMate desktop app 1.1.3? Run the DubMate 2.0.0 installer from https://github.com/sylenthsnares/DubMate/releases/latest to get voice effects and the stronger noise cleanup. The in-app update alone brings everything else."
   2. One line for source installs: re-run `update.bat` / `update.sh`.
   3. A 3-line "What's new in 2.0".
-  4. Back up `rooms/`. Rooms opened in 2.0 can't go back to 1.1.3. Each keeps `room_state.v1-backup.json` and its original take files.
+  4. What happens to rooms: each keeps `room_state.v1-backup.json` and its take files, and putting that copy back as `room_state.json` opens it in 1.1.3 again. No "back up first": the card shows this while the update is already being applied, and the rooms folder isn't always under the install folder (`~/.dubmate/cache` when that isn't writable).
 - Add PR #25 (premiere and export) entries:
   - the Live mix / Final video label;
   - the bigger premiere and the "In this dub" list, where clicking a line jumps playback for everyone;
@@ -138,7 +145,7 @@ In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_proces
 - Python, without deep-filter (`get_deep_filter_path` returns None): upload with cleanup, the toggle, Refresh older takes and a room check all work, and `strong_cleanup` is reported only for a `python-runtime` executable.
 - Python migration:
   - a room written by the real v1.1.3 code (fixture generated by `tests/fixtures/make_v113_room.py` from `git show v1.1.3:…`, committed so CI needs no tags) loads;
-  - the backup is byte-identical, an existing backup isn't overwritten, and a failed backup means no save;
+  - the backup is byte-identical, an existing backup isn't overwritten (a different one gets `-2`), and a failed backup means no save;
   - originals are kept and the copies are byte-identical;
   - a pack edited after recording (a line inserted before index 2, line file mtimes set by `os.utime`) leaves that take unplaced and the earlier ones placed;
   - a missing `recorded_at` leaves the take unplaced;
@@ -168,8 +175,8 @@ In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_proces
 3. The notice is shown once per engine version and missing set, to the host only, on the premiere, until "Got it". There's no toast per export.
 4. `strong_cleanup` is reported only for the desktop app's bundled runtime. Source installs aren't nagged.
 5. A member on a host's engine sees "not installed on the host's DubMate", with no button.
-6. On an older desktop app, "Open download page" copies the link and says so. The address is always in the text.
-7. The backup is named `room_state.v1-backup.json` and is written once. If it can't be written, the migration isn't saved.
+6. On an older desktop app the button is "Copy download link" (known from the boot-time refusal); it copies the link and says so. The address is always in the text.
+7. The backup is named `room_state.v1-backup.json` and is never overwritten (a later, different v1 state gets `-2`, `-3`…). If it can't be written, the migration isn't saved.
 8. Old take files are copied, not moved, and are never deleted by migration.
 9. A v1 take is placed only when the pack provably didn't change after it was recorded (mtimes). Otherwise it is kept aside in `unplaced_v1_takes`, with no UI yet.
 10. The project manifest gains `master.voice_effects: false` when dry, and keeps `"version": "2.3"`.
@@ -182,7 +189,7 @@ In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_proces
   1. the old room opens with its takes, and `room_state.v1-backup.json` and the `take_line_*.wav` files are still there;
   2. Save video, Separate tracks and Editing project all save;
   3. the premiere notice shows once, and "Got it" keeps it away;
-  4. **Open download page** copies the link (1.1.3 launcher).
+  4. the button reads **Copy download link** and copies the link (1.1.3 launcher).
 - **B.** On a 2.0 installer build, Open download page opens the browser on the releases page, on Windows and on macOS.
 - **C.** Edit a pack in 1.1.3 after recording (rebuild with a line inserted), then update. The takes after the insert are kept aside, not on wrong lines.
 - **D.** Read the top of the `[2.0.0]` notes in the 1.1.3 update card at 960x680. The installer line must be readable.

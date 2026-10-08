@@ -7,8 +7,12 @@
 import { lineTakes } from './takes.js';
 import { CLEAN_CHAIN, resolveChain, editChain, presetLabel, eqCurveDb, createRenderScheduler } from './voice.js';
 
-const EFFECTS_MISSING_NOTE = "Voice effects need the DubMate 2.0 installer, from the download page on GitHub. Takes play without them until then.";
-const EFFECTS_MISSING_NOTE_MEMBER = "Voice effects aren't installed on the host's DubMate. Takes play without them.";
+// The Voice card's note when the engine has no voice effects, by whose engine it is.
+const EFFECTS_MISSING_NOTES = {
+  own: "Voice effects need the DubMate 2.0 installer, from the download page on GitHub. Takes play without them until then.",
+  source: "Voice effects aren't installed. Run update.bat or update.sh again to add them. Takes play without them until then.",
+  member: "Voice effects aren't installed on the host's DubMate. Takes play without them.",
+};
 // A take's own sound is saved this long after the last change to it (and when a dial is let go).
 const VOICE_SAVE_QUIET_MS = 400;
 
@@ -368,12 +372,18 @@ export class VoiceRackMethods {
       this.voiceStatusDot.classList.toggle('is-still', prefersReducedMotion());
     }
     if (this.voiceEffectsNote) {
-      // On this computer's engine, where to get them; a member can't install them for the host.
-      const note = this.voiceUnavailable ? (this.isEngineLocal() ? 'own' : 'member') : '';
+      // On this computer's engine, where to get them (a source install runs its update
+      // script); a member can't install them for the host. Only the sentence is announced.
+      let note = '';
+      if (this.voiceUnavailable) {
+        if (!this.isEngineLocal()) note = 'member';
+        else note = this.roomState?.engine_bundled === false ? 'source' : 'own';
+      }
       if (this.voiceEffectsNote.dataset.note !== note) {
         this.voiceEffectsNote.dataset.note = note;
-        if (note === 'own') this.voiceEffectsNote.replaceChildren(EFFECTS_MISSING_NOTE, document.createElement('br'), this.downloadPageControl());
-        else this.voiceEffectsNote.textContent = note ? EFFECTS_MISSING_NOTE_MEMBER : '';
+        this.voiceEffectsNote.querySelector('.voice-effects-note-text').textContent = EFFECTS_MISSING_NOTES[note] || '';
+        this.voiceEffectsNote.querySelector('.download-page-control')?.remove();
+        if (note === 'own') this.voiceEffectsNote.append(this.downloadPageControl());
       }
       this.voiceEffectsNote.style.display = note ? '' : 'none';
     }

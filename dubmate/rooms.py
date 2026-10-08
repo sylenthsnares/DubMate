@@ -29,7 +29,8 @@ from dubmate import common, packs_cache, vocal_chain
 # Voice chains ("voice" and take "chain") are additive, so they stay version 2.
 STATE_VERSION = 2
 # A version 1 room_state.json is copied here, byte for byte, before its first save in the
-# new layout, so DubMate 1.1.3 can still open the room. Written once, never overwritten.
+# new layout, so DubMate 1.1.3 can still open the room. Never overwritten: a later, different
+# version 1 state gets a numbered backup beside it (Room._write_v1_backup).
 V1_BACKUP_NAME = "room_state.v1-backup.json"
 # How much later than a v1 take's recorded_at a pack file may be dated and still count as
 # unchanged since the take (file system time resolution and clock rounding).
@@ -339,11 +340,24 @@ class Room:
             self._write_state_file()
 
     def _write_v1_backup(self) -> bool:
-        """Writes the room's version 1 room_state.json to V1_BACKUP_NAME unless a backup is
-        already there. False (and logged) when it can't, so the caller doesn't save."""
-        backup = os.path.join(audio_processor.get_room_cache_dir(self.room_id), V1_BACKUP_NAME)
-        if os.path.exists(backup):
-            return True
+        """Writes the room's version 1 room_state.json to V1_BACKUP_NAME. A backup already
+        there is never overwritten: one with other contents (the room went back to 1.1.3 and
+        was updated again) gets room_state.v1-backup-2.json beside it, then -3 and so on.
+        False (and logged) when it can't, so the caller doesn't save."""
+        folder = audio_processor.get_room_cache_dir(self.room_id)
+        stem, ext = os.path.splitext(V1_BACKUP_NAME)
+        number = 1
+        while True:
+            backup = os.path.join(folder, V1_BACKUP_NAME if number == 1 else f"{stem}-{number}{ext}")
+            if not os.path.exists(backup):
+                break
+            try:
+                with open(backup, "rb") as f:
+                    if f.read() == self.v1_state_bytes:
+                        return True
+            except OSError:
+                pass
+            number += 1
         tmp = backup + ".tmp"
         try:
             with open(tmp, "wb") as f:
@@ -428,6 +442,8 @@ class Room:
             # What the host's engine lacks that only the 2.0 installer brings, so the studio
             # can say so without asking /health.
             "engine_missing": audio_processor.missing_parts(),
+            # False for a source install: it gets them by running update.bat/update.sh again.
+            "engine_bundled": audio_processor.bundled_runtime(),
         }
 
     async def broadcast(self, message_type: str, payload: Any = None):
@@ -793,27 +809,31 @@ def _migrate_legacy_sound(room: Room) -> None:
                 _legacy_take_chain(take)
 
 
-def _pack_unchanged_since(pack: pack_loader.PackInfo, index: int, recorded_at: Any) -> bool:
-    """True when the pack can't have changed at or before line `index` since recorded_at:
-    the line files at indexes 0..index and the pack folder itself are all dated no later
-    than recorded_at + V1_PACK_MTIME_SLACK_S. An inserted or rebuilt line file is newer, and
-    removing one makes the folder newer. A missing file or an unusable time gives False.
-    Loading a pack writes nothing into its folder (peaks and web videos go to the cache)
-    except a missing _captions.json or _TIMESTAMPS.txt, which 1.1.3 already wrote when it
-    first loaded the pack, before any take. So the folder's time only moves when the pack
-    itself is edited, and then every v1 take of the room is kept aside."""
+def _why_v1_take_kept_aside(pack: pack_loader.PackInfo, index: int, recorded_at: Any) -> Optional[str]:
+    """None when a version 1 take recorded at recorded_at for line `index` can go on the line
+    now at that index, because the pack can't have changed at or before it since: the line
+    files at indexes 0..index and the pack folder itself are all dated no later than
+    recorded_at + V1_PACK_MTIME_SLACK_S. Otherwise why not, for the log. An inserted or
+    rebuilt line file is newer, and removing one makes the folder newer. Loading a pack
+    writes nothing into its folder (peaks and web videos go to the cache) except a missing
+    _captions.json or _TIMESTAMPS.txt, which 1.1.3 already wrote when it first loaded the
+    pack, before any take. Anything else that adds a file to the folder (Finder's .DS_Store,
+    say) also moves its time, and can't be told from a removed line file; then every v1
+    take of the room is kept aside too, with its files."""
+    if not 0 <= index < len(pack.lines):
+        return f"the scene has only {len(pack.lines)} lines now"
     if isinstance(recorded_at, bool) or not isinstance(recorded_at, (int, float)) or recorded_at != recorded_at:
-        return False
+        return "it has no recording time to check the scene against"
     limit = recorded_at + V1_PACK_MTIME_SLACK_S
     try:
-        if os.path.getmtime(pack.folder) > limit:
-            return False
         for line in pack.lines[:index + 1]:
             if os.path.getmtime(os.path.join(pack.folder, line["filename"])) > limit:
-                return False
+                return "the scene changed after it was recorded"
+        if os.path.getmtime(pack.folder) > limit:
+            return "the scene's folder changed after it was recorded (a line may have been removed)"
     except (OSError, KeyError, TypeError):
-        return False
-    return True
+        return "the scene changed after it was recorded (a line file is missing)"
+    return None
 
 
 def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
@@ -822,7 +842,7 @@ def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
     copied to takes/<line_id>/. The take_line_* originals are kept, for DubMate 1.1.3.
 
     v1 state names a line only by its index, so a take is placed only when the pack provably
-    didn't change since it was recorded (_pack_unchanged_since). Otherwise, and for an index
+    didn't change since it was recorded (_why_v1_take_kept_aside). Otherwise, and for an index
     outside the current pack, the take goes to room.unplaced_v1_takes with its files
     untouched: never onto a line it might not belong to.
 
@@ -843,9 +863,10 @@ def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
         if not isinstance(old, dict):
             print(f"[DubMate] Room {room.room_id}: skipped an unreadable take for line {index + 1}.")
             continue
-        if not 0 <= index < len(lines) or not _pack_unchanged_since(room.pack, index, old.get("recorded_at")):
-            print(f"[DubMate] Room {room.room_id}: take for old line {index + 1} kept aside: the scene changed "
-                  f"after it was recorded. Its files stay in the room folder.")
+        why = _why_v1_take_kept_aside(room.pack, index, old.get("recorded_at"))
+        if why:
+            print(f"[DubMate] Room {room.room_id}: take for old line {index + 1} kept aside: {why}. "
+                  f"Its files stay in the room folder as take_line_{index}*.wav.")
             room.unplaced_v1_takes[str(key)] = old
             continue
         line_id = lines[index]["line_id"]

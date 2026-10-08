@@ -137,10 +137,20 @@ class TestV113Room(V113RoomCase):
             self.assertFalse([n for n in os.listdir(d) if not n.endswith(".wav")])
 
     def test_existing_backup_is_not_overwritten(self):
+        # The room went back to 1.1.3 (from its backup), was recorded in again and updated
+        # again: that newer state gets a numbered backup of its own beside the first.
         with open(self._backup_file(), "wb") as f:
             f.write(b"an earlier backup")
         self._reload()
         self.assertEqual(self._read(self._backup_file()), b"an earlier backup")
+        second = os.path.join(self.room_dir, "room_state.v1-backup-2.json")
+        self.assertEqual(self._read(second), FIXTURE_STATE_BYTES)
+
+    def test_same_backup_is_not_written_twice(self):
+        with open(self._backup_file(), "wb") as f:
+            f.write(FIXTURE_STATE_BYTES)
+        self._reload()
+        self.assertEqual([n for n in os.listdir(self.room_dir) if "backup" in n], [BACKUP_NAME])
 
     def test_failed_backup_means_no_save_until_it_works(self):
         real_open = builtins.open
@@ -213,10 +223,13 @@ class TestTakesNeverOnAWrongLine(V113RoomCase):
         del state["takes"]["0"]["recorded_at"]
         state["takes"]["2"]["recorded_at"] = "yesterday"
         self._write_state(state)
-        room = self._reload()
+        room, log = self._reload_logged()
         self.assertEqual(room.takes, {})
         self.assertEqual(sorted(room.unplaced_v1_takes), ["0", "2"])
         self._assert_originals_kept()
+        # The scene didn't change: the log says what the take lacks.
+        self.assertNotIn("scene changed", log)
+        self.assertIn("take for old line 1 kept aside: it has no recording time to check the scene against", log)
 
     def test_missing_line_file_keeps_the_take_aside(self):
         os.remove(os.path.join(self.pack.folder, "01_Ana_1-000.wav"))
@@ -228,9 +241,11 @@ class TestTakesNeverOnAWrongLine(V113RoomCase):
         state = json.loads(FIXTURE_STATE_BYTES)
         state["takes"]["7"] = state["takes"].pop("2")
         self._write_state(state)
-        room = self._reload()
+        room, log = self._reload_logged()
         self.assertEqual(sorted(room.takes), ["t1000"])
         self.assertEqual(sorted(room.unplaced_v1_takes), ["7"])
+        self.assertNotIn("scene changed", log)
+        self.assertIn("take for old line 8 kept aside: the scene has only 3 lines now", log)
 
     def test_kept_aside_takes_survive_saves_and_reloads(self):
         self._date_pack(RECORDED_AT - 3600, folder_mtime=RECORDED_AT + 600)

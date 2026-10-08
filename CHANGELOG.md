@@ -11,7 +11,7 @@ What's new in 2.0:
 - Takes line up with the original and are levelled for you, and noise cleanup is tuned to your room.
 - A bigger premiere with mix presets and one Save button, sessions you can continue, and a faster Pack Builder.
 
-Back up the rooms folder first (on Windows, data\rooms in your DubMate folder): rooms opened in 2.0 can't go back to 1.1.3. Each old room keeps room_state.v1-backup.json and its original take files.
+Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a copy of the room as it was (room_state.v1-backup.json, in the room's folder) and leaves its take files where they were. To open the room in 1.1.3 again, put that copy back as room_state.json; takes recorded in 2.0 aren't in it.
 
 ### Added
 - **Remove Pack Builder**: in the desktop app, Audio settings can remove the Pack Builder add-on and show how much space that frees. DubMate restarts afterwards.
@@ -51,7 +51,7 @@ Back up the rooms folder first (on Windows, data\rooms in your DubMate folder): 
 - **Live Mix or Final Video**: next to Save, the premiere says whether you're hearing the live mix or the saved video.
 - **In This Dub**: the premiere lists every line with who voices it and the take in the dub, or "Original voice". Click a line and playback jumps there for everyone. Change take opens the line in the booth.
 - **Mix Presets**: the premiere's Mix has Balanced, Voices forward and Music forward, with the music and dialogue sliders under Fine-tune. Friends see the host's mix and hear what the video will sound like.
-- **Open Download Page**: when DubMate is missing voice effects or the stronger noise cleanup, Open download page takes you to the DubMate download page. In a browser it's a link. A desktop app older than 2.0 can't open it, so it copies the link for you to paste into your browser.
+- **Open Download Page**: when DubMate is missing voice effects or the stronger noise cleanup, Open download page takes you to the DubMate download page. In a browser it's a link. A desktop app older than 2.0 can't open it, so there the button is Copy download link: it copies the link for you to paste into your browser.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -73,9 +73,9 @@ Back up the rooms folder first (on Windows, data\rooms in your DubMate folder): 
 - **Saving the Video**: Save video shows what it's doing, first mixing your takes, then making the video. If it doesn't finish, it says why, with Try again. When it's done, Watch the dub plays it for everyone and Show in folder opens it. Save then reads Saved, or "Mix changed · Save again" after a change. The 9:16 version, separate tracks and the editing project are in Save's menu.
 - **Only the Host Saves the Video**: friends get Download video once the host has saved the video. Their download never starts a video on the host's computer.
 - **Updates Bring What They Need**: once you have the 2.0 desktop app, an update that needs new parts downloads them while it installs, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
-- **Voice Effects on Older Desktop Installs**: a desktop app updated from 1.1.3 has no voice effects until you run the 2.0 installer. Recording, takes and timing work, and takes play without effects, levelled as usual. Videos, stems and projects save without voice effects instead of failing. The host is told once, on the premiere, with Open download page, and the Voice panel says the same.
-- **Old Rooms Keep a Backup**: the first time 2.0 opens a room from an earlier version, it keeps a copy of the room as it was (room_state.v1-backup.json) and leaves the original take files where they were.
-- **Takes Kept Aside**: a take from an earlier version that can't be matched to its line, because the scene changed after it was recorded, is kept aside with its files instead of being put on the wrong line.
+- **Voice Effects on Older Desktop Installs**: a desktop app updated from 1.1.3 has no voice effects until you run the 2.0 installer. Recording, takes and timing work, and takes play without effects, levelled as usual. Videos, stems and projects save without voice effects instead of failing. The host is told once, on the premiere, with a way to the download page, and the Voice panel says the same.
+- **Old Rooms Keep a Backup**: the first time 2.0 opens a room from an earlier version, it keeps a copy of the room as it was (room_state.v1-backup.json) and leaves the original take files where they were. An earlier copy is never replaced: a newer one is saved beside it with a number.
+- **Takes Kept Aside**: a take from an earlier version that DubMate can't be sure belongs to its line, for example because the scene changed after it was recorded, is kept aside instead of being put on the wrong line. Its recording stays in the room's folder as take_line_<number>.wav.
 - **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
 - **Easier to Read**: the smallest text in the studio and Pack Builder is bigger, and sentences and hints are bigger still. Line details and hints are in a lighter colour that stands out from the cards.
 - **Pack Builder Offers What's Installed**: Step 1 and the editor only offer what your install can do. Without automatic transcription, add a subtitle file or write the lines yourself, and Paste link says how to add the tools. "Fast processing" shows only when your graphics card speeds up processing.

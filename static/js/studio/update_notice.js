@@ -2,27 +2,37 @@
 // installer brings (voice effects, the stronger cleanup): an in-app update from 1.1.3 can't
 // add them (documentation/design/v2-update-path.md, section 2). "Open download page" asks the
 // desktop app to open the releases page (open_download_page in external.rs) and is a plain
-// link in a browser. The premiere tells the host once; the room check row says it too.
+// link in a browser. A desktop app older than 2.0 can't open it, so there the button is
+// "Copy download link". The premiere tells the host once; the room check row says it too.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { safeStorageGet, safeStorageSet } from './audio_setup.js';
 
 export const DOWNLOAD_PAGE_URL = 'https://github.com/sylenthsnares/DubMate/releases/latest';
 export const DOWNLOAD_PAGE_LABEL = 'github.com/sylenthsnares/DubMate/releases';
+const OPEN_LABEL = 'Open download page';
+const COPY_LABEL = 'Copy download link';
 
 // localStorage: "<engine version>|<missing parts>" of the notice the host dismissed.
 const UPDATE_NOTICE_KEY = 'dubmate_update_notice';
 
-/** The premiere notice's first clause and the rest, or null when nothing it knows is missing. */
-export function updateNoticeCopy(missing) {
+/**
+ * The premiere notice's first clause and the rest, and whether it offers the download page,
+ * or null when nothing it knows is missing. A source install (not `bundled`) gets voice
+ * effects by running its update script again; it never has the stronger cleanup to miss.
+ */
+export function updateNoticeCopy(missing, bundled = true) {
   const effects = missing.includes('voice_effects');
   const cleanup = missing.includes('strong_cleanup');
   if (effects) {
+    const lead = 'This DubMate saves videos, stems and projects without voice effects.';
+    if (!bundled) return { lead, rest: ' Run update.bat or update.sh again to add them.', download: false };
     return {
-      lead: 'This DubMate saves videos, stems and projects without voice effects.',
-      rest: ` Install DubMate 2.0 from ${DOWNLOAD_PAGE_LABEL} to add them${cleanup ? ' and stronger noise cleanup' : ''}.`,
+      lead,
+      rest: ` Run the DubMate 2.0 installer from ${DOWNLOAD_PAGE_LABEL} to add them${cleanup ? ' and stronger noise cleanup' : ''}.`,
+      download: true,
     };
   }
-  if (cleanup) return { lead: 'Install DubMate 2.0', rest: ` from ${DOWNLOAD_PAGE_LABEL} for stronger noise cleanup.` };
+  if (cleanup) return { lead: 'For stronger noise cleanup,', rest: ` run the DubMate 2.0 installer from ${DOWNLOAD_PAGE_LABEL}.`, download: true };
   return null;
 }
 
@@ -42,8 +52,9 @@ function noticeStorage() {
 export class UpdateNoticeMethods {
   /**
    * "Open download page". In the desktop app, on this computer's engine, a button that asks
-   * the app to open the page; an app older than 2.0 refuses, so it copies the address and
-   * says so beside it (or shows the address when the copy fails too). Elsewhere a link.
+   * the app to open the page. An app older than 2.0 refuses (noteOlderDesktopApp), so there
+   * it is "Copy download link": it copies the address and says so beside it (or shows the
+   * address when the copy fails too). Elsewhere a link that opens a new tab.
    */
   downloadPageControl() {
     const wrap = document.createElement('span');
@@ -57,34 +68,51 @@ export class UpdateNoticeMethods {
     if (invoke) {
       control = document.createElement('button');
       control.type = 'button';
+      control.className = 'btn btn-secondary btn-sm download-page-button';
+      control.textContent = this.olderDesktopApp ? COPY_LABEL : OPEN_LABEL;
       control.addEventListener('click', async () => {
-        try {
-          await invoke('open_download_page');
-          hint.hidden = true;
-        } catch (err) {
-          console.warn('[DubMate] The app could not open the download page:', err);
+        if (!this.olderDesktopApp) {
           try {
-            await navigator.clipboard.writeText(DOWNLOAD_PAGE_URL);
-            hint.textContent = 'Link copied. Paste it into your browser.';
-            hint.classList.remove('is-address');
-          } catch (e) {
-            hint.textContent = DOWNLOAD_PAGE_URL;
-            hint.classList.add('is-address');
+            await invoke('open_download_page');
+            hint.hidden = true;
+            return;
+          } catch (err) {
+            console.warn('[DubMate] The app could not open the download page:', err);
+            this.noteOlderDesktopApp();
           }
-          hint.hidden = false;
         }
+        try {
+          await navigator.clipboard.writeText(DOWNLOAD_PAGE_URL);
+          hint.textContent = 'Link copied. Paste it into your browser.';
+          hint.classList.remove('is-address');
+        } catch (e) {
+          hint.textContent = DOWNLOAD_PAGE_URL;
+          hint.classList.add('is-address');
+        }
+        hint.hidden = false;
       });
     } else {
       control = document.createElement('a');
+      control.className = 'btn btn-secondary btn-sm';
       control.href = DOWNLOAD_PAGE_URL;
       control.target = '_blank';
       control.rel = 'noopener noreferrer';
+      control.textContent = OPEN_LABEL;
+      control.setAttribute('aria-label', `${OPEN_LABEL} (opens in a new tab)`);
     }
-    control.className = 'btn btn-secondary btn-sm';
-    control.textContent = 'Open download page';
     control.setAttribute('data-tip', DOWNLOAD_PAGE_URL);
     wrap.append(control, hint);
     return wrap;
+  }
+
+  /**
+   * The desktop app is older than 2.0: it refused a command the 2.0 app allows this page
+   * (get_packbuilder_install at boot, or open_download_page). It can't open the download
+   * page, so every download button copies the link instead, and says so.
+   */
+  noteOlderDesktopApp() {
+    this.olderDesktopApp = true;
+    for (const btn of document.querySelectorAll('.download-page-button')) btn.textContent = COPY_LABEL;
   }
 
   /** Reads this engine's version and missing parts from /health once (the same answer the lobby reads). */
@@ -108,7 +136,7 @@ export class UpdateNoticeMethods {
     const notice = document.getElementById('screening-update-notice');
     if (!notice) return;
     const missing = this.roomState?.engine_missing || [];
-    const copy = this.isHost() ? updateNoticeCopy(missing) : null;
+    const copy = this.isHost() ? updateNoticeCopy(missing, this.roomState?.engine_bundled !== false) : null;
     if (!copy || !this.engineHealth) {
       notice.hidden = true;
       if (copy) this.loadEngineHealth().then(() => this.renderUpdateNotice());
@@ -131,11 +159,17 @@ export class UpdateNoticeMethods {
       gotIt.className = 'btn btn-ghost btn-sm';
       gotIt.textContent = 'Got it';
       gotIt.addEventListener('click', () => {
+        // Focus moves on to Mix, the next control, instead of dropping to the page.
+        const hadFocus = notice.contains(document.activeElement);
         notice.hidden = true;
         safeStorageSet(noticeStorage(), UPDATE_NOTICE_KEY, notice.dataset.key);
+        if (hadFocus) document.querySelector('#screening-mix > summary')?.focus();
       });
-      actions.append(this.downloadPageControl(), gotIt);
+      actions.append(gotIt);
     }
+    const download = actions.querySelector('.download-page-control');
+    if (copy.download && !download) actions.prepend(this.downloadPageControl());
+    else if (!copy.download && download) download.remove();
     notice.dataset.key = key;
     notice.hidden = false;
   }

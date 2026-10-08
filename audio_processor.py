@@ -102,17 +102,32 @@ class EffectsUnavailable(RuntimeError):
 _dry_takes_logged = False
 
 
+def bundled_runtime() -> bool:
+    """True when the engine runs from the desktop app's bundled Python (python-runtime),
+    which only an installer updates; a source install updates with update.bat/update.sh."""
+    return "python-runtime" in re.split(r"[\\/]", sys.executable or "")
+
+
+# missing_parts()'s answer for this engine run.
+_missing_parts: Optional[List[str]] = None
+
+
 def missing_parts() -> List[str]:
     """What this engine lacks that only the DubMate 2.0 installer brings, in this order:
     "voice_effects" without pedalboard, and "strong_cleanup" without the deep-filter
     sidecar when the engine runs from the desktop app's bundled runtime (source installs
-    never had DeepFilterNet, so they aren't told about it)."""
-    parts = []
-    if not vocal_chain.available():
-        parts.append("voice_effects")
-    if _noise_reduction_engine() == "fallback" and "python-runtime" in re.split(r"[\\/]", sys.executable or ""):
-        parts.append("strong_cleanup")
-    return parts
+    never had DeepFilterNet, so they aren't told about it). Worked out once per engine run,
+    like vocal_chain.available(): the room state carries it on every broadcast, and only
+    an installer adds these parts, which restarts the engine."""
+    global _missing_parts
+    if _missing_parts is None:
+        parts = []
+        if not vocal_chain.available():
+            parts.append("voice_effects")
+        if _noise_reduction_engine() == "fallback" and bundled_runtime():
+            parts.append("strong_cleanup")
+        _missing_parts = parts
+    return list(_missing_parts)
 
 
 # Only these characters are allowed in filesystem-derived identifiers (room_id, user_id, ...).

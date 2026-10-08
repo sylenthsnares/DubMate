@@ -52,6 +52,11 @@ def no_deep_filter():
     return mock.patch.object(ap, "get_deep_filter_path", return_value=None)
 
 
+def fresh_parts():
+    """missing_parts() is worked out once per engine run: this forgets that answer."""
+    return mock.patch.object(ap, "_missing_parts", None)
+
+
 def level(gain_db):
     return np.float32(10.0 ** (float(np.clip(gain_db, ap.GAIN_DB_MIN, ap.GAIN_DB_MAX)) / 20.0))
 
@@ -59,7 +64,7 @@ def level(gain_db):
 class TestMissingParts(unittest.TestCase):
 
     def _parts(self, effects, engine, executable):
-        with mock.patch.object(vocal_chain, "available", return_value=effects), \
+        with fresh_parts(), mock.patch.object(vocal_chain, "available", return_value=effects), \
                 mock.patch.object(ap, "_noise_reduction_engine", return_value=engine), \
                 mock.patch.object(sys, "executable", executable):
             return ap.missing_parts()
@@ -81,9 +86,27 @@ class TestMissingParts(unittest.TestCase):
                 self.assertEqual(self._parts(effects, engine, exe), expected)
 
     def test_without_the_binary_the_engine_is_the_fallback(self):
-        with no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME), \
+        with fresh_parts(), no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME), \
                 mock.patch.object(vocal_chain, "available", return_value=True):
             self.assertEqual(ap.missing_parts(), ["strong_cleanup"])
+
+    def test_worked_out_once_per_run(self):
+        # The room state carries it on every broadcast; only an installer adds these parts,
+        # and that restarts the engine.
+        with fresh_parts():
+            with no_effects(), no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME):
+                first = ap.missing_parts()
+            with mock.patch.object(ap, "get_deep_filter_path", side_effect=AssertionError("looked again")), \
+                    mock.patch.object(vocal_chain, "available", side_effect=AssertionError("looked again")):
+                self.assertEqual(ap.missing_parts(), first)
+                ap.missing_parts().append("changed")   # a caller can't change the answer
+                self.assertEqual(ap.missing_parts(), ["voice_effects", "strong_cleanup"])
+
+    def test_bundled_runtime(self):
+        cases = ((WIN_RUNTIME, True), (MAC_RUNTIME, True), (SOURCE_VENV, False), (LOOKALIKE, False), ("", False))
+        for exe, expected in cases:
+            with self.subTest(exe=exe), mock.patch.object(sys, "executable", exe):
+                self.assertIs(ap.bundled_runtime(), expected)
 
     def test_the_message_says_where_to_get_it(self):
         self.assertEqual(ap.EFFECTS_MISSING_MESSAGE,
@@ -103,17 +126,21 @@ class TestHealthAndRoomState(UploadCase):
                 self.assertEqual(body["status"], "ok")
 
     def test_health_on_an_updated_desktop_app(self):
-        with no_effects(), no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME):
+        with fresh_parts(), no_effects(), no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME):
             self.assertEqual(self.client.get("/health").json()["missing"], ["voice_effects", "strong_cleanup"])
 
     def test_room_state_carries_the_host_engines_list(self):
         room = self._room()
-        with no_effects(), no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME):
+        with fresh_parts(), no_effects(), no_deep_filter(), mock.patch.object(sys, "executable", WIN_RUNTIME):
             self.assertEqual(room.to_state_dict()["engine_missing"], ["voice_effects", "strong_cleanup"])
+            self.assertIs(room.to_state_dict()["engine_bundled"], True)
             self.assertEqual(self.client.get(f"/api/rooms/{self.ROOM}").json()["engine_missing"],
                              ["voice_effects", "strong_cleanup"])
         with mock.patch.object(ap, "missing_parts", return_value=[]):
             self.assertEqual(room.to_state_dict()["engine_missing"], [])
+        # A source install is told to run its update script, not the installer.
+        with mock.patch.object(sys, "executable", SOURCE_VENV):
+            self.assertIs(room.to_state_dict()["engine_bundled"], False)
 
 
 class TestDryRenderTake(unittest.TestCase):
@@ -389,7 +416,10 @@ class TestWithoutPedalboardInstalled(unittest.TestCase):
             with zipfile.ZipFile(out) as zf:
                 print(json.dumps(sorted(n.split("/", 1)[1] for n in zf.namelist())))
         """)
-        res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=300)
+        # Its own cache (pack_index.json and the rest), also when this file runs on its own
+        # rather than under run_all_tests; the packs still come from the configured folders.
+        env = dict(os.environ, DUBMATE_CACHE_DIR=os.path.join(work, "cache"))
+        res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=300, env=env)
         self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
         names = json.loads(res.stdout.strip().splitlines()[-1])
         self.assertIn("Dialogue.wav", names)
