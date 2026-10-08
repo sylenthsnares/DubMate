@@ -7,6 +7,9 @@
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 
 const PACKBUILDER_POLL_MS = 1000;
+/** The launcher doesn't wait for the install to begin, so an idle first answer gets one more look. */
+const PACKBUILDER_IDLE_RECHECK_MS = 3000;
+const FAILED_TIP = 'Check your internet connection and free disk space, then press Try again.';
 const INSTALL_STEPS = { preparing: 'Prepare', downloading: 'Download', installing: 'Install', finalizing: 'Finish' };
 const STEP_ORDER = Object.keys(INSTALL_STEPS);
 const MENU_COPY = {
@@ -42,6 +45,7 @@ export class PackBuilderInstallMethods {
     this.pbMenuDesc = document.querySelector('#mode-opt-builder .mode-item-desc');
     this.pbMenuDescOriginal = this.pbMenuDesc ? this.pbMenuDesc.textContent : '';
     this.pbInstallTimer = null;
+    this.pbInstallRechecked = false;
 
     document.getElementById('btn-packbuilder-install-retry')
       ?.addEventListener('click', () => this.retryPackBuilderInstall());
@@ -78,7 +82,11 @@ export class PackBuilderInstallMethods {
     // Two answers in flight (a double-clicked Try again) still leave one loop.
     clearTimeout(this.pbInstallTimer);
     if (install && install.state === 'running') {
+      this.pbInstallRechecked = true;
       this.pbInstallTimer = setTimeout(() => this.pollPackBuilderInstall(), PACKBUILDER_POLL_MS);
+    } else if (install && install.state === 'idle' && !this.pbInstallRechecked) {
+      this.pbInstallRechecked = true;
+      this.pbInstallTimer = setTimeout(() => this.pollPackBuilderInstall(), PACKBUILDER_IDLE_RECHECK_MS);
     }
   }
 
@@ -109,11 +117,10 @@ export class PackBuilderInstallMethods {
     if (this.pbMenuDesc) this.pbMenuDesc.textContent = menuLine;
   }
 
-  /** The failed line's tooltip: the first line of what went wrong. */
+  /** The failed line's tooltip says what to do; what went wrong is technical, so it goes to the log. */
   setPackBuilderInstallError(error) {
-    const first = String(error || '').split('\n').map((line) => line.trim()).find(Boolean);
-    this.pbInstallFailed.querySelector('.pb-install-label')
-      .setAttribute('data-tip', first || 'Check your internet connection and try again.');
+    if (error) console.warn('[DubMate] Pack Builder did not install:', error);
+    this.pbInstallFailed.querySelector('.pb-install-label').setAttribute('data-tip', FAILED_TIP);
   }
 
   async retryPackBuilderInstall() {

@@ -58,7 +58,7 @@ Out of scope, owned elsewhere: the booth, the lobby, the landing page and the jo
 **Status-text classes (plan 6a, left by U1 for this step).** In `style.css`:
 - `.status-text`: 12px, weight 500.
 - `.is-pending`: `--foreground-muted`.
-- `.is-done`: `--accent-teal-light`, with a CSS-mask check icon (no glyph).
+- `.is-done`: `--accent-green-light`, with a CSS-mask check icon (no glyph).
 - `.is-attention`: `--primary-hover`.
 - `.is-error`: `--accent-red-soft`.
 
@@ -93,10 +93,11 @@ They are applied to:
   - -10 to -6: done, "Good level."
   - Above -6: error, "Too loud. Move back from the mic or turn down its input level."
 - After 2.5 s of quiet the hint goes back to neutral by itself. Mic error lines (`micErrorMessage`) and the fallback line still win.
-- The numbers leave the face: `#level-meter-rms` and `#level-meter-peak-readout` go. A focusable tooltip on the meter ("Peak -8 dB") and `aria-valuetext` carry them, updated at most 4 times a second.
+- The numbers leave the face: `#level-meter-rms` and `#level-meter-peak-readout` go. A focusable tooltip on the meter ("Peak -8 dB", "Peak +1 dB" above full scale) and `aria-valuetext` carry them, updated at most 4 times a second.
+- While mic sync runs, its clicks and claps peak near full scale on purpose, so the hint reads "Syncing. The clicks and claps read loud here, and that's fine." instead of "Too loud", and those peaks don't count toward the hint afterwards.
 - The meter keeps following the test's own stream during checks (PR #19).
 
-**Sticky footer.** The devices step's Done row is `position: sticky; bottom: 0` inside the scrolling card. It gets the card's background and a top hairline, so Done stays reachable at 1280x720 and 960x680. Intro and denied keep their action rows; they fit.
+**Sticky footer.** The devices step's Done row is `position: sticky; bottom: 0` inside the scrolling card. It gets the card's background and a top hairline, so Done stays reachable at 1280x720 and 960x680. The card has `scroll-padding-bottom: 84px`, so a focused control scrolled into view (the export folder, a panel's Start) stops above the footer, not behind it. Intro and denied keep their action rows; they fit.
 
 **Pack Builder row.** "Remove Pack Builder" becomes `btn btn-danger btn-sm`; the confirm's Remove is already danger.
 
@@ -111,17 +112,17 @@ They are applied to:
 - The box gets an SVG mic-off icon in place of 🚫, plus the heading and detail.
 - **One short list** for the detected case, built from a `RECOVERY_STEPS` table:
   - **Desktop app, Windows:**
-    1. "Open Windows microphone settings."
+    1. "Open Windows Settings → Privacy & security → Microphone." (the path, not the button's label, so it still helps when the button can't open it)
     2. "Turn on Microphone access and Let desktop apps access your microphone."
     3. "Come back and press Try again. If it still doesn't work, restart DubMate."
   - **Desktop app, Mac:**
-    1. "Open macOS microphone settings."
+    1. "Open System Settings → Privacy & Security → Microphone."
     2. "Turn on DubMate."
     3. "Restart DubMate."
   - **Browser:**
     1. "Click the icon at the left of the address bar."
     2. "Set Microphone to Allow."
-    3. "Press Try again."
+    3. "Press Try again, or reload the page." (some browsers only apply a changed permission after a reload)
     - Plus one OS line: Windows "Still blocked? In Windows Settings → Privacy & security → Microphone, turn on Let desktop apps access your microphone."; Mac "Still blocked? In System Settings → Privacy & Security → Microphone, turn on your browser."
 - In the desktop app on this computer (`desktopInvoke()`), step 1 includes a secondary button, "Open Windows microphone settings" or "Open macOS microphone settings". It calls `invoke('open_mic_settings')` (group 2). If that fails, the button hides and the text step stays.
 - The other cases go in a closed `<details>`: **"Using something else?"**.
@@ -196,7 +197,7 @@ The "Status" paragraph notes the PR #19 second pass and U5b.
 - The JS poll still detects health, but writes no text.
 
 **Elapsed time.** The JS timing is based on elapsed time, not poll count:
-- From 8 s, a mono detail line reads "Still starting · 12 s", ticking every second.
+- From 8 s, a detail line reads "Still starting · 12 s", ticking every second; only the count is mono.
 - From 25 s, the splash stays neutral. The status line keeps the stage, and the detail line becomes "Taking longer than usual · 31 s", with a ghost text button, **"Restart DubMate"** (`trigger_start_sidecars`).
 - No red card comes from the JS. Its only safety is a "DubMate didn't start" failure after 3 minutes with no answer from Rust.
 
@@ -204,6 +205,7 @@ The "Status" paragraph notes the PR #19 second pass and U5b.
 - `wait_for_engine` waits up to 180 s, not 30.
 - It stops early once the engine process has exited. The exit watcher sets a flag, so it doesn't send a second error.
 - `server-error` carries a struct: `{ kind, title, message, detail }`. The launcher still accepts the old string.
+- Rust keeps the last failure until the next start. A failure in the first moments (no runtime) can come before the launcher listens, so once its listeners are up it asks `get_last_failure` and shows it.
 - A pure `classify_engine_failure(last_stderr)` picks the kind (unit-tested):
   - "10048", "address already in use", "Errno 98" or "Errno 48" → `port_in_use`. Title "Another app is using DubMate's port"; message "Close any other copy of DubMate, or restart your computer, then press Restart DubMate."
   - "ModuleNotFoundError" or "ImportError" → `damaged`. Title "Some of DubMate's files are damaged"; message "Reinstall DubMate to fix this."
@@ -229,12 +231,12 @@ The "Status" paragraph notes the PR #19 second pass and U5b.
 - The release body is not shown (see Decided).
 - The bar has `role=progressbar` and `aria-valuenow`/`min`/`max`/`aria-valuetext`. The meta reads "42% · 21 MB of 51 MB · about 1 min left".
 - The `update-stage` events keep the `effects-rack.md` copy ("Installing the update" / "Downloading the parts it needs").
-- The splash text has `role=status` and `aria-live=polite`.
+- The splash text has `role=status` and `aria-live=polite`. The wordmark is `role=img` named "DubMate".
 
 ### D. Pack Builder installs in the background (step 39b)
 
 **The launcher no longer has a Pack Builder card.**
-- After `update-status` (up to date or offline), it reads `get_packbuilder_status`. When the user opted in and Pack Builder isn't installed, it calls `start_packbuilder_install`, which returns at once.
+- Just before it enters the studio, whichever way (up to date, offline, after an update, Skip, Open DubMate after a failed update, the 20 s cap), it reads `get_packbuilder_status`. When the user opted in and Pack Builder isn't installed, it calls `start_packbuilder_install`, which returns at once.
 - It enters the studio as soon as the engine is healthy.
 - The 20 s `builderCheckPending` hold goes. Entry still waits for `update-status`, capped at 20 s as now, so a pending update is never skipped by accident.
 
@@ -243,7 +245,7 @@ The "Status" paragraph notes the PR #19 second pass and U5b.
 - It calls `cancel_update`, disables itself ("Skipping…"), and acts on `apply_update`'s result:
   - `Err("skipped")` → enter the studio;
   - success → `update-complete`, which opens the studio once the engine answers. Rust has already restarted it on the new files; the launcher no longer reloads itself, which used to wait out the 20 s update cap.
-- It hides once the `update-stage` event ("Installing the update") arrives, because the engine may be stopped by then.
+- It hides once the download reaches 100% or the `update-stage` event ("Installing the update") arrives, because only installing is left and the engine may be stopped by then.
 - The update is offered again on the next launch.
 
 **Time remaining.** Rust computes `eta_secs` with a small `EtaEstimator` (smoothed speed). It is `None` until the speed is stable:
@@ -253,9 +255,9 @@ The "Status" paragraph notes the PR #19 second pass and U5b.
 The UI shows "about N min left", or "less than a minute left".
 
 **Studio (on the engine's computer, desktop app only, `desktopInvoke()`).**
-- **Header chip.** `#packbuilder-install-chip` sits in `.header-status`, before the Audio button. It is hidden otherwise and for members. It polls `get_packbuilder_install` every second while `running`:
-  - **Running.** A 40px mini bar plus "Pack Builder 42%", with `role=status`. A focusable tooltip reads "Step 2 of 4: Download · Downloading the speech recognition engine · 612 MB of ~2.0 GB · about 6 min left". Below 1280px only the bar and "42%" show.
-  - **Failed.** "Pack Builder didn't install". A **Try again** text button calls `start_packbuilder_install` again. The tooltip gives the first line of the error.
+- **Header chip.** `#packbuilder-install-chip` sits in `.header-status`, before the Audio button. It is hidden otherwise and for members. It polls `get_packbuilder_install` every second while `running`. The launcher doesn't wait for the install to begin, so an `idle` first answer gets one more look 3 s later. A new engine that started after the install finished resets `done` to `idle` (`start_sidecars`), so the chip goes once Pack Builder is loaded:
+  - **Running.** A 40px mini bar plus "Pack Builder 42%". It is not a live region, since the percent changes every second. A focusable tooltip reads "Step 2 of 4: Download · Downloading the speech recognition engine · 612 MB of ~2.0 GB · about 6 min left". Below 1280px only the bar and "42%" show.
+  - **Failed.** "Pack Builder didn't install". A **Try again** text button calls `start_packbuilder_install` again. The tooltip says what to do: "Check your internet connection and free disk space, then press Try again." The error itself goes to the log.
   - **Done.** A secondary button, **"Restart to finish Pack Builder"**:
     - Outside a room it restarts at once.
     - In a room it first shows an inline confirm under the chip: "DubMate restarts, so anyone in your room is disconnected." with Cancel and Restart.

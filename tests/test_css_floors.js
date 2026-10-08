@@ -214,6 +214,10 @@ else {
     if (!decl.test(footer.body)) fail(`.audio-settings-footer is missing ${decl}`);
   }
 }
+// A focused control scrolled into view must stop above the footer, not behind it.
+const setupCard = styleBlocks.find((b) => b.selector === ".audio-setup-card");
+const scrollPad = setupCard && setupCard.body.match(/scroll-padding-bottom\s*:\s*(\d+)px/);
+if (!scrollPad || Number(scrollPad[1]) < 72) fail(".audio-setup-card needs scroll-padding-bottom of at least the footer's height (72px)");
 const doneRow = indexHtml.match(/<div class="([^"]*)">\s*<button id="btn-audio-settings-done"/);
 if (!doneRow || !/\baudio-settings-footer\b/.test(doneRow[1])) fail("Done is not inside .audio-settings-footer");
 const STATUS_COLOURS = {

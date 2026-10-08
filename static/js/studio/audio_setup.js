@@ -22,6 +22,7 @@ const METER_HINT_WINDOW_MS = 2500;
 // The meter's numbers (tooltip, screen readers) change at most 4 times a second.
 const METER_READOUT_INTERVAL_MS = 250;
 const METER_FALLBACK_HINT = "Your saved microphone isn't connected. Showing the system default.";
+const METER_SYNC_HINT = "Syncing. The clicks and claps read loud here, and that's fine.";
 
 const STATUS_STATES = ['pending', 'done', 'attention', 'error'];
 
@@ -31,7 +32,8 @@ const RECOVERY_STEPS = {
   'desktop-windows': {
     title: 'DubMate app on Windows',
     steps: [
-      'Open Windows microphone settings.',
+      // The path, not the button's words: it stays useful when the button can't open it.
+      'Open Windows Settings → Privacy & security → Microphone.',
       'Turn on Microphone access and Let desktop apps access your microphone.',
       "Come back and press Try again. If it still doesn't work, restart DubMate.",
     ],
@@ -39,12 +41,12 @@ const RECOVERY_STEPS = {
   },
   'desktop-mac': {
     title: 'DubMate app on a Mac',
-    steps: ['Open macOS microphone settings.', 'Turn on DubMate.', 'Restart DubMate.'],
+    steps: ['Open System Settings → Privacy & Security → Microphone.', 'Turn on DubMate.', 'Restart DubMate.'],
     settingsButton: 'Open macOS microphone settings',
   },
   browser: {
     title: 'In a browser',
-    steps: ['Click the icon at the left of the address bar.', 'Set Microphone to Allow.', 'Press Try again.'],
+    steps: ['Click the icon at the left of the address bar.', 'Set Microphone to Allow.', 'Press Try again, or reload the page.'],
   },
 };
 // After the browser steps, the computer's own switch.
@@ -126,7 +128,9 @@ export function micErrorMessage(err) {
 // The meter's numbers, for its tooltip and screen readers.
 function meterReadout(db) {
   if (typeof db !== 'number' || !isFinite(db) || db <= METER_FLOOR_DB) return 'No sound';
-  return `Peak ${Math.round(db)} dB`;
+  const rounded = Math.round(db);
+  // Above full scale it is clipping; the sign keeps it from reading like a quiet level.
+  return `Peak ${rounded > 0 ? '+' : ''}${rounded} dB`;
 }
 
 // "2.1 GB" or "340 MB"; empty when the size is unknown.
@@ -913,11 +917,17 @@ export class AudioSetupMethods {
     }
 
     // The hint follows the loudest peak of the last 2.5 s, unless a mic error or fallback line holds it.
-    meter.levelWindow.push({ t: now, db: peakDb });
-    while (meter.levelWindow[0].t < now - METER_HINT_WINDOW_MS) meter.levelWindow.shift();
-    if (!meter.hintLocked) {
-      const hint = levelHint(Math.max(...meter.levelWindow.map((p) => p.db)));
-      this.setMeterHint(hint.text, hint.tone);
+    // Mic sync's clicks and claps peak near full scale on purpose, so they don't count.
+    if (this.micSyncBusy) {
+      meter.levelWindow = [];
+      if (!meter.hintLocked) this.setMeterHint(METER_SYNC_HINT, 'neutral');
+    } else {
+      meter.levelWindow.push({ t: now, db: peakDb });
+      while (meter.levelWindow[0].t < now - METER_HINT_WINDOW_MS) meter.levelWindow.shift();
+      if (!meter.hintLocked) {
+        const hint = levelHint(Math.max(...meter.levelWindow.map((p) => p.db)));
+        this.setMeterHint(hint.text, hint.tone);
+      }
     }
   }
 

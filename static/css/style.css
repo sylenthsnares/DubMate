@@ -4427,13 +4427,15 @@ svg {
 }
 
 /* The bottom padding sits on the steps, not the scrolling card: a sticky footer
-   would otherwise stop that far above the card's edge. */
+   would otherwise stop that far above the card's edge. The scroll padding keeps a
+   focused control scrolled into view clear of that footer (about 72px tall). */
 .audio-setup-card {
   max-width: 620px;
   text-align: left;
   padding: 30px 28px 0;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
+  scroll-padding-bottom: 84px;
 }
 
 .audio-setup-step {

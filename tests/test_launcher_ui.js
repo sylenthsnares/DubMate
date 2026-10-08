@@ -176,6 +176,15 @@ function deferredUpdate() {
     t.close();
   }
 
+  {
+    const t = await boot();
+    const logo = t.doc.querySelector(".logo");
+    // An image with a name: the cards below it have their own h1.
+    check("the wordmark is named DubMate", logo.getAttribute("role") === "img"
+      && logo.getAttribute("aria-label") === "DubMate", logo.outerHTML.slice(0, 60));
+    t.close();
+  }
+
   console.log("\n  [+] Launcher: a slow start stays neutral");
   {
     const t = await boot();
@@ -192,7 +201,9 @@ function deferredUpdate() {
       && t.text("btn-restart-slow") === "Restart DubMate");
     await t.clock.advance(6000);
     check("still counting", t.text("detail-text") === "Taking longer than usual · 31 s", t.text("detail-text"));
-    check("the detail line is mono", t.$("detail-text").classList.contains("mono"));
+    const mono = t.$("detail-text").querySelector(".mono");
+    check("only the number is mono", !t.$("detail-text").classList.contains("mono")
+      && mono && mono.textContent === "31", t.$("detail-text").innerHTML);
     check("the splash stays up", t.visible("splash") && !t.visible("error-box"));
 
     await t.click("btn-restart-slow");
@@ -240,6 +251,19 @@ function deferredUpdate() {
       t.visible("btn-error-secondary") === !!failure.detail
         && (!failure.detail || t.text("btn-error-secondary") === "Copy details"));
     check(`${failure.kind}: the title is an h1`, t.$("error-title").tagName === "H1");
+    t.close();
+  }
+
+  {
+    // Rust can fail before the launcher listens; it asks for the failure once it does.
+    const t = await boot({ handlers: { get_last_failure: () => KINDS[4] } });
+    check("a failure sent before the launcher listened still shows", t.visible("error-box")
+      && t.text("error-title") === KINDS[4].title, t.text("error-title"));
+    t.close();
+  }
+  {
+    const t = await boot();
+    check("no stored failure: the splash stays", t.visible("splash") && !t.visible("error-box"));
     t.close();
   }
 
@@ -346,6 +370,9 @@ function deferredUpdate() {
     check("less than a minute left", t.text("progress-meta") === "79% · 40 MB of 51 MB · less than a minute left", t.text("progress-meta"));
     await t.emit("update-progress", { received: 5 * MB, total: 0, percentage: 0, eta_secs: null });
     check("an unknown size shows the amount so far", t.text("progress-meta") === "5 MB", t.text("progress-meta"));
+    check("Skip stays while it downloads", t.visible("btn-skip-update"));
+    await t.emit("update-progress", { received: 50.7 * MB, total: 50.7 * MB, percentage: 100, eta_secs: 0 });
+    check("Skip hides once the download is complete", !t.visible("btn-skip-update"));
 
     await t.emit("update-stage", { headline: "Installing the update", detail: "Downloading the parts it needs" });
     check("update-stage keeps its copy", t.text("progress-headline") === "Installing the update"
@@ -381,6 +408,25 @@ function deferredUpdate() {
     check("and enters the studio on skipped", t.entered.length === 1 && t.entered[0] === "http://127.0.0.1:8123",
       JSON.stringify(t.entered));
     check("without an error card", !t.visible("error-box"));
+    t.close();
+  }
+  {
+    const d = deferredUpdate();
+    const t = await boot({
+      health: true,
+      handlers: {
+        apply_update: d.handler,
+        cancel_update: () => { d.reject("skipped"); return null; },
+        get_packbuilder_status: () => ({ opted_in: true, installed: false, writable: true }),
+      },
+    });
+    await t.emit("server-ready", 8123);
+    await t.emit("update-status", { status: "UpdateAvailable", data: UPDATE });
+    await t.click("btn-skip-update");
+    await t.clock.advance(600);
+    check("after Skip, an opted-in Pack Builder still starts installing",
+      t.invoked("start_packbuilder_install").length === 1);
+    check("and the studio opens", t.entered.length === 1);
     t.close();
   }
 
@@ -500,6 +546,16 @@ function deferredUpdate() {
     check("without update-status it waits", t.entered.length === 0);
     await t.clock.advance(1000);
     check("but never more than 20 s", t.entered.length === 1);
+    t.close();
+  }
+  {
+    const t = await boot({
+      health: true,
+      handlers: { get_packbuilder_status: () => ({ opted_in: true, installed: false, writable: true }) },
+    });
+    await t.clock.advance(20000);
+    check("entering at the 20 s cap still starts an opted-in Pack Builder",
+      t.invoked("start_packbuilder_install").length === 1 && t.entered.length === 1);
     t.close();
   }
   {

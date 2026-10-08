@@ -90,6 +90,14 @@ impl PackBuilderInstall {
             *self = Self::IDLE;
         }
     }
+
+    /// A new engine is up. If the install had finished before it started, that engine
+    /// loaded Pack Builder, so "Restart to finish" has done its job.
+    fn engine_started(&mut self, done_at_spawn: bool) {
+        if done_at_spawn && self.state == InstallState::Done {
+            *self = Self::IDLE;
+        }
+    }
 }
 
 static INSTALL: Mutex<PackBuilderInstall> = Mutex::new(PackBuilderInstall::IDLE);
@@ -112,6 +120,16 @@ pub(crate) fn stop_packbuilder_install() {
 
 fn install_state() -> MutexGuard<'static, PackBuilderInstall> {
     INSTALL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether a finished install is waiting for the engine to restart. start_sidecars
+/// reads it before spawning the engine and hands it to `engine_started` once it's up.
+pub(crate) fn install_done() -> bool {
+    install_state().state == InstallState::Done
+}
+
+pub(crate) fn engine_started(done_at_spawn: bool) {
+    install_state().engine_started(done_at_spawn);
 }
 
 /// Roughly what the AI pipeline weighs. Only used as the denominator until pip has
@@ -525,6 +543,36 @@ mod packbuilder_install_state_tests {
         let before = install.clone();
         assert!(!install.begin());
         assert_eq!(install, before);
+    }
+
+    #[test]
+    fn an_engine_started_after_the_install_finished_settles_it() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert!(install.begin());
+        install.finish(Ok(()));
+        // The restarted engine loaded Pack Builder: no more "Restart to finish".
+        install.engine_started(true);
+        assert_eq!(install, PackBuilderInstall::IDLE);
+    }
+
+    #[test]
+    fn an_engine_started_before_the_install_finished_keeps_the_offer() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert!(install.begin());
+        install.engine_started(false);
+        assert_eq!(install.state, InstallState::Running);
+        install.finish(Ok(()));
+        install.engine_started(false);
+        assert_eq!(install.state, InstallState::Done);
+    }
+
+    #[test]
+    fn a_restart_keeps_a_failed_install() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert!(install.begin());
+        install.finish(Err("No internet".to_string()));
+        install.engine_started(true);
+        assert_eq!(install.state, InstallState::Failed);
     }
 
     #[test]

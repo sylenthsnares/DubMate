@@ -101,11 +101,18 @@ function renderElapsed() {
     });
     return;
   }
-  const secs = Math.floor(elapsed / 1000);
-  let line = "";
-  if (waiting && elapsed >= VERY_SLOW_AFTER_MS) line = `Taking longer than usual · ${secs} s`;
-  else if (waiting && elapsed >= SLOW_AFTER_MS) line = `Still starting · ${secs} s`;
-  detailText.textContent = line;
+  let words = "";
+  if (waiting && elapsed >= VERY_SLOW_AFTER_MS) words = "Taking longer than usual";
+  else if (waiting && elapsed >= SLOW_AFTER_MS) words = "Still starting";
+  if (words) {
+    // Only the count is mono.
+    const count = document.createElement("span");
+    count.className = "mono";
+    count.textContent = String(Math.floor(elapsed / 1000));
+    detailText.replaceChildren(`${words} · `, count, " s");
+  } else {
+    detailText.textContent = "";
+  }
   btnRestartSlow.hidden = !(waiting && elapsed >= VERY_SLOW_AFTER_MS);
 }
 
@@ -148,9 +155,15 @@ async function pollHealth() {
   }
 }
 
-function tryEnter() {
+/**
+ * Opens the studio, starting an opted-in Pack Builder first, whichever way entry came:
+ * up to date, offline, after an update, Skip, Open DubMate or the 20 s cap.
+ */
+async function tryEnter() {
   if (isEntering || isUpdating || failureShown || !engineHealthy || updateCheckPending) return;
   isEntering = true;
+  const invoke = tauriInvoke();
+  if (invoke) await startPackBuilderIfWanted(invoke);
   navigate(engineUrl());
 }
 
@@ -274,6 +287,8 @@ function renderUpdateProgress(p) {
   progressBar.classList.remove("is-idle");
   if (p.total > 0) {
     const pct = Math.max(0, Math.min(100, Math.round(p.percentage)));
+    // Downloaded: only installing is left, which Skip can't stop.
+    if (pct >= 100) btnSkipUpdate.hidden = true;
     progressFill.style.width = `${pct}%`;
     progressBar.setAttribute("aria-valuenow", String(pct));
     const parts = [`${pct}%`, `${megabytes(p.received)} of ${megabytes(p.total)}`];
@@ -407,7 +422,6 @@ async function listenToRust() {
       return;
     }
     // Up to date or offline.
-    await startPackBuilderIfWanted(invoke);
     updateCheckPending = false;
     tryEnter();
   });
@@ -415,14 +429,20 @@ async function listenToRust() {
   listen("update-progress", (event) => renderUpdateProgress(event.payload));
   listen("update-stage", (event) => renderUpdateStage(event.payload));
 
-  // Rust restarted the engine on the new files before sending this. DubMate is now up
-  // to date, so this is also the moment for an opted-in Pack Builder (a first download
-  // never gets an "up to date" update-status).
-  listen("update-complete", async () => {
+  // Rust restarted the engine on the new files before sending this.
+  listen("update-complete", () => {
     setProgressText("Restarting");
-    await startPackBuilderIfWanted(invoke);
     openStudioWithoutUpdate();
   });
+
+  // A failure in the first moments can come before the listener above existed.
+  try {
+    const failure = await invoke("get_last_failure");
+    if (failure && !failureShown && !isUpdating && !isEntering) showEngineFailure(failureFromPayload(failure));
+  } catch (e) {
+    // An older desktop app doesn't have this command.
+    console.warn("[Launcher] Could not read the last failure:", e);
+  }
 }
 
 let initialised = false;

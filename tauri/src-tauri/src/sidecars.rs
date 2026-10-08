@@ -199,17 +199,24 @@ pub(crate) fn hide_console(cmd: &mut std::process::Command) {
     let _ = cmd;
 }
 
+/// Sends `server-error` to the launcher and keeps it for `get_last_failure`.
+fn report_failure(app: &tauri::AppHandle, failure: EngineFailure) {
+    app.state::<SharedState>().0.lock().unwrap().last_failure = Some(failure.clone());
+    let _ = app.emit("server-error", failure);
+}
+
 pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
     // Held for the whole function, health poll included, so a second caller waits
     // rather than racing a second engine onto the port.
     let _startup_guard = sidecar_start_lock().lock().await;
+    app.state::<SharedState>().0.lock().unwrap().last_failure = None;
 
     let app_py_path = match find_app_py(&app) {
         Some(p) => p,
         None => {
             eprintln!("[Sidecar Error] app.py not found in working directory or resources!");
-            let _ = app.emit(
-                "server-error",
+            report_failure(
+                &app,
                 EngineFailure::new("missing_files", "app.py was not found.".to_string()),
             );
             return;
@@ -217,6 +224,8 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
     };
 
     // 1. Resolve and Spawn Python FastAPI sidecar
+    // Read before the engine starts: an install that finishes later isn't loaded.
+    let install_done_at_spawn = crate::packbuilder::install_done();
     let mut watch = None;
     let mut spawn_error = "The Python runtime was not found.".to_string();
     if let Some(py_exe) = find_python_exe(&app) {
@@ -243,7 +252,7 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
 
     let Some(watch) = watch else {
         eprintln!("[Sidecar Error] Unable to launch Python runtime!");
-        let _ = app.emit("server-error", EngineFailure::new("no_runtime", spawn_error));
+        report_failure(&app, EngineFailure::new("no_runtime", spawn_error));
         return;
     };
 
@@ -256,6 +265,7 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
     if !wait_for_engine(&app, engine_port, &watch).await {
         return;
     }
+    crate::packbuilder::engine_started(install_done_at_spawn);
 
     // 3. Spawn cloudflared tunnel sidecar
     start_tunnel(&app, engine_port);
@@ -388,7 +398,7 @@ fn spawn_engine(
                     Err(e) => format!("The engine stopped: {}", e),
                 };
             }
-            let _ = app_exit_clone.emit("server-error", classify_engine_failure(&detail));
+            report_failure(&app_exit_clone, classify_engine_failure(&detail));
         }
         // Set last, so the health poll only gives up once the error above is out.
         exited_flag.store(true, Ordering::SeqCst);
@@ -435,7 +445,7 @@ async fn wait_for_engine(app: &tauri::AppHandle, engine_port: u16, watch: &Engin
         detail.push_str("\n\n");
         detail.push_str(&tail);
     }
-    let _ = app.emit("server-error", EngineFailure::new("timeout", detail));
+    report_failure(app, EngineFailure::new("timeout", detail));
     false
 }
 
@@ -738,10 +748,13 @@ mod engine_failure_tests {
             .spawn()
             .expect("could not start the test program");
 
-        // Another program's name leaves it running.
-        kill_process(child.id(), Some("not-this-one.exe"));
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(child.try_wait().unwrap().is_none(), "a different name must not be killed");
+        // Another program's name leaves it running. Only Windows and Linux can tell
+        // the name (taskkill, /proc); elsewhere kill_process signals anyway.
+        if cfg!(any(target_os = "windows", target_os = "linux")) {
+            kill_process(child.id(), Some("not-this-one.exe"));
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert!(child.try_wait().unwrap().is_none(), "a different name must not be killed");
+        }
 
         kill_process(child.id(), Some(image));
         let started = std::time::Instant::now();

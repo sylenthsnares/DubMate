@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-get-engine-port",
+    "allow-get-last-failure",
     "allow-trigger-start-sidecars",
     "allow-apply-update",
     "allow-cancel-update",

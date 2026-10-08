@@ -25,6 +25,7 @@ const SR = 16000;
 const LEAD_SEC = 0.3;
 const BUSY_LINE = "Another app is using your microphone. Close it and try again.";
 const NOT_FOUND_LINE = "No microphone was found. Plug one in and press Rescan.";
+const SYNC_HINT = "Syncing. The clicks and claps read loud here, and that's fine.";
 const OK_REPORT = {
   verdict: "ok", speech_floor_db: -52.4, rumble_share: 0.71, hum_hz: 50, tones_hz: [50.0, 150.0],
   hiss: false, unstable: true, suppressed: false, clipped: false,
@@ -267,6 +268,14 @@ const CHECKS = {
       const level = env.audio.readInputLevel();
       if (!level || Math.abs(level.rms - 0.5) > 1e-6) fail(`${name}: readInputLevel during the check: ${JSON.stringify(level)}`);
       if (!(fillWidth(env) > 50)) fail(`${name}: bar frozen during the check (fill ${fillWidth(env)}%)`);
+      if (name === "mic sync") {
+        // The sync clicks and claps peak near full scale: the hint must not ask for a quieter mic.
+        env.amp = 0.99;
+        await tick(60);
+        const hint = $(env, "level-meter-hint").textContent;
+        if (hint !== SYNC_HINT) fail(`mic sync: the hint reads "${hint}" during the sync`);
+        env.amp = 0.5;
+      }
       await expectMeterLive(env, `${name} done`);
       if (name === "mic sync" && !/140 ms/.test($(env, "mic-sync-status").textContent)) fail("mic sync did not save");
       console.log(`PASS: ${name}: the bar follows the check's stream and the meter is live after it`);

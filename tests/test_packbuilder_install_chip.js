@@ -6,10 +6,11 @@
  *   - only inside the desktop app on this computer's engine; a plain browser and a
  *     member on a host's page never see it, and an older desktop app that refuses
  *     get_packbuilder_install leaves it hidden;
- *   - running: a mini bar, "Pack Builder 42%", role=status and a focusable tooltip
- *     with the step, the headline, the detail and the time left;
- *   - failed: "Pack Builder didn't install" with Try again, the error's first line
- *     in the tooltip;
+ *   - running: a mini bar, "Pack Builder 42%" (not a live region: it changes every
+ *     second) and a focusable tooltip with the step, the headline, the detail and
+ *     the time left;
+ *   - failed: "Pack Builder didn't install" with Try again, and a plain next step in
+ *     the tooltip (the raw error goes to the log);
  *   - done: "Restart to finish Pack Builder", which asks first in a room, then
  *     restarts the engine and reopens the studio on its port;
  *   - the Pack Builder line in the mode menu follows the same state;
@@ -137,6 +138,7 @@ const FAILED = {
   error: "pip couldn't reach the package index.\nTraceback (most recent call last):\n  ...",
 };
 const IDLE = { state: "idle", progress: null, error: null };
+const FAILED_TIP = "Check your internet connection and free disk space, then press Try again.";
 
 /** A fake desktop app whose install state the test moves along. */
 function desktopApp(initial, extra = {}) {
@@ -192,6 +194,22 @@ function desktopApp(initial, extra = {}) {
   }
   pass("39b idle hides the chip and stops polling");
 
+  // 4b. The launcher starts the install without waiting: a first answer can still be
+  // idle. One more look a few seconds later catches it.
+  {
+    const { box, app } = desktopApp(IDLE);
+    const { w, calls } = await boot("http://127.0.0.1:8123/", app);
+    box.install = RUNNING;
+    await settle(3200);
+    if (!shown(chip(w))) fail("an install that began just after the first look was missed");
+    box.install = IDLE;
+    await settle(1100);
+    const polls = count(calls, "get_packbuilder_install");
+    await settle(3300);
+    if (count(calls, "get_packbuilder_install") !== polls) fail("idle after an install kept polling", calls);
+  }
+  pass("39b a second look catches an install that began just after the studio opened");
+
   // 5. Running: bar, percent, status role, tooltip, menu line; then done, and polling stops.
   {
     const { box, app } = desktopApp(RUNNING);
@@ -202,7 +220,9 @@ function desktopApp(initial, extra = {}) {
     if (!shown(running)) fail("the running state is hidden");
     if (shown(byId(w, "packbuilder-install-failed"))) fail("the failed state showed while running");
     if (shown(byId(w, "btn-packbuilder-restart"))) fail("the restart button showed while running");
-    if (running.getAttribute("role") !== "status") fail("the running state is not role=status");
+    if (running.getAttribute("role") === "status" || running.hasAttribute("aria-live")) {
+      fail("the running percent is a live region: a screen reader would read every percent");
+    }
     if (running.getAttribute("tabindex") !== "0") fail("the running state's tooltip is not focusable");
     const text = running.textContent.replace(/\s+/g, " ").trim();
     if (text !== "Pack Builder 42%") fail(`the running text reads "${text}"`);
@@ -253,7 +273,7 @@ function desktopApp(initial, extra = {}) {
     const label = failed.querySelector(".pb-install-label").textContent.trim();
     if (label !== "Pack Builder didn't install") fail(`the failed line reads "${label}"`);
     const tipEl = failed.querySelector("[data-tip]");
-    if (!tipEl || tipEl.getAttribute("data-tip") !== "pip couldn't reach the package index.") {
+    if (!tipEl || tipEl.getAttribute("data-tip") !== FAILED_TIP) {
       fail(`the failed tooltip reads "${tipEl && tipEl.getAttribute("data-tip")}"`);
     }
     if (tipEl.getAttribute("tabindex") !== "0" && tipEl.tagName !== "BUTTON") fail("the failed tooltip is not focusable");
@@ -284,9 +304,9 @@ function desktopApp(initial, extra = {}) {
     const failed = byId(w, "packbuilder-install-failed");
     if (!shown(failed)) fail("a refused Try again left the failed state");
     const tip = failed.querySelector("[data-tip]").getAttribute("data-tip");
-    if (tip !== "DubMate can't write to its install folder.") fail(`the refused retry tooltip reads "${tip}"`);
+    if (tip !== FAILED_TIP) fail(`the refused retry tooltip reads "${tip}"`);
   }
-  pass("39b a refused Try again keeps the failed line with its reason");
+  pass("39b a refused Try again keeps the failed line and its plain next step");
 
   // 8. Done outside a room: restarts at once, then reopens on the engine's port.
   {

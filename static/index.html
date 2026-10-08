@@ -151,9 +151,10 @@
       </div>
       <!-- Pack Builder installing in the background (desktop app on this computer only,
            studio/packbuilder_install.js). Below 1280px the running state keeps the bar
-           and the percent; the step and the time left are in its tooltip. -->
+           and the percent; the step and the time left are in its tooltip. The percent
+           changes every second, so it is not a live region. -->
       <div id="packbuilder-install-chip" class="pb-install-chip" hidden>
-        <div id="packbuilder-install-running" class="pb-install-running" role="status" tabindex="0" data-tip="" hidden>
+        <div id="packbuilder-install-running" class="pb-install-running" tabindex="0" data-tip="" hidden>
           <span class="pb-install-bar" aria-hidden="true"><span class="pb-install-fill"></span></span>
           <span class="pb-install-label"><span class="pb-install-name">Pack Builder </span><span
               class="pb-install-percent">0%</span></span>

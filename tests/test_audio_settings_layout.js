@@ -44,12 +44,12 @@ const FALLBACK = "Your saved microphone isn't connected. Showing the system defa
 
 const STEPS = {
   "desktop-windows": [
-    "Open Windows microphone settings.",
+    "Open Windows Settings → Privacy & security → Microphone.",
     "Turn on Microphone access and Let desktop apps access your microphone.",
     "Come back and press Try again. If it still doesn't work, restart DubMate.",
   ],
-  "desktop-mac": ["Open macOS microphone settings.", "Turn on DubMate.", "Restart DubMate."],
-  browser: ["Click the icon at the left of the address bar.", "Set Microphone to Allow.", "Press Try again."],
+  "desktop-mac": ["Open System Settings → Privacy & Security → Microphone.", "Turn on DubMate.", "Restart DubMate."],
+  browser: ["Click the icon at the left of the address bar.", "Set Microphone to Allow.", "Press Try again, or reload the page."],
 };
 const STILL_BLOCKED = {
   windows: "Still blocked? In Windows Settings → Privacy & security → Microphone, turn on Let desktop apps access your microphone.",
@@ -245,6 +245,10 @@ function done(env) {
     frame(fb, 1000, -8);
     frame(fb, 1300, -3);
     check(text($(fb, "level-meter-hint")) === FALLBACK, `fallback hint replaced by: ${text($(fb, "level-meter-hint"))}`);
+    // Above full scale the readout has a sign, so it doesn't read like a quiet level.
+    frame(fb, 1600, 1.2);
+    const overTip = $(fb, "level-meter-track").getAttribute("data-tip");
+    check(overTip === "Peak +1 dB", `tooltip above 0 dBFS: ${overTip}`);
     done(fb);
     console.log("PASS: the meter shows peak in a zone band, the hint follows the last 2.5 s and the numbers live in a 4 Hz tooltip");
   }

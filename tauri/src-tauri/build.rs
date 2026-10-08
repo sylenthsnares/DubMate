@@ -11,6 +11,7 @@ fn main() {
     // has to name its own commands (capabilities/default.json).
     let manifest = tauri_build::AppManifest::new().commands(&[
         "get_engine_port",
+        "get_last_failure",
         "trigger_start_sidecars",
         "apply_update",
         "cancel_update",
