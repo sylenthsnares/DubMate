@@ -380,6 +380,7 @@ Every group runs `python tests/run_all_tests.py`.
 15. **Palette:** the replacement colours, and the new order listed in section 3.
 16. **Processing copy:** messages use the body font; mono is only for percentages and file sizes. The error title names the failed stage.
 17. **Characters without lines** aren't kept across a reload; only lines are stored.
+18. **Failures before the engine runs** (built in group B): a failed subtitle import marks the "Write out the lines" row, since the lines come from the subtitles. A refused `/process` (for example an ended session) marks the first engine row under the headline "Processing didn't start". The upload row reads "Upload the video" and its headline "Uploading the video". In the error state the sub-line and the bar hide, so the message shows only in the red row. On windows under 780px tall the processing card tightens so Cancel stays on screen at 1280x720 and 960x680.
 
 ## Hands-on checks for the owner
 
