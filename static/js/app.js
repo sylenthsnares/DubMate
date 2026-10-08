@@ -1779,8 +1779,8 @@ class DubMateApp {
       if (action) action.hidden = true;
       if (leave) leave.hidden = true;
       if (wasLost) announce(CONNECTION_COPY.back);
-      // Only show recovery if the user actually saw a problem.
-      if (banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
+      // Only show recovery if the user actually saw a problem (not after the first "Connecting…").
+      if (wasLost && banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
         banner.classList.add('is-recovered');
         text.innerText = CONNECTION_COPY.back;
         clearTimeout(this._connectionBannerTimer);

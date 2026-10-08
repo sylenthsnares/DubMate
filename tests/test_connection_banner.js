@@ -115,6 +115,10 @@ async function boot() {
   check(!shown(action) && !shown(leave), "the first connect shows no buttons");
   check(said.length === 0, "the first connect is not read out", said);
   setState("open");
+  await tick(20);
+  // Nothing was lost: joining a room never says "Back online", it just goes away.
+  check(banner.style.display === "none" && !banner.classList.contains("is-recovered"),
+    "the first connect hides the pill without 'Back online'", banner.style.display, text.innerText);
 
   // Lost: amber, Retry now, the tip, the short form.
   setState("reconnecting", { retryInMs: 4000, attempt: 1 });
