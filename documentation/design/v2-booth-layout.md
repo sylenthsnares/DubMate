@@ -240,6 +240,11 @@ These were answered overnight while you slept. They follow the critique's recomm
 - **The booth fills the window below the header.** Its height no longer subtracts the cast strip, which the booth no longer shows. The booth's page padding is 8 / 16 / 12 (top, sides, bottom), so the picture starts at y = 114.
 - **The longest real caption** (92 characters, a pack in `~/Documents/DubMate/Packs`) wraps to two centred lines at 1280x720. The prompter is then 75 px tall and the picture 22.7% of the screen: below the 25% target, but well above today's 14.7%.
 - **The who's-here popover** lists several roles by name ("2 roles: Carol, Dave"). Someone with no role reads "No role yet", with no progress line, and one line reads "0 of 1 line recorded". Hover and focus open it; a click keeps it open until a second click, Esc or focus leaving. While the stack is inert (recording), Esc is left to the booth. `presence.js` also exports `avatarHtml` and `avatarEl(user, size)` (28 px by default) for the take rows.
+- **Take rows fit 340 px by tightening the row, not by dropping the duration.** Inside a row the gaps are 4 px, the slot is 70 px and "Use this take" is 11 px; ▶ and ⋯ are 24 px wide (the WCAG 2.2 minimum). The sync word ellipsizes if a platform's font runs wider. On a line two people share, another person's take shows their avatar instead of the duration, because both don't fit.
+- **The "Use this take" cue** shows while the pointer is on the row or the row itself has focus. It doesn't show when ▶ or ⋯ has focus, since Enter there doesn't use the take. While the line saves it doesn't show at all, and ⋯ (Delete only) is off.
+- **The recorder's avatar** reads "Recorded by Mika" in its tooltip and to screen readers.
+- **The Voice summary** reads "level matched · noise cleanup on", or "level +2 dB" once you turn Level. Before the first take: "level matched when you record · noise cleanup on". It wraps under the For row when both don't fit, which at 340 px is always; it is still shorter than U2's Level row.
+- **The waveform with no take** is inert but not dimmed: the original's waveform is what you watch before the first take. The timing row is inert and dimmed. On a line you can't record the waveform is inert too (view only): dragging it there moved someone else's take on your screen.
 
 ## Hands-on checks (owner, in the morning)
 

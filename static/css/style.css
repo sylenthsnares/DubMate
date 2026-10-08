@@ -3049,8 +3049,8 @@ body.resizing .resize-grip-pill {
   align-self: stretch;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 6px 0 10px;
+  gap: var(--space-1);
+  padding: 0 0 0 var(--space-2);
   border-radius: var(--radius-md);
   font-size: 12px;
   color: var(--foreground-muted);
@@ -3087,34 +3087,63 @@ body.resizing .resize-grip-pill {
   font-size: 11px;
   white-space: nowrap;
 }
-.take-by {
+.take-sync {
+  margin-left: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.take-sync {
-  margin-left: auto;
-  white-space: nowrap;
+/* A take by someone else on a line you share: their avatar takes the duration's room. */
+.take-row:has(.take-more) .take-pick:has(.avatar) .take-dur {
+  display: none;
 }
 /* The best-timed take's sync, lightly lifted */
 .take-sync.best {
   color: var(--accent-brass);
   font-weight: 700;
 }
+/* One fixed slot after the sync: "In the dub" on the picked row, "Use this take" on your
+   other rows while the pointer is on the row or it has keyboard focus. Its width never
+   changes, so ▶ sits at the same x on every row. */
+.take-slot {
+  flex: 0 0 auto;
+  width: 70px;
+  margin-left: var(--space-1);
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
 .take-in-dub {
   font-weight: 700;
   color: var(--accent-green-light);
-  white-space: nowrap;
 }
-.take-use {
+.take-use-cue {
+  visibility: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+}
+.take-row:hover .take-use-cue,
+.take-pick:focus .take-use-cue {
+  visibility: visible;
+}
+.take-play {
   flex-shrink: 0;
+  min-width: 24px;
+  padding-left: 4px;
+  padding-right: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.take-play[aria-pressed="true"] {
+  color: var(--primary);
 }
 .take-more {
   flex-shrink: 0;
-  min-width: 28px;
-  padding-left: 6px;
-  padding-right: 6px;
+  min-width: 24px;
+  padding-left: 4px;
+  padding-right: 4px;
   font-size: 16px;
   font-weight: 700;
   line-height: 1;

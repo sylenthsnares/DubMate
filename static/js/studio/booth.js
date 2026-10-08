@@ -462,6 +462,7 @@ export class BoothMethods {
     const hearOriginal = !!this.isPlayingReference || (playingTake && this.audio.abState === 'B');
     this.btnPlayOrig.setAttribute('aria-pressed', String(hearOriginal));
     this.btnPreviewTake.setAttribute('aria-pressed', String(playingTake && this.audio.abState !== 'B'));
+    this.renderTakePlayButtons();
   }
 
   /** A transport press. While the take plays, the other side switches what you hear in
@@ -884,12 +885,14 @@ export class BoothMethods {
     const wait = { button };
     this.soundWait = wait;
     if (button) button.classList.add('is-waiting-sound');
+    this.renderTakePlayButtons();
     return wait;
   }
 
   endSoundWait(wait) {
     if (wait.button) wait.button.classList.remove('is-waiting-sound');
     if (this.soundWait === wait) this.soundWait = null;
+    this.renderTakePlayButtons();
   }
 
   // --- Studio Noise Reduction ---

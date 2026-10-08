@@ -896,7 +896,7 @@ class DubMateApp {
         // Counting in or recording, the single-letter keys would stop the take and lose it.
         const taking = this.recordState === 'countdown' || this.recordState === 'recording';
         if (e.code === 'Space') {
-          // Space presses a focused Undo, Use or answer button instead of recording.
+          // Space presses a focused ▶, ⋯, Undo or answer button instead of recording.
           if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button')) return;
           e.preventDefault();
           this.toggleRecording();
