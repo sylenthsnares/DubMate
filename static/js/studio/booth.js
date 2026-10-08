@@ -7,6 +7,7 @@ import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
 import { micErrorMessage } from './audio_setup.js';
 import { renderPresenceStack, closePresence } from './presence.js';
+import { initLineStrip, centreChip, focusChip, updateStripEdges } from './line_strip.js';
 
 const LOCK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 const SAVING_ICON = '<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>';
@@ -25,12 +26,20 @@ const INERT_WHILE_TAKING = [
 export class BoothMethods {
   toggleFilterLines() {
     this.filterMyLinesOnly = !this.filterMyLinesOnly;
-    if (this.labelFilterLines) {
-      this.labelFilterLines.innerText = this.filterMyLinesOnly ? "My lines" : "All lines";
-    }
     this.chipsScrolledLine = null;
     this.renderTimelineChips();
     this.showToast(this.filterMyLinesOnly ? "Showing your lines" : "Showing all lines");
+  }
+
+  /** "My lines" (pressed) or "All lines": the label says what the strip shows. */
+  renderLineFilterToggle() {
+    if (this.labelFilterLines) this.labelFilterLines.textContent = this.filterMyLinesOnly ? 'My lines' : 'All lines';
+    if (this.btnToggleFilterLines) {
+      this.btnToggleFilterLines.setAttribute('aria-pressed', String(!!this.filterMyLinesOnly));
+      this.btnToggleFilterLines.dataset.tip = this.filterMyLinesOnly
+        ? "Showing your lines. Click to show everyone's"
+        : "Showing everyone's lines, yours filled in. Click for only yours";
+    }
   }
 
   /** The take used in the dub for the line at this index, or undefined. */
@@ -248,6 +257,8 @@ export class BoothMethods {
 
     // Scene numbering, as on the line chips; your own position and the time range in the tooltip.
     this.boothLineIndicator.textContent = `Line ${index + 1} of ${this.roomState.pack.lines.length}`;
+    // As wide as "Line 40 of 40" (a mono face), so the strip beside it doesn't twitch.
+    this.boothLineIndicator.style.minWidth = `${`Line ${this.roomState.pack.lines.length} of ${this.roomState.pack.lines.length}`.length}ch`;
     const range = `${(line.start || 0).toFixed(1)}–${(line.end || 0).toFixed(1)} s`;
     this.boothLineIndicator.dataset.tip = isMyLine && myLinePos > 0
       ? `Your line ${myLinePos} of ${myAssignedLines.length} · ${range}` : range;
@@ -523,11 +534,20 @@ export class BoothMethods {
     this.pressTransport(this.takeForLine(this.currentLineIndex) ? 'take' : 'original');
   }
 
-  /** One button per line, numbered as in the scene: "1 ✓ 3 takes". */
+  /** One fixed-width button per line, numbered as in the scene: "1 ✓ 3" (the spoken
+   *  name and tooltip say "Line 1, Ana, recorded, 3 takes"). Your lines are filled,
+   *  everyone else's hollow. The strip itself (wheel, drag, keys, fades) is line_strip.js. */
   renderTimelineChips() {
     if (!this.roomState || !this.timelineChips) return;
-    this.timelineChips.innerHTML = '';
+    const strip = this.timelineChips;
+    initLineStrip(strip);
+    this.renderLineFilterToggle();
     const myAssignedChars = this.getMyAssignedCharacters();
+    // A redraw (a take saved, someone else's take) keeps the scroll and a focused chip.
+    const keepLeft = strip.scrollLeft;
+    const focusedLine = strip.contains(document.activeElement) ? document.activeElement.dataset.line : undefined;
+    const frag = document.createDocumentFragment();
+    let activeChip = null;
 
     this.roomState.pack.lines.forEach((l, idx) => {
       const isMyLine = myAssignedChars.includes(l.character);
@@ -541,10 +561,21 @@ export class BoothMethods {
       const isActive = idx === this.currentLineIndex;
 
       chip.type = 'button';
+      chip.dataset.line = String(idx);
+      // One tab stop: the current chip. The arrows move along the rest.
+      chip.tabIndex = isActive ? 0 : -1;
       const saving = !!this.savingTake(l);
       const waiting = !saving && this.waitingTakes(l).length > 0;
-      chip.className = `chip-item ${isActive ? 'active' : ''} ${count ? 'done' : ''} ${isMyLine ? 'my-line' : ''}${saving ? ' is-saving' : ''}`;
-      if (isActive) chip.setAttribute('aria-current', 'step');
+      chip.className = 'chip-item';
+      chip.classList.toggle('active', isActive);
+      chip.classList.toggle('done', count > 0);
+      chip.classList.toggle('my-line', isMyLine);
+      chip.classList.toggle('is-other', myAssignedChars.length > 0 && !isMyLine);
+      chip.classList.toggle('is-saving', saving);
+      if (isActive) {
+        chip.setAttribute('aria-current', 'step');
+        activeChip = chip;
+      }
       // The tooltip says the same as the label, so it isn't read twice.
       const name = `Line ${idx + 1}, ${l.character}, ${count ? `recorded, ${plural(count, 'take')}` : 'not recorded'}`
         + (saving ? ', saving a take' : '') + (waiting ? ', a take waiting to upload' : '');
@@ -554,39 +585,46 @@ export class BoothMethods {
       num.className = 'chip-num';
       num.textContent = String(idx + 1);
       chip.appendChild(num);
-      if (count) {
+      if (saving || waiting) {
+        // In place of the count, so the chip keeps its width: ↑ while a take goes up.
+        const mark = document.createElement('span');
+        mark.className = 'chip-saving';
+        mark.textContent = '↑';
+        chip.appendChild(mark);
+      } else if (count) {
         const tick = document.createElement('span');
         tick.className = 'chip-tick';
         tick.textContent = '✓';
         const n = document.createElement('span');
         n.className = 'chip-count';
-        n.textContent = plural(count, 'take');
+        n.textContent = count > 99 ? '99+' : String(count);
         chip.append(tick, n);
-      }
-      if (saving || waiting) {
-        const mark = document.createElement('span');
-        mark.className = 'chip-saving';
-        mark.textContent = saving ? 'saving' : 'waiting';
-        chip.appendChild(mark);
       }
 
       chip.addEventListener('click', () => {
         this.loadBoothLine(idx);
       });
 
-      this.timelineChips.appendChild(chip);
-
-      // Scrolled into view when the line changes, not on every redraw (a background save,
-      // someone else's take), so a strip you scrolled stays put.
-      if (isActive && this.chipsScrolledLine !== idx) {
-        this.chipsScrolledLine = idx;
-        requestAnimationFrame(() => {
-          try {
-            chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-          } catch (e) { }
-        });
-      }
+      frag.appendChild(chip);
     });
+
+    strip.replaceChildren(frag);
+    // Only if the swap moved it: setting it anyway would stop a glide that's under way.
+    if (strip.scrollLeft !== keepLeft) strip.scrollLeft = keepLeft;
+    if (focusedLine !== undefined) {
+      const again = strip.querySelector(`.chip-item[data-line="${focusedLine}"]`) || activeChip;
+      if (again) focusChip(strip, again);
+    }
+    updateStripEdges(strip);
+
+    // Centred when the line changes (or after the toggle), not on every redraw, so a
+    // strip you scrolled stays put.
+    if (activeChip && this.chipsScrolledLine !== this.currentLineIndex) {
+      this.chipsScrolledLine = this.currentLineIndex;
+      // The chip as drawn by then: another redraw may have replaced this one.
+      cancelAnimationFrame(this.chipsCentreFrame);
+      this.chipsCentreFrame = requestAnimationFrame(() => centreChip(strip, strip.querySelector('.chip-item[aria-current]')));
+    }
   }
 
   async syncVideoSeek(targetTime) {

@@ -564,7 +564,8 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     const labels = chips.map((c) => c.getAttribute("aria-label"));
     if (labels.join("|") !== "Line 1, Ana, recorded, 3 takes|Line 2, Ana, recorded, 1 take|Line 3, Ben, not recorded") fail(`chip labels: ${labels.join("|")}`);
     const counts = chips.map((c) => text(c.querySelector(".chip-count")));
-    if (counts.join("|") !== "3 takes|1 take|") fail(`visible counts: ${JSON.stringify(counts)}`);
+    // The chip shows "1 ✓ 3" (one fixed width); the words are in its name and tooltip.
+    if (counts.join("|") !== "3|1|") fail(`visible counts: ${JSON.stringify(counts)}`);
     if (text(chips[0].querySelector(".chip-num")) !== "1") fail("chip number");
     chips[2].click();
     await tick();
@@ -596,7 +597,7 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     app.toggleRecording = realToggle;
     if (recorded || ev.defaultPrevented) fail("Space on Undo started a recording instead of pressing Undo");
     const chip0 = $(env, "timeline-chips").children[0];
-    if (text(chip0.querySelector(".chip-count")) !== "2 takes") fail(`chip count during Undo: ${text(chip0.querySelector(".chip-count"))}`);
+    if (text(chip0.querySelector(".chip-count")) !== "2") fail(`chip count during Undo: ${text(chip0.querySelector(".chip-count"))}`);
     const [fire] = [...env.timers.values()];
     env.timers.clear();
     fire();
