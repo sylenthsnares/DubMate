@@ -616,6 +616,124 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     w.close();
   }
 
+  // (k) the Cast row scrolls by wheel, drag and keyboard, and shows which edge has more.
+  {
+    const ed = await bootEditor({ segments: Array.from({ length: 12 }, (_, i) => (
+      { start: i, end: i + 0.5, text: "L" + i, character: "Character " + (i + 1) })) });
+    const { w, doc, app } = ed;
+    const list = doc.getElementById("character-chips-list");
+    // jsdom has no layout: give the list a width, a content width and a clamped scrollLeft.
+    let contentWidth = 1820;
+    const boxWidth = 853;
+    let left = 0;
+    Object.defineProperty(list, "scrollWidth", { configurable: true, get: () => contentWidth });
+    Object.defineProperty(list, "clientWidth", { configurable: true, get: () => boxWidth });
+    Object.defineProperty(list, "scrollLeft", {
+      configurable: true,
+      get: () => left,
+      set: (v) => { left = Math.max(0, Math.min(Math.max(0, contentWidth - boxWidth), v)); },
+    });
+    const max = contentWidth - boxWidth;
+    const wheel = (opts) => {
+      const ev = new w.WheelEvent("wheel", { bubbles: true, cancelable: true, ...opts });
+      list.firstElementChild.dispatchEvent(ev);
+      return ev;
+    };
+    const key = (k) => {
+      const ev = new w.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+      list.dispatchEvent(ev);
+      return ev;
+    };
+    const pointer = (target, type, x, opts = {}) => {
+      const ev = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: 20, buttons: opts.buttons ?? 0 });
+      Object.defineProperty(ev, "pointerId", { value: 1 });
+      Object.defineProperty(ev, "pointerType", { value: opts.type ?? "mouse" });
+      Object.defineProperty(ev, "isPrimary", { value: true });
+      target.dispatchEvent(ev);
+    };
+    const has = (c) => list.classList.contains(c);
+
+    app.renderCharacterChips();
+    check(list.querySelectorAll(".char-color-chip").length === 12, "twelve characters make twelve chips");
+    check(list.getAttribute("tabindex") === "0" && list.getAttribute("aria-label") === "Cast" && list.getAttribute("role") === "group",
+      "an overflowing Cast row is a focusable group labelled 'Cast'");
+    check(has("has-more-end") && !has("has-more-start"), "at the start only the end edge shows more");
+
+    // A vertical mouse wheel scrolls the row sideways.
+    let ev = wheel({ deltaY: 100 });
+    check(left === 100 && ev.defaultPrevented, "a vertical wheel scrolls the Cast row sideways");
+    list.dispatchEvent(new w.Event("scroll"));
+    check(has("has-more-start") && has("has-more-end"), "in the middle both edges show more");
+    ev = wheel({ deltaY: 3, deltaMode: 1 });
+    check(left === 148, "a line-mode wheel scrolls 16 px per line");
+    ev = wheel({ deltaY: 100, ctrlKey: true });
+    check(left === 148 && !ev.defaultPrevented, "Ctrl + wheel is left to the browser");
+    ev = wheel({ deltaX: 40, deltaY: 5 });
+    check(left === 148 && !ev.defaultPrevented, "a sideways trackpad swipe is left to native scrolling");
+    left = max;
+    list.dispatchEvent(new w.Event("scroll"));
+    check(has("has-more-start") && !has("has-more-end"), "at the end only the start edge shows more");
+    ev = wheel({ deltaY: 100 });
+    check(left === max && !ev.defaultPrevented, "at the end the wheel is left to the page");
+
+    // A mouse drag past 5 px scrolls, and the click that follows doesn't rename.
+    let prompts = 0;
+    w.prompt = () => { prompts++; return null; };
+    const name = list.querySelector(".chip-name");
+    left = 200;
+    pointer(name, "pointerdown", 300, { buttons: 1 });
+    pointer(list, "pointermove", 297, { buttons: 1 });
+    check(left === 200, "a wobble under 5 px doesn't scroll");
+    pointer(list, "pointermove", 250, { buttons: 1 });
+    check(left === 250, "dragging the row 50 px left scrolls it 50 px");
+    pointer(list, "pointerup", 250);
+    name.click();
+    check(prompts === 0, "the click after a drag doesn't rename the character");
+    name.click();
+    check(prompts === 1, "a plain click still renames");
+    left = 200;
+    pointer(name, "pointerdown", 300, { buttons: 1, type: "touch" });
+    pointer(list, "pointermove", 250, { buttons: 1, type: "touch" });
+    pointer(list, "pointerup", 250, { type: "touch" });
+    check(left === 200, "touch is left to native scrolling");
+    pointer(list, "pointermove", 100);
+    check(left === 200, "moving the mouse without a button pressed doesn't scroll");
+
+    // Keyboard: arrows scroll 120 px, Home and End go to the ends.
+    left = 0;
+    ev = key("ArrowRight");
+    check(left === 120 && ev.defaultPrevented, "ArrowRight scrolls the row 120 px");
+    key("ArrowLeft");
+    check(left === 0, "ArrowLeft scrolls back");
+    key("End");
+    check(left === max, "End goes to the last chip");
+    key("Home");
+    check(left === 0, "Home goes to the first chip");
+
+    // Adding a character scrolls its chip into view.
+    const seen = [];
+    w.Element.prototype.scrollIntoView = function (opts) { seen.push([this, opts]); };
+    w.prompt = () => "Narrator";
+    app.promptAddCharacter();
+    const added = seen.find(([el]) => el.classList && el.classList.contains("char-color-chip"));
+    check(!!added && added[0].querySelector(".chip-name").textContent === "Narrator" && added[1] && added[1].inline === "nearest",
+      "a new character's chip scrolls into view");
+
+    // When everything fits: not focusable, no fades, the wheel goes to the page.
+    contentWidth = boxWidth;
+    left = 0;
+    app.renderCharacterChips();
+    check(!list.hasAttribute("tabindex") && !has("has-more-start") && !has("has-more-end"),
+      "a Cast row that fits isn't focusable and shows no fades");
+    ev = wheel({ deltaY: 100 });
+    check(!ev.defaultPrevented, "a wheel over a Cast row that fits is left to the page");
+    contentWidth = 1820;
+    w.dispatchEvent(new w.Event("resize"));
+    check(list.getAttribute("tabindex") === "0" && has("has-more-end"), "a window resize updates the Cast row");
+    await tick(100);
+    w.close();
+  }
+
   console.log("All Pack Builder editor playback and timeline checks passed.");
   process.exit(0);
 })().catch((err) => fail(err && err.stack || err));

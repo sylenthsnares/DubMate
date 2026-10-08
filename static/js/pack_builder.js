@@ -404,6 +404,7 @@ export class PackBuilderApp {
 
     // 12. Character management
     this.btnAddCharacter.addEventListener('click', () => this.promptAddCharacter());
+    this.initCastScroller();
 
     // 13. Proceed to compile
     this.btnProceedToCompile.addEventListener('click', () => this.goToCompileStep());
@@ -1416,6 +1417,81 @@ export class PackBuilderApp {
       });
       list.appendChild(chip);
     });
+    this.updateCastScroller();
+  }
+
+  // The Cast row scrolls sideways: a mouse wheel, a mouse or pen drag and the arrow keys
+  // move it. Touch and trackpad swipes scroll natively.
+  initCastScroller() {
+    const list = this.characterChipsList;
+    list.addEventListener('scroll', () => this.updateCastScroller());
+    window.addEventListener('resize', () => this.updateCastScroller());
+
+    list.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      if (list.scrollWidth <= list.clientWidth) return;
+      const before = list.scrollLeft;
+      list.scrollLeft += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      if (list.scrollLeft !== before) e.preventDefault();
+    }, { passive: false });
+
+    // Capture the pointer only once it is a drag, so a plain click still reaches the chip.
+    let drag = null;
+    let swallowClick = false;
+    list.addEventListener('pointerdown', (e) => {
+      swallowClick = false;
+      drag = null;
+      if (e.pointerType === 'touch' || e.button !== 0 || e.isPrimary === false) return;
+      drag = { id: e.pointerId, x: e.clientX, left: list.scrollLeft, moved: false };
+    });
+    list.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!(e.buttons & 1)) { drag = null; return; }
+      const dx = e.clientX - drag.x;
+      if (!drag.moved) {
+        if (Math.abs(dx) <= 5) return;
+        drag.moved = true;
+        list.setPointerCapture(e.pointerId);
+      }
+      list.scrollLeft = drag.left - dx;
+    });
+    const endDrag = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (drag.moved) {
+        swallowClick = true;
+        if (list.hasPointerCapture(e.pointerId)) list.releasePointerCapture(e.pointerId);
+      }
+      drag = null;
+    };
+    list.addEventListener('pointerup', endDrag);
+    list.addEventListener('pointercancel', endDrag);
+    // A drag never renames or deletes: drop the click that ends it.
+    list.addEventListener('click', (e) => {
+      if (!swallowClick) return;
+      swallowClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
+
+    list.addEventListener('keydown', (e) => {
+      if (e.target !== list) return;
+      const max = list.scrollWidth - list.clientWidth;
+      const to = { ArrowLeft: list.scrollLeft - 120, ArrowRight: list.scrollLeft + 120, Home: 0, End: max }[e.key];
+      if (to === undefined || max <= 0) return;
+      e.preventDefault();
+      list.scrollLeft = to;
+    });
+  }
+
+  // Fades the edges that have more chips, and makes the row focusable only while it overflows.
+  updateCastScroller() {
+    const list = this.characterChipsList;
+    const max = list.scrollWidth - list.clientWidth;
+    const overflows = max > 1;
+    list.classList.toggle('has-more-start', overflows && list.scrollLeft > 1);
+    list.classList.toggle('has-more-end', overflows && list.scrollLeft < max - 1);
+    if (overflows) list.setAttribute('tabindex', '0');
+    else list.removeAttribute('tabindex');
   }
 
   deleteCharacter(charName) {
@@ -1848,6 +1924,9 @@ export class PackBuilderApp {
       const clean = name.trim();
       this.getCharacterColor(clean);
       this.renderCharacterChips();
+      const chip = Array.from(this.characterChipsList.children)
+        .find(c => c.querySelector('.chip-del-btn')?.dataset.char === clean);
+      if (chip) chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
       this.renderSegmentsList();
       this.showToast(`"${clean}" added`);
     }

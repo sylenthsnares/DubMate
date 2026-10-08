@@ -1278,7 +1278,6 @@ body.resizing-timeline * {
   gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border-subtle);
-  overflow-x: auto;
 }
 
 .char-strip-title {
@@ -1288,13 +1287,50 @@ body.resizing-timeline * {
   font-family: var(--font-mono);
 }
 
+/* Only the chips scroll; the Cast title and the + button stay put. */
 .character-chips-list {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 2px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(204, 164, 88, 0.35) transparent;
+}
+
+/* A fade on each edge that has more chips. */
+.character-chips-list.has-more-start {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+
+.character-chips-list.has-more-end {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+
+.character-chips-list.has-more-start.has-more-end {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+/* The fade would hide the focus ring, so it goes while the row has keyboard focus. */
+.character-chips-list:focus-visible,
+.character-chips-list.has-more-start:focus-visible,
+.character-chips-list.has-more-end:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .char-color-chip {
+  flex-shrink: 0;
+  scroll-margin-inline: 24px;
   display: flex;
   align-items: center;
   gap: 6px;
