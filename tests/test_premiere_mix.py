@@ -4,7 +4,8 @@ test_premiere_mix.py
 The premiere's Mix slider (music <-> voices, 0..100, 50 = even) is the room's, like its
 dialogue level: the host's change is kept on the room (set_mix_balance), invalidates the
 renders, reaches every client, survives a reload, and every render of the scene mix (the
-premiere video, POST /export, the download and the stems) uses it. At 50 the mix is unchanged.
+premiere video, POST /export and the stems) uses it. At 50 the mix is unchanged.
+The premiere sends everyone in at once and renders its video in the background.
 """
 
 import os
@@ -86,7 +87,18 @@ class MixRoomCase(RoomCase):
     def setUp(self):
         super().setUp()
         self.client = TestClient(app)
+        self._one_event_loop(self.client)
+        exports = os.path.join(self.cache, "exports")
+        os.makedirs(exports, exist_ok=True)
+        patcher = mock.patch("dubmate.common._exports_dir", exports)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.room = self._room()
+
+    def _until(self, ws, msg_type):
+        while (msg := ws.receive_json())["type"] != msg_type:
+            pass
+        return msg
 
     def _join(self, ws, name):
         ws.send_json({"type": "join", "payload": {"name": name, "color": "#7c5cff"}})
@@ -121,6 +133,34 @@ class TestRoomBalance(MixRoomCase):
         self.assertEqual(len(syncs), 1, frames)
         self.assertEqual(syncs[0]["payload"]["balance"], 80)
         self.assertEqual(self.room.to_state_dict()["master_mix_balance"], 80)
+
+    def test_the_same_value_keeps_the_saved_video(self):
+        # Clicking the preset that is already checked must not throw the finished video away.
+        path = os.path.join(self.cache, "kept.mp4")
+        with open(path, "wb") as f:
+            f.write(b"\0" * 2048)
+        self.room.exported_video_path = path
+        generation = self.room.export_generation
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+            self._join(ws, "Host")
+            _barrier(ws)
+            ws.send_json({"type": "set_mix_balance", "payload": {"balance": 50}})
+            ws.send_json({"type": "set_dialogue_presence", "payload": {"presence_db": 0.0}})
+            frames = self._frames_until_pong(ws)
+        self.assertEqual(self.room.ready_export_path("16:9"), path)
+        self.assertEqual(self.room.export_generation, generation)
+        self.assertFalse(any(f.get("type") == "export_invalidated" for f in frames), frames)
+
+    def test_the_echo_names_the_tab_that_sent_it(self):
+        # A host with the premiere open in two windows: only the sending tab ignores the echo.
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+            self._join(ws, "Host")
+            _barrier(ws)
+            ws.send_json({"type": "set_mix_balance", "payload": {"balance": 70, "client_id": "tab-a"}})
+            ws.send_json({"type": "set_dialogue_presence", "payload": {"presence_db": 2.5, "client_id": "tab-a"}})
+            frames = self._frames_until_pong(ws)
+        echoes = [f for f in frames if f.get("type") in ("mix_balance_sync", "dialogue_presence_sync")]
+        self.assertEqual([f["payload"]["client_id"] for f in echoes], ["tab-a", "tab-a"], frames)
 
     def test_member_is_refused(self):
         with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as host_ws:
@@ -177,33 +217,129 @@ class TestRendersUseIt(MixRoomCase):
     def test_premiere_video_uses_it(self):
         self.room.master_mix_balance = 70
         seen = []
-        with mock.patch.object(audio_processor, "export_dub_video", side_effect=lambda *a, **k: seen.append(k)):
+
+        def render(*args, **kwargs):
+            seen.append(kwargs)
+            _write(*args, **kwargs)
+
+        with mock.patch.object(audio_processor, "export_dub_video", side_effect=render):
             with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
                 self._join(ws, "Host")
                 ws.send_json({"type": "launch_premiere", "payload": {}})
-                for _ in range(40):
-                    if ws.receive_json().get("type") == "warp_to_screening":
-                        break
+                self._until(ws, "export_ready")
         self.assertEqual([k.get("mix_balance") for k in seen], [70])
 
-    def test_download_and_stems_use_it(self):
+    def test_export_and_stems_use_it(self):
         self.room.master_mix_balance = 65
-
-        def write(*args, **kwargs):
-            path = kwargs.get("output_zip_path") or args[2]
-            with open(path, "wb") as f:
-                f.write(b"PK")
-            return path
-
-        exports = os.path.join(self.cache, "exports")
-        os.makedirs(exports, exist_ok=True)
-        with mock.patch("dubmate.common._exports_dir", exports), \
-                mock.patch.object(audio_processor, "export_dub_video", side_effect=write) as render, \
-                mock.patch.object(audio_processor, "build_stems_zip", side_effect=write) as stems:
+        with mock.patch.object(audio_processor, "export_dub_video", side_effect=_write) as render, \
+                mock.patch.object(audio_processor, "build_stems_zip", side_effect=_write) as stems:
+            res = self.client.post(f"/api/rooms/{self.ROOM}/export?user_id={HOST}")
+            self.assertEqual(res.json()["status"], "processing", res.text)
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                status = self.client.get(res.json()["poll_url"]).json()["status"]
+                if status != "processing":
+                    break
+                time.sleep(0.02)
+            self.assertEqual(status, "ready")
             self.assertEqual(self.client.get(f"/api/rooms/{self.ROOM}/export/download").status_code, 200)
             self.assertEqual(self.client.get(f"/api/rooms/{self.ROOM}/export/stems?user_id={HOST}").status_code, 200)
+        self.assertEqual(render.call_count, 1)
         self.assertEqual(render.call_args.kwargs.get("mix_balance"), 65)
         self.assertEqual(stems.call_args.kwargs.get("mix_balance"), 65)
+
+
+def _write(*args, **kwargs):
+    """Stands in for export_dub_video and build_stems_zip: a file big enough to count as done."""
+    path = kwargs.get("output_zip_path") or args[2]
+    with open(path, "wb") as f:
+        f.write(b"PK" + b"\0" * 2048)
+    return path
+
+
+class TestPremiereLaunch(MixRoomCase):
+    """launch_premiere sends everyone in at once; the video renders behind them."""
+
+    def setUp(self):
+        super().setUp()
+        self.sent = []
+        broadcast = self.room.broadcast
+
+        async def capture(message_type, payload=None):
+            self.sent.append((message_type, payload))
+            await broadcast(message_type, payload)
+
+        self.room.broadcast = capture
+
+    def _launch(self, ws):
+        self._join(ws, "Host")
+        ws.send_json({"type": "launch_premiere", "payload": {}})
+
+    def _wait_for_sent(self, message_type):
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            found = [p for kind, p in self.sent if kind == message_type]
+            if found:
+                return found
+            time.sleep(0.02)
+        self.fail(f"no {message_type}: {[kind for kind, _ in self.sent]}")
+
+    def test_everyone_goes_in_before_the_video_is_done(self):
+        release, finished = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def render(*args, **kwargs):
+            release.wait(10)
+            _write(*args, **kwargs)
+            finished.set()
+
+        with mock.patch.object(audio_processor, "export_dub_video", side_effect=render):
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+                self._launch(ws)
+                warp = self._until(ws, "warp_to_screening")
+                self.assertFalse(finished.is_set(), "the premiere waited for the render")
+                self.assertEqual(warp["state"]["status"], "screening")
+                self.assertEqual(warp["state"]["exports"]["16:9"], "processing")
+                release.set()
+                ready = self._until(ws, "export_ready")
+        self.assertEqual(ready["payload"]["aspect_ratio"], "16:9")
+        self.assertEqual(self.room.export_status["16:9"], "ready")
+        self.assertEqual([kind for kind, _ in self.sent if kind.startswith(("warp", "export"))],
+                         ["warp_to_screening", "export_started", "export_ready"])
+
+    def test_a_failed_render_reaches_everyone(self):
+        with mock.patch.object(audio_processor, "export_dub_video", side_effect=RuntimeError("render broke")):
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+                self._launch(ws)
+                self._until(ws, "warp_to_screening")
+                failed = self._wait_for_sent("export_failed")
+        self.assertEqual(failed, [{"aspect_ratio": "16:9", "error": "render broke"}])
+        self.assertEqual(self.room.export_status["16:9"], "failed: render broke")
+
+    def test_a_saved_video_is_not_rendered_again(self):
+        path = self.room.export_out_path("16:9")
+        _write(None, None, path)
+        self.room.exported_video_path = path
+        with mock.patch.object(audio_processor, "export_dub_video") as render:
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+                self._launch(ws)
+                warp = self._until(ws, "warp_to_screening")
+                _barrier(ws)
+        render.assert_not_called()
+        self.assertEqual(warp["state"]["exports"]["16:9"], "ready")
+
+    def test_a_member_cannot_launch_it(self):
+        with mock.patch.object(audio_processor, "export_dub_video") as render:
+            with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as host_ws:
+                self._join(host_ws, "Host")
+                _barrier(host_ws)
+                with self.client.websocket_connect(f"/ws/{self.ROOM}/{MEMBER}") as ws:
+                    self._join(ws, "Member")
+                    ws.send_json({"type": "launch_premiere", "payload": {}})
+                    _barrier(ws)
+        render.assert_not_called()
+        self.assertEqual(self.room.status, "lobby")
+        self.assertNotIn("warp_to_screening", [kind for kind, _ in self.sent])
 
 
 if __name__ == "__main__":

@@ -48,13 +48,30 @@ const MAX_TOASTS = 3;
  * Shows a short message at the bottom of the window; at most 3 at once, the oldest goes.
  * tone 'error' is for something the user has to know went wrong: it is announced at once
  * and stays until its Close button is pressed. The entrance motion lives in style.css.
+ * action {label, onClick} adds a button that runs onClick and closes the toast ("Undo").
+ * duration is how long it shows (3.2 s by default). A toast waits while it is hovered or
+ * has focus, then shows for its full duration again. Returns the toast, so its caller can
+ * close it early (toast.remove()).
  */
-export function showToast(message, { tone } = {}) {
+export function showToast(message, { tone, action, duration = 3200 } = {}) {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
-  if (tone === 'error') {
+  if (action && tone !== 'error') {
+    const text = document.createElement('span');
+    text.className = 'toast-message';
+    text.textContent = message;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-ghost btn-xs toast-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      toast.remove();
+      action.onClick();
+    });
+    toast.append(text, btn);
+  } else if (tone === 'error') {
     toast.classList.add('toast-error');
     toast.setAttribute('role', 'alert');
     const text = document.createElement('span');
@@ -72,11 +89,26 @@ export function showToast(message, { tone } = {}) {
   container.appendChild(toast);
   const shown = container.querySelectorAll('.toast');
   for (let i = 0; i < shown.length - MAX_TOASTS; i++) shown[i].remove();
-  if (tone === 'error') return;
-  setTimeout(() => {
-    toast.classList.add('is-leaving');
-    setTimeout(() => toast.remove(), 180);
-  }, 3200);
+  if (tone === 'error') return toast;
+  let timer = null;
+  let hovered = false;
+  const wait = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      toast.classList.add('is-leaving');
+      setTimeout(() => toast.remove(), 180);
+    }, duration);
+  };
+  const hold = () => clearTimeout(timer);
+  const resume = () => {
+    if (!hovered && !toast.contains(document.activeElement)) wait();
+  };
+  toast.addEventListener('pointerenter', () => { hovered = true; hold(); });
+  toast.addEventListener('pointerleave', () => { hovered = false; resume(); });
+  toast.addEventListener('focusin', hold);
+  toast.addEventListener('focusout', () => setTimeout(resume, 0));
+  wait();
+  return toast;
 }
 
 /**
@@ -261,6 +293,9 @@ export function initTooltips(root = document) {
     if (e.key === 'Escape' && current) hide();
   });
   root.addEventListener('pointerdown', hide);
+  // A control pressed from the keyboard keeps its focus, so its tip would stay up over
+  // what it opened (Audio settings).
+  root.addEventListener('click', hide);
   root.defaultView.addEventListener('scroll', hide, true);
 }
 
@@ -294,9 +329,10 @@ const FOCUSABLE = 'a[href], summary, button:not([disabled]), input:not([disabled
 /**
  * Shows a modal overlay: focuses its first control, keeps Tab / Shift+Tab inside,
  * closes on Escape or a click on the backdrop (the overlay itself), and gives
- * focus back to returnFocus. Returns close().
+ * focus back to returnFocus. While canClose() is false, Escape and the backdrop do
+ * nothing (the export modal while it saves). Returns close().
  */
-export function openDialog(overlay, { returnFocus = document.activeElement } = {}) {
+export function openDialog(overlay, { returnFocus = document.activeElement, canClose = () => true } = {}) {
   const doc = overlay.ownerDocument;
   const focusables = () => Array.from(overlay.querySelectorAll(FOCUSABLE)).filter((el) => !el.closest('[hidden]'));
   let isOpen = true;
@@ -305,7 +341,7 @@ export function openDialog(overlay, { returnFocus = document.activeElement } = {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      close();
+      if (canClose()) close();
       return;
     }
     if (e.key !== 'Tab') return;
@@ -326,7 +362,7 @@ export function openDialog(overlay, { returnFocus = document.activeElement } = {
     }
   };
   const onClick = (e) => {
-    if (e.target === overlay) close();
+    if (e.target === overlay && canClose()) close();
   };
 
   function close() {

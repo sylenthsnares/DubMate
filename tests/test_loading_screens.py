@@ -43,22 +43,29 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
             "export-modal-badge",
             "export-modal-title",
             "export-modal-status-text",
+            "export-modal-progress",
             "export-modal-progress-bar",
             "modal-step-dsp",
             "modal-step-mux",
-            "modal-step-ready",
             "connector-dsp-mux",
-            "connector-mux-ready",
             "export-modal-reassurance",
             "export-modal-actions",
+            "export-modal-failed-actions",
+            "export-modal-timeout-actions",
             "btn-modal-close-view",
             "btn-modal-close-x",
-            "btn-modal-dismiss",
+            "btn-modal-reveal",
+            "btn-modal-make-916",
             "btn-modal-download-169",
             "btn-modal-download-916",
+            "btn-modal-retry",
+            "btn-modal-keep-working",
         ]
         for el_id in required_export_ids:
             self.assertIn(f'id="{el_id}"', html, f"Missing element id: {el_id} in index.html")
+        # Two real steps (no "Finish" nothing reports), and no text Close once done (UI pass U5a).
+        for gone in ("modal-step-ready", "connector-mux-ready", "btn-modal-dismiss", "export-saved-path"):
+            self.assertNotIn(f'id="{gone}"', html, f"{gone} is still in the export modal")
 
         # A take saves in the background (UI pass U2): no booth-wide overlay.
         self.assertNotIn('id="booth-processing-overlay"', html)
@@ -226,7 +233,7 @@ class TestHonestLauncherRust(unittest.TestCase):
 
     def test_commands_are_registered_and_allowed(self):
         new = ["start_packbuilder_install", "get_packbuilder_install", "cancel_update",
-               "open_mic_settings", "open_studio_in_browser"]
+               "open_mic_settings", "open_studio_in_browser", "open_download_page"]
         build = self._read("build.rs")
         main = self._read("src", "main.rs")
         for cmd in new:
@@ -238,13 +245,14 @@ class TestHonestLauncherRust(unittest.TestCase):
         default = json.loads(self._read("capabilities", "default.json"))["permissions"]
         for perm in ("allow-start-packbuilder-install", "allow-get-packbuilder-install",
                      "allow-cancel-update", "allow-open-mic-settings",
-                     "allow-open-studio-in-browser"):
+                     "allow-open-studio-in-browser", "allow-open-download-page"):
             self.assertIn(perm, default)
         self.assertNotIn("allow-install-packbuilder", default)
 
         studio = json.loads(self._read("capabilities", "studio.json"))
         for perm in ("allow-open-mic-settings", "allow-start-packbuilder-install",
-                     "allow-get-packbuilder-install", "allow-trigger-start-sidecars"):
+                     "allow-get-packbuilder-install", "allow-trigger-start-sidecars",
+                     "allow-open-download-page"):
             self.assertIn(perm, studio["permissions"])
         # The studio page never gets the browser opener or the updater.
         self.assertNotIn("allow-open-studio-in-browser", studio["permissions"])

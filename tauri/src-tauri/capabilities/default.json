@@ -14,6 +14,7 @@
     "allow-start-packbuilder-install",
     "allow-get-packbuilder-install",
     "allow-open-mic-settings",
-    "allow-open-studio-in-browser"
+    "allow-open-studio-in-browser",
+    "allow-open-download-page"
   ]
 }

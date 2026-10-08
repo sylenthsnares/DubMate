@@ -260,6 +260,7 @@ export class RoomCheckMethods {
       this.btnRoomCheckStandard.disabled = !!this.roomCheckBusy;
     }
     this.renderRoomCheckRefresh(check, !!check && !matches);
+    this.renderRoomCheckCleanupNote();
   }
 
   isRefreshingOlderTakes() {

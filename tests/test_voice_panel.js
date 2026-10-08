@@ -501,23 +501,61 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     if (!dot.classList.contains("is-still") || !shown(dot)) fail("reduced motion: the dot isn't still");
     delete w.matchMedia;
     await tick(200);
-    answer({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Download and install the latest DubMate to use voice effects." }) });
+    answer({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Voice effects need the DubMate 2.0 installer. Get it from github.com/sylenthsnares/DubMate/releases." }) });
     await tick();
     if (app.voiceScheduler.state !== "unavailable" || shown(dot)) fail("pulse when effects are unavailable");
     const note = $("voice-effects-note");
-    if (!shown(note) || note.textContent !== "Download and install the latest DubMate to use voice effects.") fail(`note: ${note.textContent}`);
+    const OWN_NOTE = "Voice effects need the DubMate 2.0 installer, from the download page on GitHub. Takes play without them until then.";
+    const MEMBER_NOTE = "Voice effects aren't installed on the host's DubMate. Takes play without them.";
+    const noteControl = () => note.querySelector(".download-page-control a, .download-page-control button");
+    const noteText = note.querySelector(".voice-effects-note-text");
+    if (!shown(note) || !noteText || noteText.textContent !== OWN_NOTE) fail(`note: ${note.textContent}`);
+    if (!noteControl() || noteControl().textContent !== "Open download page") fail("no Open download page in the note on this computer's engine");
+    // Only the sentence is a live region: the button isn't read out with it, and its hint
+    // isn't a live region inside another.
+    if (note.hasAttribute("role") || noteText.getAttribute("role") !== "status" || noteText.contains(noteControl())) fail("the note's sentence isn't its only status region");
     if (!chips().every((c) => c.disabled) || !sw("gate").disabled || !dial("eq", "low_db").disabled
         || !scope.disabled) fail("effect controls on without voice effects");
     const knobWrap = dial("eq", "low_db").closest(".analog-dial-wrapper");
     if (!knobWrap || knobWrap.getAttribute("aria-disabled") !== "true" || knobWrap.tabIndex !== -1) fail("a locked dial is still in the tab order");
     if ($("slider-gain").disabled || $("check-noise-reduction").disabled) fail("Level or Clean up noise turned off with the effects");
-    // An engine that sends no message still gets the plain one, never a download promise.
-    app.voiceEffectsMessage = "";
+    // The note is the studio's own: it doesn't copy the engine's message.
+    if (note.textContent.includes("Get it from")) fail(`the engine's message leaked into the note: ${note.textContent}`);
+    // Refreshing keeps the same control (a focused button isn't rebuilt under the cursor).
+    const control = noteControl();
     app.refreshVoiceControls();
-    if (note.textContent !== "Download and install the latest DubMate to use voice effects.") fail(`fallback note: ${note.textContent}`);
+    if (noteControl() !== control) fail("refreshing rebuilt the download control");
+    // A source install: its update script adds them; nothing to download.
+    app.roomState.engine_bundled = false;
+    app.refreshVoiceControls();
+    const SOURCE_NOTE = "Voice effects aren't installed. Run update.bat or update.sh again to add them. Takes play without them until then.";
+    if (!shown(note) || note.textContent !== SOURCE_NOTE || noteControl()) fail(`source install note: ${note.textContent}`);
+    delete app.roomState.engine_bundled;
+    app.refreshVoiceControls();
+    if (!noteControl()) fail("the download control didn't come back on the desktop app's engine");
+    // A member on the host's engine: what's going on, and nothing to install.
+    app.isEngineLocal = () => false;
+    app.refreshVoiceControls();
+    if (!shown(note) || note.textContent !== MEMBER_NOTE || noteControl()) fail(`member note: ${note.textContent}`);
+    delete app.isEngineLocal;
     env.renderReply = null;
     app.voiceUnavailable = false;
-    console.log("PASS: the pulse follows the scheduler (still under reduced motion); unavailable turns effects off with the message");
+    console.log("PASS: the pulse follows the scheduler (still under reduced motion); unavailable turns effects off with the note (download control on this computer, update script on a source install, none for a member)");
+
+    // The note's layout: inside the card's padding, with room under the button for its focus
+    // ring (the card clips what overflows), the control centred under the centred sentence,
+    // and the address wrapping instead of running out of the card.
+    const css = fs.readFileSync(path.join(__dirname, "..", "static", "css", "style.css"), "utf8");
+    const rule = (sel) => {
+      const m = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{([^}]*)\\}").exec(css);
+      if (!m) fail(`no ${sel} rule`);
+      return m[1];
+    };
+    const pad = /padding:\s*(\d+)(?:px)?\s+(\d+)px\s+(\d+)px\s*;/.exec(rule(".voice-effects-note"));
+    if (!pad || Number(pad[2]) !== 12 || Number(pad[3]) < 8) fail(`.voice-effects-note padding: ${pad && pad[0]}`);
+    if (!/justify-content:\s*center/.test(rule(".voice-effects-note .download-page-control"))) fail("the note's control isn't centred");
+    if (!/overflow-wrap:\s*anywhere/.test(rule(".download-page-hint.is-address"))) fail("the address doesn't wrap");
+    console.log("PASS: the note sits in the card's padding with its control centred, and the address wraps");
   }
 
   // 12. voice_updated: someone gave Ana Monster; a take without its own sound follows it.

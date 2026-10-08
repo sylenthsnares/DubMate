@@ -181,7 +181,7 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     h = harness();
     h.scheduler.want(chainA, {});
     await h.clock.advance(120);
-    h.requests[0].resolve({ status: 503, message: "Download and install the latest DubMate to use voice effects." });
+    h.requests[0].resolve({ status: 503, message: "Voice effects need the DubMate 2.0 installer. Get it from github.com/sylenthsnares/DubMate/releases." });
     await tick();
     if (h.ready.length || h.scheduler.state !== "unavailable") fail(`503: ${h.scheduler.state}`);
     h.scheduler.want(chainB, {});   // effects may have arrived since: it asks again
@@ -462,7 +462,8 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     app.stopBoothPlayback();
 
     // Voice effects not installed: 503, the raw take plays, controls off, message shown.
-    const message = "Download and install the latest DubMate to use voice effects.";
+    const message = "Voice effects need the DubMate 2.0 installer. Get it from github.com/sylenthsnares/DubMate/releases.";
+    const note = "Voice effects need the DubMate 2.0 installer, from the download page on GitHub. Takes play without them until then.";
     renderReply = () => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message }) });
     played.length = 0;
     await app.loadBoothLine(0);
@@ -474,7 +475,8 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     if (app.sliderGain.disabled) fail("Level turned off with the effects");
     const pitchKnob = pitchDial.closest(".analog-dial-wrapper");
     if (!pitchKnob || pitchKnob.getAttribute("aria-disabled") !== "true" || pitchKnob.tabIndex !== -1) fail("a locked dial is still in the tab order");
-    if (app.voiceEffectsNote.style.display === "none" || app.voiceEffectsNote.textContent !== message) fail(`note: ${app.voiceEffectsNote.textContent}`);
+    if (app.voiceEffectsNote.style.display === "none" || !app.voiceEffectsNote.textContent.startsWith(note)
+        || !app.voiceEffectsNote.querySelector(".download-page-control")) fail(`note: ${app.voiceEffectsNote.textContent}`);
     app.stopBoothPlayback();
 
     // Effects arrive: the next line load renders again and the controls come back.

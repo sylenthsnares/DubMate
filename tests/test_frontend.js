@@ -405,14 +405,13 @@ try {
       process.exit(1);
     }
 
-    // Test 6: Screening Project ZIP Download Buttons
-    const btnZipToolbar = dom.window.document.getElementById("btn-toolbar-project-zip");
-    const btnZipContainer = dom.window.document.getElementById("btn-download-project-zip");
-    if (!btnZipToolbar || !btnZipContainer) {
-      console.error("FAIL: Project ZIP download buttons not found in DOM!");
+    // Test 6: the premiere's Save menu has the editing project
+    const projectRow = dom.window.document.getElementById("save-menu-project");
+    if (!projectRow || projectRow.getAttribute("role") !== "menuitem") {
+      console.error("FAIL: the Save menu has no Editing project row!");
       process.exit(1);
     }
-    console.log("PASS: Project ZIP download buttons found in Screening DOM!");
+    console.log("PASS: the Save menu's Editing project row is in the Screening DOM!");
     if (typeof app.downloadFullProjectZip === "function") {
       app.downloadFullProjectZip();
       console.log("PASS: app.downloadFullProjectZip() executed cleanly without errors!");

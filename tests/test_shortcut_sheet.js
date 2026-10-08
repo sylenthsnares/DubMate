@@ -130,7 +130,8 @@ const NAMED = {
 /** The KeyboardEvent a US keyboard sends for a combo from SHORTCUT_GROUPS. */
 function eventInit(combo) {
   const shiftKey = combo.includes("Shift");
-  const name = combo.filter((k) => k !== "Shift");
+  const ctrlKey = combo.includes("Ctrl");
+  const name = combo.filter((k) => k !== "Shift" && k !== "Ctrl");
   if (name.length !== 1) fail(`unexpected combo ${JSON.stringify(combo)}`);
   const k = name[0];
   let init;
@@ -141,6 +142,7 @@ function eventInit(combo) {
     init.shiftKey = true;
     if (SHIFTED[init.key]) init.key = SHIFTED[init.key];
   }
+  if (ctrlKey) init.ctrlKey = true;
   return init;
 }
 
@@ -282,6 +284,8 @@ const VERIFY = {
     press(env, eventInit(combo));
     return calls.length === 1;
   },
+  "watch-seek": (env, combo, i) => premiereSeek(env, combo, 7) === (i === 0 ? 2 : 12),
+  "watch-line": (env, combo, i) => premiereSeek(env, combo, 3.2) === (i === 0 ? 2.5 : 4),
   "builder-play": (env, combo) => builderCall(env, combo, "togglePlayPause"),
   "builder-in": (env, combo) => builderCall(env, combo, "markInAtPlayhead"),
   "builder-out": (env, combo) => builderCall(env, combo, "markOutAtPlayhead"),
@@ -299,6 +303,29 @@ const VERIFY = {
     env.app.selectedSegmentIndex = 0;
     const calls = builderCalls(env, combo, "deleteSegment");
     return calls.length === 1 && calls[0][0] === 0;
+  },
+  "builder-undo": (env, combo) => {
+    const app = env.app;
+    app.currentStep = "editor";
+    // deleteSegment is a spy by now (builder-delete): take the undo step by hand.
+    app.segments = [{ start: 1, end: 2, text: "Hi", character: "A" }, { start: 3, end: 4, text: "Bye", character: "A" }];
+    app.pushUndo();
+    app.segments = app.segments.slice(0, 1);
+    blur(env);
+    press(env, eventInit(combo));
+    return app.segments.length === 2 && app.segments[1].text === "Bye";
+  },
+  "builder-line-move": (env, combo, i) => {
+    const app = env.app;
+    app.currentStep = "editor";
+    app.segments = [0, 1, 2].map((n) => ({ start: n * 2, end: n * 2 + 1, text: `Line ${n}`, character: "A" }));
+    app.selectedSegmentIndex = 1;
+    app.renderSegmentsList();
+    const row = (n) => env.doc.getElementById(`cue-card-${n}`);
+    row(1).focus();
+    press(env, eventInit(combo));
+    const to = i === 0 ? 0 : 2;
+    return app.selectedSegmentIndex === to && env.doc.activeElement === row(to);
   },
   help: (env, combo) => {
     if (env.page === "studio") showView(env, "landing");
@@ -330,6 +357,26 @@ function takesOnScreen(env) {
 
 const takeRadio = (env, id) => [...env.doc.querySelectorAll("#takes-list .take-row")]
   .find((r) => r.dataset.takeId === id)?.querySelector('[role="radio"]');
+
+/** The premiere as a member (their seeks stay local) at a position; returns where the key moved it. */
+function premiereSeek(env, combo, at) {
+  showView(env, "screening");
+  blur(env);
+  const app = env.app;
+  app.roomState = { state_version: 3, room_id: "R", host_id: "someone-else", users: {}, role_assignments: {}, takes: {},
+    pack: { duration: 20, video_url: "/v.mp4", lines: [
+      { line_id: "t1", index: 0, character: "Ana", start: 1, end: 2, duration: 1 },
+      { line_id: "t2", index: 1, character: "Ana", start: 2.5, end: 3.5, duration: 1 },
+      { line_id: "t3", index: 2, character: "Ana", start: 4, end: 5, duration: 1 },
+    ] } };
+  const video = app.screeningVideo;
+  let position = at;
+  Object.defineProperty(video, "paused", { configurable: true, get: () => true });
+  Object.defineProperty(video, "duration", { configurable: true, get: () => 20 });
+  Object.defineProperty(video, "currentTime", { configurable: true, get: () => position, set: (v) => { position = v; } });
+  press(env, eventInit(combo));
+  return position;
+}
 
 function nudgeBy(env, combo, delta) {
   showView(env, "booth");

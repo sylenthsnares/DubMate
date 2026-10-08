@@ -1580,6 +1580,40 @@ def import_pack_folder_tree(files_with_paths: List[Tuple[bytes, str]]) -> Dict[s
     }
 
 
+# A pack moved aside while a rebuild is swapped in (pack_builder._replace_pack_folder):
+# '.replaced-<8 hex>-<original folder name>'.
+REPLACED_PACK_PREFIX = ".replaced-"
+_REPLACED_PACK_RE = re.compile(r"^\.replaced-[0-9a-f]{8}-(.+)$")
+
+
+def restore_replaced_packs() -> List[str]:
+    """Puts back any pack a crash left moved aside during a rebuild: a '.replaced-*'
+    folder whose original folder is missing is renamed back. One whose original folder
+    exists (the new pack is in place) is left alone. Nothing is ever deleted.
+    Returns the restored pack folders."""
+    restored = []
+    for base in PACKS_DIRS:
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for name in names:
+            m = _REPLACED_PACK_RE.match(name)
+            if not m:
+                continue
+            original = os.path.join(base, m.group(1))
+            if os.path.lexists(original):
+                continue
+            try:
+                os.rename(os.path.join(base, name), original)
+            except OSError as ex:
+                print(f"[pack_loader] Couldn't put back the pack in {os.path.join(base, name)}: {ex}")
+                continue
+            print(f"[pack_loader] Put back pack '{m.group(1)}' from {name}: a rebuild of it was interrupted.")
+            restored.append(original)
+    return restored
+
+
 def get_all_packs(force_disk_scan: bool = False) -> Dict[str, PackInfo]:
     """
     Scans all pack directories with ultra-fast folder mtime caching.

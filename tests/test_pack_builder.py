@@ -14,6 +14,7 @@ import io
 import json
 import shutil
 import tempfile
+import time
 import unittest
 import wave
 import struct
@@ -657,7 +658,7 @@ NOTE This is a test subtitle file
                 shutil.rmtree(pack_folder, ignore_errors=True)
 
     def test_13_rebuild_same_pack_name_drops_stale_slices(self):
-        """Rebuilding a pack under the same name must not keep the previous build's line slices or icon."""
+        """Rebuilding a pack in its folder (Build again) must not keep the previous build's line slices or icon."""
         src_wav = os.path.join(self.tmp_dir, "rebuild_audio.wav")
         create_dummy_wav(src_wav, duration_sec=6.0)
         video_dummy = os.path.join(self.tmp_dir, "rebuild_video.mp4")
@@ -699,6 +700,7 @@ NOTE This is a test subtitle file
                 video_source_path=video_dummy,
                 backing_source_path=src_wav,
                 line_slices=second_slices,
+                folder_name=os.path.basename(pack_folder),
             )
             self.assertEqual(os.path.normpath(second_folder), os.path.normpath(pack_folder))
             second = pack_loader.load_pack(second_folder)
@@ -848,7 +850,7 @@ NOTE This is a test subtitle file
             calls.append("nonverbal")
             return segments + [dict(grunt)]
 
-        def fake_detect(vocals_wav, on_progress=None):
+        def fake_detect(vocals_wav, on_progress=None, cancel=None):
             calls.append(("detect", vocals_wav))
             on_progress(0.88, "Downloading speaker detection (about 35 MB, first time only)")
             statuses.append((progress_ref[0].status, progress_ref[0].message))
@@ -1357,6 +1359,15 @@ NOTE This is a test subtitle file
             self.assertTrue(plan["proc"].killed.is_set())
             self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
 
+            # Cancelling processing stops a running child at once.
+            cancel = threading.Event()
+            threading.Timer(0.1, cancel.set).start()
+            plan.clear()
+            plan.update(lines=["DUBMATE_SPEAKER_PROGRESS 0.1"], code=0, hang=True)
+            with self.assertRaises(pack_builder.BuildCancelled):
+                pack_builder.detect_speaker_turns(wav, cancel=cancel)
+            self.assertTrue(plan["proc"].killed.is_set())
+
             # The child can't even start.
             (turns, notice), _ = run([], 0, **{"raise": True})
             self.assertEqual((turns, notice), (None, pack_builder.SPEAKER_NOTICE_FAILED))
@@ -1447,6 +1458,666 @@ NOTE This is a test subtitle file
                          ["Speaker 1", "Speaker 2"])
 
 
+SRT_THREE = ("1\n00:00:01,000 --> 00:00:02,000\n[Levi] Move.\n\n"
+             "2\n00:00:02,500 --> 00:00:03,500\n[Kenny] Not yet.\n\n"
+             "3\n00:00:04,000 --> 00:00:05,000\nSomeone shouts.\n")
+
+
+class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
+    """What is installed, subtitles, retries, cancel, skipped stages and session expiry."""
+
+    def setUp(self):
+        from dubmate import builder_api
+        self.api = builder_api
+        self.tmp_dir = tempfile.mkdtemp(prefix="dubmate_test_builder_runs_")
+        self.session_ids = []
+        builder_api._GPU_STATE.update(value=None, started=False)
+
+    def tearDown(self):
+        for sid in self.session_ids:
+            BUILDER_SESSIONS.pop(sid, None)
+        self.api._GPU_STATE.update(value=None, started=False)
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def _session(self, sid, **extra):
+        folder = os.path.join(self.tmp_dir, sid)
+        os.makedirs(folder, exist_ok=True)
+        session = {"session_id": sid, "folder": folder, "duration": 10.0,
+                   "progress": pack_builder.BuildProgress(sid),
+                   "video_path": os.path.join(folder, "clip.mp4"), "created_at": time.time(),
+                   "vocals_path": None, "backing_path": None, "full_audio_path": None}
+        session.update(extra)
+        BUILDER_SESSIONS[sid] = session
+        self.session_ids.append(sid)
+        return session
+
+    def _fake_pipeline(self, calls, transcribe=None, gate=None):
+        """Patches the slow stages. Separation writes real files, so a retry can reuse them."""
+        from unittest import mock
+
+        def extract(video, out):
+            calls.append("extract")
+            if gate is not None:
+                gate.wait(30)
+            with open(out, "wb") as f:
+                f.write(b"RIFF")
+            return out
+
+        def separate(wav, out_dir):
+            calls.append("separate")
+            os.makedirs(out_dir, exist_ok=True)
+            paths = {k: os.path.join(out_dir, f"{k}.wav") for k in ("vocals", "backing")}
+            for p in paths.values():
+                with open(p, "wb") as f:
+                    f.write(b"RIFF")
+            return dict(paths, used_fallback=False)
+
+        def fake_transcribe(wav, **kwargs):
+            calls.append("transcribe")
+            if transcribe:
+                return transcribe()
+            return [{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Actor"}]
+
+        def detect(vocals_wav, on_progress=None, **kwargs):
+            calls.append("detect")
+            return None, ""
+
+        patches = [
+            mock.patch.object(pack_builder, "extract_audio_from_video", extract),
+            mock.patch.object(pack_builder, "separate_audio_stems", separate),
+            mock.patch.object(pack_builder, "transcribe_audio", fake_transcribe),
+            mock.patch.object(pack_builder, "add_nonverbal_segments", lambda segs, *a: segs),
+            mock.patch.object(pack_builder, "detect_speaker_turns", detect),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _wait_for(self, client, sid, statuses, timeout=30.0):
+        deadline = time.time() + timeout
+        state = None
+        while time.time() < deadline:
+            state = client.get(f"/api/builder/{sid}/status").json()
+            if state["status"] in statuses:
+                return state
+            time.sleep(0.02)
+        self.fail(f"status never reached {statuses}: {state}")
+
+    def test_25_capabilities_follow_find_spec(self):
+        """Each flag is an installed module; torch is never imported when it is missing."""
+        from unittest import mock
+        present = set()
+        detect_calls = []
+
+        def find_spec(name, *args, **kwargs):
+            return object() if name in present else None
+
+        def detect():
+            detect_calls.append(1)
+            return True, True, "cuda"
+
+        with mock.patch.object(self.api.importlib.util, "find_spec", find_spec), \
+                mock.patch.object(pack_builder, "detect_torch_and_cuda", detect):
+            client = TestClient(app)
+            present.update({"whisper", "yt_dlp", "pykakasi"})
+            caps = client.get("/api/builder/capabilities").json()
+            self.assertEqual(caps, {"separation": False, "transcription": True, "link_import": True,
+                                    "speakers": False, "romaji": True, "gpu": False})
+            self.assertEqual(detect_calls, [], "torch is missing, so the GPU probe never imports it")
+
+            present.clear()
+            present.update({"torch", "demucs", "sherpa_onnx"})
+            caps = client.get("/api/builder/capabilities").json()
+            self.assertEqual({k: caps[k] for k in ("separation", "transcription", "link_import", "speakers", "romaji")},
+                             {"separation": True, "transcription": False, "link_import": False,
+                              "speakers": True, "romaji": False})
+            # demucs alone isn't separation without torch.
+            present.discard("torch")
+            self.assertFalse(client.get("/api/builder/capabilities").json()["separation"])
+
+    def test_26_capabilities_gpu_from_null_to_bool(self):
+        """The GPU probe runs once in the background: null until it is known, then cached."""
+        import threading
+        from unittest import mock
+        release = threading.Event()
+        detect_calls = []
+
+        def detect():
+            detect_calls.append(1)
+            release.wait(5)
+            return True, True, "cuda"
+
+        with mock.patch.object(self.api.importlib.util, "find_spec", lambda name, *a, **k: object()), \
+                mock.patch.object(pack_builder, "detect_torch_and_cuda", detect):
+            client = TestClient(app)
+            self.assertIsNone(client.get("/api/builder/capabilities").json()["gpu"])
+            self.assertIsNone(client.get("/api/builder/capabilities").json()["gpu"])
+            release.set()
+            deadline = time.time() + 3
+            gpu = None
+            while gpu is None and time.time() < deadline:
+                gpu = client.get("/api/builder/capabilities").json()["gpu"]
+                time.sleep(0.02)
+            self.assertIs(gpu, True)
+            self.assertEqual(len(detect_calls), 1, "the probe runs once per process")
+
+    def test_27_subtitles_check(self):
+        """A dropped file is checked without a session: its lines and named speakers, or a clear 400."""
+        client = TestClient(app)
+        res = client.post("/api/builder/subtitles/check",
+                          files={"file": ("scene.srt", io.BytesIO(SRT_THREE.encode("utf-8")), "text/plain")})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"count": 3, "characters": ["Actor", "Kenny", "Levi"]})
+
+        vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n"
+        res = client.post("/api/builder/subtitles/check", files={"file": ("a.vtt", io.BytesIO(vtt.encode()), "text/vtt")})
+        self.assertEqual(res.json(), {"count": 1, "characters": ["Actor"]})
+
+        res = client.post("/api/builder/subtitles/check",
+                          files={"file": ("notes.srt", io.BytesIO(b"just some text"), "text/plain")})
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["detail"], "No timed lines in this file. Use an SRT or VTT file.")
+
+    def test_28_subtitles_live_in_the_session(self):
+        """Imported subtitles skip transcription; DELETE clears them and the next run transcribes."""
+        calls = []
+        self._fake_pipeline(calls)
+        sid = "t28"
+        session = self._session(sid)
+        client = TestClient(app)
+        res = client.post(f"/api/builder/{sid}/import_subtitles",
+                          files={"file": ("scene.srt", io.BytesIO(SRT_THREE.encode("utf-8")), "text/plain")})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(session["subtitle_segments"]), 3)
+
+        self.api._run_builder_pipeline_sync(sid)
+        progress = session["progress"]
+        self.assertEqual(progress.status, "transcribed")
+        self.assertNotIn("transcribe", calls)
+        self.assertNotIn("detect", calls, "the subtitles named the speakers")
+        self.assertEqual(progress.to_dict()["skipped"], ["transcription", "speakers"])
+        self.assertEqual([s["character"] for s in session["subtitle_segments"]], ["Levi", "Kenny", "Actor"],
+                         "the run doesn't change the stored subtitles")
+
+        res = client.delete(f"/api/builder/{sid}/subtitles")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(session["subtitle_segments"], [])
+        # The last run's lines are in progress.segments; they are not subtitles.
+        self.assertTrue(progress.segments)
+        calls.clear()
+        self.api._run_builder_pipeline_sync(sid)
+        self.assertIn("transcribe", calls)
+        self.assertEqual(progress.to_dict()["skipped"], [])
+        self.assertEqual(client.delete("/api/builder/nope/subtitles").status_code, 404)
+
+    def test_29_process_without_transcription(self):
+        """transcribe:false finishes with no lines: no transcription, no speaker detection, no placeholder."""
+        calls = []
+        self._fake_pipeline(calls)
+        session = self._session("t29")
+        self.api._run_builder_pipeline_sync("t29", None, "base", {"transcribe": False})
+        progress = session["progress"]
+        self.assertEqual(progress.status, "transcribed")
+        self.assertEqual(progress.segments, [])
+        self.assertEqual(calls, ["extract", "separate"])
+        self.assertEqual(progress.to_dict()["skipped"], ["transcription", "speakers"])
+
+    def test_29b_no_lines_heard_no_placeholder(self):
+        """Transcription hearing nothing doesn't invent a "Dialogue line 1"."""
+        calls = []
+        self._fake_pipeline(calls, transcribe=lambda: [])
+        session = self._session("t29b")
+        self.api._run_builder_pipeline_sync("t29b")
+        self.assertEqual(session["progress"].status, "transcribed")
+        self.assertEqual(session["progress"].segments, [])
+        self.assertEqual(session["progress"].to_dict()["skipped"], ["speakers"])
+
+    def test_30_retry_reuses_audio_and_separation(self):
+        """A failed transcription keeps its stage; the retry skips reading the audio and separating."""
+        calls = []
+        failing = {"on": True}
+
+        def transcribe():
+            if failing["on"]:
+                raise RuntimeError("Couldn't write out the lines.")
+            return [{"start": 1.0, "end": 2.0, "text": "Hi", "character": "Actor"}]
+
+        self._fake_pipeline(calls, transcribe=transcribe)
+        session = self._session("t30")
+        self.api._run_builder_pipeline_sync("t30")
+        state = session["progress"].to_dict()
+        self.assertEqual((state["status"], state["stage"], state["error"]),
+                         ("error", "transcription", "Couldn't write out the lines."))
+        self.assertEqual(calls, ["extract", "separate", "transcribe"])
+
+        failing["on"] = False
+        calls.clear()
+        self.api._run_builder_pipeline_sync("t30")
+        state = session["progress"].to_dict()
+        self.assertEqual(state["status"], "transcribed")
+        self.assertEqual(calls, ["transcribe", "detect"])
+        self.assertIsNone(state["error"])
+        self.assertIsNone(state["error_code"])
+        self.assertIs(state["voices_separated"], True)
+
+    def test_31_cancel_and_the_run_lock(self):
+        """Cancel stops at the next stage boundary; a new run waits for the last one to exit."""
+        import threading
+        calls = []
+        gate = threading.Event()
+        self._fake_pipeline(calls, gate=gate)
+        sid = "t31"
+        session = self._session(sid)
+        with TestClient(app) as client:
+            self.assertEqual(client.post(f"/api/builder/{sid}/process", json={}).status_code, 200)
+            self._wait_for(client, sid, {"extracting_audio"})
+            self.assertEqual(client.post(f"/api/builder/{sid}/cancel").status_code, 200)
+            gate.set()
+            state = self._wait_for(client, sid, {"cancelled", "transcribed", "error"})
+            self.assertEqual(state["status"], "cancelled")
+            self.assertEqual(calls, ["extract"], "nothing runs after the cancel")
+
+            # Cancel, then process again while the cancelled run is still in its stage.
+            gate.clear()
+            calls.clear()
+            os.remove(session["full_audio_path"])
+            client.post(f"/api/builder/{sid}/process", json={})
+            self._wait_for(client, sid, {"extracting_audio"})
+            client.post(f"/api/builder/{sid}/cancel")
+            client.post(f"/api/builder/{sid}/process", json={})
+            time.sleep(0.2)
+            state = client.get(f"/api/builder/{sid}/status").json()
+            self.assertEqual((state["status"], state["message"]), ("queued", "Finishing the last run"))
+            gate.set()
+            state = self._wait_for(client, sid, {"transcribed", "error"})
+            self.assertEqual(state["status"], "transcribed")
+            self.assertEqual(calls, ["extract", "extract", "separate", "transcribe", "detect"])
+            self.assertEqual(client.post("/api/builder/nope/cancel").status_code, 404)
+
+    def test_32_error_keeps_the_failed_stage(self):
+        """Separation failing reports stage stem_separation, not a reset stage."""
+        from unittest import mock
+        calls = []
+        self._fake_pipeline(calls)
+
+        def broken(wav, out_dir):
+            raise RuntimeError("Couldn't separate the voices.")
+
+        session = self._session("t32")
+        with mock.patch.object(pack_builder, "separate_audio_stems", broken):
+            self.api._run_builder_pipeline_sync("t32")
+        state = session["progress"].to_dict()
+        self.assertEqual((state["status"], state["stage"]), ("error", "stem_separation"))
+        self.assertEqual(state["error_code"], "processing_failed")
+
+    def test_33_sessions_expire_after_last_activity(self):
+        """Pruning uses touched_at (set by session routes), and never removes a running pipeline."""
+        import threading
+        now = time.time()
+        old = now - 3 * 3600
+        idle = self._session("t33_idle", created_at=old, touched_at=old)
+        active = self._session("t33_active", created_at=old, touched_at=old)
+        running = self._session("t33_running", created_at=old, touched_at=old, run_lock=threading.Lock())
+        client = TestClient(app)
+        client.get("/api/builder/t33_active/status")
+        self.assertGreaterEqual(active["touched_at"], now)
+        running["run_lock"].acquire()
+        try:
+            self.api.prune_old_builder_sessions()
+        finally:
+            running["run_lock"].release()
+        self.assertNotIn("t33_idle", BUILDER_SESSIONS)
+        self.assertFalse(os.path.isdir(idle["folder"]))
+        self.assertIn("t33_active", BUILDER_SESSIONS)
+        self.assertIn("t33_running", BUILDER_SESSIONS)
+
+
+    def test_34_replaced_run_never_overwrites_the_queued_one(self):
+        """A cancelled run that then fails (not by the cancel) leaves a newer queued run's status alone."""
+        import threading
+        calls = []
+        self._fake_pipeline(calls)
+        session = self._session("t34")
+        progress = session["progress"]
+
+        def extract_then_break(video, out):
+            # Cancel, then a newer /process arrives while this stage still runs; then it fails.
+            progress.cancel_requested.set()
+            progress.cancel_requested = threading.Event()
+            progress.update("queued", 0.0, "Finishing the last run")
+            raise RuntimeError("ffmpeg crashed.")
+
+        from unittest import mock
+        with mock.patch.object(pack_builder, "extract_audio_from_video", extract_then_break):
+            self.api._run_builder_pipeline_sync("t34")
+        state = progress.to_dict()
+        self.assertEqual((state["status"], state["message"]), ("queued", "Finishing the last run"))
+        self.assertIsNone(state["error"])
+
+    def test_35_basic_filter_stage_says_so(self):
+        """Without voice separation installed, the stage message names the backing track, not separation."""
+        calls = []
+        self._fake_pipeline(calls)
+        session = self._session("t35")
+        seen = []
+        real_installed = self.api._installed
+        from unittest import mock
+
+        def separate(wav, out_dir):
+            seen.append(session["progress"].message)
+            os.makedirs(out_dir, exist_ok=True)
+            paths = {k: os.path.join(out_dir, f"{k}.wav") for k in ("vocals", "backing")}
+            for p in paths.values():
+                with open(p, "wb") as f:
+                    f.write(b"RIFF")
+            return dict(paths, used_fallback=True, fallback_notice="Voice separation isn't installed, so a basic filter was used.")
+
+        with mock.patch.object(pack_builder, "separate_audio_stems", separate), \
+                mock.patch.object(self.api, "_installed", lambda name: False if name == "demucs" else real_installed(name)):
+            self.api._run_builder_pipeline_sync("t35")
+        self.assertEqual(seen, ["Making the backing track"])
+        self.assertIs(session["progress"].voices_separated, False)
+
+    def test_36_subtitles_wait_for_the_run(self):
+        """Importing subtitles keeps the edited lines (a cancelled Process again loses nothing); /status counts them."""
+        sid = "t36"
+        session = self._session(sid)
+        progress = session["progress"]
+        edited = [{"start": 1.0, "end": 2.0, "text": "My edit", "character": "Levi"}]
+        progress.segments = [dict(s) for s in edited]
+        client = TestClient(app)
+        self.assertEqual(client.get(f"/api/builder/{sid}/status").json()["subtitles_count"], 0)
+        res = client.post(f"/api/builder/{sid}/import_subtitles",
+                          files={"file": ("scene.srt", io.BytesIO(SRT_THREE.encode("utf-8")), "text/plain")})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["count"], 3)
+        self.assertEqual(progress.segments, edited, "the lines being edited stay until a run replaces them")
+        self.assertEqual(client.get(f"/api/builder/{sid}/status").json()["subtitles_count"], 3)
+        client.delete(f"/api/builder/{sid}/subtitles")
+        self.assertEqual(client.get(f"/api/builder/{sid}/status").json()["subtitles_count"], 0)
+
+    def test_37_build_again_under_a_new_title_replaces_the_pack(self):
+        """Build again after a title change rebuilds the same pack (same id and folder) with the new title."""
+        sid = "t37"
+        session = self._session(sid)
+        video = os.path.join(session["folder"], "clip.mp4")
+        create_dummy_mp4(video, duration_sec=4.0)
+        vocals = os.path.join(session["folder"], "vocals.wav")
+        create_dummy_wav(vocals, duration_sec=4.0)
+        session.update(video_path=video, vocals_path=vocals, full_audio_path=vocals, backing_path=vocals)
+        client = TestClient(app)
+        lines = [{"start": 0.5, "end": 1.8, "text": "Believe it!", "character": "Naruto"}]
+        folders = []
+        try:
+            first = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "Rename Test Pack", "segments": lines})
+            self.assertEqual(first.status_code, 200)
+            folders.append(os.path.join(pack_loader.PACKS_DIRS[0], first.json()["pack_id"]))
+            folders.append(os.path.join(pack_loader.PACKS_DIRS[0], "Rename Test Pack 2"))
+            again = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "Rename Test Pack 2", "segments": lines})
+            self.assertEqual(again.status_code, 200)
+            self.assertEqual(again.json()["pack_id"], first.json()["pack_id"], "Build again keeps the pack's id")
+            self.assertFalse(os.path.isdir(folders[1]), "no second pack is made")
+            with open(os.path.join(folders[0], "pack.json"), encoding="utf-8") as f:
+                self.assertEqual(json.load(f)["title"], "Rename Test Pack 2")
+        finally:
+            for folder in folders:
+                shutil.rmtree(folder, ignore_errors=True)
+
+    # --- Build again and data safety: a build never harms a pack that isn't its own ---
+
+    def _packs_dir(self):
+        """Points the packs folder at a temp folder for this test; returns it."""
+        from unittest import mock
+        packs = os.path.join(self.tmp_dir, "Packs")
+        os.makedirs(packs, exist_ok=True)
+        p = mock.patch.object(pack_loader, "PACKS_DIRS", [packs])
+        p.start()
+        self.addCleanup(p.stop)
+        return packs
+
+    def _other_pack(self, packs, name):
+        """A different pack already in the library, with a file no build would write."""
+        folder = os.path.join(packs, name)
+        os.makedirs(folder)
+        files = {"pack.json": '{"title": "Theirs"}', "theirs.txt": "keep me",
+                 "dub_video.mp4": "their video", "01.00.wav": "their line"}
+        for fname, body in files.items():
+            with open(os.path.join(folder, fname), "w", encoding="utf-8") as f:
+                f.write(body)
+        return folder, files
+
+    def _assert_untouched(self, folder, files):
+        self.assertEqual(sorted(os.listdir(folder)), sorted(files))
+        for fname, body in files.items():
+            with open(os.path.join(folder, fname), encoding="utf-8") as f:
+                self.assertEqual(f.read(), body, fname)
+
+    def _assemble_args(self, title):
+        src = os.path.join(self.tmp_dir, "src")
+        os.makedirs(src, exist_ok=True)
+        wav = os.path.join(src, "line.wav")
+        if not os.path.isfile(wav):
+            create_dummy_wav(wav, duration_sec=1.0)
+        line = {"filename": "00.50.wav", "file_path": wav, "start": 0.5, "end": 1.0,
+                "character": "Levi", "caption": "Mine"}
+        return dict(pack_name=title, video_source_path=os.path.join(src, "missing.mp4"),
+                    backing_source_path=wav, line_slices=[line])
+
+    def _compile_session(self, sid, **extra):
+        session = self._session(sid, **extra)
+        vocals = os.path.join(session["folder"], "vocals.wav")
+        create_dummy_wav(vocals, duration_sec=3.0)
+        session.update(vocals_path=vocals, full_audio_path=vocals, backing_path=vocals)
+        return session
+
+    def _no_leftovers(self, packs):
+        self.assertEqual([n for n in os.listdir(packs) if n.startswith(".")], [], "no staging folders stay behind")
+
+    def _files(self, folder):
+        out = {}
+        for name in os.listdir(folder):
+            with open(os.path.join(folder, name), "rb") as f:
+                out[name] = f.read()
+        return out
+
+    LINES = [{"start": 0.5, "end": 1.5, "text": "Mine", "character": "Levi"}]
+
+    def test_38_new_pack_never_replaces_a_pack_with_the_same_name(self):
+        """A first build whose title matches another pack's folder gets its own folder; the other pack is untouched."""
+        packs = self._packs_dir()
+        theirs, files = self._other_pack(packs, "Levi vs Beast Titan")
+        folder = pack_builder.assemble_pack(**self._assemble_args("Levi vs Beast Titan"))
+        self.assertEqual(os.path.basename(folder), "Levi vs Beast Titan 2")
+        self._assert_untouched(theirs, files)
+        with open(os.path.join(folder, "pack.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["title"], "Levi vs Beast Titan")
+        # Names differing only by case are one folder on Windows: never shared either.
+        folder3 = pack_builder.assemble_pack(**self._assemble_args("levi vs beast titan"))
+        self.assertEqual(os.path.basename(folder3), "levi vs beast titan 3")
+        self._assert_untouched(theirs, files)
+        self._no_leftovers(packs)
+
+    def test_39_build_again_with_another_packs_title_keeps_both(self):
+        """Build again renamed to another pack's title rebuilds this session's pack (same id); the other pack is untouched."""
+        packs = self._packs_dir()
+        theirs, files = self._other_pack(packs, "Their Pack")
+        sid = "t39"
+        self._compile_session(sid)
+        client = TestClient(app)
+        first = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "My Pack", "segments": self.LINES})
+        self.assertEqual(first.status_code, 200)
+        again = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "Their Pack", "segments": self.LINES})
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["pack_id"], first.json()["pack_id"], "the pack keeps its id")
+        self.assertEqual(sorted(os.listdir(packs)), ["My Pack", "Their Pack"])
+        self._assert_untouched(theirs, files)
+        with open(os.path.join(packs, "My Pack", "pack.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["title"], "Their Pack")
+
+    def test_40_build_failing_midway_keeps_the_built_pack(self):
+        """A rebuild that fails while writing, or can't move the old pack (open files on Windows), leaves the pack as it was."""
+        from unittest import mock
+        packs = self._packs_dir()
+        folder = pack_builder.assemble_pack(**self._assemble_args("Kept Pack"))
+        before = self._files(folder)
+
+        def still_same():
+            self.assertEqual(self._files(folder), before)
+            self._no_leftovers(packs)
+
+        args = dict(self._assemble_args("Kept Pack, renamed"), folder_name="Kept Pack")
+        with mock.patch.object(pack_loader, "write_caption_files", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                pack_builder.assemble_pack(**args)
+        still_same()
+
+        real_rename = os.rename
+
+        def locked(src, dst):
+            if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(folder)):
+                raise PermissionError(32, "The process cannot access the file")
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", locked), mock.patch.object(pack_builder.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                pack_builder.assemble_pack(**args)
+        self.assertEqual(str(ctx.exception), pack_builder.PACK_IN_USE_MESSAGE)
+        still_same()
+
+        # The new build can't be moved in after the old one moved aside: the old one goes back.
+        def stuck(src, dst):
+            if os.path.basename(src).startswith(".building-"):
+                raise PermissionError(5, "Access is denied")
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", stuck), mock.patch.object(pack_builder.time, "sleep"):
+            with self.assertRaises(PermissionError):
+                pack_builder.assemble_pack(**args)
+        still_same()
+
+        # Through the API the failure reaches the Build step as an error, and the pack stays.
+        sid = "t40"
+        session = self._compile_session(sid, pack_folder=folder)
+        with mock.patch.object(pack_loader, "write_caption_files", side_effect=OSError("disk full")):
+            res = TestClient(app).post(f"/api/builder/{sid}/compile", json={"pack_name": "Kept Pack", "segments": self.LINES})
+        self.assertEqual(res.status_code, 500)
+        self.assertEqual(res.json()["detail"], "The pack couldn't be added to your library. Try again.")
+        self.assertEqual(session["progress"].status, "error")
+        self.assertEqual(session["pack_folder"], folder)
+        still_same()
+
+    def test_41_build_again_after_the_packs_folder_changed_makes_a_new_pack(self):
+        """After the packs folder changes, Build again doesn't reuse the folder name there (it may be another pack)."""
+        from unittest import mock
+        old_packs = os.path.join(self.tmp_dir, "OldPacks")
+        os.makedirs(old_packs)
+        with mock.patch.object(pack_loader, "PACKS_DIRS", [old_packs]):
+            mine = pack_builder.assemble_pack(**self._assemble_args("Same Name"))
+        packs = self._packs_dir()
+        theirs, files = self._other_pack(packs, "Same Name")
+        sid = "t41"
+        self._compile_session(sid, pack_folder=mine)
+        res = TestClient(app).post(f"/api/builder/{sid}/compile", json={"pack_name": "Mine Again", "segments": self.LINES})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["pack_id"], "Mine Again")
+        self._assert_untouched(theirs, files)
+        self.assertTrue(os.path.isdir(mine), "the pack in the old packs folder stays")
+
+    def _swap_dirs(self):
+        """A pack folder and a staged rebuild of it, for _replace_pack_folder."""
+        packs = self._packs_dir()
+        pack_dir, old_files = self._other_pack(packs, "Swap Pack")
+        staging = os.path.join(packs, ".building-test")
+        os.makedirs(staging)
+        with open(os.path.join(staging, "pack.json"), "w", encoding="utf-8") as f:
+            f.write('{"title": "New"}')
+        return packs, pack_dir, old_files, staging
+
+    def test_42_pack_left_aside_by_a_crash_comes_back(self):
+        """A crash between moving the old pack aside and moving the new one in: the next start, and the next build, put the old pack back."""
+        from unittest import mock
+        from dubmate import packs_cache
+        packs = self._packs_dir()
+        folder = pack_builder.assemble_pack(**self._assemble_args("Crash Pack"))
+        before = self._files(folder)
+        args = dict(self._assemble_args("Crash Pack"), folder_name="Crash Pack")
+        real_rename = os.rename
+
+        class Crash(BaseException):
+            pass
+
+        def dies_after_moving_aside(src, dst):
+            if os.path.basename(dst).startswith(".replaced-"):
+                return real_rename(src, dst)
+            raise Crash()  # the process is gone: nothing else gets renamed
+
+        def crash():
+            with mock.patch.object(pack_builder.os, "rename", dies_after_moving_aside):
+                with self.assertRaises(Crash):
+                    pack_builder.assemble_pack(**args)
+            self.assertFalse(os.path.exists(folder))
+            set_aside = [n for n in os.listdir(packs) if n.startswith(".replaced-") and n != os.path.basename(aside)]
+            self.assertEqual(len(set_aside), 1)
+
+        # A pack set aside by another build whose new pack is in place is left alone.
+        other = os.path.join(packs, "Other Pack")
+        os.makedirs(other)
+        aside = os.path.join(packs, ".replaced-0a1b2c3d-Other Pack")
+        os.makedirs(aside)
+
+        crash()
+        saved_cache = packs_cache.PACKS_CACHE
+        self.addCleanup(setattr, packs_cache, "PACKS_CACHE", saved_cache)
+        packs_cache.refresh_packs()  # engine start
+        self.assertEqual(self._files(folder), before)
+        self.assertTrue(os.path.isdir(aside), "a set-aside pack whose folder exists is kept")
+        self.assertTrue(os.path.isdir(other))
+
+        crash()
+        folder_again = pack_builder.assemble_pack(**args)  # the next build puts it back first
+        self.assertEqual(folder_again, folder)
+        self.assertEqual([n for n in os.listdir(packs) if n.startswith(".")], [os.path.basename(aside)])
+
+    def test_43_failed_rollback_says_where_the_old_pack_is(self):
+        """If the new pack can't go in and the old one can't go back, the error names where the old pack is, and nothing is deleted."""
+        from unittest import mock
+        packs, pack_dir, old_files, staging = self._swap_dirs()
+        real_rename = os.rename
+
+        def stuck(src, dst):
+            name = os.path.basename(src)
+            if name.startswith(".building-") or name.startswith(".replaced-"):
+                raise PermissionError(5, "Access is denied")
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", stuck), mock.patch.object(pack_builder.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                pack_builder._replace_pack_folder(staging, pack_dir)
+        aside = [n for n in os.listdir(packs) if n.startswith(".replaced-")]
+        self.assertEqual(len(aside), 1)
+        aside = os.path.join(packs, aside[0])
+        self.assertIn(f"The old pack is safe in {aside}", str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, PermissionError)
+        self._assert_untouched(aside, old_files)
+        self.assertEqual(os.listdir(staging), ["pack.json"])
+
+    def test_44_interrupt_while_swapping_puts_the_old_pack_back(self):
+        """Ctrl+C while the new pack is moved in: the old pack goes back in place."""
+        from unittest import mock
+        packs, pack_dir, old_files, staging = self._swap_dirs()
+        real_rename = os.rename
+
+        def interrupted(src, dst):
+            if os.path.basename(src).startswith(".building-"):
+                raise KeyboardInterrupt()
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                pack_builder._replace_pack_folder(staging, pack_dir)
+        self._assert_untouched(pack_dir, old_files)
+        self.assertEqual([n for n in os.listdir(packs) if n.startswith(".replaced-")], [])
+
+
 if __name__ == "__main__":
     unittest.main()
-

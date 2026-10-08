@@ -261,14 +261,16 @@ class TestEffectsUnavailable(RenderCase):
             with self.assertRaises(audio_processor.EffectsUnavailable) as caught:
                 audio_processor.render_take_cached(self.take, vocal_chain.CLEAN, self.render_dir)
         self.assertEqual(str(caught.exception),
-                         "Download and install the latest DubMate to use voice effects.")
+                         "Voice effects need the DubMate 2.0 installer. "
+                         "Get it from github.com/sylenthsnares/DubMate/releases.")
         self.assertFalse(os.path.exists(self.render_dir))
 
-    def test_export_path_fails_instead_of_dropping_the_effects(self):
+    def test_export_path_saves_the_take_without_its_effects(self):
         take = {"wav_path": self.take, "render_dir": self.render_dir, "chain": vocal_chain.chain_from_legacy(0, 0.3)}
         with mock.patch.object(vocal_chain, "available", return_value=False):
-            with self.assertRaises(audio_processor.EffectsUnavailable):
-                audio_processor._render_take(take, SR, 0.0, "test")
+            audio = audio_processor._render_take(take, SR, -6.0, "test")
+        np.testing.assert_array_equal(audio, audio_processor.read_wav_mono(self.take, SR) * np.float32(10 ** (-6.0 / 20)))
+        self.assertFalse(os.path.exists(self.render_dir))
 
     def test_upload_level_falls_back_without_effects(self):
         cache = tempfile.mkdtemp(prefix="dm_render_level_")
@@ -416,15 +418,15 @@ class TestRoomRoutes(UploadCase):
         self.assertIn("| Sound: Custom |", cues)
         self.assertIn("| Sound: Clean |", cues)
 
-    def test_exports_fail_with_the_missing_effects_message(self):
+    def test_project_zip_saves_without_effects_and_says_so(self):
         self._room()
-        self._upload("t1000", speech_like(duration=1.0, lead=0.1))
+        self._upload("t1000", speech_like(duration=1.0, lead=0.1), reverb_wet=0.3)
         with mock.patch.object(vocal_chain, "available", return_value=False):
-            zip_res = self.client.get(f"/api/rooms/{self.ROOM}/export/project_zip?user_id=hostT")
-            video_res = self.client.get(f"/api/rooms/{self.ROOM}/export/download")
-        for res in (zip_res, video_res):
-            self.assertEqual(res.status_code, 503, res.text)
-            self.assertEqual(res.json()["detail"], audio_processor.EFFECTS_MISSING_MESSAGE)
+            manifest, cues = self._zip()
+        self.assertEqual(manifest["version"], "2.3")
+        self.assertIs(manifest["master"]["voice_effects"], False)
+        self.assertIn("| Sound: none (voice effects not installed) |", cues)
+        self.assertNotIn("| Sound: Custom |", cues)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 // pack_builder.js - High-Performance Pack Authoring Studio Controller
 // Handles Video Ingestion, Demucs/Whisper Progress SSE, Interactive Timeline & Cue Editor, and Pack Assembly
-import { escapeHtml, showToast, initModeDropdown, initTooltips, isDialogOpen } from './ui_common.js';
+import { escapeHtml, showToast, initModeDropdown, initTooltips, isDialogOpen, openDialog, plural } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
 import { packLanes } from './builder_lanes.js';
 
@@ -12,17 +12,75 @@ function detailText(body, fallback) {
   return fallback;
 }
 
+// Smooth scrolling, unless the system asks for reduced motion.
+function scrollBehavior() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+}
+
+// Kana and CJK ideographs: a line in Japanese script can be converted to romaji.
+const JAPANESE_SCRIPT = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+// Step 1's hero line names only the steps that are installed.
+const HERO_LINES = {
+  both: 'Add a clip. DubMate separates the voices from the background and writes out each line for you to check.',
+  separation: 'Add a clip and a subtitle file. DubMate separates the voices from the background.',
+  neither: 'Add a clip and a subtitle file. DubMate turns them into a scene you can dub.',
+};
+
+// The processing screen's rows, in order: the engine's stage key, the status while it
+// runs, the headline while it runs and the headline when it fails.
+const PROCESS_STAGES = [
+  { key: 'upload', status: 'uploading', active: 'Uploading the video', failed: "The upload didn't finish" },
+  { key: 'audio_extraction', status: 'extracting_audio', active: 'Reading the audio', failed: "Couldn't read the audio" },
+  {
+    key: 'stem_separation', status: 'separating_stems', active: 'Separating the voices', failed: "Couldn't separate the voices",
+    title: 'Separate the voices', desc: 'Splits dialogue from music and effects',
+    // Without voice separation installed, the engine makes the backing track with a basic filter.
+    basic: { title: 'Make the backing track', desc: 'Uses a basic filter to quiet the voices', active: 'Making the backing track', failed: "Couldn't make the backing track" },
+  },
+  { key: 'transcription', status: 'transcribing', active: 'Writing out the lines', failed: "Couldn't write out the lines" },
+  { key: 'speakers', status: 'detecting_speakers', active: 'Detecting who speaks', failed: "Couldn't detect who speaks" },
+];
+// Failures before the engine runs: the subtitles show on the lines row, a refused start on the first stage.
+const PROCESS_FAILURES = {
+  subtitles: { row: 'transcription', headline: "Couldn't read the subtitles" },
+  start: { row: 'audio_extraction', headline: "Processing didn't start" },
+  ended: { row: 'audio_extraction', headline: 'That session has ended' },
+};
+const ICON_TICK = '<svg class="icon-tick" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+// Whether CSS can size a textarea to its text (the selected line's text grows without JS).
+const FIELD_SIZING = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
+
+// The line rows' icon actions.
+const ICON_PLAY = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 19 12 6 20 6 4"/></svg>';
+const ICON_MIC = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
+const ICON_GLOBE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+const ICON_TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+const ICON_SPINNER = '<svg class="spinning" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+const ICON_ALERT = '<svg class="icon-alert" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+
+// The steps in order. Process is never a destination of its own.
+const STEP_ORDER = ['upload', 'process', 'editor', 'compile'];
+// Engine statuses whose lines can be edited (a build in progress or done included).
+const LINES_READY = ['transcribed', 'done', 'slicing', 'assembling'];
+// Engine statuses with no run going.
+const STOPPED = ['error', 'cancelled', 'idle'];
+const UNDO_LIMIT = 50;
+const UNDO_TOAST_MS = 6000;
+const SAVE_FAILED = "Couldn't save your changes. Trying again…";
+
+// Character colours, in an order that keeps neighbours apart. Red (recording) and
+// green (a confirmed take) mean something else in DubMate, so no character gets them.
+// Amber is the selection colour (and the primary), so it comes later, apart from terracotta.
 const PALETTE = [
-  '#d97706', // Vintage Amber
-  '#cca458', // Walnut Gold
-  '#dc2626', // Pilot Red
-  '#16a34a', // Studio Olive
-  '#b45309', // Terracotta Bronze
-  '#7c5cff', // Electric Violet
-  '#ec4899', // Magenta Neon
-  '#06b6d4', // Cyan Console
-  '#8b5cf6', // Purple Tone
-  '#f59e0b', // Amber Glow
+  '#06b6d4', // cyan
+  '#ec4899', // magenta
+  '#cca458', // brass
+  '#7c5cff', // violet
+  '#d97706', // amber
+  '#60a5fa', // sky
+  '#b45309', // terracotta
+  '#a3a3f5', // periwinkle
 ];
 
 export class PackBuilderApp {
@@ -31,11 +89,29 @@ export class PackBuilderApp {
     this.videoFile = null;
     this.coverFile = null;
     this.subFile = null;
+    this.subFileSent = false; // the chosen file went to the engine (it then holds its lines)
+    // Lines in the subtitles the session holds on the engine (a link's own, an imported
+    // file, or a restored session's), 0 for none, and the chip's name for them.
+    this.engineSubtitleCount = 0;
+    this.engineSubtitleName = '';
+    // GET /api/builder/capabilities: what is installed. Null until it answers, and
+    // nothing is hidden until then.
+    this.capabilities = null;
     this.duration = 0.0;
     this.segments = [];
     this.characterColors = new Map();
     this.currentStep = 'upload';
     this.currentIngestTab = 'file'; // 'file' | 'url'
+
+    // Processing: each run gets a number, so a cancelled run's late callbacks are ignored.
+    this.processRun = 0;
+    this.processState = null; // the last state renderProcessState() drew
+    this.uploadInRun = false; // the run started with a file to upload (shows the Upload row)
+    this.uploadXhr = null;
+    this.processRequest = null; // the POST /process in flight, so a Cancel lands after it
+    this.runSkipped = []; // stages this run skips, known before it starts (no transcription)
+    this.progressSource = null;
+    this.progressPoll = null;
 
     // Waveform & Timeline Engine State
     this.waveformPeaks = [];
@@ -77,33 +153,130 @@ export class PackBuilderApp {
 
     this.animationFrameId = null;
 
+    // Never losing work: the furthest step this session reached (an index in STEP_ORDER),
+    // the undo steps, the save queue, the last build and an explicit leave.
+    this.reachedStep = 0;
+    this.undoStack = [];
+    this.undoToasts = []; // {toast, step}: a toast's Undo, closed once its step is gone
+    this.save = { wanted: false, inFlight: false, failed: false, retryTimer: null, delay: 0 };
+    this.builtSignature = null;
+    this.compiling = false;
+    this.compileFilled = false;
+    this.editorWarning = '';
+    this.textBefore = null; // a line's text when its field took focus, for undo
+    this.leaving = false;
+
     this.initDOM();
     this.initEvents();
     this.initKeyboardShortcuts();
-    this.detectHardware();
+    this.loadCapabilities();
+    this.initSession();
   }
 
-  async detectHardware() {
-    try {
-      const res = await fetch('/api/system/encoder');
-      if (res.ok) {
-        const data = await res.json();
-        if (this.deviceLabel) {
-          const isHw = data.is_hardware;
-          this.deviceLabel.innerText = isHw ? 'Fast processing' : 'Standard processing';
-        }
-        if (this.devicePill) {
-          this.devicePill.dataset.tip = data.is_hardware
-            ? 'Your graphics card speeds up processing.'
-            : 'No supported graphics card found, so processing uses the processor and takes longer.';
-          if (data.is_hardware) {
-            this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
-          }
-        }
+  /** Reads what is installed, and asks again each second (up to 20 s) while the GPU check runs. */
+  async loadCapabilities() {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, 1000));
+      let caps = null;
+      try {
+        const res = await fetch('/api/builder/capabilities');
+        if (res.ok) caps = await res.json();
+      } catch (e) {
+        console.warn('[PackBuilder] Could not read what is installed:', e);
       }
-    } catch (e) {
-      console.warn('[PackBuilder] Could not detect hardware acceleration engine:', e);
+      if (!caps) return;
+      this.applyCapabilities(caps);
+      if (caps.gpu !== null) return;
     }
+  }
+
+  /** Whether a Pack Builder tool is installed. Unknown counts as installed, so nothing is hidden by mistake. */
+  has(tool) {
+    return !this.capabilities || this.capabilities[tool] !== false;
+  }
+
+  applyCapabilities(caps) {
+    const before = this.capabilities;
+    this.capabilities = caps;
+
+    // The pill has one signal: whether the graphics card speeds up the AI steps.
+    const gpu = caps.gpu;
+    const showPill = typeof gpu === 'boolean' && (this.has('separation') || this.has('transcription'));
+    if (this.devicePill) {
+      this.devicePill.hidden = !showPill;
+      this.devicePill.classList.toggle('is-gpu', gpu === true);
+      this.devicePill.dataset.tip = gpu
+        ? 'Your graphics card speeds up separating voices and writing out lines.'
+        : 'No supported graphics card, so separating voices and writing out lines use the processor and take longer.';
+    }
+    if (this.deviceLabel) this.deviceLabel.textContent = gpu ? 'Fast processing' : 'Standard processing';
+
+    if (this.heroSub) {
+      const separation = this.has('separation');
+      const key = separation && this.has('transcription') ? 'both' : (separation ? 'separation' : 'neither');
+      this.heroSub.textContent = HERO_LINES[key];
+    }
+
+    // Paste link: without the tools, say how to add them instead of failing after a paste.
+    const canImport = this.has('link_import');
+    if (this.urlInputGroup) this.urlInputGroup.hidden = !canImport;
+    if (this.urlImporterSub) this.urlImporterSub.hidden = !canImport;
+    if (this.urlImportMissing) {
+      this.urlImportMissing.hidden = canImport;
+      const desktop = typeof window.__TAURI__?.core?.invoke === 'function';
+      this.urlImportMissingDesktop.hidden = !desktop;
+      this.urlImportMissingSource.hidden = desktop;
+    }
+
+    const canTranscribe = this.has('transcription');
+    if (this.subLabel) this.subLabel.textContent = canTranscribe ? 'Subtitles (optional)' : 'Subtitles (needed for lines)';
+    if (this.subHint) this.subHint.hidden = canTranscribe;
+    this.updateStartButtonLabel();
+
+    // aria-disabled rather than disabled, so the tooltip still says why on hover and focus.
+    if (this.btnTranscribeLine) {
+      if (canTranscribe) {
+        // Like Start and End: available once a line is selected.
+        this._markButtonsOn = null;
+        this.updateMarkButtons();
+      } else {
+        this.btnTranscribeLine.setAttribute('aria-disabled', 'true');
+        this.btnTranscribeLine.dataset.tip = "Automatic transcription isn't installed.";
+      }
+    }
+    // The line rows offer Transcribe and Romaji by what is installed.
+    const rowsChanged = !before || before.transcription !== caps.transcription || before.romaji !== caps.romaji;
+    if (this.currentStep === 'editor' && rowsChanged) this.renderSegmentsList();
+  }
+
+  /** Subtitles will give the lines: a checked file, or the ones a link import brought. */
+  hasSubtitles() {
+    return !!this.subFile || this.engineSubtitleCount > 0;
+  }
+
+  /** Without transcription and without subtitles, processing writes no lines. */
+  willWriteLines() {
+    return this.has('transcription') || this.hasSubtitles();
+  }
+
+  updateStartButtonLabel() {
+    if (!this.labelStartProcess) return;
+    // The microphone means recording elsewhere in DubMate; going back to the lines keeps only the chevron.
+    this.iconStartProcess.style.display = this.isProcessed() ? 'none' : ''; // .btn svg outranks [hidden]
+    if (this.isProcessed()) this.labelStartProcess.textContent = 'Back to Edit lines';
+    else this.labelStartProcess.textContent = this.willWriteLines() ? 'Process video' : 'Process video without lines';
+  }
+
+  /** This session's video has been processed: its lines have been in the editor. */
+  isProcessed() {
+    return !!this.sessionId && this.reachedStep >= STEP_ORDER.indexOf('editor');
+  }
+
+  /** Romaji applies to a Japanese line (by the chosen language or its script), when the tool is installed. */
+  romajiApplies(seg) {
+    if (!this.has('romaji')) return false;
+    const lang = this.selectTranscribeLang ? this.selectTranscribeLang.value : '';
+    return lang === 'ja' || lang === 'ja_romaji' || JAPANESE_SCRIPT.test((seg && seg.text) || '');
   }
 
   initDOM() {
@@ -148,24 +321,51 @@ export class PackBuilderApp {
     this.btnChangeVideo = document.getElementById('btn-change-video');
     this.inputPackTitle = document.getElementById('input-pack-title');
     this.selectTranscribeLang = document.getElementById('select-transcribe-lang');
+    this.heroSub = document.getElementById('builder-hero-sub');
+    this.urlInputGroup = document.getElementById('url-input-group');
+    this.urlImporterSub = document.getElementById('url-importer-sub');
+    this.urlImportMissing = document.getElementById('url-import-missing');
+    this.urlImportMissingDesktop = document.getElementById('url-import-missing-desktop');
+    this.urlImportMissingSource = document.getElementById('url-import-missing-source');
+    this.subLabel = document.getElementById('sub-label');
+    this.subHint = document.getElementById('sub-hint');
     this.subDropzone = document.getElementById('sub-dropzone');
     this.inputSubFile = document.getElementById('input-sub-file');
-    this.subFilenameLabel = document.getElementById('sub-filename-label');
+    this.subChip = document.getElementById('sub-chip');
+    this.btnRemoveSub = document.getElementById('btn-remove-sub');
+    this.subError = document.getElementById('sub-error');
     this.coverDropzone = document.getElementById('cover-dropzone');
     this.inputCoverFile = document.getElementById('input-cover-file');
-    this.coverFilenameLabel = document.getElementById('cover-filename-label');
+    this.coverChip = document.getElementById('cover-chip');
+    this.btnRemoveCover = document.getElementById('btn-remove-cover');
     this.btnStartProcess = document.getElementById('btn-start-process');
+    this.labelStartProcess = document.getElementById('label-start-process');
+    this.iconStartProcess = document.getElementById('icon-start-process');
+    this.sessionEndedNotice = document.getElementById('session-ended-notice');
+    this.btnReprocess = document.getElementById('btn-reprocess');
+    this.reprocessConfirm = document.getElementById('reprocess-confirm');
+    this.changeConfirm = document.getElementById('change-confirm');
+
+    // Header: the stepper and Exit, and the dialog Exit opens before lines are built.
+    this.stepper = document.getElementById('builder-stepper');
+    this.btnExitBuilder = document.getElementById('btn-exit-builder');
+    this.leaveDialog = document.getElementById('modal-leave-builder');
 
     // Step 2: Processing progress elements
+    this.processCard = document.getElementById('process-card');
+    this.processRadar = document.getElementById('process-radar');
     this.processHeadline = document.getElementById('process-headline');
     this.processSubtext = document.getElementById('process-subtext');
+    this.processProgress = document.getElementById('process-progress');
     this.builderProgressFill = document.getElementById('builder-progress-fill');
     this.processStageText = document.getElementById('process-stage-text');
     this.processPercentText = document.getElementById('process-percent-text');
-    this.stageExtract = document.getElementById('stage-extract');
-    this.stageStems = document.getElementById('stage-stems');
-    this.stageWhisper = document.getElementById('stage-whisper');
-    this.stageSpeakers = document.getElementById('stage-speakers');
+    this.processRows = new Map(PROCESS_STAGES.map((s) => [s.key, document.querySelector(`.pipeline-item[data-stage="${s.key}"]`)]));
+    this.processActions = document.getElementById('process-actions');
+    this.btnProcessRetry = document.getElementById('btn-process-retry');
+    this.btnProcessWrite = document.getElementById('btn-process-write');
+    this.btnProcessBack = document.getElementById('btn-process-back');
+    this.btnProcessCancel = document.getElementById('btn-process-cancel');
 
     // Step 3: Editor elements
     this.editorVideo = document.getElementById('editor-video');
@@ -224,6 +424,7 @@ export class PackBuilderApp {
     this.compileSuccessBox = document.getElementById('compile-success-box');
     this.btnDownloadPackZip = document.getElementById('btn-download-pack-zip');
     this.btnPlaytestNow = document.getElementById('btn-playtest-now');
+    this.compileStaleBox = document.getElementById('compile-stale-box');
   }
 
   initEvents() {
@@ -270,43 +471,90 @@ export class PackBuilderApp {
       }
     });
     this.videoDropzone.addEventListener('click', () => this.inputVideoFile.click());
+    // The dropzones are role=button: Enter and Space open the file picker too.
+    [this.videoDropzone, this.subDropzone, this.coverDropzone].forEach((zone) => {
+      zone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          zone.click();
+        }
+      });
+    });
     this.inputVideoFile.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length > 0) {
         this.handleVideoSelected(e.target.files[0]);
       }
     });
+    // Change on a processed video asks first, under the video: its lines would go.
     this.btnChangeVideo.addEventListener('click', () => {
-      this.videoFile = null;
-      this.sessionId = null;
-      this.videoSelectedCard.style.display = 'none';
-      if (this.ingestPanelFile) this.ingestPanelFile.style.display = this.currentIngestTab === 'file' ? 'block' : 'none';
-      if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = this.currentIngestTab === 'url' ? 'block' : 'none';
-      if (this.videoThumbContainer) {
-        this.videoThumbContainer.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+      if (!this.isProcessed()) {
+        this.changeVideo();
+        return;
       }
-      this.btnStartProcess.disabled = true;
+      this.askInline(this.changeConfirm, `Replace your ${plural(this.segments.length, 'line')} with a new video?`);
     });
+    document.getElementById('btn-change-confirm').addEventListener('click', () => this.changeVideo());
+    document.getElementById('btn-change-cancel').addEventListener('click', () => this.closeInline(this.changeConfirm, this.btnChangeVideo));
+    this.btnReprocess.addEventListener('click', () => {
+      this.askInline(this.reprocessConfirm, `Replace your ${plural(this.segments.length, 'line')} with a new pass?`);
+    });
+    document.getElementById('btn-reprocess-confirm').addEventListener('click', () => {
+      this.reprocessConfirm.hidden = true;
+      this.startProcessingPipeline();
+    });
+    document.getElementById('btn-reprocess-cancel').addEventListener('click', () => this.closeInline(this.reprocessConfirm, this.btnReprocess));
 
-    // 2. Subtitle file selection
+    // 2. Subtitle file selection: checked at once, then shown as a chip.
     this.subDropzone.addEventListener('click', () => this.inputSubFile.click());
     this.inputSubFile.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length > 0) {
-        this.subFile = e.target.files[0];
-        this.subFilenameLabel.innerText = `✓ ${this.subFile.name}`;
+        this.handleSubtitleSelected(e.target.files[0]);
       }
     });
+    this.btnRemoveSub.addEventListener('click', () => this.removeSubtitles());
 
     // 3. Cover art selection
     this.coverDropzone.addEventListener('click', () => this.inputCoverFile.click());
     this.inputCoverFile.addEventListener('change', (e) => {
-      if (e.target.files && e.target.files.length > 0) {
-        this.coverFile = e.target.files[0];
-        this.coverFilenameLabel.innerText = `✓ ${this.coverFile.name}`;
-      }
+      if (e.target.files && e.target.files.length > 0) this.setCoverFile(e.target.files[0]);
+    });
+    this.btnRemoveCover.addEventListener('click', () => {
+      this.inputCoverFile.value = '';
+      this.setCoverFile(null);
+      this.coverDropzone.focus();
+    });
+
+    ['dragenter', 'dragover'].forEach((name) => {
+      [this.subDropzone, this.coverDropzone].forEach((zone) => zone.addEventListener(name, (e) => {
+        e.preventDefault();
+        zone.classList.add('drag-over');
+      }));
+    });
+    ['dragleave', 'drop'].forEach((name) => {
+      [this.subDropzone, this.coverDropzone].forEach((zone) => zone.addEventListener(name, (e) => {
+        e.preventDefault();
+        zone.classList.remove('drag-over');
+      }));
+    });
+    this.subDropzone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length > 0) this.handleSubtitleSelected(files[0]);
+    });
+    this.coverDropzone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length > 0) this.setCoverFile(files[0]);
     });
 
     // 4. Start AI processing button
-    this.btnStartProcess.addEventListener('click', () => this.startProcessingPipeline());
+    // On a processed session the same button reads "Back to Edit lines".
+    this.btnStartProcess.addEventListener('click', () => {
+      if (this.isProcessed()) this.setStep('editor');
+      else this.startProcessingPipeline();
+    });
+    this.btnProcessRetry.addEventListener('click', () => this.retryProcessing());
+    this.btnProcessWrite.addEventListener('click', () => this.writeLinesMyself());
+    this.btnProcessBack.addEventListener('click', () => this.backToVideo());
+    this.btnProcessCancel.addEventListener('click', () => this.cancelProcessing());
 
     // 5. Video player controls
     this.btnPlayPause.addEventListener('click', () => this.togglePlayPause());
@@ -413,16 +661,47 @@ export class PackBuilderApp {
     window.addEventListener('pointerup', (e) => this.handleGlobalPointerUp(e));
     window.addEventListener('pointercancel', (e) => this.handleGlobalPointerUp(e, true));
 
-    // 12. Character management
-    this.btnAddCharacter.addEventListener('click', () => this.promptAddCharacter());
+    // 12. Character management and the Lines column
+    this.btnAddCharacter.addEventListener('click', () => this.addCharacterChip());
     this.initCastScroller();
+    this.initCastEditing();
+    this.initLinesList();
 
-    // 13. Proceed to compile
+    // 13. Proceed to compile. A change to the Pack details after a build offers Build again.
     this.btnProceedToCompile.addEventListener('click', () => this.goToCompileStep());
     this.btnExecuteCompile.addEventListener('click', () => this.executePackCompilation());
+    document.getElementById('btn-build-again').addEventListener('click', () => this.executePackCompilation());
+    [this.compilePackName, this.compileAuthor, this.compileSubtitle].forEach((field) => {
+      field.addEventListener('input', () => this.updateBuildState());
+    });
 
-    // 15. Playtest button
-    this.btnPlaytestNow.addEventListener('click', () => this.launchPlaytestSession());
+    // 15. Record it now
+    // It opens the studio on purpose: no "leave?" question on the way.
+    const record = () => {
+      this.leaving = true;
+      this.launchPlaytestSession();
+    };
+    this.btnPlaytestNow.addEventListener('click', record);
+    document.getElementById('btn-stale-record').addEventListener('click', record);
+
+    // 16a. The stepper's reached steps, Exit, and the session details kept per tab.
+    this.stepper.addEventListener('click', (e) => {
+      const btn = e.target.closest('button.builder-step');
+      if (btn && btn.dataset.step !== this.currentStep) this.goToStep(btn.dataset.step);
+    });
+    this.btnExitBuilder.addEventListener('click', (e) => {
+      if (!this.mustAskBeforeLeaving()) return;
+      e.preventDefault();
+      this.openLeaveDialog(this.btnExitBuilder.href);
+    });
+    document.getElementById('btn-leave-stay').addEventListener('click', () => this.closeLeaveDialog && this.closeLeaveDialog());
+    document.getElementById('btn-leave-confirm').addEventListener('click', () => {
+      this.leaving = true;
+      if (this.closeLeaveDialog) this.closeLeaveDialog();
+      window.location.href = this.leaveHref || '/';
+    });
+    this.inputPackTitle.addEventListener('input', () => this.saveSessionDetails());
+    this.selectTranscribeLang.addEventListener('change', () => this.saveSessionDetails());
 
     // 16. Window resize listener for dynamic timeline layout scaling
     let resizeTimer = null;
@@ -473,12 +752,26 @@ export class PackBuilderApp {
     window.addEventListener('keydown', (e) => {
       // A focused control that already handled the key (the Cast row's arrows) keeps it.
       if (isDialogOpen() || e.defaultPrevented) return;
-      const tag = document.activeElement?.tagName;
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      // Ctrl/Cmd+Z undoes the editor's last change. A text field keeps its own undo.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        const textField = tag === 'INPUT' || tag === 'TEXTAREA' || !!active?.isContentEditable;
+        if (this.currentStep === 'editor' && !textField && !this.isDragging) {
+          e.preventDefault();
+          this.undo();
+        }
+        return;
+      }
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
         return;
       }
 
       if (this.currentStep !== 'editor') return;
+      // A focused button or link keeps Space (it presses it), and Delete or Backspace on a
+      // button, a Cast chip or a toast never deletes the selected line.
+      const onControl = tag === 'BUTTON' || tag === 'A' || !!active?.closest?.('#character-chips-list, #toast-container');
+      if (onControl && (e.code === 'Space' || e.key === 'Delete' || e.key === 'Backspace')) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -507,19 +800,237 @@ export class PackBuilderApp {
     });
   }
 
-  setStep(stepName) {
+  /**
+   * Shows a step. The URL follows (?session=&step=) with a history entry, so browser Back
+   * moves between steps: fromHistory (popstate, restore) writes nothing, replace rewrites
+   * the current entry. Process gets no entry of its own: it is not a destination.
+   */
+  setStep(stepName, { fromHistory = false, replace = false } = {}) {
+    if (this.currentStep === 'editor' && stepName !== 'editor') this.pauseMedia();
     this.currentStep = stepName;
+    const reached = Math.max(this.reachedStep, STEP_ORDER.indexOf(stepName));
+    if (reached !== this.reachedStep) {
+      this.reachedStep = reached;
+      // A reload knows the lines were opened, whatever the engine says later.
+      this.saveSessionDetails();
+    }
     Object.keys(this.steps).forEach(k => {
       this.steps[k].classList.toggle('active', k === stepName);
-      this.navSteps[k].classList.toggle('active', k === stepName);
-      const isPast = ['upload', 'process', 'editor', 'compile'].indexOf(k) < ['upload', 'process', 'editor', 'compile'].indexOf(stepName);
-      this.navSteps[k].classList.toggle('completed', isPast);
     });
+    this.renderStepper();
+    if (stepName === 'upload') this.updateVideoStepActions();
+    if (!fromHistory && stepName !== 'process') this.writeUrl(stepName, replace);
 
     if (stepName === 'editor') {
       this.setupEditorView();
+    } else {
+      this.closeUndoToasts(); // their Undo acts on the editor
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }
+
+  /**
+   * The stepper: steps already reached (Video, Edit lines, Build) are buttons, the active one
+   * with aria-current="step". Process, steps not reached yet, and every step while processing
+   * runs are plain text.
+   */
+  renderStepper() {
+    const current = STEP_ORDER.indexOf(this.currentStep);
+    STEP_ORDER.forEach((step, i) => {
+      const old = this.navSteps[step];
+      const asButton = step !== 'process' && this.currentStep !== 'process' && i <= this.reachedStep;
+      let el = old;
+      if ((old.tagName === 'BUTTON') !== asButton) {
+        el = document.createElement(asButton ? 'button' : 'div');
+        if (asButton) el.type = 'button';
+        el.id = old.id;
+        el.className = old.className;
+        el.dataset.step = step;
+        el.append(...old.childNodes);
+        old.replaceWith(el);
+        this.navSteps[step] = el;
+      }
+      el.classList.toggle('active', i === current);
+      // Process is done only once its lines opened: a cancelled or failed run isn't.
+      const done = step === 'process' ? this.reachedStep >= STEP_ORDER.indexOf('editor') : i <= this.reachedStep;
+      el.classList.toggle('completed', i !== current && done);
+      if (i === current) el.setAttribute('aria-current', 'step');
+      else el.removeAttribute('aria-current');
+    });
+  }
+
+  /** A stepper button: Video, Edit lines or Build. */
+  goToStep(step) {
+    if (step === 'compile') this.goToCompileStep();
+    else this.setStep(step);
+  }
+
+  /** Writes ?session=<id>&step=<step> (or the bare page without a session) as a new history entry, or over the current one. */
+  writeUrl(step, replace = false) {
+    const url = this.sessionId
+      ? `${window.location.pathname}?session=${encodeURIComponent(this.sessionId)}&step=${step}`
+      : window.location.pathname;
+    const same = url === window.location.pathname + window.location.search;
+    if (replace || same) history.replaceState({ step }, '', url);
+    else history.pushState({ step }, '', url);
+  }
+
+  // --- The session in the URL: reloads, browser Back and leaving ---
+
+  /** Reopens a session named in the URL, follows browser Back and Forward, and guards leaving. */
+  initSession() {
+    window.addEventListener('popstate', (e) => this.onHistoryStep(e.state));
+    window.addEventListener('beforeunload', (e) => {
+      if (!this.mustAskBeforeLeaving()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('session');
+    if (id) this.restoreSession(id, params.get('step'));
+  }
+
+  /**
+   * Browser Back or Forward: another session's entry reopens it; this session's moves to its
+   * step. Leaving the processing screen this way stops the run, as Cancel does, so it never
+   * opens the editor over the lines later.
+   */
+  onHistoryStep(state) {
+    if (this.currentStep === 'process' && (this.processState || {}).status !== 'error') this.stopRun();
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('session');
+    const step = (state && state.step) || params.get('step') || 'upload';
+    if (id && id !== this.sessionId) {
+      this.restoreSession(id, step);
+      return;
+    }
+    if ((step === 'editor' || step === 'compile') && this.isProcessed()) {
+      if (step === 'compile' && this.goToCompileStep({ fromHistory: true })) return;
+      this.setStep('editor', { fromHistory: true });
+      return;
+    }
+    this.setStep('upload', { fromHistory: true });
+  }
+
+  /**
+   * Opens a session from the URL. A run still going shows the processing screen. Lines that
+   * were edited reopen the editor (or Build) whatever the engine's status: a failed build,
+   * a failed or cancelled Process again, or lines written after a failed transcription.
+   * An ended session says so on Step 1.
+   */
+  async restoreSession(id, step) {
+    let res = null;
+    try {
+      res = await fetch(`/api/builder/${encodeURIComponent(id)}/status`);
+    } catch (e) {
+      res = null;
+    }
+    if (!res || !res.ok) {
+      this.sessionEnded();
+      return;
+    }
+    const data = await res.json();
+    this.processRun++;
+    this.stopProgressUpdates();
+    this.resetSessionState();
+    this.sessionId = id;
+    this.uploadInRun = false;
+    this.runSkipped = [];
+    const details = this.restoreSessionDetails();
+    this.showEngineSubtitles(data.subtitles_count || 0, 'Your subtitles');
+    const status = data.status;
+    const editorIndex = STEP_ORDER.indexOf('editor');
+    const reachedEditor = step === 'editor' || step === 'compile' || (details && details.reached >= editorIndex);
+
+    if (!LINES_READY.includes(status) && !STOPPED.includes(status)) {
+      // Still processing: the processing screen follows the run.
+      this.setStep('process', { fromHistory: true });
+      this.renderProcessState(data);
+      this.listenToProgressSSE();
+      return;
+    }
+    if (LINES_READY.includes(status) || (reachedEditor && step !== 'upload')) {
+      const lines = await this.fetchLines(id);
+      if (lines.duration > 0) this.duration = lines.duration;
+      const toBuild = step === 'compile' && (lines.segments || []).length > 0;
+      this.openEditor(
+        { segments: lines.segments || [], voices_separated: data.voices_separated, warning: data.warning },
+        { quiet: true, fromHistory: toBuild, replace: !toBuild },
+      );
+      if (toBuild) this.goToCompileStep({ replace: true });
+      return;
+    }
+    if (reachedEditor) {
+      // Video (or a failed Process again) with lines to go back to.
+      const lines = await this.fetchLines(id);
+      if (lines.duration > 0) this.duration = lines.duration;
+      this.takeLines({ segments: lines.segments || [], voices_separated: data.voices_separated, warning: data.warning });
+      this.reachedStep = editorIndex;
+    }
+    if (status === 'error') {
+      this.setStep('process', { fromHistory: true });
+      this.renderProcessState(data);
+    } else {
+      this.setStep('upload', { replace: true });
+    }
+  }
+
+  /** The session's lines on the engine: {segments, characters, duration}, or {} when they can't be read. */
+  async fetchLines(id) {
+    try {
+      const res = await fetch(`/api/builder/${encodeURIComponent(id)}/segments`);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('[PackBuilder] Could not read the lines:', e);
+    }
+    return {};
+  }
+
+  /** The session in the URL has ended (the engine restarted, or it expired): say so on Step 1 and clean the URL. */
+  sessionEnded() {
+    this.sessionEndedNotice.hidden = false;
+    history.replaceState(null, '', window.location.pathname);
+  }
+
+  /** The pack name, spoken language and video name are kept per session for this tab. */
+  saveSessionDetails() {
+    if (!this.sessionId) return;
+    const details = {
+      packName: this.inputPackTitle.value,
+      language: this.selectTranscribeLang.value,
+      videoName: this.selectedVideoName.textContent,
+      reached: this.reachedStep,
+    };
+    try {
+      sessionStorage.setItem(`dubmate_builder_session_${this.sessionId}`, JSON.stringify(details));
+    } catch (e) { /* storage full or blocked: only the details are lost */ }
+  }
+
+  /** Puts back this session's details from sessionStorage, and returns them (null when there are none). */
+  restoreSessionDetails() {
+    let details = null;
+    try {
+      details = JSON.parse(sessionStorage.getItem(`dubmate_builder_session_${this.sessionId}`) || 'null');
+    } catch (e) { details = null; }
+    if (details && details.packName) this.inputPackTitle.value = details.packName;
+    if (details && Array.from(this.selectTranscribeLang.options).some((o) => o.value === details.language)) {
+      this.selectTranscribeLang.value = details.language;
+    }
+    this.showSelectedVideo((details && details.videoName) || 'Your video', '');
+    return details;
+  }
+
+  /** Leaving would lose something: a save that hasn't gone through, or lines on Edit lines or Build not built as they are. */
+  mustAskBeforeLeaving() {
+    if (this.leaving) return false;
+    if (this.save.wanted || this.save.inFlight || this.save.failed) return true;
+    return (this.currentStep === 'editor' || this.currentStep === 'compile') && !this.isBuiltCurrent();
+  }
+
+  /** Exit (or the menu's Studio) before the lines are built: Stay, or Leave to `href`. */
+  openLeaveDialog(href) {
+    this.leaveHref = href;
+    this.closeLeaveDialog = openDialog(this.leaveDialog, { returnFocus: this.btnExitBuilder });
   }
 
   // --- STEP 1: Video Selection & Ingestion ---
@@ -546,9 +1057,11 @@ export class PackBuilderApp {
   handleVideoSelected(file) {
     this.videoFile = file;
     this.sessionId = null;
-    this.selectedVideoName.innerText = file.name;
+    this.resetSessionState();
+    this.updateVideoStepActions();
+    this.selectedVideoName.textContent = file.name;
     const mbSize = (file.size / (1024 * 1024)).toFixed(1);
-    this.selectedVideoStats.innerText = `${mbSize} MB`;
+    this.selectedVideoStats.textContent = `${mbSize} MB`;
 
     if (!this.inputPackTitle.value) {
       const base = file.name.replace(/\.[^/.]+$/, '').replace(/[_\-]+/g, ' ');
@@ -563,6 +1076,163 @@ export class PackBuilderApp {
     if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
     this.videoSelectedCard.style.display = 'flex';
     this.btnStartProcess.disabled = false;
+  }
+
+  /** Change: forgets the video and its session, and shows the dropzone again. */
+  changeVideo() {
+    this.videoFile = null;
+    this.sessionId = null;
+    this.resetSessionState();
+    this.writeUrl('upload');
+    this.videoSelectedCard.style.display = 'none';
+    if (this.ingestPanelFile) this.ingestPanelFile.style.display = this.currentIngestTab === 'file' ? 'block' : 'none';
+    if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = this.currentIngestTab === 'url' ? 'block' : 'none';
+    if (this.videoThumbContainer) {
+      this.videoThumbContainer.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    }
+    this.btnStartProcess.disabled = true;
+    this.updateVideoStepActions();
+  }
+
+  /** Shows the chosen video's card in place of the dropzone and the link field. */
+  showSelectedVideo(name, stats) {
+    this.selectedVideoName.textContent = name;
+    this.selectedVideoStats.textContent = stats;
+    if (this.ingestPanelFile) this.ingestPanelFile.style.display = 'none';
+    if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
+    this.videoSelectedCard.style.display = 'flex';
+    this.btnStartProcess.disabled = false;
+  }
+
+  /** A new video or session: nothing of the last one's steps, undo, build or Pack details carries over. */
+  resetSessionState() {
+    this.reachedStep = 0;
+    this.clearUndo();
+    this.builtSignature = null;
+    this.compiledPackId = null;
+    this.compileFilled = false;
+    this.segments = [];
+    this.selectedSegmentIndex = null;
+    this.characterColors = new Map();
+    // The engine's subtitles belonged to the last session; a chosen file goes to the next one.
+    this.subFileSent = false;
+    if (this.engineSubtitleCount) {
+      this.engineSubtitleCount = 0;
+      if (!this.subFile) this.showFileChip(this.subChip, this.subDropzone, null);
+    }
+    // A save still waiting belonged to the last session's lines.
+    clearTimeout(this.save.retryTimer);
+    this.save = { wanted: false, inFlight: false, failed: false, retryTimer: null, delay: 0 };
+    if (this.sessionEndedNotice) this.sessionEndedNotice.hidden = true;
+  }
+
+  /** Video on a processed session: the primary goes back to the lines, and processing again asks first. */
+  updateVideoStepActions() {
+    const processed = this.isProcessed();
+    this.btnReprocess.hidden = !processed;
+    if (!processed) {
+      this.reprocessConfirm.hidden = true;
+      this.changeConfirm.hidden = true;
+    }
+    this.updateStartButtonLabel();
+  }
+
+  /** Shows an inline question (a sentence, then its buttons) and moves focus to its Cancel. */
+  askInline(box, question) {
+    box.querySelector('.inline-confirm-text').textContent = question;
+    box.hidden = false;
+    box.querySelector('.btn-secondary').focus();
+  }
+
+  closeInline(box, returnFocus) {
+    box.hidden = true;
+    if (returnFocus) returnFocus.focus();
+  }
+
+  /** Shows a chosen file as a chip (name, summary, ×) in place of its dropzone; null shows the dropzone. */
+  showFileChip(chip, dropzone, name, summary = '') {
+    chip.hidden = !name;
+    dropzone.hidden = !!name;
+    chip.querySelector('.file-chip-name').textContent = name || '';
+    chip.querySelector('.file-chip-summary').textContent = summary;
+  }
+
+  setCoverFile(file) {
+    this.coverFile = file;
+    this.showFileChip(this.coverChip, this.coverDropzone, file ? file.name : null, file ? this.formatFileSize(file.size) : '');
+  }
+
+  formatFileSize(bytes) {
+    return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  showSubError(message) {
+    this.subError.textContent = message || '';
+    this.subError.hidden = !message;
+  }
+
+  /** Checks a subtitle file at once. A good one becomes a chip; a bad one isn't kept and says why. */
+  async handleSubtitleSelected(file) {
+    this.showSubError('');
+    const form = new FormData();
+    form.append('file', file);
+    let error = '';
+    let data = null;
+    try {
+      const res = await fetch('/api/builder/subtitles/check', { method: 'POST', body: form });
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        error = detailText(await res.json().catch(() => ({})), 'No timed lines in this file. Use an SRT or VTT file.');
+      }
+    } catch (e) {
+      error = "Couldn't read this file. Try again.";
+    }
+    this.inputSubFile.value = '';
+    if (!data) {
+      this.showSubError(error);
+      return;
+    }
+    this.subFile = file;
+    this.subFileSent = false;
+    const lines = `${data.count} line${data.count === 1 ? '' : 's'}`;
+    // The parser names a line nobody claims "Actor"; that isn't a speaker found.
+    const speakers = (data.characters || []).filter((c) => c && c !== 'Actor').length;
+    const summary = speakers ? `${lines} · ${speakers} speaker${speakers === 1 ? '' : 's'} found` : lines;
+    this.showFileChip(this.subChip, this.subDropzone, file.name, summary);
+    this.updateStartButtonLabel();
+  }
+
+  /** Shows the subtitles the session holds on the engine as a chip, unless a chosen file takes their place. */
+  showEngineSubtitles(count, name) {
+    this.engineSubtitleCount = count;
+    this.engineSubtitleName = name;
+    if (count && !this.subFile) this.showFileChip(this.subChip, this.subDropzone, name, plural(count, 'line'));
+    this.updateStartButtonLabel();
+  }
+
+  /**
+   * × on the subtitles chip. A file not sent yet is only forgotten, and the session's own
+   * subtitles (a link's) show again. Subtitles on the engine are removed there too.
+   */
+  async removeSubtitles() {
+    const onEngine = this.subFile ? this.subFileSent : this.engineSubtitleCount > 0;
+    if (this.sessionId && onEngine) {
+      try {
+        const res = await fetch(`/api/builder/${this.sessionId}/subtitles`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(String(res.status));
+      } catch (e) {
+        this.showToast("Couldn't remove the subtitles. Try again.");
+        return;
+      }
+      this.engineSubtitleCount = 0;
+    }
+    this.subFile = null;
+    this.subFileSent = false;
+    this.showSubError('');
+    this.showFileChip(this.subChip, this.subDropzone, null);
+    this.showEngineSubtitles(this.engineSubtitleCount, this.engineSubtitleName);
+    (this.subDropzone.hidden ? this.btnRemoveSub : this.subDropzone).focus();
   }
 
   async handleUrlImport() {
@@ -630,6 +1300,7 @@ export class PackBuilderApp {
       }
 
       const data = await res.json();
+      this.resetSessionState();
       this.sessionId = data.session_id;
       this.duration = data.duration;
       this.videoFile = null;
@@ -644,35 +1315,24 @@ export class PackBuilderApp {
         this.videoThumbContainer.innerHTML = `<img src="${escapeHtml(data.cover_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;" alt="Cover Thumbnail">`;
       }
 
-      if (data.device_info) {
-        const dev = data.device_info;
-        if (dev.cuda_available) {
-          this.deviceLabel.innerText = 'Fast processing';
-          this.devicePill.dataset.tip = 'Your graphics card speeds up processing.';
-          this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
-        } else {
-          this.deviceLabel.innerText = 'Standard processing';
-          this.devicePill.dataset.tip = 'No supported graphics card found, so processing uses the processor and takes longer.';
-        }
-      }
-
       // Brief delay so user sees all green checkmarks
       await new Promise(r => setTimeout(r, 450));
 
       // Update selected card
-      this.selectedVideoName.innerText = data.title || data.filename;
-      this.selectedVideoStats.innerText = this.formatTime(data.duration);
+      this.selectedVideoName.textContent = data.title || data.filename;
+      this.selectedVideoStats.textContent = this.formatTime(data.duration);
 
       if (this.ingestPanelFile) this.ingestPanelFile.style.display = 'none';
       if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
       this.videoSelectedCard.style.display = 'flex';
       this.btnStartProcess.disabled = false;
 
-      if (data.has_subtitles) {
-        this.showToast(`Video imported with ${data.subtitles_count} subtitle lines`);
-      } else {
-        this.showToast('Video imported');
-      }
+      // The video's own subtitles give the lines, unless a file was chosen (it replaces them).
+      this.showEngineSubtitles(data.has_subtitles ? data.subtitles_count : 0, 'From the video');
+      this.updateVideoStepActions();
+      this.saveSessionDetails();
+      this.writeUrl('upload', true);
+      this.showToast('Video imported');
     } catch (e) {
       clearInterval(timerInterval);
       this.showUrlImportError(e.message, e.details);
@@ -704,47 +1364,22 @@ export class PackBuilderApp {
 
   async startProcessingPipeline() {
     if (!this.videoFile && !this.sessionId) return;
-
+    const run = ++this.processRun;
+    this.runSkipped = [];
+    this.stopProgressUpdates();
+    this.uploadInRun = !this.sessionId;
     this.setStep('process');
-    this.processHeadline.innerText = 'Preparing your video';
-    this.processSubtext.innerText = '';
-    this.builderProgressFill.style.width = '10%';
-    this.processPercentText.innerText = '10%';
+    this.renderProcessState({ status: 'starting', progress: 0, message: 'Starting' });
 
     try {
-      // If local file was selected and session hasn't been created yet
-      if (this.videoFile && !this.sessionId) {
-        this.processHeadline.innerText = 'Uploading';
-        this.processSubtext.innerText = '';
-
-        const formData = new FormData();
-        formData.append('file', this.videoFile);
-
-        const uploadRes = await fetch('/api/builder/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!uploadRes.ok) {
-          const err = await uploadRes.json().catch(() => ({}));
-          throw new Error(detailText(err, "The upload didn't finish. Try again."));
-        }
-
-        const uploadData = await uploadRes.json();
-        this.sessionId = uploadData.session_id;
-        this.duration = uploadData.duration;
-
-        if (uploadData.device_info) {
-          const dev = uploadData.device_info;
-          if (dev.cuda_available) {
-            this.deviceLabel.innerText = 'Fast processing';
-            this.devicePill.dataset.tip = 'Your graphics card speeds up processing.';
-            this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
-          } else {
-            this.deviceLabel.innerText = 'Standard processing';
-            this.devicePill.dataset.tip = 'No supported graphics card found, so processing uses the processor and takes longer.';
-          }
-        }
+      if (!this.sessionId) {
+        const uploaded = await this.uploadVideo(run);
+        if (run !== this.processRun) return;
+        this.sessionId = uploaded.session_id;
+        this.duration = uploaded.duration;
+        // From here a reload finds this session again.
+        this.saveSessionDetails();
+        this.writeUrl('upload', true);
       }
 
       if (this.coverFile) {
@@ -754,6 +1389,7 @@ export class PackBuilderApp {
           method: 'POST',
           body: coverData,
         });
+        if (run !== this.processRun) return;
         if (!coverRes.ok) {
           this.showToast("The cover image didn't upload. You can build the pack without it.");
         }
@@ -766,117 +1402,399 @@ export class PackBuilderApp {
           method: 'POST',
           body: subData,
         });
-        if (subRes.ok) {
-          const subJson = await subRes.json();
-          if (subJson.segments && subJson.segments.length > 0) {
-            this.segments = subJson.segments;
-          }
+        if (run !== this.processRun) return;
+        // Never fall through to transcription when the chosen subtitles didn't arrive.
+        if (!subRes.ok) {
+          const err = await subRes.json().catch(() => ({}));
+          throw this.processError('subtitles', detailText(err, 'Check the file and try again.'));
         }
+        // The engine holds them now. The lines in the editor stay until the run finishes.
+        const subJson = await subRes.json();
+        this.subFileSent = true;
+        this.engineSubtitleCount = subJson.count || 0;
+        this.engineSubtitleName = this.subFile.name;
       }
 
-      const lang = this.selectTranscribeLang.value;
-      const processRes = await fetch(`/api/builder/${this.sessionId}/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: lang, whisper_model: 'base' }),
-      });
-      if (!processRes.ok) {
-        const err = await processRes.json().catch(() => ({}));
-        throw new Error(detailText(err, "Processing didn't start. Try again."));
-      }
-
-      this.listenToProgressSSE();
-
+      await this.requestProcessing(run);
     } catch (ex) {
-      this.processHeadline.innerText = 'Processing stopped';
-      this.processSubtext.innerText = ex.message;
-      this.showToast(ex.message);
+      this.failProcessing(run, ex);
+    }
+  }
+
+  /** An error that names where it stopped: 'upload', 'subtitles', 'start' or an engine stage. */
+  processError(stage, message) {
+    const err = new Error(message);
+    err.stage = stage;
+    return err;
+  }
+
+  /** Shows a failure the page found itself, unless that run was cancelled. */
+  failProcessing(run, ex) {
+    if (run !== this.processRun) return;
+    console.warn('[PackBuilder] Processing stopped:', ex);
+    const last = this.processState || {};
+    this.renderProcessState({
+      status: 'error',
+      progress: 0,
+      stage: ex.stage || last.stage || 'start',
+      error: ex.message || "Processing didn't finish. Try again.",
+      skipped: last.skipped || [],
+    });
+  }
+
+  /** Uploads the chosen video with progress. Resolves the engine's answer, or null when cancelled. */
+  uploadVideo(run) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      this.uploadXhr = xhr;
+      const size = this.videoFile.size;
+      xhr.upload.onprogress = (e) => {
+        if (run !== this.processRun) return;
+        this.renderProcessState({ status: 'uploading', progress: 0, upload: { loaded: e.loaded, total: e.lengthComputable ? e.total : size } });
+      };
+      xhr.onload = () => {
+        this.uploadXhr = null;
+        let body = {};
+        try { body = JSON.parse(xhr.responseText || '{}'); } catch (e) { body = {}; }
+        if (xhr.status >= 200 && xhr.status < 300 && body.session_id) resolve(body);
+        else reject(this.processError('upload', detailText(body, 'Try again.')));
+      };
+      xhr.onerror = () => {
+        this.uploadXhr = null;
+        reject(this.processError('upload', 'Check that DubMate is still running, then try again.'));
+      };
+      xhr.onabort = () => {
+        this.uploadXhr = null;
+        resolve(null);
+      };
+      const form = new FormData();
+      form.append('file', this.videoFile);
+      xhr.open('POST', '/api/builder/upload');
+      this.renderProcessState({ status: 'uploading', progress: 0, upload: { loaded: 0, total: size } });
+      xhr.send(form);
+    });
+  }
+
+  /** POSTs /process for this session, then follows its progress. */
+  async requestProcessing(run) {
+    const lang = this.selectTranscribeLang.value;
+    const body = { language: lang, whisper_model: 'base' };
+    if (!this.willWriteLines()) body.transcribe = false;
+    // Without transcription or subtitles, those two stages read Skipped from the start.
+    this.runSkipped = body.transcribe === false ? ['transcription', 'speakers'] : [];
+    this.renderProcessState({ status: 'queued', progress: 0, message: 'Starting' });
+    const request = fetch(`/api/builder/${this.sessionId}/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    this.processRequest = request;
+    let processRes;
+    try {
+      processRes = await request;
+    } finally {
+      if (this.processRequest === request) this.processRequest = null;
+    }
+    if (run !== this.processRun) return;
+    if (processRes.status === 404) {
+      // The engine no longer has this session: the next try starts a new one.
+      this.sessionId = null;
+      this.resetSessionState();
+      throw this.processError('ended', this.videoFile ? 'Press Try again to upload your video again.' : 'Add the video again.');
+    }
+    if (!processRes.ok) {
+      const err = await processRes.json().catch(() => ({}));
+      throw this.processError('start', detailText(err, 'Try again.'));
+    }
+    this.listenToProgressSSE();
+  }
+
+  /** Try again: re-POSTs /process for the same session. Only a failed upload or subtitle import starts over. */
+  async retryProcessing() {
+    const stage = this.processState && this.processState.stage;
+    if (!this.sessionId || stage === 'upload' || stage === 'subtitles') {
+      this.startProcessingPipeline();
+      return;
+    }
+    const run = ++this.processRun;
+    try {
+      await this.requestProcessing(run);
+    } catch (ex) {
+      this.failProcessing(run, ex);
+    }
+  }
+
+  /** Cancel: stops the run and returns to Video at once with everything kept, saying so. */
+  cancelProcessing() {
+    this.stopRun();
+    this.showToast('Processing stopped. Your video and options are kept.');
+    this.showVideoStep();
+  }
+
+  /**
+   * Stops the upload, or asks the engine to stop (after its /process arrived), and stops
+   * following the run. A run on lines already opened (Process again) can finish before the
+   * cancel lands, so the lines kept here are saved again once it has.
+   */
+  stopRun() {
+    this.processRun++;
+    if (this.uploadXhr) {
+      this.uploadXhr.abort();
+    } else if (this.sessionId) {
+      // The engine stops at its next stage boundary; a new run waits for it. A cancel that
+      // reached the engine before this run's /process would be lost, so it goes after it.
+      const url = `/api/builder/${this.sessionId}/cancel`;
+      const keepLines = this.isProcessed();
+      const send = () => fetch(url, { method: 'POST' })
+        .then(() => { if (keepLines && this.isProcessed()) this.syncSegmentsToServer(); })
+        .catch((e) => console.warn('[PackBuilder] Cancel not sent:', e));
+      if (this.processRequest) this.processRequest.then(send, () => {});
+      else send();
+    }
+    this.stopProgressUpdates();
+  }
+
+  /** Back to video after a failure: the file, chips, pack name and language are kept. */
+  backToVideo() {
+    this.processRun++;
+    this.stopProgressUpdates();
+    if (!this.sessionId && !this.videoFile) {
+      // The session ended and there is no file to send again: the link field, with the notice.
+      this.changeVideo();
+      this.sessionEndedNotice.hidden = false;
+    }
+    this.showVideoStep();
+  }
+
+  /** Video after leaving the processing screen, with focus on its primary (the processing screen is gone). */
+  showVideoStep() {
+    this.setStep('upload');
+    const target = !this.btnStartProcess.disabled ? this.btnStartProcess
+      : (this.currentIngestTab === 'url' ? this.inputYoutubeUrl : this.videoDropzone);
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  /**
+   * Write the lines myself: the editor on the voice track when separation finished, with the
+   * lines this session already has (none after a first run), so a failed Process again keeps them.
+   */
+  writeLinesMyself() {
+    const state = this.processState || {};
+    this.processRun++;
+    this.stopProgressUpdates();
+    this.openEditor({ segments: this.segments, voices_separated: state.voices_separated, warning: state.warning });
+  }
+
+  stopProgressUpdates() {
+    if (this.progressSource) {
+      this.progressSource.close();
+      this.progressSource = null;
+    }
+    if (this.progressPoll) {
+      clearInterval(this.progressPoll);
+      this.progressPoll = null;
     }
   }
 
   listenToProgressSSE() {
+    this.stopProgressUpdates();
+    const run = this.processRun;
     const sse = new EventSource(`/api/builder/${this.sessionId}/progress`);
+    this.progressSource = sse;
 
     sse.onmessage = (event) => {
+      if (run !== this.processRun) {
+        sse.close();
+        return;
+      }
+      let data;
       try {
-        const data = JSON.parse(event.data);
-        const pct = Math.round((data.progress || 0.0) * 100);
-        this.builderProgressFill.style.width = `${pct}%`;
-        this.processPercentText.innerText = `${pct}%`;
-        this.processStageText.innerText = data.message || 'Processing';
-
-        const status = data.status;
-        this.stageExtract.classList.toggle('active', status === 'extracting_audio');
-        this.stageStems.classList.toggle('active', status === 'separating_stems');
-        this.stageWhisper.classList.toggle('active', status === 'transcribing');
-        this.stageSpeakers.classList.toggle('active', status === 'detecting_speakers');
-
-        if (status === 'transcribed') {
-          sse.close();
-          setTimeout(() => this.openEditor(data), 600);
-        } else if (status === 'error') {
-          sse.close();
-          this.processHeadline.innerText = 'Processing stopped';
-          this.processSubtext.innerText = data.error || "Processing didn't finish. Try again.";
-          this.showToast(data.error || "Processing didn't finish. Try again.");
-        }
+        data = JSON.parse(event.data);
       } catch (e) {
         console.error('Error parsing SSE event:', e);
+        return;
       }
+      this.applyEngineState(run, data);
     };
 
     sse.onerror = () => {
       sse.close();
-      this.pollProgressStatus();
+      if (run === this.processRun && this.progressSource === sse) {
+        this.progressSource = null;
+        this.pollProgressStatus();
+      }
     };
   }
 
-  async pollProgressStatus() {
-    const interval = setInterval(async () => {
+  pollProgressStatus() {
+    const run = this.processRun;
+    this.progressPoll = setInterval(async () => {
       try {
         const res = await fetch(`/api/builder/${this.sessionId}/status`);
-        if (!res.ok) throw new Error("Lost track of processing. Reload the page and try again.");
+        if (run !== this.processRun) return;
+        if (!res.ok) throw new Error('Lost track of processing. Try again.');
         const data = await res.json();
-        const pct = Math.round((data.progress || 0.0) * 100);
-        this.builderProgressFill.style.width = `${pct}%`;
-        this.processPercentText.innerText = `${pct}%`;
-        this.processStageText.innerText = data.message || 'Processing';
-        this.stageExtract.classList.toggle('active', data.status === 'extracting_audio');
-        this.stageStems.classList.toggle('active', data.status === 'separating_stems');
-        this.stageWhisper.classList.toggle('active', data.status === 'transcribing');
-        this.stageSpeakers.classList.toggle('active', data.status === 'detecting_speakers');
-
-        if (data.status === 'transcribed') {
-          clearInterval(interval);
-          this.openEditor(data);
-        } else if (data.status === 'error') {
-          clearInterval(interval);
-          this.processHeadline.innerText = 'Processing stopped';
-          this.processSubtext.innerText = data.error || "Processing didn't finish. Try again.";
-        }
+        if (run !== this.processRun) return;
+        this.applyEngineState(run, data);
       } catch (e) {
-        clearInterval(interval);
-        this.processHeadline.innerText = 'Processing stopped';
-        this.processSubtext.innerText = e.message;
-        this.showToast(e.message);
+        this.stopProgressUpdates();
+        this.failProcessing(run, e);
       }
     }, 1000);
   }
 
-  /** Opens the editor on finished processing: lines, the server's notice and a result toast. */
-  openEditor(data) {
-    this.segments = data.segments || this.segments;
-    // Only an explicit false means no voice track; older engines don't send the flag.
-    this.voicesSeparated = data.voices_separated !== false;
-    const notice = (data.warning || '').trim();
-    this.editorNotice.textContent = notice;
-    this.editorNotice.hidden = !notice;
-    this.setStep('editor');
+  /** One engine status (from the stream or /status) onto the screen; the editor opens when the lines are ready. */
+  applyEngineState(run, data) {
+    this.renderProcessState(data);
+    const status = data.status;
+    if (status === 'transcribed') {
+      this.stopProgressUpdates();
+      setTimeout(() => {
+        if (run === this.processRun) this.openEditor(data);
+      }, 600);
+    } else if (status === 'error') {
+      this.stopProgressUpdates();
+    } else if (status === 'cancelled') {
+      this.stopProgressUpdates();
+      this.showVideoStep();
+    }
+  }
+
+  /**
+   * The only writer of the processing screen. state: status, stage, progress,
+   * message, skipped, error_code, error, and upload ({loaded, total}) while uploading.
+   */
+  renderProcessState(state) {
+    this.processState = state;
+    const status = state.status;
+    const failed = status === 'error';
+    const finished = status === 'transcribed' || status === 'done';
+    // Without voice separation installed, its row says what runs instead.
+    const stages = PROCESS_STAGES.map((s) => (s.basic && !this.has('separation') ? { ...s, ...s.basic } : s));
+    const rows = stages.filter((s) => s.key !== 'upload' || this.uploadInRun);
+    const failure = failed ? (PROCESS_FAILURES[state.stage] || null) : null;
+
+    // The row that is running, or that failed. Rows before it are finished.
+    let current;
+    if (failed) {
+      current = rows.findIndex((s) => s.key === (failure ? failure.row : state.stage));
+      if (current < 0) current = rows.findIndex((s) => s.key !== 'upload');
+    } else if (finished) {
+      current = rows.length;
+    } else {
+      current = rows.findIndex((s) => s.status === status);
+    }
+    // Before the engine's first stage, a finished upload is already ticked.
+    const uploaded = this.uploadInRun && !!this.sessionId && status !== 'uploading';
+    const skipped = new Set([...(state.skipped || []), ...this.runSkipped]);
+    const message = (state.error || state.message || '').trim();
+
+    stages.forEach((stage) => {
+      const row = this.processRows.get(stage.key);
+      const i = rows.indexOf(stage);
+      row.hidden = i < 0;
+      if (i < 0) return;
+      if (stage.title) row.querySelector('.stage-title').textContent = stage.title;
+      let kind = 'pending';
+      if (failed && i === current) kind = 'failed';
+      else if (skipped.has(stage.key)) kind = 'skipped';
+      else if (i < current || (stage.key === 'upload' && uploaded)) kind = 'done';
+      else if (i === current) kind = 'active';
+      row.classList.toggle('active', kind === 'active');
+      row.classList.toggle('is-done', kind === 'done');
+      row.classList.toggle('is-skipped', kind === 'skipped');
+      row.classList.toggle('is-failed', kind === 'failed');
+      if (kind === 'active') row.setAttribute('aria-current', 'step');
+      else row.removeAttribute('aria-current');
+      const icon = row.querySelector('.stage-icon');
+      if (kind === 'done') icon.innerHTML = ICON_TICK;
+      else if (kind === 'failed') icon.innerHTML = ICON_ALERT;
+      else icon.textContent = String(i + 1);
+      const desc = row.querySelector('.stage-desc');
+      if (kind === 'failed') desc.textContent = message || "Processing didn't finish. Try again.";
+      else if (kind === 'skipped') desc.textContent = 'Skipped';
+      else desc.textContent = stage.desc || desc.dataset.desc || '';
+    });
+
+    // The headline: the active stage as a sentence, or the stage that failed.
+    let headline = 'Starting';
+    if (failed) headline = failure ? failure.headline : rows[current].failed;
+    else if (finished) headline = 'Opening the editor';
+    else if (rows[current]) headline = rows[current].active;
+
+    // On a failure the radar stops, and the message shows only in the failed row.
+    if (failed) this.processCard.setAttribute('role', 'alert');
+    else this.processCard.removeAttribute('role');
+    this.processRadar.classList.toggle('is-stopped', failed);
+    this.processHeadline.textContent = headline;
+    this.processSubtext.hidden = failed;
+    this.processProgress.hidden = failed;
+
+    if (!failed) {
+      const up = status === 'uploading' ? state.upload : null;
+      const fraction = up ? (up.total ? up.loaded / up.total : 0) : (state.progress || 0);
+      const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+      this.builderProgressFill.style.width = `${pct}%`;
+      this.processPercentText.textContent = `${pct}%`;
+      this.processStageText.textContent = up
+        ? `Uploading · ${this.formatMegabytes(up.loaded, up.total)} of ${this.formatMegabytes(up.total, up.total)} MB`
+        : (state.message || 'Starting');
+    }
+
+    // Cancel while it runs; when it fails, a way forward with the primary first.
+    this.btnProcessCancel.hidden = failed || finished;
+    let order = [];
+    if (failed && !this.sessionId && !this.videoFile) {
+      order = [this.btnProcessBack]; // nothing to try again with
+    } else if (failed && state.stage === 'transcription') {
+      order = state.error_code === 'pipeline_missing'
+        ? [this.btnProcessWrite, this.btnProcessBack]
+        : [this.btnProcessRetry, this.btnProcessWrite, this.btnProcessBack];
+    } else if (failed) {
+      order = [this.btnProcessRetry, this.btnProcessBack];
+    }
+    [this.btnProcessRetry, this.btnProcessWrite, this.btnProcessBack].forEach((btn) => {
+      btn.hidden = !order.includes(btn);
+      btn.classList.toggle('btn-primary', btn === order[0]);
+      btn.classList.toggle('btn-secondary', btn !== order[0]);
+    });
+    if (failed) {
+      this.processActions.prepend(...order);
+      order[0].focus();
+    }
+  }
+
+  /** Megabytes for the upload caption: whole numbers from 10 MB, one decimal below. */
+  formatMegabytes(bytes, total) {
+    const mb = bytes / (1024 * 1024);
+    return total >= 10 * 1024 * 1024 ? String(Math.round(mb)) : mb.toFixed(1);
+  }
+
+  /**
+   * Opens the editor on lines from the engine (processing finished, or a reopened session):
+   * the lines, the server's notice and a result toast (not with opts.quiet). opts also go to setStep.
+   */
+  openEditor(data, opts = {}) {
+    this.takeLines(data);
+    this.setStep('editor', opts);
     const total = this.segments.length;
+    // With no lines, the Lines column says what to do instead.
+    if (!total || opts.quiet) return;
     const noWords = this.segments.filter(s => s.nonverbal).length;
     let summary = `Found ${total} line${total === 1 ? '' : 's'}`;
     if (noWords) summary += `, ${noWords} without words`;
     this.showToast(summary);
+  }
+
+  /** The editor's lines, voice track and notice from the engine, without showing the editor. */
+  takeLines(data) {
+    this.segments = data.segments || this.segments;
+    this.selectedSegmentIndex = null;
+    this.clearUndo();
+    // Only an explicit false means no voice track; older engines don't send the flag.
+    this.voicesSeparated = data.voices_separated !== false;
+    this.editorWarning = (data.warning || '').trim();
+    this.renderEditorNotice();
   }
 
   // --- STEP 3: Timeline & Cue Editor ---
@@ -1171,7 +2089,23 @@ export class PackBuilderApp {
 
   /** The text on a line's timeline block. */
   blockLabel(seg) {
-    return `[${seg.character}] ${seg.text || '(no words)'}`;
+    return seg.text || '(no words)';
+  }
+
+  /** A block's label, and its tip and name, which also say who speaks. */
+  labelBlock(block, seg) {
+    const label = block.querySelector('.segment-block-label');
+    if (label) label.innerText = this.blockLabel(seg);
+    const name = `${seg.character}: ${this.blockLabel(seg)}`;
+    block.dataset.tip = name;
+    block.setAttribute('aria-label', name);
+  }
+
+  /** A block in its character's colour. */
+  paintBlock(block, color) {
+    block.style.borderColor = color;
+    block.style.background = `${color}28`;
+    block.querySelectorAll('.builder-segment-handle').forEach((h) => { h.style.background = color; });
   }
 
   /** Puts a line's block at its time and track. A dragged line brings its track into view. */
@@ -1218,13 +2152,10 @@ export class PackBuilderApp {
       const block = document.createElement('div');
       block.className = `builder-segment-block ${isSelected ? 'selected' : ''}`;
       this.placeBlock(block, seg, lane, laneHeight, dragging && idx === this.dragSegmentIndex);
-      block.style.borderColor = color;
-      block.style.background = `${color}28`;
 
       // Left resize handle
       const handleL = document.createElement('div');
       handleL.className = 'builder-segment-handle handle-left';
-      handleL.style.background = color;
       handleL.dataset.idx = idx;
       handleL.dataset.type = 'start';
       handleL.dataset.tip = 'Drag to change the start';
@@ -1232,7 +2163,6 @@ export class PackBuilderApp {
       // Right resize handle
       const handleR = document.createElement('div');
       handleR.className = 'builder-segment-handle handle-right';
-      handleR.style.background = color;
       handleR.dataset.idx = idx;
       handleR.dataset.type = 'end';
       handleR.dataset.tip = 'Drag to change the end';
@@ -1243,7 +2173,6 @@ export class PackBuilderApp {
 
       const label = document.createElement('div');
       label.className = 'segment-block-label';
-      label.innerText = this.blockLabel(seg);
 
       // Inline Delete Action Button right on the block
       const deleteBtn = document.createElement('button');
@@ -1272,6 +2201,8 @@ export class PackBuilderApp {
       block.appendChild(handleL);
       block.appendChild(contentWrap);
       block.appendChild(handleR);
+      this.paintBlock(block, color);
+      this.labelBlock(block, seg);
 
       // Drag handlers on segment block (mouse, touch and pen). Capture goes on
       // the scroll wrap: this block is replaced by every re-render mid-drag.
@@ -1296,172 +2227,414 @@ export class PackBuilderApp {
     });
   }
 
+  /** A row's name for screen readers: "Line 4, Detective Mori, 0:12.40". */
+  rowLabel(seg, idx) {
+    return `Line ${idx + 1}, ${seg.character}, ${this.formatTime(seg.start)}`;
+  }
+
+  /** The selected row shows start – end; the others show their start. */
+  rowTimecode(seg, selected) {
+    return selected ? `${this.formatTime(seg.start)} – ${this.formatTime(seg.end)}` : this.formatTime(seg.start);
+  }
+
+  /**
+   * One line as a compact row. Every action is in the markup and CSS shows the ones that
+   * apply (Play on hover, all of them on the selected row), so selecting rebuilds nothing.
+   * The character select holds only its own option until it is opened (fillCharacterOptions).
+   * Only the selected row's fields are in the Tab order: Tab passes the list in one stop.
+   */
+  lineRowHtml(seg, idx, selected, tabbable, canTranscribe) {
+    const text = seg.text || '';
+    const name = escapeHtml(seg.character);
+    const field = selected ? '' : ' tabindex="-1"';
+    const noWords = seg.nonverbal
+      ? `<span class="cue-nonverbal-badge" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${text.trim() ? ' hidden' : ''}>No words</span>`
+      : '';
+    const action = (cls, label, icon, extra = '') =>
+      `<button type="button" class="btn btn-ghost btn-xs line-action ${cls}" aria-label="${label}" data-tip="${label}"${extra}>${icon}</button>`;
+    return `<div class="builder-line-row${selected ? ' selected' : ''}" id="cue-card-${idx}" data-idx="${idx}" role="listitem" tabindex="${tabbable ? 0 : -1}"${selected ? ' aria-current="true"' : ''} aria-label="${escapeHtml(this.rowLabel(seg, idx))}">`
+      + `<span class="cue-dot" style="background: ${this.getCharacterColor(seg.character)};"></span>`
+      + `<span class="cue-number" aria-hidden="true">${idx + 1}</span>`
+      + `<select class="form-input cue-char-select" aria-label="Character"${field}><option value="${name}" selected>${name}</option></select>`
+      + `<div class="cue-text-cell">${noWords}<textarea class="form-input cue-text-input" rows="1" aria-label="Line text"${field} placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}">${escapeHtml(text)}</textarea></div>`
+      + '<div class="cue-actions">'
+      + action('btn-preview-cue', 'Play this line', ICON_PLAY)
+      + (canTranscribe ? action('btn-whisper-cue', 'Fill in this line&#39;s text from the audio', ICON_MIC) : '')
+      + action('btn-romaji-cue', 'Convert to romaji', ICON_GLOBE, this.romajiApplies(seg) ? '' : ' hidden')
+      + action('btn-delete-cue', 'Delete line', ICON_TRASH)
+      + '</div>'
+      + `<span class="cue-timecode-badge">${this.rowTimecode(seg, selected)}</span>`
+      + '</div>';
+  }
+
   renderSegmentsList() {
     const container = this.segmentsListContainer;
-    container.innerHTML = '';
+    const hadFocus = container.contains(document.activeElement);
     this.labelCueCount.innerText = `${this.segments.length} line${this.segments.length === 1 ? '' : 's'}`;
+    this.updateMarkButtons();
+    // aria-disabled rather than disabled, so the tooltip still says why.
+    if (this.segments.length) {
+      this.btnProceedToCompile.removeAttribute('aria-disabled');
+      delete this.btnProceedToCompile.dataset.tip;
+    } else {
+      this.btnProceedToCompile.setAttribute('aria-disabled', 'true');
+      this.btnProceedToCompile.dataset.tip = 'Add a line first';
+      container.removeAttribute('role'); // a note, not an empty list
+      container.innerHTML = `
+        <div class="lines-empty">
+          <p class="lines-empty-title">No lines yet</p>
+          <p class="lines-empty-hint">Play the video and press N, or Add line, where someone speaks.</p>
+        </div>`;
+      return;
+    }
 
-    const allCast = Array.from(new Set([
-      ...this.characterColors.keys(),
-      ...this.segments.map(s => s.character).filter(Boolean)
-    ]));
-    if (allCast.length === 0) allCast.push('Lead');
+    container.setAttribute('role', 'list');
+    const canTranscribe = this.has('transcription');
+    const selected = this.segments[this.selectedSegmentIndex] ? this.selectedSegmentIndex : null;
+    // Roving tabindex: Tab reaches the selected row, or the first one before any selection.
+    const tabbable = selected === null ? 0 : selected;
+    container.innerHTML = this.segments
+      .map((seg, idx) => this.lineRowHtml(seg, idx, idx === selected, idx === tabbable, canTranscribe))
+      .join('');
+    const row = document.getElementById(`cue-card-${tabbable}`);
+    if (row && selected !== null) this.fitLineText(row.querySelector('.cue-text-input'));
+    if (row && hadFocus) row.focus({ preventScroll: true });
+  }
 
-    this.segments.forEach((seg, idx) => {
-      const isSelected = idx === this.selectedSegmentIndex;
-      const color = this.getCharacterColor(seg.character);
+  /**
+   * The selected row's text shows in full, up to 4 lines (CSS caps it), then scrolls. CSS
+   * field-sizing grows it without a layout read; this measures only where that is missing.
+   */
+  fitLineText(textarea) {
+    if (!textarea || FIELD_SIZING) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight + 2}px`; // + the 1px borders
+  }
 
-      const card = document.createElement('div');
-      card.className = `builder-cue-card ${isSelected ? 'selected' : ''}`;
-      card.id = `cue-card-${idx}`;
+  /** Fills a row's character select with the whole cast, when it is about to open. */
+  fillCharacterOptions(select, idx) {
+    const seg = this.segments[idx];
+    if (!seg) return;
+    const cast = this.castNames();
+    if (!cast.includes(seg.character)) cast.push(seg.character);
+    select.innerHTML = cast.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
+      + '<option value="__ADD_NEW__">+ New character…</option>';
+    select.value = seg.character;
+  }
 
-      // Build options for character dropdown
-      const charOptionsHtml = allCast.map(c =>
-        `<option value="${escapeHtml(c)}" ${c === seg.character ? 'selected' : ''}>${escapeHtml(c)}</option>`
-      ).join('') + '<option value="__ADD_NEW__">+ New character</option>';
+  /**
+   * The Lines column's events, delegated once to the list: rows are plain markup, so a
+   * re-render adds no listeners, and each handler finds its line by the row's data-idx.
+   */
+  initLinesList() {
+    const list = this.segmentsListContainer;
+    const rowOf = (el) => el.closest('.builder-line-row');
+    const idxOf = (row) => parseInt(row.dataset.idx, 10);
 
-      card.innerHTML = `
-        <div class="cue-card-header">
-          <div class="cue-index-wrap">
-            <span class="cue-dot" style="background: ${color};"></span>
-            <span class="cue-number">#${idx + 1}</span>
-            ${seg.nonverbal ? `<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${(seg.text || '').trim() ? ' hidden' : ''}>No words</span>` : ''}
-          </div>
-          <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
-          <div style="display: flex; gap: 4px; align-items: center;">
-            <button class="btn btn-secondary btn-xs btn-whisper-cue" data-idx="${idx}" data-tip="Fill in this line's text from the audio">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-              <span>Transcribe</span>
-            </button>
-            <button class="btn btn-secondary btn-xs btn-romaji-cue" data-idx="${idx}" data-tip="Convert Japanese text to romaji">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-              <span>Romaji</span>
-            </button>
-            <button class="btn-delete-cue" data-idx="${idx}">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              <span>Delete</span>
-            </button>
-          </div>
-        </div>
-        <div class="cue-card-body">
-          <div class="cue-field-row">
-            <div class="cue-char-select-wrap">
-              <select class="form-input cue-char-select" data-idx="${idx}" aria-label="Character">
-                ${charOptionsHtml}
-              </select>
-            </div>
-            <button class="btn btn-secondary btn-xs btn-preview-cue" data-idx="${idx}">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              <span>Play</span>
-            </button>
-          </div>
-          <textarea class="form-input cue-text-input" rows="2" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
-        </div>
-      `;
-
-      card.addEventListener('click', (e) => {
-        if (!e.target.closest('input') && !e.target.closest('textarea') && !e.target.closest('select') && !e.target.closest('button')) {
-          this.selectSegment(idx);
-          this.seekTo(seg.start);
-        }
-      });
-
-      // Character dropdown selection change
-      const charSelect = card.querySelector('.cue-char-select');
-      charSelect.addEventListener('change', (e) => {
-        const val = e.target.value;
-        if (val === '__ADD_NEW__') {
-          const newName = prompt('Character name');
-          if (newName && newName.trim()) {
-            const clean = newName.trim();
-            this.getCharacterColor(clean);
-            this.segments[idx].character = clean;
-          } else {
-            charSelect.value = seg.character;
-            return;
-          }
-        } else {
-          this.segments[idx].character = val;
-        }
-
-        this.updateCharacterPalette();
-        this.renderTimelineSegments();
-        this.renderCharacterChips();
-        this.renderSegmentsList();
-        this.syncSegmentsToServer();
-      });
-
-      const textInput = card.querySelector('.cue-text-input');
-      textInput.addEventListener('input', (e) => {
-        this.segments[idx].text = e.target.value;
-        this.updateNonverbalBadge(idx);
-      });
-      textInput.addEventListener('change', () => {
-        const label = this.segmentBlocks[idx]?.querySelector('.segment-block-label');
-        if (label) label.innerText = this.blockLabel(this.segments[idx]);
-        this.syncSegmentsToServer();
-      });
-
-      const btnDel = card.querySelector('.btn-delete-cue');
-      btnDel.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.deleteSegment(idx);
-      });
-
-      const btnPrev = card.querySelector('.btn-preview-cue');
-      btnPrev.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.previewSegmentAudio(idx);
-      });
-
-      const btnWhisper = card.querySelector('.btn-whisper-cue');
-      btnWhisper.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.transcribeSingleSegment(idx, btnWhisper, textInput);
-      });
-
-      const btnRomaji = card.querySelector('.btn-romaji-cue');
-      btnRomaji.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.romanizeSingleSegment(idx, btnRomaji, textInput);
-      });
-
-      container.appendChild(card);
+    list.addEventListener('click', (e) => {
+      const row = rowOf(e.target);
+      if (!row) return;
+      const idx = idxOf(row);
+      const btn = e.target.closest('button');
+      if (btn) {
+        const textInput = row.querySelector('.cue-text-input');
+        if (btn.classList.contains('btn-preview-cue')) this.previewSegmentAudio(idx);
+        else if (btn.classList.contains('btn-whisper-cue')) this.transcribeSingleSegment(idx, btn, textInput);
+        else if (btn.classList.contains('btn-romaji-cue')) this.romanizeSingleSegment(idx, btn, textInput);
+        else if (btn.classList.contains('btn-delete-cue')) this.deleteSegment(idx);
+        return;
+      }
+      if (e.target.closest('select, textarea')) return;
+      this.selectSegment(idx);
+      this.seekTo(this.segments[idx].start);
     });
+
+    // A field of another line selects that line, without moving the video.
+    list.addEventListener('focusin', (e) => {
+      const row = rowOf(e.target);
+      if (!row || e.target === row) return;
+      const idx = idxOf(row);
+      if (e.target.classList.contains('cue-char-select')) this.fillCharacterOptions(e.target, idx);
+      // A committed text edit is one undo step, from the text the field had when it took focus.
+      if (e.target.classList.contains('cue-text-input')) this.textBefore = { idx, text: this.segments[idx].text || '' };
+      if (this.selectedSegmentIndex !== idx) this.selectSegment(idx);
+    });
+    // A click can open the select as it takes focus, so the press fills it too.
+    list.addEventListener('pointerdown', (e) => {
+      const select = e.target.closest('.cue-char-select');
+      if (select && document.activeElement !== select) this.fillCharacterOptions(select, idxOf(rowOf(select)));
+    });
+
+    list.addEventListener('input', (e) => {
+      if (!e.target.classList.contains('cue-text-input')) return;
+      const row = rowOf(e.target);
+      const idx = idxOf(row);
+      this.segments[idx].text = e.target.value;
+      this.updateNonverbalBadge(idx);
+      const romaji = row.querySelector('.btn-romaji-cue');
+      if (romaji) romaji.hidden = !this.romajiApplies(this.segments[idx]);
+      if (row.classList.contains('selected')) this.fitLineText(e.target);
+    });
+
+    list.addEventListener('change', (e) => {
+      const row = rowOf(e.target);
+      if (!row) return;
+      const idx = idxOf(row);
+      if (e.target.classList.contains('cue-text-input')) {
+        const before = this.textBefore;
+        if (before && before.idx === idx && before.text !== e.target.value) {
+          const step = this.snapshot();
+          step.segments[idx].text = before.text;
+          this.pushUndo(step);
+          before.text = e.target.value;
+        }
+        const block = this.segmentBlocks[idx];
+        if (block) this.labelBlock(block, this.segments[idx]);
+        this.syncSegmentsToServer();
+      } else if (e.target.classList.contains('cue-char-select')) {
+        this.changeLineCharacter(idx, e.target);
+      }
+    });
+
+    list.addEventListener('keydown', (e) => {
+      const row = rowOf(e.target);
+      if (!row) return;
+      const idx = idxOf(row);
+      if (e.target === row && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        // A focused row that isn't selected yet (before any selection) selects itself first.
+        const next = this.selectedSegmentIndex !== idx ? idx : idx + (e.key === 'ArrowDown' ? 1 : -1);
+        if (!this.segments[next]) return;
+        this.selectSegment(next);
+        document.getElementById(`cue-card-${next}`).focus({ preventScroll: true });
+        this.seekTo(this.segments[next].start);
+      } else if (e.target === row && e.key === 'Enter') {
+        e.preventDefault();
+        row.querySelector('.cue-text-input').focus();
+      } else if (e.key === 'Escape' && e.target.classList.contains('cue-text-input')) {
+        e.preventDefault();
+        row.focus();
+      }
+    });
+  }
+
+  /** A line's new character: its dot, row name, block and the Cast row follow; nothing is rebuilt. */
+  changeLineCharacter(idx, select) {
+    const seg = this.segments[idx];
+    const name = select.value;
+    if (name === '__ADD_NEW__') {
+      this.askNewCharacter(idx, select);
+      return;
+    }
+    if (name === seg.character) return;
+    this.pushUndo();
+    seg.character = name;
+    const color = this.getCharacterColor(name);
+    const row = document.getElementById(`cue-card-${idx}`);
+    if (row) {
+      row.querySelector('.cue-dot').style.background = color;
+      row.setAttribute('aria-label', this.rowLabel(seg, idx));
+    }
+    const block = this.segmentBlocks[idx];
+    if (block) {
+      this.paintBlock(block, color);
+      this.labelBlock(block, seg);
+    }
+    this.renderCharacterChips();
+    this.syncSegmentsToServer();
+  }
+
+  /**
+   * "+ New character…" in a row: the select makes way for a name field. Enter (or leaving the
+   * field with a name) creates the character and gives it the line; Esc puts the select back.
+   */
+  askNewCharacter(idx, select) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-input cue-char-input';
+    input.placeholder = 'Name';
+    input.maxLength = 40;
+    input.setAttribute('aria-label', 'New character name');
+    select.value = this.segments[idx].character;
+    select.hidden = true;
+    select.after(input);
+    let done = false;
+    const finish = (name, refocus) => {
+      if (done) return;
+      done = true;
+      input.remove();
+      select.hidden = false;
+      if (name) {
+        if (!Array.from(select.options).some((o) => o.value === name)) {
+          select.add(new Option(name, name), select.options[select.options.length - 1]);
+        }
+        select.value = name;
+        this.changeLineCharacter(idx, select);
+      }
+      if (refocus) select.focus();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(input.value.trim(), true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish('', true);
+      }
+    });
+    input.addEventListener('blur', () => finish(input.value.trim(), false));
+    input.focus();
+  }
+
+  /** Start, End and Transcribe act on the selected line. With none they say so, and so do their keys. */
+  updateMarkButtons() {
+    const has = !!this.segments[this.selectedSegmentIndex];
+    if (this._markButtonsOn === has) return;
+    this._markButtonsOn = has;
+    const buttons = [[this.btnMarkIn, 'Start the selected line at the playhead (I or [)'],
+      [this.btnMarkOut, 'End the selected line at the playhead (O or ])']];
+    // Without transcription installed, Transcribe keeps saying that instead.
+    if (this.btnTranscribeLine && this.has('transcription')) buttons.push([this.btnTranscribeLine, "Fill in the selected line's text from the audio"]);
+    buttons.forEach(([btn, tip]) => {
+      if (has) btn.removeAttribute('aria-disabled');
+      else btn.setAttribute('aria-disabled', 'true');
+      btn.dataset.tip = has ? tip : 'Select a line first';
+    });
+  }
+
+  /** Every character: the cast's colours first (their order), then any other line's character. */
+  castNames() {
+    return Array.from(new Set([
+      ...this.characterColors.keys(),
+      ...this.segments.map(s => s.character).filter(Boolean),
+    ]));
   }
 
   renderCharacterChips() {
     const list = this.characterChipsList;
     list.innerHTML = '';
 
-    // Only include distinct characters that actually exist
-    const allChars = Array.from(new Set([
-      ...this.characterColors.keys(),
-      ...this.segments.map(s => s.character).filter(Boolean)
-    ]));
-
-    allChars.forEach(char => {
+    this.castNames().forEach(char => {
       const color = this.getCharacterColor(char);
       const count = this.segments.filter(s => s.character === char).length;
+      const name = escapeHtml(char);
       const chip = document.createElement('div');
       chip.className = 'char-color-chip';
       chip.innerHTML = `
         <span class="chip-color-dot" style="background: ${color};"></span>
-        <span class="chip-name" data-tip="Click to rename">${escapeHtml(char)}</span>
+        <button type="button" class="chip-name" data-char="${name}" aria-label="Rename ${name}" data-tip="Rename">${name}</button>
         <span class="chip-count-badge" aria-label="${count} line${count === 1 ? '' : 's'}">(${count})</span>
-        <button class="chip-del-btn" aria-label="Delete ${escapeHtml(char)}" data-tip="Delete character" data-char="${escapeHtml(char)}">
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button type="button" class="chip-del-btn" aria-label="Delete ${name}" data-tip="Delete character" data-char="${name}">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       `;
-
-      chip.querySelector('.chip-name').addEventListener('click', () => this.promptRenameCharacter(char));
-      chip.querySelector('.chip-del-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.deleteCharacter(char);
-      });
       list.appendChild(chip);
     });
     this.updateCastScroller();
+  }
+
+  /** The Cast row's names and × buttons, delegated once: a name edits in place, × deletes. */
+  initCastEditing() {
+    this.characterChipsList.addEventListener('click', (e) => {
+      const del = e.target.closest('.chip-del-btn');
+      if (del) {
+        this.deleteCharacter(del.dataset.char);
+        return;
+      }
+      const name = e.target.closest('button.chip-name');
+      if (name) this.editChipName(name.closest('.char-color-chip'), name.dataset.char);
+    });
+  }
+
+  /** + in the Cast row: a new chip with its name field open. */
+  addCharacterChip() {
+    const chip = document.createElement('div');
+    chip.className = 'char-color-chip is-editing';
+    chip.innerHTML = `<span class="chip-color-dot" style="background: ${PALETTE[this.characterColors.size % PALETTE.length]};"></span>`;
+    this.characterChipsList.appendChild(chip);
+    this.updateCastScroller();
+    chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    this.editChipName(chip, null);
+  }
+
+  /**
+   * A chip's name as a field: Enter or leaving the field keeps the name, Esc cancels.
+   * oldName null is a new chip, which an empty name removes.
+   */
+  editChipName(chip, oldName) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-input chip-name-input';
+    input.value = oldName || '';
+    input.placeholder = 'Name';
+    input.maxLength = 40;
+    input.setAttribute('aria-label', oldName ? `Rename ${oldName}` : 'New character name');
+    chip.classList.add('is-editing');
+    const nameEl = chip.querySelector('.chip-name');
+    if (nameEl) nameEl.replaceWith(input);
+    else chip.appendChild(input);
+    let done = false;
+    const finish = (commit, refocus) => {
+      if (done) return;
+      done = true;
+      const result = commit ? this.commitCharacterName(oldName, input.value.trim()) : oldName;
+      if (!commit) this.renderCharacterChips();
+      if (!refocus) return;
+      const target = result && Array.from(this.characterChipsList.querySelectorAll('button.chip-name'))
+        .find((b) => b.dataset.char === result);
+      (target || this.btnAddCharacter).focus();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true, true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false, true);
+      }
+    });
+    input.addEventListener('blur', () => finish(true, false));
+    input.focus();
+    input.select();
+  }
+
+  /**
+   * Keeps a chip's new name, and returns the name the chip ends with. A new name for a new
+   * chip adds the character; a rename moves its lines; a rename onto another character
+   * merges the two. An empty or unchanged name changes nothing.
+   */
+  commitCharacterName(oldName, name) {
+    if (!name || name === oldName) {
+      this.renderCharacterChips();
+      return oldName;
+    }
+    const exists = this.castNames().includes(name);
+    if (!oldName) {
+      if (!exists) {
+        this.pushUndo();
+        this.getCharacterColor(name);
+      }
+      this.renderCharacterChips();
+      const chip = Array.from(this.characterChipsList.children).find((c) => c.querySelector('.chip-name')?.dataset.char === name);
+      if (chip) chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      return name;
+    }
+    const step = this.pushUndo();
+    this.segments.forEach((s) => { if (s.character === oldName) s.character = name; });
+    if (exists) {
+      this.characterColors.delete(oldName);
+    } else {
+      // A renamed character keeps its colour and its place in the row.
+      this.characterColors = new Map(Array.from(this.characterColors, ([k, v]) => [k === oldName ? name : k, v]));
+    }
+    this.renderTimelineSegments();
+    this.renderSegmentsList();
+    this.renderCharacterChips();
+    this.syncSegmentsToServer();
+    if (exists) this.showUndoToast(`Merged into ${name}`, step);
+    return name;
   }
 
   // The Cast row scrolls sideways: a mouse wheel, a mouse or pen drag and the arrow keys
@@ -1538,69 +2711,65 @@ export class PackBuilderApp {
     else list.removeAttribute('tabindex');
   }
 
-  deleteCharacter(charName) {
-    const segmentsWithChar = this.segments.filter(s => s.character === charName);
-    const remainingChars = Array.from(this.characterColors.keys()).filter(c => c !== charName);
-    const fallbackChar = remainingChars.length > 0 ? remainingChars[0] : 'Lead';
-
-    if (segmentsWithChar.length > 0) {
-      if (!confirm(`Delete "${charName}"? Their ${segmentsWithChar.length} line${segmentsWithChar.length === 1 ? '' : 's'} will move to "${fallbackChar}".`)) {
-        return;
-      }
-      this.segments.forEach(s => {
-        if (s.character === charName) {
-          s.character = fallbackChar;
-        }
-      });
-    }
-
-    this.characterColors.delete(charName);
-    if (this.characterColors.size === 0) {
-      this.getCharacterColor(fallbackChar);
-    }
+  /** × on a chip: the character goes at once and its lines move to the first one left. The toast can undo it. */
+  deleteCharacter(name) {
+    const moved = this.segments.filter((s) => s.character === name).length;
+    const fallback = this.castNames().find((c) => c !== name) || 'Lead';
+    const step = this.pushUndo();
+    this.segments.forEach((s) => { if (s.character === name) s.character = fallback; });
+    this.characterColors.delete(name);
+    if (this.characterColors.size === 0) this.getCharacterColor(fallback);
 
     this.renderTimelineSegments();
     this.renderCharacterChips();
     this.renderSegmentsList();
     this.syncSegmentsToServer();
-    this.showToast(`"${charName}" deleted`);
+    const message = moved ? `${name} deleted. ${plural(moved, 'line')} moved to ${fallback}` : `${name} deleted`;
+    this.showUndoToast(message, step);
   }
 
-  promptRenameCharacter(oldName) {
-    const newName = prompt(`Rename "${oldName}" to`, oldName);
-    if (newName && newName.trim() && newName.trim() !== oldName) {
-      const cleanNew = newName.trim();
-      const existingColor = this.characterColors.get(oldName) || PALETTE[0];
-      this.characterColors.delete(oldName);
-      this.characterColors.set(cleanNew, existingColor);
-
-      // Rename across all segments
-      this.segments.forEach(seg => {
-        if (seg.character === oldName) {
-          seg.character = cleanNew;
-        }
-      });
-
-      this.renderTimelineSegments();
-      this.renderCharacterChips();
-      this.renderSegmentsList();
-      this.syncSegmentsToServer();
-      this.showToast(`"${oldName}" renamed to "${cleanNew}"`);
-    }
-  }
-
-  /** Moves the highlight to a line's block and card; nothing is rebuilt. */
+  /**
+   * Moves the highlight to a line's block and row: class toggles, the rows' tabindex and
+   * timecodes, and the one textarea that grows. Nothing is rebuilt.
+   */
   selectSegment(idx) {
     this.selectedSegmentIndex = idx;
+    const list = this.segmentsListContainer;
+    const target = document.getElementById(`cue-card-${idx}`);
+    const focusOnRow = document.activeElement?.parentElement === list && document.activeElement !== target;
+    const previous = Array.from(list.querySelectorAll('.builder-line-row.selected, .builder-line-row[tabindex="0"]'))
+      .filter((row) => row !== target);
+    // Tabindex and focus go first: changed after the classes and text below, a focused
+    // row's tabindex makes the browser recalculate the styles at once (about 2 ms).
+    if (target) target.tabIndex = 0;
+    previous.forEach((row) => { row.tabIndex = -1; });
+    // Keyboard focus on a row follows the selection.
+    if (target && focusOnRow) target.focus({ preventScroll: true });
+
     this.timelineSegmentsOverlay.querySelectorAll('.builder-segment-block.selected').forEach((b) => b.classList.remove('selected'));
     if (this.segmentBlocks[idx]) this.segmentBlocks[idx].classList.add('selected');
-
-    this.segmentsListContainer.querySelectorAll('.builder-cue-card.selected').forEach((c) => c.classList.remove('selected'));
-    const targetCard = document.getElementById(`cue-card-${idx}`);
-    if (targetCard) {
-      targetCard.classList.add('selected');
-      targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    previous.forEach((row) => {
+      row.classList.remove('selected');
+      row.removeAttribute('aria-current');
+      const textInput = row.querySelector('.cue-text-input');
+      textInput.style.height = '';
+      textInput.tabIndex = -1;
+      row.querySelector('.cue-char-select').tabIndex = -1;
+      this.updateCardTimecode(parseInt(row.dataset.idx, 10));
+    });
+    if (target) {
+      target.classList.add('selected');
+      target.setAttribute('aria-current', 'true');
+      target.querySelector('.cue-text-input').removeAttribute('tabindex');
+      target.querySelector('.cue-char-select').removeAttribute('tabindex');
+      this.updateCardTimecode(idx);
+      this.fitLineText(target.querySelector('.cue-text-input'));
+      // Scrolled into view in the next frame, with that frame's layout, so the click or
+      // key that selected doesn't wait for one.
+      cancelAnimationFrame(this._scrollRowFrame);
+      this._scrollRowFrame = requestAnimationFrame(() => target.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' }));
     }
+    this.updateMarkButtons();
   }
 
   // --- Drag & Drop Segment Resizing, Moving, and Canvas Panning ---
@@ -1775,6 +2944,14 @@ export class PackBuilderApp {
       document.body.style.userSelect = '';
 
       if (hadMovement) {
+        // One undo step per drop that moved the line, back to where the drag started.
+        const moved = this.segments[modifiedIdx];
+        if (moved && (moved.start !== this.dragOrigStart || moved.end !== this.dragOrigEnd)) {
+          const step = this.snapshot();
+          step.segments[modifiedIdx].start = this.dragOrigStart;
+          step.segments[modifiedIdx].end = this.dragOrigEnd;
+          this.pushUndo(step);
+        }
         const before = this.segments.slice();
         const selected = this.segments[this.selectedSegmentIndex];
         this.segments.sort((a, b) => a.start - b.start);
@@ -1802,14 +2979,13 @@ export class PackBuilderApp {
     if (badge && seg) badge.hidden = !!(seg.text || '').trim();
   }
 
+  /** A row's timecode and name, after its line moved or was selected or deselected. */
   updateCardTimecode(idx) {
-    const card = document.getElementById(`cue-card-${idx}`);
-    if (card && this.segments[idx]) {
-      const badge = card.querySelector('.cue-timecode-badge');
-      if (badge) {
-        badge.innerText = `${this.formatTime(this.segments[idx].start)} → ${this.formatTime(this.segments[idx].end)}`;
-      }
-    }
+    const row = document.getElementById(`cue-card-${idx}`);
+    const seg = this.segments[idx];
+    if (!row || !seg) return;
+    row.querySelector('.cue-timecode-badge').innerText = this.rowTimecode(seg, row.classList.contains('selected'));
+    row.setAttribute('aria-label', this.rowLabel(seg, idx));
   }
 
   // --- Playback & Transport ---
@@ -2016,6 +3192,7 @@ export class PackBuilderApp {
       character: defaultChar
     };
 
+    this.pushUndo();
     this.segments.push(newSeg);
     this.segments.sort((a, b) => a.start - b.start);
     const newIdx = this.segments.indexOf(newSeg);
@@ -2036,56 +3213,50 @@ export class PackBuilderApp {
     this.dragLanes = null;
     cancelAnimationFrame(this._dragFrameId);
     this._dragFrameId = null;
+    const step = this.pushUndo();
     this.segments.splice(idx, 1);
-    this.selectedSegmentIndex = null;
+    // The line that took its place is selected (the one before, at the end), so the keyboard keeps its place.
+    const next = this.segments[idx] ? idx : idx - 1;
+    this.selectedSegmentIndex = next >= 0 ? next : null;
     this.renderTimelineSegments();
     this.renderSegmentsList();
     this.renderCharacterChips();
     this.syncSegmentsToServer();
-    this.showToast('Line deleted');
-  }
-
-  promptAddCharacter() {
-    const name = prompt('Character name');
-    if (name && name.trim()) {
-      const clean = name.trim();
-      this.getCharacterColor(clean);
-      this.renderCharacterChips();
-      const chip = Array.from(this.characterChipsList.children)
-        .find(c => c.querySelector('.chip-del-btn')?.dataset.char === clean);
-      if (chip) chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-      this.renderSegmentsList();
-      this.showToast(`"${clean}" added`);
-    }
+    this.showUndoToast(`Line ${idx + 1} deleted`, step);
   }
 
   markInAtPlayhead() {
-    const t = Math.round(this.editorVideo.currentTime * 50) / 50;
-    if (this.selectedSegmentIndex !== null && this.segments[this.selectedSegmentIndex]) {
-      this.segments[this.selectedSegmentIndex].start = t;
-      if (this.segments[this.selectedSegmentIndex].end <= t) {
-        this.segments[this.selectedSegmentIndex].end = Math.min(this.duration, t + 1.0);
-      }
-      this.renderTimelineSegments();
-      this.renderSegmentsList();
-      this.syncSegmentsToServer();
-      this.showToast(`Start set to ${this.formatTime(t)}`);
-    } else {
-      this.addNewSegmentAtPlayhead();
+    const idx = this.selectedSegmentIndex;
+    const seg = this.segments[idx];
+    if (!seg) {
+      this.showToast('Select a line first');
+      return;
     }
+    const t = Math.round(this.editorVideo.currentTime * 50) / 50;
+    this.pushUndo();
+    seg.start = t;
+    if (seg.end <= t) seg.end = Math.min(this.duration, t + 1.0);
+    this.renderTimelineSegments();
+    this.updateCardTimecode(idx);
+    this.syncSegmentsToServer();
+    this.showToast(`Start set to ${this.formatTime(t)}`);
   }
 
   markOutAtPlayhead() {
+    const idx = this.selectedSegmentIndex;
+    const seg = this.segments[idx];
+    if (!seg) {
+      this.showToast('Select a line first');
+      return;
+    }
     const t = Math.round(this.editorVideo.currentTime * 50) / 50;
-    if (this.selectedSegmentIndex !== null && this.segments[this.selectedSegmentIndex]) {
-      const seg = this.segments[this.selectedSegmentIndex];
-      if (t > seg.start) {
-        seg.end = t;
-        this.renderTimelineSegments();
-        this.renderSegmentsList();
-        this.syncSegmentsToServer();
-        this.showToast(`End set to ${this.formatTime(t)}`);
-      }
+    if (t > seg.start) {
+      this.pushUndo();
+      seg.end = t;
+      this.renderTimelineSegments();
+      this.updateCardTimecode(idx);
+      this.syncSegmentsToServer();
+      this.showToast(`End set to ${this.formatTime(t)}`);
     }
   }
 
@@ -2097,17 +3268,118 @@ export class PackBuilderApp {
     this.stopAt = seg.end; // the playback loop pauses here
   }
 
-  async syncSegmentsToServer() {
+  /**
+   * Saves the lines. One PUT at a time: edits made meanwhile go in the next one, with the
+   * latest lines, so an older save never lands after a newer one. A failed save says so
+   * in the editor and tries again, waiting longer each time (1 s, 2 s, 4 s… up to 30 s).
+   */
+  syncSegmentsToServer() {
     if (!this.sessionId) return;
-    try {
-      await fetch(`/api/builder/${this.sessionId}/segments`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments: this.segments })
-      });
-    } catch (e) {
-      console.warn('Failed to sync segments to server:', e);
+    this.save.wanted = true;
+    if (!this.save.inFlight) this.flushSave();
+  }
+
+  async flushSave() {
+    const save = this.save;
+    clearTimeout(save.retryTimer);
+    save.retryTimer = null;
+    while (save.wanted && this.sessionId) {
+      save.wanted = false;
+      save.inFlight = true;
+      let ok = false;
+      try {
+        const res = await fetch(`/api/builder/${this.sessionId}/segments`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ segments: this.segments }),
+        });
+        ok = res.ok;
+      } catch (e) {
+        console.warn('Failed to sync segments to server:', e);
+      }
+      save.inFlight = false;
+      if (!ok) {
+        save.wanted = true;
+        save.failed = true;
+        save.delay = Math.min(30000, save.delay ? save.delay * 2 : 1000);
+        save.retryTimer = setTimeout(() => this.flushSave(), save.delay);
+        this.renderEditorNotice();
+        return;
+      }
+      if (save.failed) {
+        save.failed = false;
+        save.delay = 0;
+        this.renderEditorNotice();
+      }
     }
+  }
+
+  /** The editor's notice: a failed save while there is one, otherwise the engine's processing notice. */
+  renderEditorNotice() {
+    const failed = this.save.failed;
+    const text = failed ? SAVE_FAILED : this.editorWarning;
+    this.editorNotice.textContent = text;
+    this.editorNotice.hidden = !text;
+    this.editorNotice.classList.toggle('is-error', failed);
+  }
+
+  // --- Undo ---
+
+  /** The editor's state for undo: the lines, the cast's colours and the selected line. */
+  snapshot() {
+    return {
+      segments: this.segments.map((s) => ({ ...s })),
+      colors: Array.from(this.characterColors),
+      selected: this.selectedSegmentIndex,
+    };
+  }
+
+  /** A toast that says what changed, with an Undo back to before `step`. */
+  showUndoToast(message, step) {
+    const toast = this.showToast(message, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
+    if (toast) this.undoToasts.push({ toast, step });
+  }
+
+  /** Closes the Undo toasts whose step was undone already, or all of them away from the editor. */
+  closeUndoToasts() {
+    this.undoToasts = this.undoToasts.filter(({ toast, step }) => {
+      if (this.currentStep === 'editor' && this.undoStack.includes(step) && toast.isConnected) return true;
+      toast.remove();
+      return false;
+    });
+  }
+
+  /** Forgets every undo step (new lines), and their toasts. */
+  clearUndo() {
+    this.undoStack = [];
+    this.closeUndoToasts();
+  }
+
+  /** Keeps the state from before a change, up to 50 steps. Returns the step, for a toast's Undo. */
+  pushUndo(step = this.snapshot()) {
+    this.undoStack.push(step);
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+    return step;
+  }
+
+  /**
+   * Undoes the last change (Ctrl+Z), or every change back to and including `step` (a toast's
+   * Undo, once later changes were made). Undo is rare, so the editor is drawn again in full.
+   */
+  undo(step = null) {
+    if (step && !this.undoStack.includes(step)) return;
+    let snap = this.undoStack.pop();
+    while (step && snap && snap !== step) snap = this.undoStack.pop();
+    this.closeUndoToasts();
+    if (!snap) return;
+    this.segments = snap.segments;
+    this.characterColors = new Map(snap.colors);
+    this.selectedSegmentIndex = this.segments[snap.selected] ? snap.selected : null;
+    this.textBefore = null;
+    this.renderTimelineSegments();
+    this.renderSegmentsList();
+    this.renderCharacterChips();
+    this.syncSegmentsToServer();
   }
 
   async transcribeSingleSegment(idx, btnEl, textInputEl) {
@@ -2115,7 +3387,7 @@ export class PackBuilderApp {
     const seg = this.segments[idx];
     const origText = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
-      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Transcribing</span>';
+      btnEl.innerHTML = ICON_SPINNER;
       btnEl.disabled = true;
     }
 
@@ -2137,6 +3409,7 @@ export class PackBuilderApp {
       if (res.ok) {
         const data = await res.json();
         if (data.text && data.text.trim()) {
+          this.pushUndo();
           seg.text = data.text.trim();
           if (textInputEl) textInputEl.value = seg.text;
           this.updateNonverbalBadge(idx);
@@ -2170,7 +3443,7 @@ export class PackBuilderApp {
 
     const origText = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
-      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Converting</span>';
+      btnEl.innerHTML = ICON_SPINNER;
       btnEl.disabled = true;
     }
 
@@ -2184,6 +3457,7 @@ export class PackBuilderApp {
       if (res.ok) {
         const data = await res.json();
         if (data.romaji && data.romaji.trim()) {
+          this.pushUndo();
           seg.text = data.romaji.trim();
           if (textInputEl) textInputEl.value = seg.text;
           this.updateNonverbalBadge(idx);
@@ -2205,8 +3479,9 @@ export class PackBuilderApp {
   }
 
   transcribeSelectedSegment() {
+    if (!this.has('transcription')) return; // the button's tooltip says why
     if (this.selectedSegmentIndex === null) {
-      this.showToast('Select a line first.');
+      this.showToast('Select a line first');
       return;
     }
     const idx = this.selectedSegmentIndex;
@@ -2218,31 +3493,61 @@ export class PackBuilderApp {
 
   // --- STEP 4: Compile & Launch ---
 
-  goToCompileStep() {
+  /** Build. The Pack details are filled in once per session, so going back and forth keeps your edits. Returns whether it opened. */
+  goToCompileStep(opts = {}) {
     if (this.segments.length === 0) {
-      this.showToast('Add at least one line before building.');
-      return;
+      this.showToast('Add a line first.');
+      return false;
     }
 
-    this.setStep('compile');
+    this.setStep('compile', opts);
     this.pauseMedia();
 
-    const savedUser = localStorage.getItem('dubmate_user_name') || '';
-    this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.innerText.replace(/\.[^/.]+$/, '');
-    this.compileAuthor.value = savedUser || 'Creator';
-    this.compileSubtitle.value = `${this.segments.length} lines, ${this.characterColors.size} characters`;
+    if (!this.compileFilled) {
+      this.compileFilled = true;
+      const savedUser = localStorage.getItem('dubmate_user_name') || '';
+      this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.textContent.replace(/\.[^/.]+$/, '');
+      this.compileAuthor.value = savedUser || 'Creator';
+      this.compileSubtitle.value = `${this.segments.length} lines, ${this.characterColors.size} characters`;
+    }
 
     this.statValDuration.innerText = this.formatTime(this.duration);
     this.statValLines.innerText = this.segments.length;
     this.statValCast.innerText = this.characterColors.size;
+    this.updateBuildState();
+    return true;
+  }
+
+  /** What a build is made of: the lines and the Pack details. */
+  buildSignature() {
+    return JSON.stringify([this.segments, this.compilePackName.value.trim(), this.compileAuthor.value.trim(), this.compileSubtitle.value.trim()]);
+  }
+
+  /** The pack was built from exactly what is here now. */
+  isBuiltCurrent() {
+    return !!this.builtSignature && this.builtSignature === this.buildSignature();
+  }
+
+  /** Build shows Build pack until a build, Pack ready while nothing changed since, and Build again after a change. */
+  updateBuildState() {
+    if (this.compiling) return;
+    const built = !!this.builtSignature;
+    const current = built && this.isBuiltCurrent();
+    this.btnExecuteCompile.style.display = built ? 'none' : 'block';
+    this.compileSuccessBox.style.display = current ? 'block' : 'none';
+    this.compileStaleBox.hidden = !built || current;
   }
 
   async executePackCompilation() {
     const packName = this.compilePackName.value.trim() || 'Custom Dub Scene';
     const authors = [this.compileAuthor.value.trim() || 'Creator'];
     const subtitle = this.compileSubtitle.value.trim();
+    const signature = this.buildSignature();
 
+    this.compiling = true;
     this.btnExecuteCompile.style.display = 'none';
+    this.compileSuccessBox.style.display = 'none';
+    this.compileStaleBox.hidden = true;
     this.compileProgressBox.style.display = 'flex';
     this.compileStatusMsg.innerText = 'Building the pack';
 
@@ -2271,13 +3576,17 @@ export class PackBuilderApp {
         this.btnDownloadPackZip.setAttribute('download', `${packName}.zip`);
       }
 
+      // Pack ready: recording is the next step, so it takes the focus.
+      this.builtSignature = signature;
+      this.compiling = false;
       this.compileProgressBox.style.display = 'none';
-      this.compileSuccessBox.style.display = 'block';
-      this.showToast(`'${packName}' is ready`);
-
+      this.updateBuildState();
+      this.btnPlaytestNow.focus({ preventScroll: true });
+      this.compileSuccessBox.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' });
     } catch (ex) {
+      this.compiling = false;
       this.compileProgressBox.style.display = 'none';
-      this.btnExecuteCompile.style.display = 'block';
+      this.updateBuildState();
       this.showToast(ex.message);
     }
   }
@@ -2323,9 +3632,19 @@ export class PackBuilderApp {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
 
-  initModeDropdown() { initModeDropdown(); }
+  // The menu's Studio link leaves Pack Builder too, so it asks the same way as Exit.
+  initModeDropdown() {
+    initModeDropdown({
+      onStudioClick: (e, closeMenu) => {
+        if (!this.mustAskBeforeLeaving()) return;
+        e.preventDefault();
+        closeMenu();
+        this.openLeaveDialog(e.currentTarget.href);
+      },
+    });
+  }
 
-  showToast(message) { showToast(message); }
+  showToast(message, opts) { return showToast(message, opts); }
 }
 
 // Instantiate Pack Builder Studio
