@@ -36,6 +36,8 @@ export const SHORTCUT_GROUPS = [
     id: 'watching', title: 'Premiere', page: 'studio', view: 'screening', items: [
       { id: 'watch-play', keys: [['Space']], label: 'Play or pause' },
       { id: 'watch-replay', keys: [['R']], label: 'Replay from the start' },
+      { id: 'watch-seek', keys: [['←'], ['→']], label: 'Back or forward 5 seconds' },
+      { id: 'watch-line', keys: [[','], ['.']], label: 'Previous or next line' },
     ],
   },
   {
@@ -46,7 +48,9 @@ export const SHORTCUT_GROUPS = [
       { id: 'builder-new', keys: [['N']], label: 'Add a new line here' },
       { id: 'builder-step', keys: [['←'], ['→']], label: 'Move back or forward 0.2 s' },
       { id: 'builder-jump', keys: [['Shift', '←'], ['Shift', '→']], label: 'Move back or forward 2 s' },
-      { id: 'builder-delete', keys: [['Delete'], ['Backspace']], label: 'Remove the selected line' },
+      { id: 'builder-line-move', keys: [['↑'], ['↓']], label: 'In the lines: move to the line above or below' },
+      { id: 'builder-delete', keys: [['Delete'], ['Backspace']], label: 'Remove the selected line (you can undo)' },
+      { id: 'builder-undo', keys: [['Ctrl', 'Z']], label: 'Undo' },
     ],
   },
   {

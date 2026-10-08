@@ -17,6 +17,7 @@ import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
 import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
+import { UpdateNoticeMethods } from './studio/update_notice.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff, FIRST_ROOM_KEY } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 import { IDENTITY_COLORS, normalizeColor, cleanName, colorName, renderColorPicker } from './identity.js';
@@ -40,6 +41,11 @@ const CONNECTION_COPY = {
   lostTip: "Casting and ready changes are sent when it's back. Wait for it before you record.",
   failedTip: "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved.",
 };
+
+// The room messages that change the premiere's In this dub list and timeline ticks (a join
+// or a status update brings an actor's name and colour).
+const PREMIERE_LINE_EVENTS = ['take_recorded', 'take_picked', 'take_deleted', 'role_assigned', 'user_joined',
+  'user_status_updated'];
 
 class DubMateApp {
   constructor() {
@@ -241,6 +247,10 @@ class DubMateApp {
     this.headerUserName = document.getElementById('header-user-name');
     this.btnLeaveRoom = document.getElementById('btn-leave-room');
     this.btnAudioSettings = document.getElementById('btn-audio-settings');
+    // A remote member's export folder row is hidden: their renders are on the host's computer.
+    if (this.btnAudioSettings && !this.isEngineLocal()) {
+      this.btnAudioSettings.setAttribute('data-tip', 'Microphone and headphones');
+    }
     this.audioSettingsAlertDot = document.getElementById('audio-settings-alert-dot');
     this.studioBreadcrumbs = document.getElementById('studio-breadcrumbs');
     this.navStepLobby = document.getElementById('nav-step-lobby');
@@ -449,27 +459,55 @@ class DubMateApp {
     this.screeningVideo.muted = true;
     this.screeningVideo.volume = 0;
 
-    this.screeningHostBadge = document.getElementById('screening-host-badge');
-    this.screeningMasterBadge = document.getElementById('screening-master-badge');
     this.screeningStatusDesc = document.getElementById('screening-status-desc');
     this.btnScreeningPlayPause = document.getElementById('btn-screening-play-pause');
-    this.screeningPlayIcon = document.getElementById('screening-play-icon');
+    this.screeningPlayLabel = document.getElementById('screening-play-label');
     this.btnScreeningReplay = document.getElementById('btn-screening-replay');
+    this.screeningSourceLabel = document.getElementById('screening-source-label');
+    this.screeningSourceText = document.getElementById('screening-source-text');
+    // The timeline under the video and In this dub (screening.js)
+    this.screeningTrack = document.getElementById('screening-track');
+    this.screeningTrackPlayed = document.getElementById('screening-track-played');
+    this.screeningTrackThumb = document.getElementById('screening-track-thumb');
+    this.screeningTrackTicks = document.getElementById('screening-track-ticks');
+    this.screeningTimeElapsed = document.getElementById('screening-time-elapsed');
+    this.screeningTimeTotal = document.getElementById('screening-time-total');
+    this.screeningLines = document.getElementById('screening-lines');
+    this.screeningLinesSummary = document.getElementById('screening-lines-summary');
+    this.screeningLinesList = document.getElementById('screening-lines-list');
+    // A drag on the timeline: where the thumb is until it is let go (null when not dragging).
+    this.premiereDragTime = null;
+    this.screeningSaveError = document.getElementById('screening-save-error');
+    this.screeningSaveErrorText = document.getElementById('screening-save-error-text');
+    this.btnSaveRetry = document.getElementById('btn-save-retry');
+    // Save (host) / Download video (member): the main part, the chevron and its menu.
+    this.screeningSave = document.getElementById('screening-save');
     this.btnExportVideo = document.getElementById('btn-export-video');
-    this.btnBackBooth = document.getElementById('btn-back-booth');
-    this.exportProgressBox = document.getElementById('export-progress-box');
-    this.exportProgressFill = document.getElementById('export-progress-fill');
-    this.exportStatusText = document.getElementById('export-status-text');
-    this.exportDownloadContainer = document.getElementById('export-download-container');
-    this.btnDownloadLink = document.getElementById('btn-download-link');
-    this.btnDownloadLink916 = document.getElementById('btn-download-link-9-16');
-    this.btnDownloadProjectZip = document.getElementById('btn-download-project-zip');
-    this.btnToolbarProjectZip = document.getElementById('btn-toolbar-project-zip');
-    this.btnDownloadStems = document.getElementById('btn-download-stems');
-    this.btnToolbarStems = document.getElementById('btn-toolbar-stems');
-    this.btnAspect169 = document.getElementById('btn-aspect-16-9');
-    this.btnAspect916 = document.getElementById('btn-aspect-9-16');
-    this.selectedAspectRatio = '16:9';
+    this.labelExportBtn = document.getElementById('label-export-btn');
+    this.btnSaveMenu = document.getElementById('btn-save-menu');
+    this.saveMenu = document.getElementById('save-menu');
+    this.saveMenuEditing = document.getElementById('save-menu-editing');
+    this.saveMenuRows = {
+      '16:9': document.getElementById('save-menu-video-169'),
+      '9:16': document.getElementById('save-menu-video-916'),
+      stems: document.getElementById('save-menu-stems'),
+      project: document.getElementById('save-menu-project'),
+    };
+    // A video was saved and then the mix changed: Save reads "Mix changed · Save again".
+    this.exportStale = false;
+    // Why a render failed, per aspect, from export_failed (or a refused request).
+    this.exportFailures = {};
+    // Separate tracks and the editing project saved into the export folder this visit.
+    this.editingSaved = { stems: false, project: false };
+    // A finished video that arrived mid-play: it swaps in at the next pause.
+    this.pendingExportSwap = null;
+
+    // Mix: presets for the host, the host's choice read-only for members
+    this.screeningMixSummary = document.getElementById('screening-mix-summary');
+    this.screeningMixHost = document.getElementById('screening-mix-host');
+    this.screeningMixMember = document.getElementById('screening-mix-member');
+    this.screeningMixMemberPreset = document.getElementById('screening-mix-member-preset');
+    this.mixPresetButtons = Array.from(document.querySelectorAll('#screening-mix .mix-preset'));
 
     // Screening Master Audio Stem Mixer Elements
     this.sliderScreeningBalance = document.getElementById('slider-screening-balance');
@@ -487,30 +525,37 @@ class DubMateApp {
     this.masterDialoguePresence = 0.0;
     this.screeningSyncRafId = null;
 
-    // Export Step Indicators
-    this.stepDsp = document.getElementById('step-dsp');
-    this.stepMux = document.getElementById('step-mux');
-    this.stepReady = document.getElementById('step-ready');
-
-    // Master Export Modal Elements
+    // The export modal (export.js): rendering, timeout, failed and done
     this.modalExportRendering = document.getElementById('modal-export-rendering');
+    this.exportModalReel = document.getElementById('export-modal-reel');
+    this.exportModalIconDone = document.getElementById('export-modal-icon-done');
+    this.exportModalIconFailed = document.getElementById('export-modal-icon-failed');
+    this.exportModalBadges = document.getElementById('export-modal-badges');
     this.exportModalBadge = document.getElementById('export-modal-badge');
     this.exportModalTitle = document.getElementById('export-modal-title');
     this.exportModalStatusText = document.getElementById('export-modal-status-text');
-    this.exportModalProgressBar = document.getElementById('export-modal-progress-bar');
+    this.exportModalSteps = document.getElementById('export-modal-steps');
+    this.exportModalProgress = document.getElementById('export-modal-progress');
     this.modalStepDsp = document.getElementById('modal-step-dsp');
     this.modalStepMux = document.getElementById('modal-step-mux');
-    this.modalStepReady = document.getElementById('modal-step-ready');
     this.connectorDspMux = document.getElementById('connector-dsp-mux');
-    this.connectorMuxReady = document.getElementById('connector-mux-ready');
     this.exportModalReassurance = document.getElementById('export-modal-reassurance');
     this.exportModalActions = document.getElementById('export-modal-actions');
+    this.exportModalFailedActions = document.getElementById('export-modal-failed-actions');
+    this.exportModalTimeoutActions = document.getElementById('export-modal-timeout-actions');
     this.btnModalCloseView = document.getElementById('btn-modal-close-view');
     this.btnModalCloseX = document.getElementById('btn-modal-close-x');
-    this.btnModalDismiss = document.getElementById('btn-modal-dismiss');
+    this.btnModalReveal = document.getElementById('btn-modal-reveal');
+    this.btnModalMake916 = document.getElementById('btn-modal-make-916');
     this.btnModalDownload169 = document.getElementById('btn-modal-download-169');
     this.btnModalDownload916 = document.getElementById('btn-modal-download-916');
-    this.exportSavedPath = document.getElementById('export-saved-path');
+    this.btnModalRetry = document.getElementById('btn-modal-retry');
+    this.btnModalCloseFailed = document.getElementById('btn-modal-close-failed');
+    this.btnModalKeepWorking = document.getElementById('btn-modal-keep-working');
+    // openDialog's close() while the export modal is open.
+    this.closeExportDialog = null;
+    // A remote host's Download for a format not saved yet: downloaded once it is made.
+    this.exportDownloadAfter = null;
 
     // Import Loading Overlay
     this.modalImportLoading = document.getElementById('modal-import-loading');
@@ -789,12 +834,6 @@ class DubMateApp {
       this.broadcastMyStatus('screening');
     });
 
-    this.btnBackBooth.addEventListener('click', () => {
-      this.showView('booth');
-      this.loadBoothLine(this.currentLineIndex);
-      this.broadcastMyStatus('booth');
-    });
-
     // Premiere Readiness & Filter Events
     this.btnToggleReady.addEventListener('click', () => this.toggleMyReadiness());
     this.btnLaunchPremiere.addEventListener('click', () => this.launchGroupPremiere());
@@ -898,19 +937,15 @@ class DubMateApp {
     // effects; Esc closes it); the Takes card handles its own arrows, P, Enter and Delete
     // (takes_card.js).
     // The list the user sees is SHORTCUT_GROUPS in shortcuts.js; keep the two in step.
-    // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
+    // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00), ←/→ (5 s), , and . (line starts)
     window.addEventListener('keydown', (e) => {
-      // The shortcut sheet (or another openDialog window) handles its own keys.
+      // The shortcut sheet, the export modal (or another openDialog window) handles its own keys.
       if (isDialogOpen()) return;
 
-      // Escape key closes modals if they are open and not actively rendering
+      // Escape closes Audio settings and the booth's inline questions
       if (e.key === 'Escape') {
         if (this.isAudioSettingsOpen()) {
           this.closeAudioSettings();
-          return;
-        }
-        if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
-          this.closeExportModal();
           return;
         }
         // Esc cancels the count-in. While recording it does nothing: a stray Esc never loses a take.
@@ -990,11 +1025,25 @@ class DubMateApp {
         }
       } else if (this.views.screening.classList.contains('active')) {
         if (e.code === 'Space') {
+          // A focused control gets its own Space (a section opens, a preset is picked, a
+          // button is pressed); only the video, the timeline and the page play for everyone.
+          if (e.target.closest?.('button, summary, a, [role="radio"], [role="menuitem"]')) return;
           e.preventDefault();
           this.handleScreeningPlayPause();
         } else if (e.code === 'KeyR' || e.key === 'r' || e.key === 'R') {
           e.preventDefault();
           this.handleScreeningReplay();
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.defaultPrevented
+            && !e.target.closest?.('[role="menu"], [role="radiogroup"]')) {
+          // The Save menu and the Mix presets use the arrows themselves.
+          const step = { ArrowLeft: -5, ArrowRight: 5 }[e.key];
+          if (step) {
+            e.preventDefault();
+            this.seekPremiere((this.screeningVideo.currentTime || 0) + step);
+          } else if (e.key === ',' || e.key === '.') {
+            e.preventDefault();
+            this.stepPremiereLine(e.key === ',' ? -1 : 1);
+          }
         }
       }
     });
@@ -1094,6 +1143,8 @@ class DubMateApp {
         }
         this.renderCastActivityHUD();
         this.updateScreeningControls();
+        // In this dub and the timeline's ticks follow takes and casting.
+        if (this.currentView === 'screening' && PREMIERE_LINE_EVENTS.includes(data.type)) this.renderPremiereLines();
       }
     });
 
@@ -1221,42 +1272,73 @@ class DubMateApp {
       this.handleIncomingScreeningSync(data.payload);
     });
 
+    // A video's export state is the room's (state.exports), so Save and the status line
+    // follow every render, whoever started it: the premiere's own, the host's Save, a 9:16.
+    // Only the client that pressed Save has the export modal; its POST and poll drive it.
     this.socket.on('export_started', (data) => {
-      // The client that pressed Export already has the modal open and locked, and
-      // its own POST/poll drives the progress; re-opening here would rewind it.
-      if (this.isRenderingExport) return;
-      if (this.views.screening.classList.contains('active')) {
-        // Someone else started this render: show it, but leave the modal closable.
-        this.openExportModal({ locked: false });
-        this.updateExportModalStep(1, 30, "Mixing your takes with the scene…");
+      this.applyIncomingState(data);
+      const aspect = data.payload?.aspect_ratio === '9:16' ? '9:16' : '16:9';
+      // A restart (the mix changed mid-render) stays in Saving…; this client's modal goes
+      // back to mixing, which the engine does again.
+      this.setExportState(aspect, 'processing');
+      delete this.exportFailures[aspect];
+      if (this.exportModalAspect === aspect && this.modalExportRendering?.dataset.state === 'rendering'
+          && this.isExportModalOpen()) {
+        this.updateExportModalStep(1, 'Mixing your takes…');
       }
+      this.updateScreeningControls();
     });
 
     this.socket.on('export_ready', (data) => {
       if (!this.applyIncomingState(data)) return;
-      const payload = data.payload || data;
-      if (payload && (payload.download_url || payload.export_video_url || payload.download_url_16_9)) {
+      const payload = data.payload || {};
+      const aspect = payload.aspect_ratio === '9:16' ? '9:16' : '16:9';
+      if (this.exportPollInterval && this.exportModalAspect === aspect) {
+        // This client's poll would report it a tick later; stop it so it lands once.
+        clearInterval(this.exportPollInterval);
+        this.exportPollInterval = null;
         this.handleExportSuccess(payload);
-        this.showToast("The dubbed video is ready");
+      } else {
+        this.onExportReady(aspect, payload.export_video_url);
       }
+      if (aspect === '16:9') announce('The video is saved');
     });
 
     this.socket.on('export_failed', (data) => {
-      const payload = data.payload || data;
-      const modalOpen = this.modalExportRendering && this.modalExportRendering.style.display !== 'none';
-      if (!modalOpen) return;
-      // The initiator's poll would report the same failure a tick later; stop it so
-      // the failure is shown once.
-      if (this.exportPollInterval) {
-        clearInterval(this.exportPollInterval);
-        this.exportPollInterval = null;
+      this.applyIncomingState(data);
+      const payload = data.payload || {};
+      const aspect = payload.aspect_ratio === '9:16' ? '9:16' : '16:9';
+      const err = new Error(payload.error || 'failed');
+      this.setExportState(aspect, 'failed');
+      // "The video didn't save: {reason}" sits next to its own Try again button.
+      this.exportFailures[aspect] = this.friendlyError(err, 'Something went wrong.').replace(/\s*Try again\.?$/, '');
+      if (this.isExportModalOpen() && this.exportModalAspect === aspect) {
+        // The initiator's poll would report the same failure a tick later; stop it so
+        // the failure is shown once.
+        if (this.exportPollInterval) {
+          clearInterval(this.exportPollInterval);
+          this.exportPollInterval = null;
+        }
+        this.failExport(err);
       }
-      this.failExport(new Error(payload?.error || 'failed'));
+      this.updateScreeningControls();
+    });
+
+    // The takes or the mix changed and a saved (or saving) video was dropped.
+    this.socket.on('export_invalidated', (data) => {
+      // Read before the merge: the incoming state no longer lists the dropped video.
+      if (this.exportState('16:9') === 'ready') this.exportStale = true;
+      this.applyIncomingState(data);
+      this.dropStaleExport();
+      this.updateScreeningControls();
     });
 
     this.socket.on('cleanup_refreshed', (data) => this.onCleanupRefreshed(data));
 
+    // This tab's own change comes back as an echo; applying it could move the slider back
+    // mid-drag under lag, so it is skipped. Another tab's applies, even the same host's.
     this.socket.on('dialogue_presence_sync', (data) => {
+      if (data.payload?.client_id === this.renderClientId()) return;
       const pres = parseFloat(data.payload?.presence_db ?? 0.0);
       this.masterDialoguePresence = pres;
       this.renderPresenceUI(pres);
@@ -1265,6 +1347,7 @@ class DubMateApp {
     });
 
     this.socket.on('mix_balance_sync', (data) => {
+      if (data.payload?.client_id === this.renderClientId()) return;
       const balance = Number(data.payload?.balance ?? 50);
       if (this.roomState) this.roomState.master_mix_balance = balance;
       this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);
@@ -1894,7 +1977,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, MicCardMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, MicCardMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

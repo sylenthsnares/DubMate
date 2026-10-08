@@ -15,7 +15,8 @@ import asyncio
 import functools
 import re
 import math
-import threading
+import subprocess
+import sys
 from collections import deque
 from typing import Dict, Any, Iterable, Optional, Tuple
 
@@ -265,6 +266,19 @@ def _refuse_during_cleanup_refresh(room) -> None:
     """409 while older takes are re-cleaned: a render then would mix old and new audio."""
     if room.cleanup_refreshing:
         raise HTTPException(status_code=409, detail="Older takes are being refreshed. Try again in a moment.")
+
+
+async def _wait_for_cleanup_refresh(room) -> None:
+    """Returns once no Refresh older takes is running or about to start its task (a request
+    still planning holds its claim in room.cleanup_refreshing before the task exists)."""
+    while True:
+        task = room.cleanup_refresh_task
+        if task is not None and not task.done():
+            await asyncio.wait({task})
+        elif room.cleanup_refreshing:
+            await asyncio.sleep(0.05)
+        else:
+            return
 
 
 @router.post("/api/rooms/{room_id}/lines/{line_id}/takes")
@@ -925,77 +939,92 @@ async def export_room_dub(room_id: str, aspect_ratio: str = "16:9", presence: fl
     room = rooms.room_or_404(room_id)
     _require_host(room, user_id, "Only the host can make the video.")
     _refuse_during_cleanup_refresh(room)
+    aspect_ratio = "9:16" if aspect_ratio == "9:16" else "16:9"
 
-    presence_val = float(presence) if presence != 0.0 else room.master_dialogue_presence_db
-    room.master_dialogue_presence_db = presence_val
-    # The Mix the host hears, sent along in case its set_mix_balance hasn't landed yet.
+    # The dialogue level and Mix the host hears, sent along in case its set_dialogue_presence
+    # or set_mix_balance hasn't landed yet. A change drops the videos made with the old mix.
+    if presence != 0.0 and presence == presence and float(presence) != room.master_dialogue_presence_db:
+        room.master_dialogue_presence_db = max(-12.0, min(12.0, float(presence)))
+        room.invalidate_exports()
     if balance is not None and balance == balance:
         new_balance = max(0.0, min(100.0, float(balance)))
         if new_balance != room.master_mix_balance:
             room.master_mix_balance = new_balance
             room.invalidate_exports()
-    mix_balance = room.master_mix_balance
 
-    is_9_16 = (aspect_ratio == "9:16")
-    out_path = room.export_out_path(aspect_ratio)
-
-    # Check if existing rendered file is already ready
     if room.ready_export_path(aspect_ratio):
         return {"status": "ok", **room.export_ready_payload(aspect_ratio)}
 
-    current_status = room.export_status.get(aspect_ratio)
-    if current_status == "processing":
-        return {
-            "status": "processing",
-            "message": "Rendering in progress...",
-            "aspect_ratio": aspect_ratio,
-            "poll_url": f"/api/rooms/{room.room_id}/export/status?aspect_ratio={aspect_ratio}"
-        }
-
-    room.export_status[aspect_ratio] = "processing"
-    await room.broadcast("export_started", {"aspect_ratio": aspect_ratio})
-    takes = await mix_for_export(room)
-
-    # Captured here, on the event loop thread: the worker thread has no running loop
-    # of its own, so asyncio.get_event_loop() there cannot reach the clients.
-    loop = asyncio.get_running_loop()
-
-    def notify_clients(message_type: str, payload: Dict[str, Any]):
-        try:
-            asyncio.run_coroutine_threadsafe(room.broadcast(message_type, payload), loop)
-        except Exception as ex:
-            print(f"[ExportWorkerWarning] Could not broadcast {message_type} for {room.room_id} ({aspect_ratio}): {ex}")
-
-    def render_worker():
-        try:
-            audio_processor.export_dub_video(
-                room.pack,
-                takes,
-                out_path,
-                aspect_ratio="9:16" if is_9_16 else "16:9",
-                master_dialogue_presence_db=presence_val,
-                mix_balance=mix_balance,
-            )
-            if is_9_16:
-                room.exported_video_9_16_path = out_path
-            else:
-                room.exported_video_path = out_path
-
-            room.export_status[aspect_ratio] = "ready"
-            notify_clients("export_ready", room.export_ready_payload(aspect_ratio))
-        except Exception as ex:
-            room.export_status[aspect_ratio] = f"failed: {str(ex)}"
-            print(f"[ExportWorkerError] Error rendering {room.room_id} ({aspect_ratio}): {ex}")
-            notify_clients("export_failed", {"aspect_ratio": aspect_ratio, "error": str(ex)})
-
-    threading.Thread(target=render_worker, daemon=True).start()
-
+    start_export_render(room, aspect_ratio)
     return {
         "status": "processing",
-        "message": "Rendering started in background",
+        "message": "Rendering in the background",
         "aspect_ratio": aspect_ratio,
         "poll_url": f"/api/rooms/{room.room_id}/export/status?aspect_ratio={aspect_ratio}"
     }
+
+
+def start_export_render(room, aspect_ratio: str) -> asyncio.Task:
+    """Renders the room's video for this aspect in a background task kept in room.export_tasks,
+    so it outlives the request or socket that asked for it. A render already running for the
+    aspect is returned instead of starting a second ffmpeg on the same file. Marked
+    "processing" at once, so no Refresh older takes starts before the task runs."""
+    task = room.export_tasks.get(aspect_ratio)
+    if task is not None and not task.done():
+        return task
+    room.export_status[aspect_ratio] = "processing"
+    task = asyncio.get_running_loop().create_task(_render_export(room, aspect_ratio))
+    room.export_tasks[aspect_ratio] = task
+    return task
+
+
+async def _render_export(room, aspect_ratio: str) -> None:
+    """The export render: waits for a running Refresh older takes, mixes and renders with the
+    room's current dialogue level and Mix. When the takes or the mix changed meanwhile
+    (room.export_generation), the result is thrown away and the scene is rendered again, so a
+    video that doesn't match what the room hears is never offered as ready."""
+    started = {"aspect_ratio": aspect_ratio}
+
+    def audio_mixed():   # from the render's thread: the step is now the video
+        room.export_steps[aspect_ratio] = "video"
+
+    try:
+        while True:
+            room.export_status[aspect_ratio] = "processing"
+            room.export_steps[aspect_ratio] = "mix"
+            await room.broadcast("export_started", started)
+            await _wait_for_cleanup_refresh(room)
+            generation = room.export_generation
+            out_path = room.export_out_path(aspect_ratio)
+            takes = await mix_for_export(room)
+            # ffmpeg runs synchronously; a thread keeps it from stalling every room's sockets.
+            await asyncio.to_thread(
+                audio_processor.export_dub_video,
+                room.pack, takes, out_path,
+                aspect_ratio=aspect_ratio,
+                master_dialogue_presence_db=room.master_dialogue_presence_db,
+                mix_balance=room.master_mix_balance,
+                on_audio_mixed=audio_mixed,
+            )
+            if room.export_generation == generation:
+                break
+            started = {"aspect_ratio": aspect_ratio, "restarted": True}
+        if aspect_ratio == "9:16":
+            room.exported_video_9_16_path = out_path
+        else:
+            room.exported_video_path = out_path
+        room.export_status[aspect_ratio] = "ready"
+        await room.broadcast("export_ready", room.export_ready_payload(aspect_ratio))
+    except asyncio.CancelledError:
+        if room.export_status.get(aspect_ratio) == "processing":
+            room.export_status.pop(aspect_ratio, None)
+        raise
+    except Exception as ex:
+        room.export_status[aspect_ratio] = f"failed: {ex}"
+        print(f"[ExportError] Error rendering {room.room_id} ({aspect_ratio}): {ex}")
+        await room.broadcast("export_failed", {"aspect_ratio": aspect_ratio, "error": str(ex)})
+    finally:
+        room.export_steps.pop(aspect_ratio, None)
 
 
 @router.get("/api/rooms/{room_id}/export/status")
@@ -1007,10 +1036,11 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
         return {"status": "ready", **room.export_ready_payload(aspect_ratio)}
 
     status = room.export_status.get(aspect_ratio, "idle")
-    return {
-        "status": status,
-        "aspect_ratio": aspect_ratio,
-    }
+    body = {"status": status, "aspect_ratio": aspect_ratio}
+    # A running render's step: "mix" (the takes and the audio), then "video" (the encode).
+    if status == "processing" and room.export_steps.get(aspect_ratio):
+        body["step"] = room.export_steps[aspect_ratio]
+    return body
 
 
 @router.get("/api/rooms/{room_id}/export/video")
@@ -1032,37 +1062,19 @@ async def get_room_exported_video(room_id: str, request: Request, aspect_ratio: 
 
 @router.get("/api/rooms/{room_id}/export/download")
 async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
+    """The saved video, for anyone in the room. It never renders: only the host's POST /export
+    and the premiere start a render, so a member can't start one on the host's computer."""
     room = rooms.room_or_404(room_id)
     _refuse_during_cleanup_refresh(room)
 
-    # A render for this aspect is already writing the file; rendering it again here
-    # would put a second ffmpeg on the same output path.
+    # A render for this aspect is writing the file right now.
     if room.export_status.get(aspect_ratio) == "processing":
         raise HTTPException(status_code=409, detail="Export still rendering")
-
-    is_9_16 = (aspect_ratio == "9:16")
     target_path = room.ready_export_path(aspect_ratio)
     if not target_path:
-        out_path = room.export_out_path(aspect_ratio)
-        takes = await mix_for_export(room)
-        # ffmpeg render is fully synchronous; off-loading keeps it from stalling the
-        # event loop (and therefore every other room's websocket) for its whole duration.
-        try:
-            await asyncio.to_thread(
-                audio_processor.export_dub_video,
-                room.pack, takes, out_path,
-                aspect_ratio="9:16" if is_9_16 else "16:9",
-                master_dialogue_presence_db=room.master_dialogue_presence_db,
-                mix_balance=room.master_mix_balance,
-            )
-        except audio_processor.EffectsUnavailable as ex:
-            raise HTTPException(status_code=503, detail=str(ex))
-        if is_9_16:
-            room.exported_video_9_16_path = out_path
-        else:
-            room.exported_video_path = out_path
-        target_path = out_path
+        raise HTTPException(status_code=409, detail="The host hasn't saved this video yet.")
 
+    is_9_16 = (aspect_ratio == "9:16")
     aspect_label = "Shorts_9x16" if is_9_16 else "Cinema_16x9"
     filename = f"Dub_{room.pack.name.replace(' ', '_')}_{room.room_id}_{aspect_label}.mp4"
     return FileResponse(
@@ -1074,6 +1086,16 @@ async def download_room_dub(room_id: str, aspect_ratio: str = "16:9"):
             "Access-Control-Allow-Origin": "*",
         }
     )
+
+
+def _stems_zip_path(room) -> str:
+    """Where GET /export/stems writes the room's separate tracks."""
+    return os.path.join(common.exports_dir(), f"DubMate_Stems_{room.pack.pack_id}_{room.room_id}.zip")
+
+
+def _project_zip_path(room) -> str:
+    """Where GET /export/project_zip writes the room's editing project."""
+    return os.path.join(common.exports_dir(), f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip")
 
 
 class _FileResponseThen(FileResponse):
@@ -1105,7 +1127,7 @@ async def download_room_stems(room_id: str, user_id: str = ""):
     # Claimed before the first await, so a second request or a refresh can't slip in.
     room.export_status["stems"] = "processing"
     release = lambda: room.export_status.pop("stems", None)  # noqa: E731
-    zip_path = os.path.join(common.exports_dir(), f"DubMate_Stems_{room.pack.pack_id}_{room.room_id}.zip")
+    zip_path = _stems_zip_path(room)
     try:
         takes = await mix_for_export(room)
         await asyncio.to_thread(
@@ -1121,8 +1143,6 @@ async def download_room_stems(room_id: str, user_id: str = ""):
         )
     except BaseException as ex:
         release()
-        if isinstance(ex, audio_processor.EffectsUnavailable):
-            raise HTTPException(status_code=503, detail=str(ex))
         if isinstance(ex, Exception):
             print(f"[StemsError] Error generating stems for {room_id}: {ex}")
             raise HTTPException(status_code=500, detail="Couldn't get the stems. Try again.")
@@ -1152,8 +1172,8 @@ async def download_room_project_zip(room_id: str, user_id: str = ""):
     _require_host(room, user_id, "Only the host can get the project files.")
     _refuse_during_cleanup_refresh(room)
 
-    zip_filename = f"DubMate_Project_{room.pack.pack_id}_{room.room_id}.zip"
-    zip_path = os.path.join(common.exports_dir(), zip_filename)
+    zip_path = _project_zip_path(room)
+    zip_filename = os.path.basename(zip_path)
     takes = await mix_for_export(room)
 
     try:
@@ -1169,8 +1189,6 @@ async def download_room_project_zip(room_id: str, user_id: str = ""):
                 bitrate="192k",
             )
         )
-    except audio_processor.EffectsUnavailable as ex:
-        raise HTTPException(status_code=503, detail=str(ex))
     except Exception as ex:
         print(f"[ProjectZipError] Error generating project ZIP for {room_id}: {ex}")
         raise HTTPException(status_code=500, detail="Couldn't build the project files. Try again.")
@@ -1190,3 +1208,38 @@ async def download_room_project_zip(room_id: str, user_id: str = ""):
             "Access-Control-Allow-Origin": "*",
         }
     )
+
+
+def reveal_in_file_manager(path: str) -> None:
+    """Opens the system file manager on `path`: selected in Explorer or Finder, its folder on
+    Linux."""
+    if sys.platform == "win32":
+        # Explorer only selects a file given backslashes (a configured folder may use "/").
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", path])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(path)])
+
+
+@router.post("/api/rooms/{room_id}/export/reveal")
+async def reveal_export(room_id: str, payload: Dict[str, Any], request: Request):
+    """Show in folder: opens the file manager on a saved video ({kind: "video", aspect_ratio}),
+    the separate tracks ({kind: "stems"}) or the editing project ({kind: "project"}). Host only,
+    on the engine's own computer, and only on a path the room knows: none comes from the client."""
+    common.require_own_computer(request)
+    room = rooms.room_or_404(room_id)
+    _require_host(room, str(payload.get("user_id") or ""), "Only the host can open the export folder.")
+    kind = payload.get("kind")
+    if kind == "video":
+        path = room.ready_export_path("9:16" if payload.get("aspect_ratio") == "9:16" else "16:9")
+    elif kind == "stems":
+        path = _stems_zip_path(room)
+    elif kind == "project":
+        path = _project_zip_path(room)
+    else:
+        raise HTTPException(status_code=400, detail="Unknown export.")
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="That file isn't in the export folder. Save it again.")
+    reveal_in_file_manager(path)
+    return {"status": "ok"}

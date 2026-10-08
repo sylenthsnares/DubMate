@@ -84,6 +84,7 @@ fn main() {
             mic_permission::allow_room_origin,
             external::open_mic_settings,
             external::open_studio_in_browser,
+            external::open_download_page,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed

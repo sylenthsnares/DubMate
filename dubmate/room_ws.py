@@ -13,8 +13,7 @@ import traceback
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-import audio_processor
-from dubmate import identity, rooms, rooms_api
+from dubmate import common, identity, rooms, rooms_api
 
 router = APIRouter()
 
@@ -41,19 +40,6 @@ def _guest_cast_refusal(room, user_id: str, character, user_ids) -> str:
         holder = room.users.get(current[0], {}).get("name") or "Someone"
         return f"{holder} is voicing {character} now."
     return f"Only the host can change who voices {character}."
-
-
-async def _wait_for_cleanup_refresh(room) -> None:
-    """Returns once no Refresh older takes is running or about to start its task (a request
-    still planning holds its claim in room.cleanup_refreshing before the task exists)."""
-    while True:
-        task = room.cleanup_refresh_task
-        if task is not None and not task.done():
-            await asyncio.wait({task})
-        elif room.cleanup_refreshing:
-            await asyncio.sleep(0.05)
-        else:
-            return
 
 
 @router.websocket("/ws/{room_id}/{user_id}")
@@ -181,33 +167,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     room.status = "screening"
                     for u in room.users.values():
                         u["location"] = "screening"
-
-                    # Auto-master the scene into MP4 for the cast. Marked as rendering
-                    # first, as the export route does, so no Refresh older takes starts
-                    # now; then it waits for any refresh already running, so the render
-                    # doesn't mix old and new audio.
-                    room.export_status["16:9"] = "processing"
-                    try:
-                        await _wait_for_cleanup_refresh(room)
-                        out_path = room.export_out_path("16:9")
-                        takes = await rooms_api.mix_for_export(room)
-                        await asyncio.to_thread(
-                            audio_processor.export_dub_video,
-                            room.pack, takes, out_path,
-                            master_dialogue_presence_db=room.master_dialogue_presence_db,
-                            mix_balance=room.master_mix_balance,
-                        )
-                        room.exported_video_path = out_path
-                        room.export_status["16:9"] = "ready"
-                        await room.broadcast("export_ready", room.export_ready_payload("16:9"))
-                    except Exception as ex:
-                        room.export_status["16:9"] = f"failed: {ex}"
-                        print(f"[PremiereRenderError] {ex}")
-                    finally:
-                        # Cancelled (the host's socket closed) before it finished.
-                        if room.export_status.get("16:9") == "processing":
-                            room.export_status.pop("16:9", None)
-
+                    # Everyone goes in at once on the live mix; the video renders behind them
+                    # (export_started, then export_ready or export_failed). Started first, so
+                    # the warp's state already says the video is being saved.
+                    if not room.ready_export_path("16:9"):
+                        rooms_api.start_export_render(room, "16:9")
                     await room.broadcast("warp_to_screening", {"triggered_by": user_id})
 
             elif msg_type == "screening_control":
@@ -230,11 +194,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 except (TypeError, ValueError) as ex:
                     print(f"[WS] {room_id}/{user_id} ignored bad presence_db: {ex!r}")
                     continue
-                room.master_dialogue_presence_db = max(-12.0, min(12.0, presence_db))
-                room.invalidate_exports()
+                presence_db = max(-12.0, min(12.0, presence_db))
+                # The level it already has (a preset clicked again) keeps the saved video.
+                if presence_db != room.master_dialogue_presence_db:
+                    room.master_dialogue_presence_db = presence_db
+                    room.invalidate_exports()
+                # client_id: the tab that sent it, which ignores its own echo (a host may
+                # have the premiere open in two windows).
                 await room.broadcast("dialogue_presence_sync", {
                     "presence_db": room.master_dialogue_presence_db,
-                    "triggered_by": user_id
+                    "triggered_by": user_id,
+                    "client_id": str(payload.get("client_id") or "")[:64],
                 })
 
             elif msg_type == "set_mix_balance":
@@ -248,11 +218,14 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     continue
                 if balance != balance:  # NaN
                     continue
-                room.master_mix_balance = max(0.0, min(100.0, balance))
-                room.invalidate_exports()
+                balance = max(0.0, min(100.0, balance))
+                if balance != room.master_mix_balance:
+                    room.master_mix_balance = balance
+                    room.invalidate_exports()
                 await room.broadcast("mix_balance_sync", {
                     "balance": room.master_mix_balance,
-                    "triggered_by": user_id
+                    "triggered_by": user_id,
+                    "client_id": str(payload.get("client_id") or "")[:64],
                 })
 
             elif msg_type == "ping":

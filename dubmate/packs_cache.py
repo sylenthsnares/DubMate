@@ -37,6 +37,7 @@ def refresh_packs() -> Dict[str, pack_loader.PackInfo]:
     """Rescans the pack folders into a fresh registry (startup load)."""
     global PACKS_CACHE
     with _RESCAN_LOCK:
+        pack_loader.restore_replaced_packs()  # a pack a crashed rebuild left aside
         PACKS_CACHE = pack_loader.get_all_packs()
     return PACKS_CACHE
 

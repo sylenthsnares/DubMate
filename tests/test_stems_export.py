@@ -277,23 +277,17 @@ class TestStemsZip(StemsCase):
             self.assertAlmostEqual(float(np.sum(np.abs(audio))),
                                    float(np.sum(np.abs(audio[int(start * SR):int((start + 1.0) * SR)]))), places=3)
 
-    def test_i_effects_unavailable_propagates_and_leaves_nothing(self):
+    def test_i_without_effects_the_takes_go_in_as_recorded(self):
+        """Without the voice effects every take goes in dry at its level: the same stems as a
+        render that returns the take itself."""
         pack, takes = self._scene()
-        made = []
-        real_mkdtemp = tempfile.mkdtemp
-
-        def mkdtemp(*args, **kwargs):
-            made.append(real_mkdtemp(*args, **kwargs))
-            return made[-1]
-
-        out = os.path.join(self.dir, "out", "stems.zip")
-        with mock.patch.object(audio_processor, "_render_take", side_effect=audio_processor.EffectsUnavailable()), \
-                mock.patch.object(audio_processor.tempfile, "mkdtemp", side_effect=mkdtemp):
-            with self.assertRaises(audio_processor.EffectsUnavailable):
-                audio_processor.build_stems_zip(pack, takes, out, room_id="ROOM1")
-        self.assertFalse(os.path.exists(out))
-        for path in made:
-            self.assertFalse(os.path.exists(path))
+        rendered = self._build(pack, takes)
+        with mock.patch.object(audio_processor, "render_take_cached", side_effect=audio_processor.EffectsUnavailable()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            dry = self._build(pack, takes)
+        self.assertEqual(sorted(dry), sorted(rendered))
+        for rel in dry:
+            np.testing.assert_array_equal(dry[rel][0], rendered[rel][0])
 
     def test_i_stage_folder_is_removed_when_writing_fails(self):
         pack, takes = self._scene()
@@ -393,9 +387,7 @@ class TestStemsRoute(StemsRouteCase):
         built.assert_not_called()
 
     def test_c_failures_release_the_claim(self):
-        for error, status, detail in ((audio_processor.EffectsUnavailable("Voice effects are missing."), 503,
-                                       "Voice effects are missing."),
-                                      (RuntimeError("boom"), 500, FAILED)):
+        for error, status, detail in ((RuntimeError("boom"), 500, FAILED),):
             with self.subTest(status=status):
                 with mock.patch.object(audio_processor, "build_stems_zip", side_effect=error), \
                         contextlib.redirect_stdout(io.StringIO()):

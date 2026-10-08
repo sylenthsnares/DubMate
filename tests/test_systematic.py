@@ -14,6 +14,8 @@ import shutil
 import zipfile
 import tempfile
 import unittest
+import contextlib
+import anyio
 import numpy as np
 from starlette.testclient import TestClient
 
@@ -365,6 +367,12 @@ class TestSystematicDualEngine(unittest.TestCase):
 
     def test_08_video_export_cinema_and_shorts(self):
         """Test video export endpoints for 16:9 cinema and 9:16 vertical shorts."""
+        # One event loop for the whole test: the render is a background task that outlives
+        # the POST that starts it.
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.client.portal = stack.enter_context(anyio.from_thread.start_blocking_portal("asyncio"))
+        stack.callback(setattr, self.client, "portal", None)
         packs = pack_loader.get_all_packs()
         pack = next((p for p in packs.values() if os.path.isfile(p.video_path) and os.path.getsize(p.video_path) > 5000), list(packs.values())[0])
 
@@ -376,6 +384,10 @@ class TestSystematicDualEngine(unittest.TestCase):
         self.assertEqual(res_room.status_code, 200)
         room_id = res_room.json()["room_id"]
         host_id = res_room.json()["user_id"]
+
+        # The download never renders: nothing is saved yet.
+        res_early = self.client.get(f"/api/rooms/{room_id}/export/download?aspect_ratio=16:9")
+        self.assertEqual(res_early.status_code, 409)
 
         # 1. Test POST /api/rooms/{room_id}/export (16:9)
         res_exp_16 = self.client.post(f"/api/rooms/{room_id}/export?aspect_ratio=16:9&user_id={host_id}")

@@ -458,6 +458,11 @@ body::after {
   box-shadow: 0 0 6px var(--accent-red);
   animation: pulse-dot 1.5s infinite;
 }
+/* The premiere is live, not recording: amber, never red */
+.badge-live-dot-amber {
+  background: var(--primary);
+  box-shadow: 0 0 6px var(--accent-amber-glow);
+}
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -4131,59 +4136,12 @@ svg {
 /* 4. FINALE SCREENING THEATER & EXPORT                          */
 /* ------------------------------------------------------------- */
 
-.screening-header-card {
-  padding: 12px 18px;
-  margin-bottom: 12px;
-}
-
-.screening-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 4px;
-}
-
-.theater-icon {
-  font-size: 20px;
-}
-
-.screening-title {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--foreground);
-}
-
-.badge-host {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(217, 119, 6, 0.15);
-  color: var(--primary);
-  border: 1px solid var(--primary);
-  border-radius: var(--radius-sm);
-}
-
-.badge-master {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--accent-teal);
-  border: 1px solid var(--accent-teal);
-  border-radius: var(--radius-sm);
-}
-
-.screening-desc {
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
+/* The premiere: the video owns the screen. Under it sit the timeline, one slim bar of
+   controls (Play/Pause, Replay, the status line, then the source label and Save) and
+   the Mix disclosure. */
 
 .screening-theater-box {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .theater-player {
@@ -4192,65 +4150,630 @@ svg {
   margin: 0 auto;
 }
 
-.screening-controls-bar {
+/* Beats the booth's .video-container rules, including its max-height: 720px one, on
+   specificity: the theater is as wide as its 16:9 height allows, never wider than the view. */
+#view-screening .theater-player {
+  height: clamp(280px, 62vh, 760px);
+  max-height: none;
+  width: auto;
+  max-width: 100%;
+  flex: none;
+}
+#view-screening .theater-player.video-expanded {
+  height: min(82vh, 900px) !important;
+  max-height: none !important;
+}
+
+/* The timeline: elapsed time, the track (an amber played part, a tick at each line's start
+   in its actor's colour, the thumb), the total. The track is the slider and its hit area. */
+.screening-timeline {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 10px 16px;
   gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+  padding: 0 4px;
 }
-
-.aspect-ratio-toggle-group {
-  display: flex;
-  padding: 2px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  gap: 2px;
-}
-
-.btn-aspect {
-  padding: 5px 10px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
+.screening-time {
+  flex: none;
+  min-width: 32px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
   color: var(--foreground-muted);
-  font-family: var(--font-sans);
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--duration-fast);
+  font-variant-numeric: tabular-nums;
 }
-.btn-aspect.active {
-  background: var(--secondary);
-  color: var(--foreground);
-  border: 1px solid var(--border-wood);
+#screening-time-total {
+  text-align: right;
+}
+.screening-track {
+  position: relative;
+  flex: 1;
+  height: 20px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+.screening-track:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.screening-track-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 6px;
+  overflow: hidden;
+  background: var(--panel-raised);
+  border-radius: var(--radius-full);
+}
+.screening-track-played {
+  width: 0;
+  height: 100%;
+  background: var(--primary);
+}
+.screening-track-ticks {
+  position: absolute;
+  inset: 0;
+}
+.screening-tick {
+  position: absolute;
+  top: 4px;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  border-radius: 1px;
+  /* A dark edge keeps an amber tick readable over the amber played part */
+  box-shadow: 0 0 0 1px var(--background);
+}
+/* A wider target than the 2px mark: a click near a tick seeks to its line's start. */
+.screening-tick::before {
+  content: '';
+  position: absolute;
+  inset: -4px -4px;
+}
+.screening-tick.is-unassigned,
+.screening-line-dot.is-unassigned {
+  background: var(--foreground-muted);
+}
+.screening-track-thumb {
+  position: absolute;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  pointer-events: none;
+  background: var(--foreground);
+  border: 2px solid var(--primary);
+  border-radius: 50%;
   box-shadow: var(--shadow-sm);
 }
 
-/* Master Stem Balance Deck */
-.screening-stem-mixer {
-  padding: 12px 16px;
-  margin-bottom: 12px;
+.screening-controls-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: var(--card);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.screening-play {
+  min-width: 132px;
+}
+.screening-play-icon {
+  display: inline-flex;
+}
+.screening-play .icon-pause,
+.screening-play.is-playing .icon-play {
+  display: none;
+}
+.screening-play.is-playing .icon-pause {
+  display: block;
+}
+
+.screening-desc {
+  flex: 1 1 200px;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+}
+
+.screening-save-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+/* "Live mix" (amber dot) while the theater plays the stems; plain "Final video" for the MP4 */
+.screening-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.screening-source-dot {
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.screening-source.is-live {
+  color: var(--foreground);
+  cursor: help;
+}
+.screening-source.is-live .screening-source-dot {
+  display: block;
+}
+
+/* Save: a split button with a fixed width, so a label change never shifts the row */
+/* Wide enough for its longest label, "Mix changed · Save again" */
+.save-split {
+  position: relative;
+  display: inline-flex;
+  min-width: 208px;
+  width: 252px;
+}
+.save-split-main {
+  flex: 1;
+  justify-content: flex-start;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  white-space: nowrap;
+}
+.save-split-toggle {
+  padding: 8px 10px;
+  border-left-width: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+/* The focus ring draws over the neighbouring half */
+.save-split-main:focus-visible,
+.save-split-toggle:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.save-split-toggle[aria-expanded="true"] {
+  background: var(--secondary-hover);
+}
+.save-icon {
+  display: none;
+  flex-shrink: 0;
+}
+.save-split[data-state="idle"] .save-icon-save,
+.save-split[data-state="stale"] .save-icon-save,
+.save-split[data-state="member"] .save-icon-save,
+.save-split[data-state="processing"] .save-icon-spin,
+.save-split[data-state="ready"] .save-icon-check {
+  display: block;
+}
+.save-icon-spin {
+  animation: spin 0.9s linear infinite;
+}
+.save-split[data-state="ready"] .save-icon-check {
+  color: var(--accent-brass);
+}
+/* Saving… is busy, not broken: it stays readable on the control surface. */
+.save-split[data-state="processing"] .save-split-main[aria-disabled="true"] {
+  background: var(--secondary);
+  color: var(--foreground-muted);
+  border-color: var(--border-wood);
+  cursor: progress;
+}
+
+/* The menu opens upward, over the video, so it never runs off the bottom of the window */
+.save-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 60;
+  min-width: 292px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--popover);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+.save-menu[hidden] {
+  display: none;
+}
+.save-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.save-menu-group[hidden] {
+  display: none;
+}
+.save-menu-heading {
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent-brass);
+}
+.save-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.save-menu-item:hover,
+.save-menu-item:focus {
+  background: var(--secondary);
+}
+.save-menu-item:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.save-menu-item[aria-disabled="true"] {
+  cursor: default;
+}
+.save-menu-item[aria-disabled="true"]:not([aria-busy]) .save-menu-label {
+  color: var(--foreground-muted);
+}
+.save-menu-state {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.save-menu-state:empty {
+  display: none;
+}
+/* Making…: a small indeterminate bar along the row's foot */
+.save-menu-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--input);
+  overflow: hidden;
+}
+.save-menu-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: indeterminateBar 1.6s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+}
+
+/* A render that failed: why, and Try again */
+.screening-save-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 10px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--accent-red-soft);
+}
+.screening-save-error[hidden] {
+  display: none;
+}
+
+/* What only the DubMate 2.0 installer brings (update_notice.js): a quiet walnut row, no
+   amber (Play stays the one primary) and no red (nothing failed) */
+.update-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  background: var(--secondary);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+.update-notice[hidden] {
+  display: none;
+}
+.update-notice-icon {
+  flex: none;
+  color: var(--accent-brass);
+}
+.update-notice-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.update-notice-lead {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.update-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+@media (max-width: 1099px) {
+  .update-notice {
+    flex-wrap: wrap;
+  }
+  .update-notice-icon {
+    align-self: flex-start;
+    margin-top: 2px;
+  }
+  .update-notice-text {
+    flex-basis: calc(100% - 26px);
+  }
+  .update-notice-actions {
+    flex-basis: 100%;
+    padding-left: 26px;
+  }
+}
+
+/* "Open download page", and what happened when the app couldn't open it */
+.download-page-control {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  vertical-align: middle;
+}
+.download-page-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+}
+.download-page-hint.is-address {
+  min-width: 0;
+  color: var(--foreground);
+  user-select: all;
+  /* An address has no spaces: it wraps instead of running out of its card. */
+  overflow-wrap: anywhere;
+}
+
+/* Mix and In this dub: disclosures under the controls, side by side on wide windows */
+.screening-sections {
+  display: grid;
+  gap: 10px;
+  align-items: start;
+  margin-bottom: 10px;
+}
+.screening-sections > .screening-section {
+  margin-bottom: 0;
+}
+@media (min-width: 1200px) {
+  .screening-sections {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.screening-section {
+  margin-bottom: 10px;
+  background: var(--card);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-lg);
+}
+.screening-section-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-lg);
+}
+.screening-section-summary::-webkit-details-marker {
+  display: none;
+}
+.screening-section-summary:hover {
+  background: var(--muted);
+}
+.screening-section-summary:focus-visible,
+.screening-fine-tune-summary:focus-visible,
+#screening-mix .tab-pill:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.screening-section-chevron {
+  color: var(--foreground-muted);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.screening-section[open] > .screening-section-summary .screening-section-chevron {
+  transform: rotate(90deg);
+}
+.screening-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.screening-section-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+.screening-section-body {
+  padding: 4px 14px 14px;
+}
+
+.mix-presets {
+  max-width: 460px;
+  margin-bottom: 10px;
+}
+
+.screening-fine-tune-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.screening-fine-tune-summary:hover,
+.screening-fine-tune[open] > .screening-fine-tune-summary {
+  color: var(--foreground);
+}
+.screening-fine-tune-summary::-webkit-details-marker {
+  display: none;
+}
+.screening-fine-tune[open] > .screening-fine-tune-summary .screening-section-chevron {
+  transform: rotate(90deg);
+}
+.mix-fine-row {
+  margin-top: 12px;
+}
+.mix-fine-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.screening-mix-member {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.screening-mix-member[hidden] {
+  display: none;
+}
+.screening-mix-member-preset {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.screening-mix-member-desc {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
+/* In this dub: one compact row per line; the row plays from the line, Change take sits in
+   its own column so the statuses line up. The list scrolls with the app's scrollbar (no
+   scrollbar-width or scrollbar-color here: in Chromium they bring back the grey bar). */
+.screening-lines-list {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 2px 8px 8px;
+  list-style: none;
+}
+.screening-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+}
+.screening-lines-list.has-change .screening-line {
+  grid-template-columns: minmax(0, 1fr) 92px;
+}
+.screening-line + .screening-line {
+  border-top: 1px solid var(--border-subtle);
+}
+.screening-line-seek {
+  display: grid;
+  /* The status column is as wide as "Original voice · Unrecorded", so every row lines up */
+  grid-template-columns: 8px 30px minmax(0, 1.2fr) minmax(0, 1fr) 168px;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 36px;
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.screening-line-seek:hover {
+  background: var(--muted);
+}
+.screening-line-seek:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.screening-line-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.screening-line-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+  font-variant-numeric: tabular-nums;
+}
+.screening-line-char,
+.screening-line-speaker {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.screening-line-char {
+  font-size: 13px;
+  font-weight: 600;
+}
+.screening-line-speaker {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.screening-line-status {
+  justify-self: end;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.screening-line-status.is-original {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+.screening-line-change {
+  justify-self: end;
 }
 
 .stem-mixer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.stem-title-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-brass);
+  margin-bottom: 6px;
 }
 
 .stem-val-badge {
@@ -4262,6 +4785,7 @@ svg {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .stem-slider-row {
@@ -4284,65 +4808,16 @@ svg {
   cursor: pointer;
 }
 
-.stem-scale-row {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-muted);
-  margin-top: 4px;
-}
-
-/* Export Progress Box */
-.export-progress-box {
-  padding: 24px;
-  text-align: center;
-}
-
-.export-progress-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.export-status-text {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--foreground);
-}
-
-.progress-bar {
-  width: 100%;
-  height: 8px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-
-.progress-fill {
-  width: 0%;
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), var(--primary-hover));
-  border-radius: var(--radius-full);
-  transition: width 200ms ease;
-}
-
-.export-steps-list {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-.step-item.active {
-  color: var(--primary);
-  font-weight: 700;
+@media (prefers-reduced-motion: reduce) {
+  .save-icon-spin,
+  .save-menu-bar::after,
+  .badge-live-dot {
+    animation: none;
+  }
+  .save-menu-bar::after {
+    width: 100%;
+    opacity: 0.6;
+  }
 }
 
 /* Toasts: bottom centre, newest at the bottom, at most 3 (ui_common.js showToast).
@@ -4393,6 +4868,12 @@ svg {
 }
 .toast-error .toast-close {
   flex-shrink: 0;
+}
+/* A toast's one action ("Undo"), in the amber of a next step. */
+.toast-action {
+  margin-left: 12px;
+  vertical-align: middle;
+  color: var(--primary);
 }
 
 @keyframes toast-in {
@@ -4658,9 +5139,7 @@ body.no-home-chrome .logo-with-dropdown {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border-wood);
-  color: var(--foreground-dim);
-  font-size: 14px;
-  font-weight: 700;
+  color: var(--foreground-muted);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4678,6 +5157,11 @@ body.no-home-chrome .logo-with-dropdown {
 
 .modal-close-btn:active {
   transform: scale(0.95);
+}
+
+.modal-close-btn:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .import-modal-card {
@@ -4816,6 +5300,12 @@ body.no-home-chrome .logo-with-dropdown {
   border-color: rgba(34, 197, 94, 0.35);
 }
 
+.badge-render-live.failed {
+  color: var(--accent-red-soft);
+  background: rgba(220, 38, 38, 0.16);
+  border-color: var(--accent-red-glow);
+}
+
 .modal-title {
   font-family: var(--font-sans);
   font-size: 20px;
@@ -4906,6 +5396,7 @@ body.no-home-chrome .logo-with-dropdown {
   background: var(--accent-teal);
   border-color: var(--accent-green-bright);
   color: var(--white);
+  font-size: 0;
 }
 
 .modal-step-item.completed .step-num::after {
@@ -4975,25 +5466,6 @@ body.no-home-chrome .logo-with-dropdown {
   margin-bottom: 8px;
 }
 
-/* A render folder can easily be a 200-character Windows path; clamp it to two
-   lines so a long path cannot stretch the modal. The full path is in `title`. */
-.export-saved-path {
-  display: none;
-  margin: 10px 0 0;
-  font-size: 12px;
-  line-height: 1.45;
-  text-align: center;
-  color: var(--foreground-muted);
-  overflow-wrap: anywhere;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.export-saved-path.is-visible {
-  display: -webkit-box;
-}
-
 .modal-actions {
   margin-top: 24px;
   display: flex;
@@ -5001,6 +5473,53 @@ body.no-home-chrome .logo-with-dropdown {
   justify-content: center;
   flex-wrap: wrap;
   animation: studioFadeIn 300ms ease;
+}
+
+/* The export modal (export.js setExportModalState): each state hides the parts it
+   doesn't use with the hidden attribute, which the flex rules above would override. */
+#modal-export-rendering [hidden] {
+  display: none !important;
+}
+
+/* Only focused from code, so focus is inside while there is nothing to press. */
+#export-modal-title:focus {
+  outline: none;
+}
+
+/* Done and failed: a static icon where the reel spun */
+.export-modal-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle, var(--panel-edge) 0%, var(--panel-core) 100%);
+  border: 2px solid currentColor;
+}
+
+.export-modal-icon.is-done {
+  color: var(--accent-green-light);
+}
+
+.export-modal-icon.is-failed {
+  color: var(--accent-red-soft);
+}
+
+/* Done: Watch the dub across the card, then the two formats as a pair */
+.export-modal-done {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.export-modal-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.export-modal-pair .btn {
+  justify-content: center;
 }
 
 /* Interaction Lock Class Utilities */
@@ -5034,32 +5553,6 @@ body.no-home-chrome .logo-with-dropdown {
   border-color: var(--primary) !important;
   color: var(--white) !important;
   box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
-}
-
-.btn-presence-preset {
-  padding: 3px 9px !important;
-  font-size: 11px !important;
-  font-family: var(--font-mono);
-  font-weight: 600;
-  border-radius: 9999px !important;
-  background: rgba(22, 18, 14, 0.7) !important;
-  border: 1px solid var(--border-wood) !important;
-  color: var(--foreground-muted) !important;
-  transition: all 160ms var(--ease-out);
-  cursor: pointer;
-}
-
-.btn-presence-preset:hover {
-  border-color: var(--accent-brass) !important;
-  color: var(--foreground) !important;
-  background: rgba(35, 29, 23, 0.9) !important;
-}
-
-.btn-presence-preset.active {
-  background: rgba(217, 119, 6, 0.22) !important;
-  border-color: var(--primary) !important;
-  color: var(--primary) !important;
-  box-shadow: 0 0 10px rgba(217, 119, 6, 0.3) !important;
 }
 
 /* ------------------------------------------------------------- */
@@ -5341,6 +5834,17 @@ body.no-home-chrome .logo-with-dropdown {
   font-size: 12px;
   line-height: 1.45;
   color: var(--foreground-muted);
+}
+/* Room row: the stronger cleanup needs the 2.0 installer, with Open download page */
+.room-check-cleanup-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 0;
+}
+.room-check-cleanup-note[hidden] {
+  display: none;
 }
 
 .audio-unsupported-box {
@@ -5674,6 +6178,8 @@ body.no-home-chrome .logo-with-dropdown {
   text-transform: none;
   text-align: left;
   white-space: normal;
+  /* An address has no spaces: it wraps instead of running out of the box. */
+  overflow-wrap: anywhere;
   pointer-events: none;
   visibility: hidden;
   opacity: 0;
@@ -5883,12 +6389,22 @@ body.no-home-chrome .logo-with-dropdown {
   50% { opacity: 0.45; }
 }
 
+/* Inside the card's padding, with room under the button for its focus ring (.fx-panel clips) */
 .voice-effects-note {
-  margin: var(--space-2) 0 0;
+  margin: 0;
+  padding: 0 12px 12px;
   font-size: 12px;
   line-height: 1.4;
   color: var(--foreground-muted);
   text-align: center;
+}
+.voice-effects-note-text {
+  margin: 0;
+}
+.voice-effects-note .download-page-control {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6191,5 +6707,11 @@ span.voice-chip {
   }
   body.is-taking [inert] {
     transition: none;
+  }
+  .modal-progress-fill.indeterminate,
+  .save-menu-bar::after {
+    animation: none;
+    width: 100% !important;
+    opacity: 0.55;
   }
 }

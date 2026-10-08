@@ -11,12 +11,9 @@ import os
 import asyncio
 import functools
 import threading
-import contextlib
 import time
 import unittest
 from unittest import mock
-
-import anyio
 
 import sys as _sys
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,10 +33,7 @@ class RefreshCase(UploadCase):
 
     def setUp(self):
         super().setUp()
-        stack = contextlib.ExitStack()
-        self.addCleanup(stack.close)
-        self.client.portal = stack.enter_context(anyio.from_thread.start_blocking_portal("asyncio"))
-        stack.callback(setattr, self.client, "portal", None)
+        self._one_event_loop(self.client)
         for patcher in (mock.patch.object(ap, "get_deep_filter_path", return_value=None),
                         mock.patch.object(ap, "apply_noise_reduction", side_effect=self._fake_clean)):
             self.nr = patcher.start()
@@ -228,7 +222,7 @@ class TestCleanupRefresh(RefreshCase):
                 body = self._refresh(status=409)
                 self.assertEqual(body["detail"], EXPORTING)
                 release.set()
-                self._until(ws, "warp_to_screening")
+                self._until(ws, "export_ready")
         self.assertEqual(self.room.export_status["16:9"], "ready")
         self.assertNotIn("nr_settings", take)
         self.assertEqual(self._refresh()["refreshing"], 1)
@@ -241,7 +235,7 @@ class TestCleanupRefresh(RefreshCase):
         with mock.patch.object(ap, "export_dub_video", side_effect=RuntimeError("render broke")):
             with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
                 self._premiere(ws)
-                self._until(ws, "warp_to_screening")
+                self._until(ws, "export_failed")
         self.assertEqual(self.room.export_status["16:9"], "failed: render broke")
         self.assertEqual(self._refresh()["refreshing"], 1)
         self._wait()
@@ -338,7 +332,7 @@ class TestRefreshWhileRunning(RefreshCase):
                 time.sleep(0.3)
                 self.assertEqual(seen, [])
                 self.gate.set()
-                self._until(ws, "warp_to_screening")
+                self._until(ws, "export_ready")
         self.assertEqual(seen, [{}])
         self.assertEqual(self.nr.call_count, 2)
 
@@ -349,7 +343,7 @@ class TestRefreshWhileRunning(RefreshCase):
         with mock.patch.object(ap, "export_dub_video", side_effect=lambda *a, **k: seen.append(k)):
             with self.client.websocket_connect(f"/ws/{self.ROOM}/hostT") as ws:
                 ws.send_json({"type": "launch_premiere", "payload": {}})
-                self._until(ws, "warp_to_screening")
+                self._until(ws, "export_ready")
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].get("master_dialogue_presence_db"), 4.5)
 

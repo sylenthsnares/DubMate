@@ -94,6 +94,7 @@ async def delete_session(room_id: str, request: Request):
             tasks = [t for t in (room._save_task, room.cleanup_refresh_task) if t is not None and not t.done()]
             for task in tasks:
                 task.cancel()
+            tasks += room.cancel_export_renders()
             await asyncio.gather(*tasks, return_exceptions=True)
 
         await asyncio.to_thread(_remove_folder, room, folder)

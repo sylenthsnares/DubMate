@@ -75,8 +75,10 @@ export class PackBuilderInstallMethods {
     try {
       install = await invoke('get_packbuilder_install');
     } catch (err) {
-      // An older desktop app doesn't have this command, or doesn't allow it here.
+      // An older desktop app doesn't have this command, or doesn't allow it here; nor can
+      // it open the download page (update_notice.js).
       console.warn('[DubMate] Could not read the Pack Builder install:', err);
+      this.noteOlderDesktopApp();
     }
     this.renderPackBuilderInstall(install);
     // Two answers in flight (a double-clicked Try again) still leave one loop.

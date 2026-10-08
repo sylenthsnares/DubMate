@@ -84,7 +84,7 @@ const db = (x) => Math.pow(10, x / 20);
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ url: "/api/rooms/R1/renders/00000000000000a1.wav", key: "00000000000000a1", duration: 2 }) });
     }
     if (u === "/api/rooms/R1/lines/t4000/takes/k2/render") {
-      return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Download and install the latest DubMate to use voice effects." }) });
+      return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Voice effects need the DubMate 2.0 installer. Get it from github.com/sylenthsnares/DubMate/releases." }) });
     }
     if (u.startsWith("/api/rooms/R1/export?")) {
       return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ detail: "held for the test" }) });

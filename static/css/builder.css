@@ -36,8 +36,33 @@
   color: var(--primary);
 }
 
+/* A step already reached is a button back to it. */
+button.builder-step {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.builder-step:hover {
+  color: var(--foreground);
+}
+
+button.builder-step.active:hover {
+  color: var(--primary);
+}
+
 .builder-step.completed {
   color: var(--accent-brass);
+}
+
+/* Process is never a destination: once done it reads as a quiet waypoint, not a button. */
+div.builder-step.completed {
+  color: var(--foreground-muted);
+  font-weight: 600;
 }
 
 .step-num {
@@ -66,6 +91,13 @@
   color: var(--accent-brass);
 }
 
+div.builder-step.completed .step-num {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border-subtle);
+  color: var(--foreground-muted);
+}
+
 .step-arrow {
   color: var(--foreground-dim);
   display: inline-flex;
@@ -74,6 +106,8 @@
   opacity: 0.6;
 }
 
+/* One signal: whether the graphics card speeds up the AI steps. Brass for the card,
+   a neutral dot for the processor; never green, and no glow (nothing is live). */
 .builder-device-pill {
   display: flex;
   align-items: center;
@@ -82,8 +116,9 @@
   border: 1px solid var(--border-wood);
   padding: 4px 10px;
   border-radius: var(--radius-full);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--foreground-muted);
 }
 
@@ -91,8 +126,37 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-teal);
-  box-shadow: 0 0 6px var(--accent-teal);
+  background: var(--foreground-muted);
+}
+
+.builder-device-pill.is-gpu .device-dot {
+  background: var(--accent-brass);
+}
+
+/* Elements the page hides with the hidden attribute, whatever display their class sets. */
+.builder-device-pill[hidden],
+#view-step-upload [hidden],
+#view-step-process [hidden],
+#view-step-editor [hidden],
+#view-step-compile [hidden] {
+  display: none;
+}
+
+.builder-device-pill:focus-visible,
+.builder-dropzone:focus-visible,
+.sub-dropzone:focus-visible,
+.cover-dropzone:focus-visible,
+.file-chip-remove:focus-visible,
+.url-import-missing-details summary:focus-visible,
+.builder-line-row:focus-visible,
+.cue-char-select:focus-visible,
+.cue-char-input:focus-visible,
+.chip-name-input:focus-visible,
+button.builder-step:focus-visible,
+.chip-name:focus-visible,
+.success-zip-link:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .builder-main-container {
@@ -137,6 +201,43 @@ body:has(#view-step-editor.active) .builder-main-container {
 .builder-hero {
   text-align: center;
   margin-bottom: 24px;
+}
+
+/* A session from the URL that the engine no longer has. */
+.session-ended-notice {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--accent-brass);
+  background: rgba(204, 164, 88, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+/* A question asked in place, under the button that raised it, before lines are replaced. */
+.inline-confirm {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  background: rgba(18, 14, 11, 0.6);
+}
+
+.inline-confirm-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+
+.inline-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-reprocess {
+  width: 100%;
+  margin-top: 8px;
 }
 
 .builder-upload-grid {
@@ -235,6 +336,47 @@ body:has(#view-step-editor.active) .builder-main-container {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Paste link without the Pack Builder tools: why, and how to add them. */
+.url-import-missing {
+  margin-top: 10px;
+  max-width: 420px;
+}
+
+.url-import-missing-text {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.url-import-missing .field-hint {
+  margin: 0;
+}
+
+.url-import-missing-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  border-radius: var(--radius-sm);
+}
+
+.url-import-missing-details[open] summary {
+  margin-bottom: 6px;
+}
+
+.url-import-missing-cmd {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+  user-select: all;
 }
 
 .url-input-group {
@@ -421,10 +563,85 @@ body:has(#view-step-editor.active) .builder-main-container {
   transition: all 160ms ease;
 }
 
-.sub-dropzone:hover, .cover-dropzone:hover {
+.sub-dropzone:hover, .cover-dropzone:hover,
+.sub-dropzone.drag-over, .cover-dropzone.drag-over {
   border-color: var(--accent-brass);
   color: var(--foreground);
   background: rgba(35, 28, 22, 0.8);
+}
+
+/* A chosen file: its name, what is in it, and × to remove it. */
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  background: rgba(22, 17, 13, 0.6);
+  color: var(--foreground-muted);
+}
+
+.file-chip > svg {
+  flex-shrink: 0;
+  color: var(--accent-brass);
+}
+
+.file-chip-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file-chip-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-chip-summary {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
+.file-chip-remove {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.file-chip-remove:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.field-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
+.field-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--accent-red-soft);
 }
 
 /* Step 2: Processing Screen */
@@ -464,6 +681,28 @@ body:has(#view-step-editor.active) .builder-main-container {
   }
 }
 
+/* Processing failed: the radar stops and the centre shows a still alert. */
+.process-radar.is-stopped .radar-pulse {
+  animation: none;
+  display: none;
+}
+
+.radar-icon-alert,
+.process-radar.is-stopped .radar-icon-live {
+  display: none;
+}
+
+.process-radar.is-stopped .radar-icon-alert {
+  display: block;
+}
+
+.process-radar.is-stopped .radar-center {
+  background: var(--panel-deep);
+  border: 1.5px solid var(--accent-red-bright);
+  color: var(--accent-red-bright);
+  box-shadow: none;
+}
+
 .radar-center {
   width: 54px;
   height: 54px;
@@ -480,6 +719,11 @@ body:has(#view-step-editor.active) .builder-main-container {
   font-size: 20px;
   font-weight: 800;
   margin-bottom: 8px;
+}
+
+/* A failure hides the sub-line and the bar; the headline keeps its distance from the stages. */
+.builder-process-card[role="alert"] .process-title {
+  margin-bottom: 24px;
 }
 
 .process-subtitle {
@@ -514,9 +758,21 @@ body:has(#view-step-editor.active) .builder-main-container {
 .builder-progress-meta {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
-  font-family: var(--font-mono);
+  align-items: baseline;
+  gap: 12px;
   color: var(--foreground-muted);
+}
+
+/* The engine's message is a sentence; only the percentage is a readout. */
+.process-caption {
+  font-size: 12px;
+  text-align: left;
+}
+
+.process-percent {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .pipeline-stages {
@@ -545,24 +801,105 @@ body:has(#view-step-editor.active) .builder-main-container {
   background: rgba(217, 119, 6, 0.08);
 }
 
+.pipeline-item.is-done {
+  opacity: 1;
+}
+
+.pipeline-item.is-failed {
+  opacity: 1;
+  border-color: var(--accent-red-bright);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+/* Pending and skipped rows: a number in a neutral circle. */
 .stage-icon {
-  font-size: 14px;
-  font-weight: 800;
-  color: var(--primary);
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
   width: 22px;
   height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+  border: 1px solid var(--border-wood);
+  background: var(--panel-deep);
+}
+
+.pipeline-item.active .stage-icon {
+  color: var(--primary);
+  border-color: rgba(217, 119, 6, 0.5);
   background: rgba(217, 119, 6, 0.15);
+}
+
+.pipeline-item.is-done .stage-icon {
+  color: var(--accent-brass);
+  border-color: rgba(204, 164, 88, 0.45);
+  background: rgba(204, 164, 88, 0.12);
+}
+
+.pipeline-item.is-failed .stage-icon {
+  color: var(--accent-red-bright);
+  border-color: var(--accent-red-bright);
+  background: rgba(220, 38, 38, 0.12);
 }
 
 .stage-title {
   display: block;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--foreground);
+}
+
+.pipeline-item.is-failed .stage-desc {
+  color: var(--accent-red-soft);
+}
+
+/* Cancel while it runs; Try again, Write the lines myself and Back to video when it fails. */
+.process-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+/* Short windows (1280x720, 960x680): the whole card, Cancel included, stays on screen. */
+@media (max-height: 780px) {
+  .builder-process-card {
+    margin: 16px auto;
+    padding: 24px 32px;
+  }
+
+  .process-radar {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 14px;
+  }
+
+  .radar-center {
+    width: 44px;
+    height: 44px;
+  }
+
+  .process-subtitle,
+  .builder-progress-container {
+    margin-bottom: 18px;
+  }
+
+  .pipeline-stages {
+    gap: 8px;
+  }
+
+  .pipeline-item {
+    padding: 7px 14px;
+  }
+
+  .process-actions {
+    margin-top: 16px;
+  }
 }
 
 .stage-desc {
@@ -673,7 +1010,6 @@ body:has(#view-step-editor.active) .builder-main-container {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  box-shadow: 0 0 10px var(--accent-amber-glow);
 }
 
 .deck-timecode-hud {
@@ -749,54 +1085,13 @@ body:has(#view-step-editor.active) .builder-main-container {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  white-space: nowrap;
 }
 
 .cue-add-ai-group {
   display: flex;
   align-items: center;
   gap: 5px;
-}
-
-.btn-cue-add-highlight {
-  background: linear-gradient(135deg, var(--primary) 0%, #b45309 100%);
-  color: var(--white);
-  font-weight: 800;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--primary-hover);
-  box-shadow: 0 0 12px rgba(217, 119, 6, 0.4);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 140ms ease;
-  white-space: nowrap;
-}
-
-.btn-cue-add-highlight:hover {
-  background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary) 100%);
-  box-shadow: 0 0 16px rgba(245, 158, 11, 0.6);
-  transform: translateY(-1px);
-}
-
-.btn-whisper-ai-deck {
-  background: rgba(147, 51, 234, 0.15);
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  color: #e9d5ff;
-  font-weight: 700;
-  font-size: 11px;
-  padding: 4px 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 140ms ease;
-  white-space: nowrap;
-}
-
-.btn-whisper-ai-deck:hover {
-  background: rgba(147, 51, 234, 0.28);
-  border-color: #a855f7;
-  color: var(--white);
 }
 
 .deck-zoom-group {
@@ -931,9 +1226,9 @@ body.resizing-timeline * {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent-green-bright);
-  background: rgba(34, 197, 94, 0.12);
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--foreground-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
   padding: 2px 7px;
   border-radius: var(--radius-full);
 }
@@ -1060,8 +1355,8 @@ body.resizing-timeline * {
   top: 0;
   height: 100%;
   font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--foreground-dim);
+  font-size: 11px;
+  color: var(--foreground-muted);
   padding-left: 4px;
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   line-height: 22px;
@@ -1177,9 +1472,9 @@ body.resizing-timeline * {
 }
 
 .segment-block-label {
-  font-size: 9.5px;
-  font-weight: 700;
-  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sans);
   color: var(--white);
   white-space: nowrap;
   overflow: hidden;
@@ -1198,7 +1493,7 @@ body.resizing-timeline * {
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 11px;
   cursor: pointer;
   margin-left: 4px;
   flex-shrink: 0;
@@ -1264,12 +1559,17 @@ body.resizing-timeline * {
   overflow: hidden;
 }
 
+/* One row: Lines, the count, and Continue at the right end. */
 .sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-wood);
+}
+
+.sidebar-header #btn-proceed-to-compile {
+  margin-left: auto;
 }
 
 .character-manager-strip {
@@ -1362,6 +1662,26 @@ body.resizing-timeline * {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 2px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* A chip's name being edited in place (click a name, or + for a new one). */
+.chip-name-input.form-input {
+  width: 96px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.char-color-chip.is-editing:hover {
+  transform: none;
 }
 
 .chip-count-badge {
@@ -1415,64 +1735,173 @@ body.resizing-timeline * {
   color: var(--primary);
 }
 
+/* Rows stack in block flow: a change in one row then lays out that row, where a flex
+   column would measure every row again (about 3x the time with 40 lines). The padding
+   leaves room for a row's focus ring. */
 .segments-list-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 4px 12px 0;
+  margin: 0 -4px;
+  padding: 4px;
 }
 
-.builder-cue-card {
-  background: rgba(20, 16, 13, 0.7);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  transition: all 160ms ease;
+/* The editor with no lines: what to do, in place of the list. */
+.lines-empty {
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.lines-empty-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.lines-empty-hint {
+  margin: 0 auto;
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground-muted);
+}
+
+/* One line per row: dot, number, character, text, actions, timecode. Rows divide with
+   a 1px line; the selected one gets the amber border and wash. */
+.builder-line-row {
+  display: grid;
+  grid-template-columns: 8px 22px 140px minmax(0, 1fr) auto auto;
+  align-items: start;
+  column-gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
+  scroll-margin: 4px;
+  transition: background 120ms ease;
 }
 
-.builder-cue-card:hover {
+.builder-line-row:hover {
   background: rgba(30, 24, 19, 0.9);
-  border-color: var(--accent-brass);
 }
 
-.builder-cue-card.selected {
-  border-color: var(--primary);
+.builder-line-row.selected {
   background: rgba(217, 119, 6, 0.08);
-  box-shadow: 0 0 14px rgba(217, 119, 6, 0.25);
-}
-
-.cue-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.cue-index-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  box-shadow: inset 0 0 0 1px var(--primary);
 }
 
 .cue-dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
+  margin-top: 11px;
   border-radius: 50%;
 }
 
 .cue-number {
   font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 30px;
+  text-align: right;
+  color: var(--foreground-muted);
+}
+
+.builder-line-row.selected .cue-number {
   color: var(--foreground);
 }
 
+.cue-text-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Unselected: one line of plain text that fades at the right edge. */
+.builder-line-row .cue-text-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 16px;
+  color: var(--foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  resize: none;
+  white-space: pre;
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+/* Selected: the whole text as a field, up to 4 lines, then it scrolls. */
+.builder-line-row.selected .cue-text-input,
+.builder-line-row .cue-text-input:focus {
+  field-sizing: content;
+  height: auto;
+  max-height: 78px;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  cursor: text;
+  background: rgba(15, 12, 9, 0.85);
+  border-color: var(--border-wood);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.builder-line-row .cue-text-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
+}
+
+/* "No words" stands in for the empty text, so the cue placeholder waits for selection. */
+.builder-line-row:not(.selected) .cue-nonverbal-badge:not([hidden]) + .cue-text-input::placeholder {
+  color: transparent;
+}
+
+.cue-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+}
+
+/* Play shows on hover (its place is kept, so the text doesn't shift); the selected row shows
+   every action that applies. */
+.line-action {
+  display: none;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+
+.line-action.btn-preview-cue {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+.builder-line-row:hover .line-action.btn-preview-cue,
+.builder-line-row.selected .line-action {
+  display: inline-flex;
+  visibility: visible;
+}
+
+.line-action.btn-delete-cue:hover {
+  color: var(--white);
+  background: var(--accent-red);
+}
+
 .cue-nonverbal-badge {
+  flex-shrink: 0;
+  margin-top: 6px;
   font-size: 11px;
   font-weight: 700;
+  line-height: 14px;
   color: var(--foreground-muted);
   border: 1px solid currentColor;
   padding: 1px 6px;
@@ -1497,77 +1926,80 @@ body.resizing-timeline * {
   display: none;
 }
 
+/* A save that didn't go through: an error until it does. */
+.editor-notice.is-error {
+  color: var(--accent-red-soft);
+  background: rgba(220, 38, 38, 0.12);
+}
+
 .cue-timecode-badge {
+  min-width: 48px;
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-brass);
-  background: rgba(204, 164, 88, 0.12);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(204, 164, 88, 0.2);
-}
-
-.btn-delete-cue {
-  background: transparent;
-  border: none;
+  font-weight: 600;
+  line-height: 30px;
+  text-align: right;
+  white-space: nowrap;
   color: var(--foreground-muted);
-  cursor: pointer;
+}
+
+.builder-line-row.selected .cue-timecode-badge {
+  color: var(--accent-brass);
+}
+
+.cue-char-select[hidden] {
+  display: none;
+}
+
+/* "+ New character…" in a row: a name field in the select's place. */
+.cue-char-input.form-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 6px;
   font-size: 12px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  transition: all 120ms ease;
-}
-
-.btn-delete-cue:hover {
-  color: var(--white);
-  background: var(--accent-red);
-}
-
-.cue-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cue-field-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.cue-char-select-wrap {
-  flex: 1;
-  position: relative;
 }
 
 .cue-char-select {
   width: 100%;
-  font-size: 11.5px !important;
-  padding: 4px 8px !important;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
   font-weight: 700;
-  height: 30px !important;
-  background: rgba(18, 14, 11, 0.9) !important;
-  border: 1px solid var(--border-wood) !important;
-  color: var(--foreground) !important;
-  border-radius: var(--radius-sm);
-}
-
-.cue-text-input {
-  font-size: 12.5px !important;
-  padding: 8px 10px !important;
-  resize: vertical;
-  min-height: 48px;
-  line-height: 1.35;
-  background: rgba(15, 12, 9, 0.85);
-  border: 1px solid var(--border-wood);
   color: var(--foreground);
+  background: rgba(18, 14, 11, 0.9);
+  border: 1px solid var(--border-wood);
   border-radius: var(--radius-sm);
+  cursor: pointer;
 }
 
-.cue-text-input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
+/* The selects of rows at rest read as names, with no arrow; the field shows on hover and selection. */
+.builder-line-row:not(.selected):not(:hover) .cue-char-select:not(:focus) {
+  background: transparent;
+  border-color: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* Narrow windows (a Lines column under about 640px): a smaller select, and the selected
+   row puts its actions and times under the text, so the text keeps its width. */
+@media (max-width: 1180px) {
+  .builder-line-row {
+    grid-template-columns: 8px 22px 112px minmax(0, 1fr) auto auto;
+  }
+
+  .builder-line-row.selected .cue-text-cell {
+    grid-column: 4 / -1;
+  }
+
+  .builder-line-row.selected .cue-actions {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  .builder-line-row.selected .cue-timecode-badge {
+    grid-column: 5 / -1;
+    grid-row: 2;
+  }
 }
 
 /* Step 4: Compile View */
@@ -1666,9 +2098,65 @@ body.resizing-timeline * {
   justify-content: center;
 }
 
+/* Pack ready's quiet second choice. */
+.success-zip-link {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border-radius: 2px;
+}
+
+.success-zip-link:hover {
+  color: var(--foreground);
+}
+
+/* After a build, the lines or details changed: no green, nothing is done yet. */
+.compile-stale-box {
+  margin-top: 24px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-wood);
+  background: rgba(18, 14, 11, 0.6);
+  text-align: center;
+}
+
+.compile-stale-text {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+/* Exit before the lines are in a pack. */
+.builder-leave-card {
+  max-width: 400px;
+  text-align: left;
+}
+
+.builder-leave-card .modal-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 @media (max-width: 1100px) {
   .builder-upload-grid {
     grid-template-columns: 1fr;
+  }
+  /* The header is full at the narrowest windows: the pill keeps its dot, and its
+     label stays for screen readers (the tooltip says what it means). */
+  .builder-device-pill {
+    padding: 9px;
+  }
+  .builder-device-pill .device-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
   .editor-right-sidebar {
     height: auto;

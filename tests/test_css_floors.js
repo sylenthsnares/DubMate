@@ -21,13 +21,7 @@ const STATIC = path.join(__dirname, "..", "static");
 const FLOOR_PX = 11;
 
 // Selectors allowed under the floor, one by one.
-const EXEMPT = [
-  // Pack Builder timeline internals sit inside fixed timeline geometry (ruler
-  // spacing, segment block height). They are resized with the timeline in step 40h.
-  { selector: ".ruler-tick", reason: "fixed timeline geometry, step 40h" },
-  { selector: ".segment-block-label", reason: "fixed timeline geometry, step 40h" },
-  { selector: ".segment-inline-delete-btn", reason: "fixed timeline geometry, step 40h" },
-];
+const EXEMPT = [];
 
 const META_CLASS = /meta|hint|caption|desc|path|legend/;
 

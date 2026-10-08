@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import unittest
 import zipfile
 from unittest import mock
 
+import anyio
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -148,16 +150,17 @@ class TestTakeFiles(unittest.TestCase):
         audio_processor.delete_take_files(d, "take1")
         self.assertEqual(sorted(os.listdir(d)), sorted(others))
 
-    def test_migrate_moves_every_variant_byte_identically(self):
+    def test_migrate_copies_every_variant_byte_identically_and_keeps_the_originals(self):
         key_suffix = os.path.basename(audio_processor.denoised_take_path(self.room_dir, "take_line_0"))[len("take_line_0"):-4]
         before = self._legacy(0, "", "_raw", key_suffix, "_denoised")
         other = self._legacy(10, "", "_raw")
         result = audio_processor.migrate_legacy_take_files(self.ROOM, 0, "t1000", "take1", True)
         self.assertEqual(result, {"has_audio": True, "has_raw": True, "noise_reduction": True})
         d = os.path.join(self.room_dir, "takes", "t1000")
+        self.assertEqual(sorted(os.listdir(d)), sorted(f"take1{suffix}.wav" for suffix in before))
         for suffix, data in before.items():
             self.assertEqual(self._read(os.path.join(d, f"take1{suffix}.wav")), data)
-            self.assertFalse(os.path.exists(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")))
+            self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")), data)
         for suffix, data in other.items():
             self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_10{suffix}.wav")), data)
 
@@ -192,7 +195,7 @@ class TestTakeFiles(unittest.TestCase):
         result = audio_processor.migrate_legacy_take_files(self.ROOM, 3, "t3000", "take1", False)
         self.assertEqual(result, {"has_audio": False, "has_raw": False, "noise_reduction": False})
 
-    def test_failed_move_puts_moved_files_back(self):
+    def test_failed_copy_removes_only_its_own_copies(self):
         key_suffix = os.path.basename(audio_processor.denoised_take_path(self.room_dir, "take_line_0"))[len("take_line_0"):-4]
         before = self._legacy(0, "", "_raw", key_suffix)
         real_replace = os.replace
@@ -237,6 +240,7 @@ class RoomCase(unittest.TestCase):
 
     ROOM = "TMROOM"
     PACK_ID = "take_model_pack"
+    PACK_MTIME = 1_789_000_000.0
 
     def setUp(self):
         self.cache = tempfile.mkdtemp(prefix="dm_take_rooms_")
@@ -263,6 +267,9 @@ class RoomCase(unittest.TestCase):
             pack.lines.append({"index": i, "start": start, "end": start + 1.5, "character": char,
                                "filename": fname, "caption": f"Line {i + 1}"})
         pack_loader.assign_line_ids(pack.lines)  # t1000, t3000, t5000
+        # Dated before the v1 takes' recorded_at, so a v1 take may be placed on its line.
+        for path in [os.path.join(folder, line["filename"]) for line in pack.lines] + [folder]:
+            os.utime(path, (self.PACK_MTIME, self.PACK_MTIME))
         return pack
 
     def _wav(self, path, freq, seconds=0.25):
@@ -275,6 +282,14 @@ class RoomCase(unittest.TestCase):
     def _read(self, path):
         with open(path, "rb") as f:
             return f.read()
+
+    def _one_event_loop(self, client):
+        """Runs every request and socket of `client` on one event loop for the rest of the test,
+        so a background task (a refresh, an export render) outlives the request that starts it."""
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        client.portal = stack.enter_context(anyio.from_thread.start_blocking_portal("asyncio"))
+        stack.callback(setattr, client, "portal", None)
 
     def _room(self):
         room = rooms.Room(self.ROOM, self.pack, "hostT", "Host", "#7c5cff")
@@ -476,13 +491,15 @@ class TestOldRoomMigration(RoomCase):
         new0 = os.path.join(self.room_dir, "takes", "t1000")
         for suffix, data in line0.items():
             self.assertEqual(self._read(os.path.join(new0, f"take1{suffix}.wav")), data)
-            self.assertFalse(os.path.exists(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")))
+            self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")), data)
         self.assertEqual(self._read(os.path.join(self.room_dir, "takes", "t3000", "take1.wav")), line1)
-        self.assertFalse(os.path.exists(os.path.join(self.room_dir, "take_line_1.wav")))
+        self.assertEqual(self._read(os.path.join(self.room_dir, "take_line_1.wav")), line1)
         self.assertEqual(self._read(os.path.join(self.room_dir, "take_line_7.wav")), line7)
+        self.assertEqual(room.unplaced_v1_takes, {"7": self._old_take()})
 
         saved = self._load_state()
         self.assertEqual(saved["state_version"], 2)
+        self.assertEqual(saved["unplaced_v1_takes"], {"7": self._old_take()})
         self.assertEqual(saved["takes"], json.loads(json.dumps(room.takes)))
         self.assertEqual(room.to_state_dict()["takes"]["t1000"]["takes"][0]["url"],
                          f"/api/rooms/{self.ROOM}/lines/t1000/takes/take1/audio?v={take0['audio_version']}")
@@ -581,7 +598,7 @@ class TestOldRoomMigration(RoomCase):
         new0 = os.path.join(self.room_dir, "takes", "t1000")
         for suffix, data in line0.items():
             self.assertEqual(self._read(os.path.join(new0, f"take1{suffix}.wav")), data)
-            self.assertFalse(os.path.exists(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")))
+            self.assertEqual(self._read(os.path.join(self.room_dir, f"take_line_0{suffix}.wav")), data)
         saved = self._load_state()
         self.assertNotIn("pending_v1_takes", saved)
         self.assertEqual(room.pending_v1_takes, {})
@@ -824,7 +841,8 @@ class TestTakeRoutes(RoomCase):
                        "role_assignments": {}, "status": "lobby", "exported_video_path": None,
                        "takes": {"0": {"user_id": "hostT", "user_name": "Ana", "duration": 0.25,
                                        "wav_path": os.path.join(self.room_dir, "take_line_0.wav"),
-                                       "url": "/old", "offset_ms": 0, "noise_reduction": False}}}, f)
+                                       "url": "/old", "offset_ms": 0, "noise_reduction": False,
+                                       "recorded_at": self.PACK_MTIME + 60}}}, f)
         self._reload()
         res = self.client.get(self._url("t1000", "take1", "/audio"))
         self.assertEqual(res.status_code, 200)
