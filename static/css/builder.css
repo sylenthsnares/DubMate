@@ -74,6 +74,8 @@
   opacity: 0.6;
 }
 
+/* One signal: whether the graphics card speeds up the AI steps. Brass for the card,
+   a neutral dot for the processor; never green, and no glow (nothing is live). */
 .builder-device-pill {
   display: flex;
   align-items: center;
@@ -82,8 +84,9 @@
   border: 1px solid var(--border-wood);
   padding: 4px 10px;
   border-radius: var(--radius-full);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--foreground-muted);
 }
 
@@ -91,8 +94,28 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-teal);
-  box-shadow: 0 0 6px var(--accent-teal);
+  background: var(--foreground-muted);
+}
+
+.builder-device-pill.is-gpu .device-dot {
+  background: var(--accent-brass);
+}
+
+/* Elements the page hides with the hidden attribute, whatever display their class sets. */
+.builder-device-pill[hidden],
+#view-step-upload [hidden],
+#view-step-editor [hidden] {
+  display: none;
+}
+
+.builder-device-pill:focus-visible,
+.builder-dropzone:focus-visible,
+.sub-dropzone:focus-visible,
+.cover-dropzone:focus-visible,
+.file-chip-remove:focus-visible,
+.url-import-missing-details summary:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .builder-main-container {
@@ -235,6 +258,47 @@ body:has(#view-step-editor.active) .builder-main-container {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Paste link without the Pack Builder tools: why, and how to add them. */
+.url-import-missing {
+  margin-top: 10px;
+  max-width: 420px;
+}
+
+.url-import-missing-text {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.url-import-missing .field-hint {
+  margin: 0;
+}
+
+.url-import-missing-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  border-radius: var(--radius-sm);
+}
+
+.url-import-missing-details[open] summary {
+  margin-bottom: 6px;
+}
+
+.url-import-missing-cmd {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+  user-select: all;
 }
 
 .url-input-group {
@@ -421,10 +485,85 @@ body:has(#view-step-editor.active) .builder-main-container {
   transition: all 160ms ease;
 }
 
-.sub-dropzone:hover, .cover-dropzone:hover {
+.sub-dropzone:hover, .cover-dropzone:hover,
+.sub-dropzone.drag-over, .cover-dropzone.drag-over {
   border-color: var(--accent-brass);
   color: var(--foreground);
   background: rgba(35, 28, 22, 0.8);
+}
+
+/* A chosen file: its name, what is in it, and × to remove it. */
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  background: rgba(22, 17, 13, 0.6);
+  color: var(--foreground-muted);
+}
+
+.file-chip > svg {
+  flex-shrink: 0;
+  color: var(--accent-brass);
+}
+
+.file-chip-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file-chip-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-chip-summary {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+
+.file-chip-remove {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.file-chip-remove:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.field-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+
+.field-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--accent-red-soft);
 }
 
 /* Step 2: Processing Screen */
@@ -1669,6 +1808,19 @@ body.resizing-timeline * {
 @media (max-width: 1100px) {
   .builder-upload-grid {
     grid-template-columns: 1fr;
+  }
+  /* The header is full at the narrowest windows: the pill keeps its dot, and its
+     label stays for screen readers (the tooltip says what it means). */
+  .builder-device-pill {
+    padding: 9px;
+  }
+  .builder-device-pill .device-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
   .editor-right-sidebar {
     height: auto;

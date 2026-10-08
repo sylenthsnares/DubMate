@@ -12,6 +12,16 @@ function detailText(body, fallback) {
   return fallback;
 }
 
+// Kana and CJK ideographs: a line in Japanese script can be converted to romaji.
+const JAPANESE_SCRIPT = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+// Step 1's hero line names only the steps that are installed.
+const HERO_LINES = {
+  both: 'Add a clip. DubMate separates the voices from the background and writes out each line for you to check.',
+  separation: 'Add a clip and a subtitle file. DubMate separates the voices from the background.',
+  neither: 'Add a clip and a subtitle file. DubMate turns them into a scene you can dub.',
+};
+
 const PALETTE = [
   '#d97706', // Vintage Amber
   '#cca458', // Walnut Gold
@@ -31,6 +41,11 @@ export class PackBuilderApp {
     this.videoFile = null;
     this.coverFile = null;
     this.subFile = null;
+    // Lines in the subtitles a link import brought (kept on the engine), 0 for none.
+    this.linkSubtitleCount = 0;
+    // GET /api/builder/capabilities: what is installed. Null until it answers, and
+    // nothing is hidden until then.
+    this.capabilities = null;
     this.duration = 0.0;
     this.segments = [];
     this.characterColors = new Map();
@@ -80,30 +95,105 @@ export class PackBuilderApp {
     this.initDOM();
     this.initEvents();
     this.initKeyboardShortcuts();
-    this.detectHardware();
+    this.loadCapabilities();
   }
 
-  async detectHardware() {
-    try {
-      const res = await fetch('/api/system/encoder');
-      if (res.ok) {
-        const data = await res.json();
-        if (this.deviceLabel) {
-          const isHw = data.is_hardware;
-          this.deviceLabel.innerText = isHw ? 'Fast processing' : 'Standard processing';
-        }
-        if (this.devicePill) {
-          this.devicePill.dataset.tip = data.is_hardware
-            ? 'Your graphics card speeds up processing.'
-            : 'No supported graphics card found, so processing uses the processor and takes longer.';
-          if (data.is_hardware) {
-            this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
-          }
-        }
+  /** Reads what is installed, and asks again each second (up to 20 s) while the GPU check runs. */
+  async loadCapabilities() {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, 1000));
+      let caps = null;
+      try {
+        const res = await fetch('/api/builder/capabilities');
+        if (res.ok) caps = await res.json();
+      } catch (e) {
+        console.warn('[PackBuilder] Could not read what is installed:', e);
       }
-    } catch (e) {
-      console.warn('[PackBuilder] Could not detect hardware acceleration engine:', e);
+      if (!caps) return;
+      this.applyCapabilities(caps);
+      if (caps.gpu !== null) return;
     }
+  }
+
+  /** Whether a Pack Builder tool is installed. Unknown counts as installed, so nothing is hidden by mistake. */
+  has(tool) {
+    return !this.capabilities || this.capabilities[tool] !== false;
+  }
+
+  applyCapabilities(caps) {
+    const before = this.capabilities;
+    this.capabilities = caps;
+
+    // The pill has one signal: whether the graphics card speeds up the AI steps.
+    const gpu = caps.gpu;
+    const showPill = typeof gpu === 'boolean' && (this.has('separation') || this.has('transcription'));
+    if (this.devicePill) {
+      this.devicePill.hidden = !showPill;
+      this.devicePill.classList.toggle('is-gpu', gpu === true);
+      this.devicePill.dataset.tip = gpu
+        ? 'Your graphics card speeds up separating voices and writing out lines.'
+        : 'No supported graphics card, so separating voices and writing out lines use the processor and take longer.';
+    }
+    if (this.deviceLabel) this.deviceLabel.textContent = gpu ? 'Fast processing' : 'Standard processing';
+
+    if (this.heroSub) {
+      const separation = this.has('separation');
+      const key = separation && this.has('transcription') ? 'both' : (separation ? 'separation' : 'neither');
+      this.heroSub.textContent = HERO_LINES[key];
+    }
+
+    // Paste link: without the tools, say how to add them instead of failing after a paste.
+    const canImport = this.has('link_import');
+    if (this.urlInputGroup) this.urlInputGroup.hidden = !canImport;
+    if (this.urlImporterSub) this.urlImporterSub.hidden = !canImport;
+    if (this.urlImportMissing) {
+      this.urlImportMissing.hidden = canImport;
+      const desktop = typeof window.__TAURI__?.core?.invoke === 'function';
+      this.urlImportMissingDesktop.hidden = !desktop;
+      this.urlImportMissingSource.hidden = desktop;
+    }
+
+    const canTranscribe = this.has('transcription');
+    if (this.subLabel) this.subLabel.textContent = canTranscribe ? 'Subtitles (optional)' : 'Subtitles (needed for lines)';
+    if (this.subHint) this.subHint.hidden = canTranscribe;
+    this.updateStartButtonLabel();
+
+    // aria-disabled rather than disabled, so the tooltip still says why on hover and focus.
+    if (this.btnTranscribeLine) {
+      if (canTranscribe) {
+        this.btnTranscribeLine.removeAttribute('aria-disabled');
+        this.btnTranscribeLine.dataset.tip = "Fill in the selected line's text from the audio";
+      } else {
+        this.btnTranscribeLine.setAttribute('aria-disabled', 'true');
+        this.btnTranscribeLine.dataset.tip = "Automatic transcription isn't installed.";
+      }
+    }
+    // The line rows offer Transcribe and Romaji by what is installed.
+    const rowsChanged = !before || before.transcription !== caps.transcription || before.romaji !== caps.romaji;
+    if (this.currentStep === 'editor' && rowsChanged) this.renderSegmentsList();
+  }
+
+  /** Subtitles will give the lines: a checked file, or the ones a link import brought. */
+  hasSubtitles() {
+    return !!this.subFile || this.linkSubtitleCount > 0;
+  }
+
+  /** Without transcription and without subtitles, processing writes no lines. */
+  willWriteLines() {
+    return this.has('transcription') || this.hasSubtitles();
+  }
+
+  updateStartButtonLabel() {
+    if (this.labelStartProcess) {
+      this.labelStartProcess.textContent = this.willWriteLines() ? 'Process video' : 'Process video without lines';
+    }
+  }
+
+  /** Romaji applies to a Japanese line (by the chosen language or its script), when the tool is installed. */
+  romajiApplies(seg) {
+    if (!this.has('romaji')) return false;
+    const lang = this.selectTranscribeLang ? this.selectTranscribeLang.value : '';
+    return lang === 'ja' || lang === 'ja_romaji' || JAPANESE_SCRIPT.test((seg && seg.text) || '');
   }
 
   initDOM() {
@@ -148,13 +238,25 @@ export class PackBuilderApp {
     this.btnChangeVideo = document.getElementById('btn-change-video');
     this.inputPackTitle = document.getElementById('input-pack-title');
     this.selectTranscribeLang = document.getElementById('select-transcribe-lang');
+    this.heroSub = document.getElementById('builder-hero-sub');
+    this.urlInputGroup = document.getElementById('url-input-group');
+    this.urlImporterSub = document.getElementById('url-importer-sub');
+    this.urlImportMissing = document.getElementById('url-import-missing');
+    this.urlImportMissingDesktop = document.getElementById('url-import-missing-desktop');
+    this.urlImportMissingSource = document.getElementById('url-import-missing-source');
+    this.subLabel = document.getElementById('sub-label');
+    this.subHint = document.getElementById('sub-hint');
     this.subDropzone = document.getElementById('sub-dropzone');
     this.inputSubFile = document.getElementById('input-sub-file');
-    this.subFilenameLabel = document.getElementById('sub-filename-label');
+    this.subChip = document.getElementById('sub-chip');
+    this.btnRemoveSub = document.getElementById('btn-remove-sub');
+    this.subError = document.getElementById('sub-error');
     this.coverDropzone = document.getElementById('cover-dropzone');
     this.inputCoverFile = document.getElementById('input-cover-file');
-    this.coverFilenameLabel = document.getElementById('cover-filename-label');
+    this.coverChip = document.getElementById('cover-chip');
+    this.btnRemoveCover = document.getElementById('btn-remove-cover');
     this.btnStartProcess = document.getElementById('btn-start-process');
+    this.labelStartProcess = document.getElementById('label-start-process');
 
     // Step 2: Processing progress elements
     this.processHeadline = document.getElementById('process-headline');
@@ -270,6 +372,15 @@ export class PackBuilderApp {
       }
     });
     this.videoDropzone.addEventListener('click', () => this.inputVideoFile.click());
+    // The dropzones are role=button: Enter and Space open the file picker too.
+    [this.videoDropzone, this.subDropzone, this.coverDropzone].forEach((zone) => {
+      zone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          zone.click();
+        }
+      });
+    });
     this.inputVideoFile.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length > 0) {
         this.handleVideoSelected(e.target.files[0]);
@@ -285,24 +396,53 @@ export class PackBuilderApp {
         this.videoThumbContainer.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
       }
       this.btnStartProcess.disabled = true;
+      // A link's subtitles belonged to the session that just went.
+      if (this.linkSubtitleCount) {
+        this.linkSubtitleCount = 0;
+        this.showFileChip(this.subChip, this.subDropzone, null);
+        this.updateStartButtonLabel();
+      }
     });
 
-    // 2. Subtitle file selection
+    // 2. Subtitle file selection: checked at once, then shown as a chip.
     this.subDropzone.addEventListener('click', () => this.inputSubFile.click());
     this.inputSubFile.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length > 0) {
-        this.subFile = e.target.files[0];
-        this.subFilenameLabel.innerText = `✓ ${this.subFile.name}`;
+        this.handleSubtitleSelected(e.target.files[0]);
       }
     });
+    this.btnRemoveSub.addEventListener('click', () => this.removeSubtitles());
 
     // 3. Cover art selection
     this.coverDropzone.addEventListener('click', () => this.inputCoverFile.click());
     this.inputCoverFile.addEventListener('change', (e) => {
-      if (e.target.files && e.target.files.length > 0) {
-        this.coverFile = e.target.files[0];
-        this.coverFilenameLabel.innerText = `✓ ${this.coverFile.name}`;
-      }
+      if (e.target.files && e.target.files.length > 0) this.setCoverFile(e.target.files[0]);
+    });
+    this.btnRemoveCover.addEventListener('click', () => {
+      this.inputCoverFile.value = '';
+      this.setCoverFile(null);
+      this.coverDropzone.focus();
+    });
+
+    ['dragenter', 'dragover'].forEach((name) => {
+      [this.subDropzone, this.coverDropzone].forEach((zone) => zone.addEventListener(name, (e) => {
+        e.preventDefault();
+        zone.classList.add('drag-over');
+      }));
+    });
+    ['dragleave', 'drop'].forEach((name) => {
+      [this.subDropzone, this.coverDropzone].forEach((zone) => zone.addEventListener(name, (e) => {
+        e.preventDefault();
+        zone.classList.remove('drag-over');
+      }));
+    });
+    this.subDropzone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length > 0) this.handleSubtitleSelected(files[0]);
+    });
+    this.coverDropzone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length > 0) this.setCoverFile(files[0]);
     });
 
     // 4. Start AI processing button
@@ -565,6 +705,78 @@ export class PackBuilderApp {
     this.btnStartProcess.disabled = false;
   }
 
+  /** Shows a chosen file as a chip (name, summary, ×) in place of its dropzone; null shows the dropzone. */
+  showFileChip(chip, dropzone, name, summary = '') {
+    chip.hidden = !name;
+    dropzone.hidden = !!name;
+    chip.querySelector('.file-chip-name').textContent = name || '';
+    chip.querySelector('.file-chip-summary').textContent = summary;
+  }
+
+  setCoverFile(file) {
+    this.coverFile = file;
+    this.showFileChip(this.coverChip, this.coverDropzone, file ? file.name : null, file ? this.formatFileSize(file.size) : '');
+  }
+
+  formatFileSize(bytes) {
+    return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  showSubError(message) {
+    this.subError.textContent = message || '';
+    this.subError.hidden = !message;
+  }
+
+  /** Checks a subtitle file at once. A good one becomes a chip; a bad one isn't kept and says why. */
+  async handleSubtitleSelected(file) {
+    this.showSubError('');
+    const form = new FormData();
+    form.append('file', file);
+    let error = '';
+    let data = null;
+    try {
+      const res = await fetch('/api/builder/subtitles/check', { method: 'POST', body: form });
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        error = detailText(await res.json().catch(() => ({})), 'No timed lines in this file. Use an SRT or VTT file.');
+      }
+    } catch (e) {
+      error = "Couldn't read this file. Try again.";
+    }
+    this.inputSubFile.value = '';
+    if (!data) {
+      this.showSubError(error);
+      return;
+    }
+    this.subFile = file;
+    const lines = `${data.count} line${data.count === 1 ? '' : 's'}`;
+    // The parser names a line nobody claims "Actor"; that isn't a speaker found.
+    const speakers = (data.characters || []).filter((c) => c && c !== 'Actor').length;
+    const summary = speakers ? `${lines} · ${speakers} speaker${speakers === 1 ? '' : 's'} found` : lines;
+    this.showFileChip(this.subChip, this.subDropzone, file.name, summary);
+    this.updateStartButtonLabel();
+  }
+
+  /** × on the subtitles chip: forgets the file, and the session's subtitles on the engine. */
+  async removeSubtitles() {
+    if (this.sessionId) {
+      try {
+        const res = await fetch(`/api/builder/${this.sessionId}/subtitles`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(String(res.status));
+      } catch (e) {
+        this.showToast("Couldn't remove the subtitles. Try again.");
+        return;
+      }
+    }
+    this.subFile = null;
+    this.linkSubtitleCount = 0;
+    this.showSubError('');
+    this.showFileChip(this.subChip, this.subDropzone, null);
+    this.updateStartButtonLabel();
+    this.subDropzone.focus();
+  }
+
   async handleUrlImport() {
     const url = (this.inputYoutubeUrl.value || '').trim();
     if (!url) {
@@ -644,18 +856,6 @@ export class PackBuilderApp {
         this.videoThumbContainer.innerHTML = `<img src="${escapeHtml(data.cover_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;" alt="Cover Thumbnail">`;
       }
 
-      if (data.device_info) {
-        const dev = data.device_info;
-        if (dev.cuda_available) {
-          this.deviceLabel.innerText = 'Fast processing';
-          this.devicePill.dataset.tip = 'Your graphics card speeds up processing.';
-          this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
-        } else {
-          this.deviceLabel.innerText = 'Standard processing';
-          this.devicePill.dataset.tip = 'No supported graphics card found, so processing uses the processor and takes longer.';
-        }
-      }
-
       // Brief delay so user sees all green checkmarks
       await new Promise(r => setTimeout(r, 450));
 
@@ -668,11 +868,14 @@ export class PackBuilderApp {
       this.videoSelectedCard.style.display = 'flex';
       this.btnStartProcess.disabled = false;
 
-      if (data.has_subtitles) {
-        this.showToast(`Video imported with ${data.subtitles_count} subtitle lines`);
-      } else {
-        this.showToast('Video imported');
+      // The video's own subtitles give the lines, unless a file was chosen (it replaces them).
+      this.linkSubtitleCount = data.has_subtitles ? data.subtitles_count : 0;
+      if (this.linkSubtitleCount && !this.subFile) {
+        const n = this.linkSubtitleCount;
+        this.showFileChip(this.subChip, this.subDropzone, 'From the video', `${n} line${n === 1 ? '' : 's'}`);
       }
+      this.updateStartButtonLabel();
+      this.showToast('Video imported');
     } catch (e) {
       clearInterval(timerInterval);
       this.showUrlImportError(e.message, e.details);
@@ -734,17 +937,6 @@ export class PackBuilderApp {
         this.sessionId = uploadData.session_id;
         this.duration = uploadData.duration;
 
-        if (uploadData.device_info) {
-          const dev = uploadData.device_info;
-          if (dev.cuda_available) {
-            this.deviceLabel.innerText = 'Fast processing';
-            this.devicePill.dataset.tip = 'Your graphics card speeds up processing.';
-            this.devicePill.style.borderColor = 'rgba(22, 163, 74, 0.4)';
-          } else {
-            this.deviceLabel.innerText = 'Standard processing';
-            this.devicePill.dataset.tip = 'No supported graphics card found, so processing uses the processor and takes longer.';
-          }
-        }
       }
 
       if (this.coverFile) {
@@ -766,19 +958,24 @@ export class PackBuilderApp {
           method: 'POST',
           body: subData,
         });
-        if (subRes.ok) {
-          const subJson = await subRes.json();
-          if (subJson.segments && subJson.segments.length > 0) {
-            this.segments = subJson.segments;
-          }
+        // Never fall through to transcription when the chosen subtitles didn't arrive.
+        if (!subRes.ok) {
+          const err = await subRes.json().catch(() => ({}));
+          throw new Error(detailText(err, "Couldn't read the subtitles. Check the file and try again."));
+        }
+        const subJson = await subRes.json();
+        if (subJson.segments && subJson.segments.length > 0) {
+          this.segments = subJson.segments;
         }
       }
 
       const lang = this.selectTranscribeLang.value;
+      const body = { language: lang, whisper_model: 'base' };
+      if (!this.willWriteLines()) body.transcribe = false;
       const processRes = await fetch(`/api/builder/${this.sessionId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: lang, whisper_model: 'base' }),
+        body: JSON.stringify(body),
       });
       if (!processRes.ok) {
         const err = await processRes.json().catch(() => ({}));
@@ -1306,6 +1503,7 @@ export class PackBuilderApp {
       ...this.segments.map(s => s.character).filter(Boolean)
     ]));
     if (allCast.length === 0) allCast.push('Lead');
+    const canTranscribe = this.has('transcription');
 
     this.segments.forEach((seg, idx) => {
       const isSelected = idx === this.selectedSegmentIndex;
@@ -1329,11 +1527,11 @@ export class PackBuilderApp {
           </div>
           <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
           <div style="display: flex; gap: 4px; align-items: center;">
-            <button class="btn btn-secondary btn-xs btn-whisper-cue" data-idx="${idx}" data-tip="Fill in this line's text from the audio">
+            ${canTranscribe ? `<button class="btn btn-secondary btn-xs btn-whisper-cue" data-idx="${idx}" data-tip="Fill in this line's text from the audio">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
               <span>Transcribe</span>
-            </button>
-            <button class="btn btn-secondary btn-xs btn-romaji-cue" data-idx="${idx}" data-tip="Convert Japanese text to romaji">
+            </button>` : ''}
+            <button class="btn btn-secondary btn-xs btn-romaji-cue" data-idx="${idx}" data-tip="Convert Japanese text to romaji"${this.romajiApplies(seg) ? '' : ' hidden'}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
               <span>Romaji</span>
             </button>
@@ -1392,9 +1590,11 @@ export class PackBuilderApp {
       });
 
       const textInput = card.querySelector('.cue-text-input');
+      const btnRomaji = card.querySelector('.btn-romaji-cue');
       textInput.addEventListener('input', (e) => {
         this.segments[idx].text = e.target.value;
         this.updateNonverbalBadge(idx);
+        btnRomaji.hidden = !this.romajiApplies(this.segments[idx]);
       });
       textInput.addEventListener('change', () => {
         const label = this.segmentBlocks[idx]?.querySelector('.segment-block-label');
@@ -1415,12 +1615,13 @@ export class PackBuilderApp {
       });
 
       const btnWhisper = card.querySelector('.btn-whisper-cue');
-      btnWhisper.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.transcribeSingleSegment(idx, btnWhisper, textInput);
-      });
+      if (btnWhisper) {
+        btnWhisper.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.transcribeSingleSegment(idx, btnWhisper, textInput);
+        });
+      }
 
-      const btnRomaji = card.querySelector('.btn-romaji-cue');
       btnRomaji.addEventListener('click', (e) => {
         e.stopPropagation();
         this.romanizeSingleSegment(idx, btnRomaji, textInput);
@@ -2205,6 +2406,7 @@ export class PackBuilderApp {
   }
 
   transcribeSelectedSegment() {
+    if (!this.has('transcription')) return; // the button's tooltip says why
     if (this.selectedSegmentIndex === null) {
       this.showToast('Select a line first.');
       return;
