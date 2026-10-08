@@ -76,7 +76,8 @@ fn main() {
             apply_update,
             updater::cancel_update,
             packbuilder::get_packbuilder_status,
-            packbuilder::install_packbuilder,
+            packbuilder::start_packbuilder_install,
+            packbuilder::get_packbuilder_install,
             packbuilder::remove_packbuilder,
             mic_permission::allow_room_origin,
         ])

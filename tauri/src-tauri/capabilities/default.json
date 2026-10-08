@@ -10,6 +10,7 @@
     "allow-apply-update",
     "allow-cancel-update",
     "allow-get-packbuilder-status",
-    "allow-install-packbuilder"
+    "allow-start-packbuilder-install",
+    "allow-get-packbuilder-install"
   ]
 }

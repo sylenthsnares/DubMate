@@ -2,6 +2,7 @@
 //! plain-language progress shown while it runs, and removing it again.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::Emitter;
 
 use crate::paths::{
@@ -9,6 +10,7 @@ use crate::paths::{
     PACKBUILDER_OPTIN_MARKER,
 };
 use crate::sidecars::{hide_console, kill_sidecars, start_sidecars};
+use crate::updater::EtaEstimator;
 
 /// A human-readable snapshot of the Pack Builder install, sent to the launcher in
 /// place of raw pip output. Nobody installing a dubbing app should have to read
@@ -25,6 +27,75 @@ pub struct PackBuilderProgress {
     pub percent: f64,
     /// The original pip line, kept for the collapsible technical view.
     pub raw: String,
+    /// Bytes of the files that have finished downloading.
+    pub done_bytes: f64,
+    /// The download's expected size, which grows as pip announces more files.
+    pub total_bytes: f64,
+    /// Seconds of download left, once the speed has settled; None outside downloading.
+    pub eta_secs: Option<u64>,
+}
+
+/// Where the background install is, for the studio's header chip
+/// (`get_packbuilder_install`). It lives as long as the app, so it survives page reloads.
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallState {
+    Idle,
+    Running,
+    Done,
+    Failed,
+}
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub struct PackBuilderInstall {
+    pub state: InstallState,
+    pub progress: Option<PackBuilderProgress>,
+    pub error: Option<String>,
+}
+
+impl PackBuilderInstall {
+    const IDLE: Self = Self { state: InstallState::Idle, progress: None, error: None };
+
+    /// Starts a fresh run and returns true, or returns false when one is already running.
+    fn begin(&mut self) -> bool {
+        if self.state == InstallState::Running {
+            return false;
+        }
+        *self = Self { state: InstallState::Running, ..Self::IDLE };
+        true
+    }
+
+    fn report(&mut self, progress: PackBuilderProgress) {
+        if self.state == InstallState::Running {
+            self.progress = Some(progress);
+        }
+    }
+
+    fn finish(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.state = InstallState::Done;
+                self.error = None;
+            }
+            Err(e) => {
+                self.state = InstallState::Failed;
+                self.error = Some(e);
+            }
+        }
+    }
+
+    /// Back to idle after Pack Builder is removed, unless an install is running.
+    fn forget(&mut self) {
+        if self.state != InstallState::Running {
+            *self = Self::IDLE;
+        }
+    }
+}
+
+static INSTALL: Mutex<PackBuilderInstall> = Mutex::new(PackBuilderInstall::IDLE);
+
+fn install_state() -> MutexGuard<'static, PackBuilderInstall> {
+    INSTALL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Roughly what the AI pipeline weighs. Only used as the denominator until pip has
@@ -62,23 +133,46 @@ fn friendly_component_name(package: &str) -> &'static str {
 /// only size signal available is the "Downloading x.whl (197.8 MB)" announcements.
 /// A file is treated as complete once the next one is announced, which is accurate
 /// enough for a bar and never overstates what has finished.
-#[derive(Default)]
 struct PipProgressParser {
     completed_bytes: f64,
     announced_total: f64,
     current_bytes: f64,
+    /// The file in flight came from pip's cache, so it finishes at no download speed.
+    current_cached: bool,
+    /// Bytes of finished files that really came over the network: the speed's measure.
+    fetched_bytes: f64,
     current_component: String,
     phase: String,
     install_count: usize,
     last_percent: f64,
+    /// pip only reports whole files, so the speed settles after 20 s and 2 of them.
+    eta: EtaEstimator,
 }
 
 impl PipProgressParser {
     fn new() -> Self {
         Self {
+            completed_bytes: 0.0,
+            announced_total: 0.0,
+            current_bytes: 0.0,
+            current_cached: false,
+            fetched_bytes: 0.0,
+            current_component: String::new(),
             phase: "preparing".to_string(),
-            ..Default::default()
+            install_count: 0,
+            last_percent: 0.0,
+            eta: EtaEstimator::new(20.0, 2),
         }
+    }
+
+    /// The file in flight has landed, `elapsed` seconds after pip started.
+    fn finish_current(&mut self, elapsed: f64) {
+        self.completed_bytes += self.current_bytes;
+        if !self.current_cached && self.current_bytes > 0.0 {
+            self.fetched_bytes += self.current_bytes;
+            self.eta.sample(elapsed, self.fetched_bytes);
+        }
+        self.current_bytes = 0.0;
     }
 
     /// Parses a trailing "(197.8 MB)" size annotation into bytes.
@@ -126,7 +220,7 @@ impl PipProgressParser {
         }
     }
 
-    fn snapshot(&mut self, raw: &str) -> PackBuilderProgress {
+    fn snapshot(&mut self, raw: &str, elapsed: f64) -> PackBuilderProgress {
         let downloaded = self.completed_bytes;
         let total = self.announced_total.max(PACKBUILDER_EXPECTED_BYTES);
 
@@ -162,8 +256,14 @@ impl PipProgressParser {
             ),
             _ => (
                 "Finishing up".to_string(),
-                "Restarting DubMate".to_string(),
+                "Almost done".to_string(),
             ),
+        };
+
+        let eta_secs = if self.phase == "downloading" {
+            self.eta.eta_secs(elapsed, total - downloaded)
+        } else {
+            None
         };
 
         PackBuilderProgress {
@@ -172,20 +272,22 @@ impl PipProgressParser {
             detail,
             percent: self.last_percent,
             raw: raw.to_string(),
+            done_bytes: downloaded,
+            total_bytes: total,
+            eta_secs,
         }
     }
 
-    fn push(&mut self, line: &str) -> PackBuilderProgress {
+    /// Reads one line of pip's output, `elapsed` seconds after pip started.
+    fn push(&mut self, line: &str, elapsed: f64) -> PackBuilderProgress {
         let trimmed = line.trim();
 
         if trimmed.starts_with("Downloading ") || trimmed.starts_with("Using cached ") {
-            let keyword = if trimmed.starts_with("Using cached ") {
-                "Using cached "
-            } else {
-                "Downloading "
-            };
+            let cached = trimmed.starts_with("Using cached ");
+            let keyword = if cached { "Using cached " } else { "Downloading " };
             // The previously announced file is finished the moment a new one starts.
-            self.completed_bytes += self.current_bytes;
+            self.finish_current(elapsed);
+            self.current_cached = cached;
             self.current_bytes = Self::parse_size(trimmed).unwrap_or(0.0);
             self.announced_total += self.current_bytes;
             let package = Self::package_from(trimmed, keyword);
@@ -202,8 +304,7 @@ impl PipProgressParser {
             }
         } else if trimmed.starts_with("Installing collected packages") {
             // Everything announced has landed by this point.
-            self.completed_bytes += self.current_bytes;
-            self.current_bytes = 0.0;
+            self.finish_current(elapsed);
             self.install_count = trimmed
                 .split_once(':')
                 .map(|(_, list)| list.split(',').filter(|s| !s.trim().is_empty()).count())
@@ -213,7 +314,7 @@ impl PipProgressParser {
             self.phase = "finalizing".to_string();
         }
 
-        self.snapshot(trimmed)
+        self.snapshot(trimmed, elapsed)
     }
 }
 
@@ -265,7 +366,7 @@ mod packbuilder_progress_tests {
         let mut last = 0.0;
         let mut phases = Vec::new();
         for line in lines {
-            let snap = p.push(line);
+            let snap = p.push(line, 0.0);
             assert!(snap.percent >= last, "percent rewound at {line}: {} < {last}", snap.percent);
             assert!(snap.percent <= 100.0);
             assert!(!snap.headline.is_empty());
@@ -284,11 +385,11 @@ mod packbuilder_progress_tests {
     fn download_detail_reports_completed_bytes_not_announced_ones() {
         let mut p = PipProgressParser::new();
         // A single announced file is in flight, so nothing has completed yet.
-        let first = p.push("Downloading torch-2.4.0.whl (100.0 MB)");
+        let first = p.push("Downloading torch-2.4.0.whl (100.0 MB)", 0.0);
         assert!(first.detail.starts_with("0 MB of"), "got {}", first.detail);
 
         // Announcing the next file means the first one landed.
-        let second = p.push("Downloading demucs-4.0.1.whl (50.0 MB)");
+        let second = p.push("Downloading demucs-4.0.1.whl (50.0 MB)", 0.0);
         assert!(second.detail.starts_with("100 MB of"), "got {}", second.detail);
         assert_eq!(second.headline, "Downloading voice separation");
     }
@@ -297,10 +398,161 @@ mod packbuilder_progress_tests {
     fn oversized_installs_grow_the_estimate_instead_of_pinning_the_bar() {
         let mut p = PipProgressParser::new();
         // Announce well beyond the 2 GB guess.
-        p.push("Downloading a-1.0.whl (3000.0 MB)");
-        let snap = p.push("Downloading b-1.0.whl (1000.0 MB)");
+        p.push("Downloading a-1.0.whl (3000.0 MB)", 0.0);
+        let snap = p.push("Downloading b-1.0.whl (1000.0 MB)", 0.0);
         assert!(snap.detail.contains("of ~3.9 GB"), "estimate should grow: {}", snap.detail);
         assert!(snap.percent < 100.0);
+    }
+
+    const MB: f64 = 1024.0 * 1024.0;
+
+    #[test]
+    fn progress_carries_the_bytes_behind_the_detail() {
+        let mut p = PipProgressParser::new();
+        let start = p.push("Collecting torch", 0.0);
+        assert_eq!(start.done_bytes, 0.0);
+        assert_eq!(start.total_bytes, PACKBUILDER_EXPECTED_BYTES);
+
+        p.push("Downloading a-1.0.whl (100.0 MB)", 1.0);
+        let snap = p.push("Downloading b-1.0.whl (3000.0 MB)", 2.0);
+        assert_eq!(snap.done_bytes, 100.0 * MB);
+        assert_eq!(snap.total_bytes, 3100.0 * MB);
+    }
+
+    #[test]
+    fn time_left_waits_for_20_seconds_and_two_finished_files() {
+        let mut p = PipProgressParser::new();
+        assert_eq!(p.push("Downloading a-1.0.whl (100.0 MB)", 0.0).eta_secs, None);
+        // One finished file: not enough, however long it took.
+        assert_eq!(p.push("Downloading b-1.0.whl (100.0 MB)", 30.0).eta_secs, None);
+        // Two finished files, past 20 s: about 3.3 MB/s with 1848 MB to go.
+        let snap = p.push("Downloading c-1.0.whl (100.0 MB)", 60.0);
+        let eta = snap.eta_secs.expect("stable by now");
+        assert!((500..=620).contains(&eta), "got {eta}");
+
+        // Two finished files, but under 20 s.
+        let mut quick = PipProgressParser::new();
+        quick.push("Downloading a-1.0.whl (100.0 MB)", 0.0);
+        quick.push("Downloading b-1.0.whl (100.0 MB)", 5.0);
+        assert_eq!(quick.push("Downloading c-1.0.whl (100.0 MB)", 10.0).eta_secs, None);
+    }
+
+    #[test]
+    fn cached_files_do_not_count_as_download_speed() {
+        let mut p = PipProgressParser::new();
+        p.push("Using cached torch-2.4.0.whl (800.0 MB)", 1.0);
+        // The cached file "finished" instantly; only the next one is a real sample.
+        p.push("Downloading a-1.0.whl (100.0 MB)", 1.5);
+        let snap = p.push("Downloading b-1.0.whl (100.0 MB)", 30.0);
+        assert_eq!(snap.done_bytes, 900.0 * MB, "cached bytes still count as done");
+        assert_eq!(snap.eta_secs, None, "one real download is not a stable speed");
+    }
+
+    #[test]
+    fn no_time_left_once_the_download_is_over() {
+        let mut p = PipProgressParser::new();
+        p.push("Downloading a-1.0.whl (100.0 MB)", 0.0);
+        p.push("Downloading b-1.0.whl (100.0 MB)", 30.0);
+        p.push("Downloading c-1.0.whl (100.0 MB)", 60.0);
+        let snap = p.push("Installing collected packages: a, b, c", 90.0);
+        assert_eq!(snap.eta_secs, None);
+        // The finishing step no longer claims a restart: the studio offers it.
+        let done = p.push("Successfully installed a b c", 120.0);
+        assert!(!done.detail.contains("Restarting"), "{}", done.detail);
+    }
+}
+
+#[cfg(test)]
+mod packbuilder_install_state_tests {
+    use super::*;
+
+    fn progress(percent: f64) -> PackBuilderProgress {
+        let mut p = PipProgressParser::new();
+        let mut snap = p.push("Collecting torch", 0.0);
+        snap.percent = percent;
+        snap
+    }
+
+    #[test]
+    fn an_install_runs_then_finishes() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert_eq!(install.state, InstallState::Idle);
+        assert!(install.begin());
+        assert_eq!(install.state, InstallState::Running);
+        install.report(progress(40.0));
+        assert_eq!(install.progress.as_ref().map(|p| p.percent), Some(40.0));
+        install.finish(Ok(()));
+        assert_eq!(install.state, InstallState::Done);
+        assert_eq!(install.error, None);
+    }
+
+    #[test]
+    fn a_failed_install_keeps_its_error_and_can_start_again() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert!(install.begin());
+        install.finish(Err("No internet".to_string()));
+        assert_eq!(install.state, InstallState::Failed);
+        assert_eq!(install.error.as_deref(), Some("No internet"));
+
+        // Try again starts clean.
+        assert!(install.begin());
+        assert_eq!(install.state, InstallState::Running);
+        assert_eq!(install.error, None);
+        assert_eq!(install.progress, None);
+    }
+
+    #[test]
+    fn starting_while_running_changes_nothing() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert!(install.begin());
+        install.report(progress(55.0));
+        let before = install.clone();
+        assert!(!install.begin());
+        assert_eq!(install, before);
+    }
+
+    #[test]
+    fn progress_after_the_end_is_ignored() {
+        let mut install = PackBuilderInstall::IDLE;
+        install.report(progress(10.0));
+        assert_eq!(install.progress, None, "nothing is running");
+        assert!(install.begin());
+        install.finish(Ok(()));
+        install.report(progress(99.0));
+        assert_eq!(install.progress, None);
+    }
+
+    #[test]
+    fn removing_pack_builder_forgets_a_finished_install() {
+        let mut install = PackBuilderInstall::IDLE;
+        assert!(install.begin());
+        install.finish(Ok(()));
+        install.forget();
+        assert_eq!(install, PackBuilderInstall::IDLE);
+
+        // A running install is left alone.
+        assert!(install.begin());
+        install.forget();
+        assert_eq!(install.state, InstallState::Running);
+    }
+
+    #[test]
+    fn the_studio_reads_the_state_in_lowercase() {
+        let mut install = PackBuilderInstall::IDLE;
+        let idle = serde_json::to_value(&install).unwrap();
+        assert_eq!(idle["state"], "idle");
+        assert!(idle["progress"].is_null());
+        assert!(idle["error"].is_null());
+        install.begin();
+        install.report(progress(12.0));
+        let running = serde_json::to_value(&install).unwrap();
+        assert_eq!(running["state"], "running");
+        assert_eq!(running["progress"]["percent"], 12.0);
+        assert!(running["progress"]["done_bytes"].is_number());
+        assert!(running["progress"]["total_bytes"].is_number());
+        assert!(running["progress"]["eta_secs"].is_null());
+        install.finish(Err("x".to_string()));
+        assert_eq!(serde_json::to_value(&install).unwrap()["state"], "failed");
     }
 }
 
@@ -404,6 +656,7 @@ fn run_pip_install(
     // One parser shared by both streams, behind a mutex: pip interleaves them and the
     // progress estimate has to see every line to stay accurate.
     let parser = std::sync::Arc::new(std::sync::Mutex::new(PipProgressParser::new()));
+    let started = std::time::Instant::now();
 
     if let Some(stdout) = child.stdout.take() {
         let app = app.clone();
@@ -411,7 +664,7 @@ fn run_pip_install(
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Ok(mut p) = parser.lock() {
-                    let _ = app.emit("packbuilder-progress", p.push(&line));
+                    publish(&app, p.push(&line, started.elapsed().as_secs_f64()));
                 }
             }
         });
@@ -421,7 +674,7 @@ fn run_pip_install(
     if let Some(stderr) = child.stderr.take() {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             if let Ok(mut p) = parser.lock() {
-                let _ = app.emit("packbuilder-progress", p.push(&line));
+                publish(app, p.push(&line, started.elapsed().as_secs_f64()));
             }
             errors.push(line);
         }
@@ -445,12 +698,19 @@ fn run_pip_install(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
+/// Keeps the latest progress for `get_packbuilder_install` and sends it to the launcher.
+fn publish(app: &tauri::AppHandle, progress: PackBuilderProgress) {
+    install_state().report(progress.clone());
+    let _ = app.emit("packbuilder-progress", progress);
+}
+
+/// What the install needs, checked before anything is downloaded: a writable install
+/// folder, the requirements file and the bundled Python.
+fn prepare_install(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     // Requirements ship beside app.py (resources), but the packages install at the
     // install root so they land on the drive the user chose.
-    let app_dir = get_app_install_dir(&app);
-    let root = install_root_dir(&app);
+    let app_dir = get_app_install_dir(app);
+    let root = install_root_dir(app);
     crate::updater::ensure_writable(&root)?;
 
     let requirements = app_dir.join("requirements_builder.txt");
@@ -461,33 +721,43 @@ pub async fn install_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
         ));
     }
 
-    let py = find_python_exe(&app)
+    let py = find_python_exe(app)
         .ok_or_else(|| "Bundled Python runtime not found; cannot install the AI pipeline.".to_string())?;
-    let target = root.join(AI_PACKAGES_DIR);
+    Ok((py, requirements, root.join(AI_PACKAGES_DIR)))
+}
 
-    let app_for_thread = app.clone();
+/// Starts the Pack Builder download in the background and returns at once, so the
+/// studio can open while it runs. Calling it while an install runs does nothing.
+///
+/// The engine keeps running: it only picks Pack Builder up when it next starts, which
+/// the studio offers ("Restart to finish Pack Builder") once the state is `done`.
+#[tauri::command]
+pub async fn start_packbuilder_install(app: tauri::AppHandle) -> Result<(), String> {
+    if !install_state().begin() {
+        return Ok(());
+    }
+    let (py, requirements, target) = match prepare_install(&app) {
+        Ok(found) => found,
+        Err(e) => {
+            install_state().finish(Err(e.clone()));
+            return Err(e);
+        }
+    };
+
     tauri::async_runtime::spawn_blocking(move || {
-        run_pip_install(&py, &requirements, &target, &app_for_thread)
-    })
-    .await
-    .map_err(|e| format!("Install task failed: {}", e))??;
-
-    // The engine caches imports at startup, so it must restart before torch/whisper
-    // become importable — the same trap that made OTA updates look like no-ops.
-    let _ = app.emit(
-        "packbuilder-progress",
-        PackBuilderProgress {
-            phase: "finalizing".to_string(),
-            headline: "Finishing up".to_string(),
-            detail: "Restarting DubMate".to_string(),
-            percent: 98.0,
-            raw: "Restarting DubMate".to_string(),
-        },
-    );
-    kill_sidecars(&app);
-    start_sidecars(app.clone()).await;
-
+        let result = run_pip_install(&py, &requirements, &target, &app);
+        if let Err(e) = &result {
+            eprintln!("[PackBuilder] Install failed: {}", e);
+        }
+        install_state().finish(result);
+    });
     Ok(())
+}
+
+/// Where the background install is: `{ state, progress, error }`.
+#[tauri::command]
+pub fn get_packbuilder_install() -> PackBuilderInstall {
+    install_state().clone()
 }
 
 /// The folder removal is allowed to delete: the real `ai-packages` folder directly
@@ -574,6 +844,10 @@ pub async fn remove_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
     .await
     .map_err(|e| format!("Removal task failed: {}", e))
     .and_then(|result| result);
+    if removed.is_ok() {
+        // A finished install no longer waits for a restart.
+        install_state().forget();
+    }
 
     start_sidecars(app.clone()).await;
     removed

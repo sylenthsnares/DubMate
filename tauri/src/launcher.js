@@ -318,9 +318,8 @@ function renderBuilderProgress(payload) {
 }
 
 /**
- * Runs the one-time Pack Builder AI download when the installer recorded an opt-in.
- * Returns false only when the install failed and an error card is now on screen,
- * so the caller knows not to navigate away from it.
+ * Starts the one-time Pack Builder AI download when the installer recorded an opt-in.
+ * It runs in the background, so this always lets the caller enter the studio.
  */
 async function maybeInstallPackBuilder(invoke) {
   let status = null;
@@ -335,39 +334,14 @@ async function maybeInstallPackBuilder(invoke) {
     return true;
   }
 
-  isInstallingBuilder = true;
   builderCheckPending = false;
-  showUpdater();
-  if (updaterTitle) updaterTitle.innerText = "PACK BUILDER";
-  if (updaterMsg) {
-    // Say what it does, not what it is called. Package names mean nothing to
-    // someone who just wants to turn a video into a dubbing scene.
-    updaterMsg.innerText =
-      "Downloading Pack Builder, about 2 GB. This happens once.";
-  }
-  if (builderStages) builderStages.style.display = "flex";
-  if (techDetails) techDetails.style.display = "block";
-  if (progressBar) progressBar.classList.remove("is-idle");
-  if (progressFill) progressFill.style.width = "2%";
-  if (progressPercent) progressPercent.innerText = "0%";
-  if (progressHeadline) progressHeadline.innerText = "Getting ready";
-  if (progressText) progressText.innerText = "";
-
+  // It installs in the background and returns at once; the studio shows its progress.
   try {
-    await invoke("install_packbuilder");
-    isInstallingBuilder = false;
-    return true;
+    await invoke("start_packbuilder_install");
   } catch (e) {
-    console.error("[PackBuilder] Install failed:", e);
-    isInstallingBuilder = false;
-    showError(
-      `Pack Builder didn't install. Everything else works. ` +
-      `Click Try again to open DubMate. Pack Builder will install the next time you start it.`,
-      "Pack Builder didn't install",
-      e
-    );
-    return false;
+    console.warn("[PackBuilder] Install didn't start:", e);
   }
+  return true;
 }
 
 async function pollAndEnterStudio() {

@@ -15,7 +15,8 @@ fn main() {
         "apply_update",
         "cancel_update",
         "get_packbuilder_status",
-        "install_packbuilder",
+        "start_packbuilder_install",
+        "get_packbuilder_install",
         "remove_packbuilder",
         "allow_room_origin",
     ]);
