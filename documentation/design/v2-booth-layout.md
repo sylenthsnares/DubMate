@@ -235,6 +235,10 @@ These were answered overnight while you slept. They follow the critique's recomm
 - **Avatar colours** are each person's current colour. The new 8-hue palette (critique Q6) is the join/lobby PR's.
 - **The record button stays at 48 px** on screens 800 px tall or shorter, as in U2. A 62 px button at 720 wasn't mocked.
 - **The ±100 ms buttons go** (audit step 10). Shift+`[`/`]` keeps 100 ms.
+- **The chip strip is as wide as its chips** (`flex: 0 1 auto`, not `flex: 1`), so "My lines" sits right after the chips as in Mock A. It still shrinks and scrolls: with 40 lines, Mark ready and Start premiere stay in the bar at 1440, 1280 and 960.
+- **Short windows (800 px tall or less) keep 8 px column gaps** and an 8 px vertical deck padding, as U2 did. Both are on the scale; the 12 px gutter (L1) is the same at every height.
+- **The booth fills the window below the header.** Its height no longer subtracts the cast strip, which the booth no longer shows. The booth's page padding is 8 / 16 / 12 (top, sides, bottom), so the picture starts at y = 114.
+- **The longest real caption** (92 characters, a pack in `~/Documents/DubMate/Packs`) wraps to two centred lines at 1280x720. The prompter is then 75 px tall and the picture 22.7% of the screen: below the 25% target, but well above today's 14.7%.
 
 ## Hands-on checks (owner, in the morning)
 
