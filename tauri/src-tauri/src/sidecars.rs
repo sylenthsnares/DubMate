@@ -1,7 +1,10 @@
 //! Starting, supervising and stopping the Python engine and cloudflared tunnel
 //! sidecars.
 
+use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use regex::Regex;
 use tauri::{Emitter, Manager};
@@ -16,6 +19,91 @@ use crate::state::SharedState;
 /// Port the engine prefers. Anything already holding it used to make the app fail to
 /// start with an error that named the cause but offered no way out.
 pub(crate) const DEFAULT_ENGINE_PORT: u16 = 8000;
+
+/// How long the engine gets to answer before the launcher is told it didn't start. A
+/// first start after install, with antivirus scanning every file, can take minutes; the
+/// launcher stays neutral meanwhile and offers Restart from 25 s.
+const ENGINE_START_TIMEOUT_SECS: u64 = 180;
+
+/// Lines of the engine's stderr kept for the error card's details.
+const STDERR_TAIL_LINES: usize = 20;
+
+/// Why the engine didn't start, sent to the launcher as `server-error`. The title names
+/// the cause, the message says what to do, and the detail is the log for Copy details.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub(crate) struct EngineFailure {
+    /// One of: missing_files, no_runtime, port_in_use, damaged, crashed, timeout.
+    pub kind: &'static str,
+    pub title: &'static str,
+    pub message: &'static str,
+    /// Technical detail, empty when there is none.
+    pub detail: String,
+}
+
+impl EngineFailure {
+    pub(crate) fn new(kind: &'static str, detail: String) -> Self {
+        let (title, message) = match kind {
+            "missing_files" => (
+                "Some of DubMate's files are missing",
+                "Connect to the internet and restart DubMate to download them, or reinstall it.",
+            ),
+            "no_runtime" => ("DubMate couldn't start", "Reinstall DubMate to fix this."),
+            "port_in_use" => (
+                "Another app is using DubMate's port",
+                "Close any other copy of DubMate, or restart your computer, then press Restart DubMate.",
+            ),
+            "damaged" => ("Some of DubMate's files are damaged", "Reinstall DubMate to fix this."),
+            "timeout" => (
+                "DubMate didn't start",
+                "It didn't answer for 3 minutes. Press Restart DubMate.",
+            ),
+            _ => ("DubMate stopped while starting", "Press Restart DubMate to try again."),
+        };
+        Self { kind, title, message, detail }
+    }
+}
+
+/// Reads the cause from the end of the engine's stderr: a busy port (Windows, Linux and
+/// macOS word it differently), a missing module, or anything else as a crash.
+pub(crate) fn classify_engine_failure(last_stderr: &str) -> EngineFailure {
+    let lower = last_stderr.to_ascii_lowercase();
+    let kind = if ["10048", "address already in use", "errno 98", "errno 48"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        "port_in_use"
+    } else if last_stderr.contains("ModuleNotFoundError") || last_stderr.contains("ImportError") {
+        "damaged"
+    } else {
+        "crashed"
+    };
+    EngineFailure::new(kind, last_stderr.to_string())
+}
+
+/// Keeps the last `STDERR_TAIL_LINES` non-blank lines.
+fn push_tail(tail: &mut VecDeque<String>, line: &str) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if tail.len() == STDERR_TAIL_LINES {
+        tail.pop_front();
+    }
+    tail.push_back(trimmed.to_string());
+}
+
+fn joined_tail(tail: &Mutex<VecDeque<String>>) -> String {
+    tail.lock()
+        .map(|t| t.iter().cloned().collect::<Vec<_>>().join("\n"))
+        .unwrap_or_default()
+}
+
+/// What `spawn_engine` hands the health poll: whether this engine process has exited
+/// (its exit watcher has then said why, if it was a failure), and its recent stderr.
+struct EngineWatch {
+    exited: Arc<AtomicBool>,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+}
 
 /// Serialises sidecar startup. `start_sidecars` is reachable from app setup, the
 /// Retry button, apply_update and the Pack Builder install/remove commands; two
@@ -115,19 +203,20 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
         Some(p) => p,
         None => {
             eprintln!("[Sidecar Error] app.py not found in working directory or resources!");
-            let _ = app.emit("server-error", "Some of DubMate's files are missing. Connect to the internet and restart DubMate to download them, or reinstall it.");
-            let _ = app.emit("startup-progress", "Files missing");
+            let _ = app.emit(
+                "server-error",
+                EngineFailure::new("missing_files", "app.py was not found.".to_string()),
+            );
             return;
         }
     };
 
-    let _ = app.emit("startup-progress", "Starting DubMate");
-
     // 1. Resolve and Spawn Python FastAPI sidecar
-    let mut spawned = false;
+    let mut watch = None;
+    let mut spawn_error = "The Python runtime was not found.".to_string();
     if let Some(py_exe) = find_python_exe(&app) {
         println!("[DubMate] Launching Python from: {:?}", py_exe);
-        let _ = app.emit("startup-progress", "Starting DubMate");
+        let _ = app.emit("startup-progress", "Starting the engine");
 
         let port = find_available_port(DEFAULT_ENGINE_PORT);
         {
@@ -139,16 +228,19 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
         }
 
         match spawn_engine(&app, &app_py_path, &py_exe, port) {
-            Ok(()) => spawned = true,
-            Err(e) => eprintln!("[Sidecar Error] Failed to spawn Python directly: {}", e),
+            Ok(w) => watch = Some(w),
+            Err(e) => {
+                eprintln!("[Sidecar Error] Failed to spawn Python directly: {}", e);
+                spawn_error = format!("Could not start {}: {}", py_exe.display(), e);
+            }
         }
     }
 
-    if !spawned {
+    let Some(watch) = watch else {
         eprintln!("[Sidecar Error] Unable to launch Python runtime!");
-        let _ = app.emit("server-error", "DubMate couldn't start. Reinstall DubMate to fix this.");
+        let _ = app.emit("server-error", EngineFailure::new("no_runtime", spawn_error));
         return;
-    }
+    };
 
     // 2. Poll the engine's health endpoint until responsive
     let engine_port = {
@@ -156,7 +248,7 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
         let p = state.0.lock().unwrap().engine_port;
         p.unwrap_or(DEFAULT_ENGINE_PORT)
     };
-    if !wait_for_engine(&app, engine_port).await {
+    if !wait_for_engine(&app, engine_port, &watch).await {
         return;
     }
 
@@ -171,7 +263,7 @@ fn spawn_engine(
     app_py_path: &Path,
     py_exe: &Path,
     port: u16,
-) -> Result<(), String> {
+) -> Result<EngineWatch, String> {
     let app_dir = app_py_path.parent().unwrap_or(app_py_path);
 
     let mut cmd = std::process::Command::new(py_exe);
@@ -246,8 +338,8 @@ fn spawn_engine(
     });
 
     let app_err_clone = app.clone();
-    let last_error_buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let last_error_writer = last_error_buf.clone();
+    let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
+    let tail_writer = stderr_tail.clone();
 
     std::thread::spawn(move || {
         if let Some(err) = stderr.take() {
@@ -255,52 +347,69 @@ fn spawn_engine(
             let reader = BufReader::new(err);
             for line in reader.lines().map_while(Result::ok) {
                 eprintln!("[Python ERR] {}", line);
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    let mut b = last_error_writer.lock().unwrap();
-                    *b = trimmed.to_string();
+                if let Ok(mut tail) = tail_writer.lock() {
+                    push_tail(&mut tail, &line);
                 }
-                if line.contains("Traceback") || line.contains("ModuleNotFoundError") || line.contains("Error") {
-                    let _ = app_err_clone.emit("startup-progress", "Still starting");
+                // uvicorn logs this once app.py is imported and its startup (loading the
+                // scene library) begins.
+                if line.contains("Waiting for application startup") {
+                    let _ = app_err_clone.emit("startup-progress", "Loading your scenes");
                 }
             }
         }
     });
 
+    let exited = Arc::new(AtomicBool::new(false));
+    let exited_flag = exited.clone();
     let app_exit_clone = app.clone();
-    let last_error_reader = last_error_buf.clone();
+    let tail_reader = stderr_tail.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Ok(status) = child.wait() {
-            eprintln!("[Python] Process exited with status: {:?}", status);
-            if !status.success() {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let err_msg = {
-                    let b = last_error_reader.lock().unwrap();
-                    if !b.is_empty() {
-                        b.clone()
-                    } else {
-                        format!("Process exited with status {:?}", status.code())
-                    }
+        let status = child.wait();
+        eprintln!("[Python] Process exited with status: {:?}", status);
+        // Give the stderr reader a moment to catch the last lines.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        // An engine that kill_sidecars stopped (Restart, an update, Pack Builder) is no
+        // longer the tracked one, and its exit is not a failure to report.
+        let still_tracked = {
+            let state = app_exit_clone.state::<SharedState>();
+            let data = state.0.lock().unwrap();
+            data.python_pid == Some(pid)
+        };
+        if still_tracked {
+            let mut detail = joined_tail(&tail_reader);
+            if detail.is_empty() {
+                detail = match &status {
+                    Ok(status) => format!("The engine exited with status {:?}.", status.code()),
+                    Err(e) => format!("The engine stopped: {}", e),
                 };
-                let _ = app_exit_clone.emit("server-error", format!("DubMate stopped while starting. Click Try again to restart it.\n\nDetails: {}", err_msg));
             }
+            let _ = app_exit_clone.emit("server-error", classify_engine_failure(&detail));
         }
+        // Set last, so the health poll only gives up once the error above is out.
+        exited_flag.store(true, Ordering::SeqCst);
     });
 
-    Ok(())
+    Ok(EngineWatch { exited, stderr_tail })
 }
 
-/// Polls the engine's health endpoint until it answers (max 60 attempts x 500ms = 30s).
-/// Emits server-ready on success and server-error on timeout.
-async fn wait_for_engine(app: &tauri::AppHandle, engine_port: u16) -> bool {
+/// Polls the engine's health endpoint until it answers, for up to
+/// `ENGINE_START_TIMEOUT_SECS`. Emits server-ready on success and a `timeout` failure
+/// when it never answers. Stops early, without a second error, once the engine process
+/// has exited: its exit watcher has already reported why.
+async fn wait_for_engine(app: &tauri::AppHandle, engine_port: u16, watch: &EngineWatch) -> bool {
     let health_url = format!("http://127.0.0.1:{}/health", engine_port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap_or_default();
 
-    for _attempt in 1..=60 {
-        let _ = app.emit("startup-progress", "Starting DubMate");
+    let started = std::time::Instant::now();
+    let limit = std::time::Duration::from_secs(ENGINE_START_TIMEOUT_SECS);
+    while started.elapsed() < limit {
+        if watch.exited.load(Ordering::SeqCst) {
+            eprintln!("[Sidecar Error] The engine exited before it answered on port {}", engine_port);
+            return false;
+        }
         if let Ok(resp) = client.get(&health_url).send().await {
             if resp.status().is_success() {
                 let _ = app.emit("server-ready", engine_port);
@@ -311,8 +420,17 @@ async fn wait_for_engine(app: &tauri::AppHandle, engine_port: u16) -> bool {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
-    eprintln!("[Sidecar Error] Studio engine did not respond on http://127.0.0.1:{} within 30 seconds", engine_port);
-    let _ = app.emit("server-error", "DubMate didn't start in time. Click Try again to restart it.");
+    eprintln!(
+        "[Sidecar Error] Studio engine did not respond on http://127.0.0.1:{} within {} seconds",
+        engine_port, ENGINE_START_TIMEOUT_SECS
+    );
+    let mut detail = format!("No answer from {} after {} seconds.", health_url, ENGINE_START_TIMEOUT_SECS);
+    let tail = joined_tail(&watch.stderr_tail);
+    if !tail.is_empty() {
+        detail.push_str("\n\n");
+        detail.push_str(&tail);
+    }
+    let _ = app.emit("server-error", EngineFailure::new("timeout", detail));
     false
 }
 
@@ -522,4 +640,93 @@ async fn post_tunnel_notice(port: u16, body: serde_json::Value, attempts: u32) {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     eprintln!("[DubMate] Gave up notifying engine of tunnel notice {}", body);
+}
+
+#[cfg(test)]
+mod engine_failure_tests {
+    use super::*;
+
+    #[test]
+    fn a_busy_port_on_any_system_is_port_in_use() {
+        for stderr in [
+            "ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000)",
+            "OSError: [Errno 98] Address already in use",
+            "OSError: [Errno 48] Address already in use",
+            "something: ADDRESS ALREADY IN USE",
+        ] {
+            let failure = classify_engine_failure(stderr);
+            assert_eq!(failure.kind, "port_in_use", "{stderr}");
+            assert_eq!(failure.title, "Another app is using DubMate's port");
+            assert_eq!(
+                failure.message,
+                "Close any other copy of DubMate, or restart your computer, then press Restart DubMate."
+            );
+            assert_eq!(failure.detail, stderr);
+        }
+    }
+
+    #[test]
+    fn a_missing_module_means_damaged_files() {
+        for stderr in [
+            "ModuleNotFoundError: No module named 'fastapi'",
+            "ImportError: DLL load failed while importing _sounddevice",
+        ] {
+            let failure = classify_engine_failure(stderr);
+            assert_eq!(failure.kind, "damaged", "{stderr}");
+            assert_eq!(failure.title, "Some of DubMate's files are damaged");
+            assert_eq!(failure.message, "Reinstall DubMate to fix this.");
+        }
+    }
+
+    #[test]
+    fn anything_else_is_a_crash() {
+        let failure = classify_engine_failure("ValueError: bad config\nApplication shutdown complete.");
+        assert_eq!(failure.kind, "crashed");
+        assert_eq!(failure.title, "DubMate stopped while starting");
+        assert_eq!(failure.message, "Press Restart DubMate to try again.");
+        assert_eq!(classify_engine_failure("").kind, "crashed");
+    }
+
+    #[test]
+    fn the_port_wins_when_a_traceback_mentions_both() {
+        // uvicorn logs the bind error, then shuts down; the bind error is what matters.
+        let stderr = "ImportError: optional thing\nERROR:    [Errno 10048] error while attempting to bind";
+        assert_eq!(classify_engine_failure(stderr).kind, "port_in_use");
+    }
+
+    #[test]
+    fn each_kind_has_its_own_words() {
+        let missing = EngineFailure::new("missing_files", String::new());
+        assert_eq!(missing.title, "Some of DubMate's files are missing");
+        assert_eq!(
+            missing.message,
+            "Connect to the internet and restart DubMate to download them, or reinstall it."
+        );
+        let runtime = EngineFailure::new("no_runtime", String::new());
+        assert_eq!(runtime.title, "DubMate couldn't start");
+        assert_eq!(runtime.message, "Reinstall DubMate to fix this.");
+        let timeout = EngineFailure::new("timeout", String::new());
+        assert_eq!(timeout.title, "DubMate didn't start");
+        assert_eq!(timeout.message, "It didn't answer for 3 minutes. Press Restart DubMate.");
+    }
+
+    #[test]
+    fn the_failure_reaches_the_launcher_as_an_object() {
+        let value = serde_json::to_value(EngineFailure::new("timeout", "x".to_string())).unwrap();
+        assert_eq!(value["kind"], "timeout");
+        assert_eq!(value["title"], "DubMate didn't start");
+        assert_eq!(value["detail"], "x");
+        assert!(value["message"].is_string());
+    }
+
+    #[test]
+    fn the_stderr_tail_keeps_the_last_lines() {
+        let mut tail = std::collections::VecDeque::new();
+        for i in 0..(STDERR_TAIL_LINES + 5) {
+            push_tail(&mut tail, &format!("line {i}"));
+        }
+        push_tail(&mut tail, "   ");
+        assert_eq!(tail.len(), STDERR_TAIL_LINES);
+        assert_eq!(tail.back().map(String::as_str), Some(format!("line {}", STDERR_TAIL_LINES + 4).as_str()));
+    }
 }

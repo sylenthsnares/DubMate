@@ -206,6 +206,12 @@ async function init() {
       // Listen for server error events from Rust
       listen("server-error", (event) => {
         if (!isUpdating && !isEntering) {
+          // Rust sends { kind, title, message, detail }.
+          const failure = event.payload;
+          if (failure && typeof failure === "object") {
+            showError(failure.message, failure.title, failure.detail || undefined);
+            return;
+          }
           // Rust appends the raw error as "\n\nDetails: ..."; keep it behind Show details.
           const text = String(event.payload || "DubMate couldn't start. Click Try again.");
           const marker = "\n\nDetails: ";

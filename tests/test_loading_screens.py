@@ -173,6 +173,62 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
 
 
 
+class TestHonestLauncherRust(unittest.TestCase):
+    """UI pass U5b (39a, 39b): Rust owns the startup text, reports real failures as a
+    struct, and Pack Builder installs in the background."""
+
+    TAURI_DIR = os.path.join(BASE_DIR, "tauri", "src-tauri")
+
+    def _read(self, *parts):
+        with open(os.path.join(self.TAURI_DIR, *parts), "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_startup_stages_come_from_rust(self):
+        rs = _rust_source()
+        self.assertIn('"Starting the engine"', rs)
+        self.assertIn('"Loading your scenes"', rs)
+        self.assertIn("Waiting for application startup", rs)
+        # The stderr "Error"/"Traceback" guess is gone, and so is the generic stage.
+        self.assertNotIn('"Still starting"', rs)
+        self.assertNotIn('"Starting DubMate"', rs)
+
+    def test_engine_failures_are_a_struct_with_known_kinds(self):
+        rs = _rust_source()
+        self.assertIn("struct EngineFailure", rs)
+        self.assertIn("fn classify_engine_failure", rs)
+        for kind in ("missing_files", "no_runtime", "port_in_use", "damaged", "crashed", "timeout"):
+            self.assertIn(f'"{kind}"', rs, kind)
+        # 3 minutes before a real "didn't start", not 30 seconds.
+        self.assertIn("ENGINE_START_TIMEOUT_SECS: u64 = 180", rs)
+
+    def test_commands_are_registered_and_allowed(self):
+        new = ["start_packbuilder_install", "get_packbuilder_install", "cancel_update",
+               "open_mic_settings", "open_studio_in_browser"]
+        build = self._read("build.rs")
+        main = self._read("src", "main.rs")
+        for cmd in new:
+            self.assertIn(f'"{cmd}"', build, cmd)
+            self.assertIn(cmd, main, cmd)
+        self.assertNotIn('"install_packbuilder"', build)
+        self.assertNotIn("fn install_packbuilder", _rust_source())
+
+        default = json.loads(self._read("capabilities", "default.json"))["permissions"]
+        for perm in ("allow-start-packbuilder-install", "allow-get-packbuilder-install",
+                     "allow-cancel-update", "allow-open-mic-settings",
+                     "allow-open-studio-in-browser"):
+            self.assertIn(perm, default)
+        self.assertNotIn("allow-install-packbuilder", default)
+
+        studio = json.loads(self._read("capabilities", "studio.json"))
+        for perm in ("allow-open-mic-settings", "allow-start-packbuilder-install",
+                     "allow-get-packbuilder-install", "allow-trigger-start-sidecars"):
+            self.assertIn(perm, studio["permissions"])
+        # The studio page never gets the browser opener or the updater.
+        self.assertNotIn("allow-open-studio-in-browser", studio["permissions"])
+        self.assertNotIn("allow-cancel-update", studio["permissions"])
+        self.assertNotIn("allow-apply-update", studio["permissions"])
+
+
 class TestEnginePortIsDynamic(unittest.TestCase):
     """The engine port must not be hardcoded: a busy 8000 used to be fatal."""
 
