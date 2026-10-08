@@ -36,6 +36,25 @@
   color: var(--primary);
 }
 
+/* A step already reached is a button back to it. */
+button.builder-step {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.builder-step:hover {
+  color: var(--foreground);
+}
+
+button.builder-step.active:hover {
+  color: var(--primary);
+}
+
 .builder-step.completed {
   color: var(--accent-brass);
 }
@@ -105,7 +124,8 @@
 .builder-device-pill[hidden],
 #view-step-upload [hidden],
 #view-step-process [hidden],
-#view-step-editor [hidden] {
+#view-step-editor [hidden],
+#view-step-compile [hidden] {
   display: none;
 }
 
@@ -116,7 +136,10 @@
 .file-chip-remove:focus-visible,
 .url-import-missing-details summary:focus-visible,
 .builder-line-row:focus-visible,
-.cue-nonverbal-badge:focus-visible {
+.cue-nonverbal-badge:focus-visible,
+button.builder-step:focus-visible,
+.chip-name:focus-visible,
+.success-zip-link:focus-visible {
   outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
@@ -163,6 +186,43 @@ body:has(#view-step-editor.active) .builder-main-container {
 .builder-hero {
   text-align: center;
   margin-bottom: 24px;
+}
+
+/* A session from the URL that the engine no longer has. */
+.session-ended-notice {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--accent-brass);
+  background: rgba(204, 164, 88, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+/* A question asked in place, under the button that raised it, before lines are replaced. */
+.inline-confirm {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  background: rgba(18, 14, 11, 0.6);
+}
+
+.inline-confirm-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+
+.inline-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-reprocess {
+  width: 100%;
+  margin-top: 8px;
 }
 
 .builder-upload-grid {
@@ -1587,6 +1647,26 @@ body.resizing-timeline * {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 2px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* A chip's name being edited in place (click a name, or + for a new one). */
+.chip-name-input.form-input {
+  width: 96px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.char-color-chip.is-editing:hover {
+  transform: none;
 }
 
 .chip-count-badge {
@@ -1831,6 +1911,12 @@ body.resizing-timeline * {
   display: none;
 }
 
+/* A save that didn't go through: an error until it does. */
+.editor-notice.is-error {
+  color: var(--accent-red-soft);
+  background: rgba(220, 38, 38, 0.12);
+}
+
 .cue-timecode-badge {
   min-width: 48px;
   font-family: var(--font-mono);
@@ -1844,6 +1930,18 @@ body.resizing-timeline * {
 
 .builder-line-row.selected .cue-timecode-badge {
   color: var(--accent-brass);
+}
+
+.cue-char-select[hidden] {
+  display: none;
+}
+
+/* "+ New character…" in a row: a name field in the select's place. */
+.cue-char-input.form-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
 }
 
 .cue-char-select {
@@ -1981,6 +2079,49 @@ body.resizing-timeline * {
   display: flex;
   gap: 10px;
   justify-content: center;
+}
+
+/* Pack ready's quiet second choice. */
+.success-zip-link {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border-radius: 2px;
+}
+
+.success-zip-link:hover {
+  color: var(--foreground);
+}
+
+/* After a build, the lines or details changed: no green, nothing is done yet. */
+.compile-stale-box {
+  margin-top: 24px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-wood);
+  background: rgba(18, 14, 11, 0.6);
+  text-align: center;
+}
+
+.compile-stale-text {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+/* Exit before the lines are in a pack. */
+.builder-leave-card {
+  max-width: 400px;
+  text-align: left;
+}
+
+.builder-leave-card .modal-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 @media (max-width: 1100px) {

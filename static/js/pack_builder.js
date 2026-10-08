@@ -1,6 +1,6 @@
 // pack_builder.js - High-Performance Pack Authoring Studio Controller
 // Handles Video Ingestion, Demucs/Whisper Progress SSE, Interactive Timeline & Cue Editor, and Pack Assembly
-import { escapeHtml, showToast, initModeDropdown, initTooltips, isDialogOpen } from './ui_common.js';
+import { escapeHtml, showToast, initModeDropdown, initTooltips, isDialogOpen, openDialog, plural } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
 import { packLanes } from './builder_lanes.js';
 
@@ -47,6 +47,14 @@ const ICON_GLOBE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" 
 const ICON_TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
 const ICON_SPINNER = '<svg class="spinning" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
 const ICON_ALERT = '<svg class="icon-alert" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+
+// The steps in order. Process is never a destination of its own.
+const STEP_ORDER = ['upload', 'process', 'editor', 'compile'];
+// Engine statuses whose lines can be edited (a build in progress or done included).
+const LINES_READY = ['transcribed', 'done', 'slicing', 'assembling'];
+const UNDO_LIMIT = 50;
+const UNDO_TOAST_MS = 6000;
+const SAVE_FAILED = "Couldn't save your changes. Trying again…";
 
 // Character colours, in an order that keeps neighbours apart. Red (recording) and
 // green (a confirmed take) mean something else in DubMate, so no character gets them.
@@ -126,10 +134,23 @@ export class PackBuilderApp {
 
     this.animationFrameId = null;
 
+    // Never losing work: the furthest step this session reached (an index in STEP_ORDER),
+    // the undo steps, the save queue, the last build and an explicit leave.
+    this.reachedStep = 0;
+    this.undoStack = [];
+    this.save = { wanted: false, inFlight: false, failed: false, retryTimer: null, delay: 0 };
+    this.builtSignature = null;
+    this.compiling = false;
+    this.compileFilled = false;
+    this.editorWarning = '';
+    this.textBefore = null; // a line's text when its field took focus, for undo
+    this.leaving = false;
+
     this.initDOM();
     this.initEvents();
     this.initKeyboardShortcuts();
     this.loadCapabilities();
+    this.initSession();
   }
 
   /** Reads what is installed, and asks again each second (up to 20 s) while the GPU check runs. */
@@ -218,9 +239,14 @@ export class PackBuilderApp {
   }
 
   updateStartButtonLabel() {
-    if (this.labelStartProcess) {
-      this.labelStartProcess.textContent = this.willWriteLines() ? 'Process video' : 'Process video without lines';
-    }
+    if (!this.labelStartProcess) return;
+    if (this.isProcessed()) this.labelStartProcess.textContent = 'Back to Edit lines';
+    else this.labelStartProcess.textContent = this.willWriteLines() ? 'Process video' : 'Process video without lines';
+  }
+
+  /** This session's video has been processed: its lines have been in the editor. */
+  isProcessed() {
+    return !!this.sessionId && this.reachedStep >= STEP_ORDER.indexOf('editor');
   }
 
   /** Romaji applies to a Japanese line (by the chosen language or its script), when the tool is installed. */
@@ -291,6 +317,15 @@ export class PackBuilderApp {
     this.btnRemoveCover = document.getElementById('btn-remove-cover');
     this.btnStartProcess = document.getElementById('btn-start-process');
     this.labelStartProcess = document.getElementById('label-start-process');
+    this.sessionEndedNotice = document.getElementById('session-ended-notice');
+    this.btnReprocess = document.getElementById('btn-reprocess');
+    this.reprocessConfirm = document.getElementById('reprocess-confirm');
+    this.changeConfirm = document.getElementById('change-confirm');
+
+    // Header: the stepper and Exit, and the dialog Exit opens before lines are built.
+    this.stepper = document.getElementById('builder-stepper');
+    this.btnExitBuilder = document.getElementById('btn-exit-builder');
+    this.leaveDialog = document.getElementById('modal-leave-builder');
 
     // Step 2: Processing progress elements
     this.processCard = document.getElementById('process-card');
@@ -365,6 +400,7 @@ export class PackBuilderApp {
     this.compileSuccessBox = document.getElementById('compile-success-box');
     this.btnDownloadPackZip = document.getElementById('btn-download-pack-zip');
     this.btnPlaytestNow = document.getElementById('btn-playtest-now');
+    this.compileStaleBox = document.getElementById('compile-stale-box');
   }
 
   initEvents() {
@@ -425,23 +461,24 @@ export class PackBuilderApp {
         this.handleVideoSelected(e.target.files[0]);
       }
     });
+    // Change on a processed video asks first, under the video: its lines would go.
     this.btnChangeVideo.addEventListener('click', () => {
-      this.videoFile = null;
-      this.sessionId = null;
-      this.videoSelectedCard.style.display = 'none';
-      if (this.ingestPanelFile) this.ingestPanelFile.style.display = this.currentIngestTab === 'file' ? 'block' : 'none';
-      if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = this.currentIngestTab === 'url' ? 'block' : 'none';
-      if (this.videoThumbContainer) {
-        this.videoThumbContainer.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+      if (!this.isProcessed()) {
+        this.changeVideo();
+        return;
       }
-      this.btnStartProcess.disabled = true;
-      // A link's subtitles belonged to the session that just went.
-      if (this.linkSubtitleCount) {
-        this.linkSubtitleCount = 0;
-        this.showFileChip(this.subChip, this.subDropzone, null);
-        this.updateStartButtonLabel();
-      }
+      this.askInline(this.changeConfirm, `Replace your ${plural(this.segments.length, 'line')} with a new video?`);
     });
+    document.getElementById('btn-change-confirm').addEventListener('click', () => this.changeVideo());
+    document.getElementById('btn-change-cancel').addEventListener('click', () => this.closeInline(this.changeConfirm, this.btnChangeVideo));
+    this.btnReprocess.addEventListener('click', () => {
+      this.askInline(this.reprocessConfirm, `Replace your ${plural(this.segments.length, 'line')} with a new pass?`);
+    });
+    document.getElementById('btn-reprocess-confirm').addEventListener('click', () => {
+      this.reprocessConfirm.hidden = true;
+      this.startProcessingPipeline();
+    });
+    document.getElementById('btn-reprocess-cancel').addEventListener('click', () => this.closeInline(this.reprocessConfirm, this.btnReprocess));
 
     // 2. Subtitle file selection: checked at once, then shown as a chip.
     this.subDropzone.addEventListener('click', () => this.inputSubFile.click());
@@ -485,7 +522,11 @@ export class PackBuilderApp {
     });
 
     // 4. Start AI processing button
-    this.btnStartProcess.addEventListener('click', () => this.startProcessingPipeline());
+    // On a processed session the same button reads "Back to Edit lines".
+    this.btnStartProcess.addEventListener('click', () => {
+      if (this.isProcessed()) this.setStep('editor');
+      else this.startProcessingPipeline();
+    });
     this.btnProcessRetry.addEventListener('click', () => this.retryProcessing());
     this.btnProcessWrite.addEventListener('click', () => this.writeLinesMyself());
     this.btnProcessBack.addEventListener('click', () => this.backToVideo());
@@ -597,16 +638,46 @@ export class PackBuilderApp {
     window.addEventListener('pointercancel', (e) => this.handleGlobalPointerUp(e, true));
 
     // 12. Character management and the Lines column
-    this.btnAddCharacter.addEventListener('click', () => this.promptAddCharacter());
+    this.btnAddCharacter.addEventListener('click', () => this.addCharacterChip());
     this.initCastScroller();
+    this.initCastEditing();
     this.initLinesList();
 
-    // 13. Proceed to compile
+    // 13. Proceed to compile. A change to the Pack details after a build offers Build again.
     this.btnProceedToCompile.addEventListener('click', () => this.goToCompileStep());
     this.btnExecuteCompile.addEventListener('click', () => this.executePackCompilation());
+    document.getElementById('btn-build-again').addEventListener('click', () => this.executePackCompilation());
+    [this.compilePackName, this.compileAuthor, this.compileSubtitle].forEach((field) => {
+      field.addEventListener('input', () => this.updateBuildState());
+    });
 
-    // 15. Playtest button
-    this.btnPlaytestNow.addEventListener('click', () => this.launchPlaytestSession());
+    // 15. Record it now
+    // It opens the studio on purpose: no "leave?" question on the way.
+    const record = () => {
+      this.leaving = true;
+      this.launchPlaytestSession();
+    };
+    this.btnPlaytestNow.addEventListener('click', record);
+    document.getElementById('btn-stale-record').addEventListener('click', record);
+
+    // 16a. The stepper's reached steps, Exit, and the session details kept per tab.
+    this.stepper.addEventListener('click', (e) => {
+      const btn = e.target.closest('button.builder-step');
+      if (btn && btn.dataset.step !== this.currentStep) this.goToStep(btn.dataset.step);
+    });
+    this.btnExitBuilder.addEventListener('click', (e) => {
+      if (!this.mustAskBeforeLeaving()) return;
+      e.preventDefault();
+      this.openLeaveDialog(this.btnExitBuilder.href);
+    });
+    document.getElementById('btn-leave-stay').addEventListener('click', () => this.closeLeaveDialog && this.closeLeaveDialog());
+    document.getElementById('btn-leave-confirm').addEventListener('click', () => {
+      this.leaving = true;
+      if (this.closeLeaveDialog) this.closeLeaveDialog();
+      window.location.href = this.leaveHref || '/';
+    });
+    this.inputPackTitle.addEventListener('input', () => this.saveSessionDetails());
+    this.selectTranscribeLang.addEventListener('change', () => this.saveSessionDetails());
 
     // 16. Window resize listener for dynamic timeline layout scaling
     let resizeTimer = null;
@@ -657,7 +728,17 @@ export class PackBuilderApp {
     window.addEventListener('keydown', (e) => {
       // A focused control that already handled the key (the Cast row's arrows) keeps it.
       if (isDialogOpen() || e.defaultPrevented) return;
-      const tag = document.activeElement?.tagName;
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      // Ctrl/Cmd+Z undoes the editor's last change. A text field keeps its own undo.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        const textField = tag === 'INPUT' || tag === 'TEXTAREA' || !!active?.isContentEditable;
+        if (this.currentStep === 'editor' && !textField && !this.isDragging) {
+          e.preventDefault();
+          this.undo();
+        }
+        return;
+      }
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
         return;
       }
@@ -691,19 +772,195 @@ export class PackBuilderApp {
     });
   }
 
-  setStep(stepName) {
+  /**
+   * Shows a step. The URL follows (?session=&step=) with a history entry, so browser Back
+   * moves between steps: fromHistory (popstate, restore) writes nothing, replace rewrites
+   * the current entry. Process gets no entry of its own: it is not a destination.
+   */
+  setStep(stepName, { fromHistory = false, replace = false } = {}) {
+    if (this.currentStep === 'editor' && stepName !== 'editor') this.pauseMedia();
     this.currentStep = stepName;
+    this.reachedStep = Math.max(this.reachedStep, STEP_ORDER.indexOf(stepName));
     Object.keys(this.steps).forEach(k => {
       this.steps[k].classList.toggle('active', k === stepName);
-      this.navSteps[k].classList.toggle('active', k === stepName);
-      const isPast = ['upload', 'process', 'editor', 'compile'].indexOf(k) < ['upload', 'process', 'editor', 'compile'].indexOf(stepName);
-      this.navSteps[k].classList.toggle('completed', isPast);
     });
+    this.renderStepper();
+    if (stepName === 'upload') this.updateVideoStepActions();
+    if (!fromHistory && stepName !== 'process') this.writeUrl(stepName, replace);
 
     if (stepName === 'editor') {
       this.setupEditorView();
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /**
+   * The stepper: steps already reached (Video, Edit lines, Build) are buttons, the active one
+   * with aria-current="step". Process, steps not reached yet, and every step while processing
+   * runs are plain text.
+   */
+  renderStepper() {
+    const current = STEP_ORDER.indexOf(this.currentStep);
+    STEP_ORDER.forEach((step, i) => {
+      const old = this.navSteps[step];
+      const asButton = step !== 'process' && this.currentStep !== 'process' && i <= this.reachedStep;
+      let el = old;
+      if ((old.tagName === 'BUTTON') !== asButton) {
+        el = document.createElement(asButton ? 'button' : 'div');
+        if (asButton) el.type = 'button';
+        el.id = old.id;
+        el.className = old.className;
+        el.dataset.step = step;
+        el.append(...old.childNodes);
+        old.replaceWith(el);
+        this.navSteps[step] = el;
+      }
+      el.classList.toggle('active', i === current);
+      el.classList.toggle('completed', i !== current && i <= this.reachedStep);
+      if (i === current) el.setAttribute('aria-current', 'step');
+      else el.removeAttribute('aria-current');
+    });
+  }
+
+  /** A stepper button: Video, Edit lines or Build. */
+  goToStep(step) {
+    if (step === 'compile') this.goToCompileStep();
+    else this.setStep(step);
+  }
+
+  /** Writes ?session=<id>&step=<step> (or the bare page without a session) as a new history entry, or over the current one. */
+  writeUrl(step, replace = false) {
+    const url = this.sessionId
+      ? `${window.location.pathname}?session=${encodeURIComponent(this.sessionId)}&step=${step}`
+      : window.location.pathname;
+    const same = url === window.location.pathname + window.location.search;
+    if (replace || same) history.replaceState({ step }, '', url);
+    else history.pushState({ step }, '', url);
+  }
+
+  // --- The session in the URL: reloads, browser Back and leaving ---
+
+  /** Reopens a session named in the URL, follows browser Back and Forward, and guards leaving. */
+  initSession() {
+    window.addEventListener('popstate', (e) => this.onHistoryStep(e.state));
+    window.addEventListener('beforeunload', (e) => {
+      if (!this.mustAskBeforeLeaving()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('session');
+    if (id) this.restoreSession(id, params.get('step'));
+  }
+
+  /** Browser Back or Forward: another session's entry reopens it; this session's moves to its step. */
+  onHistoryStep(state) {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('session');
+    const step = (state && state.step) || params.get('step') || 'upload';
+    if (id && id !== this.sessionId) {
+      this.restoreSession(id, step);
+      return;
+    }
+    if ((step === 'editor' || step === 'compile') && this.isProcessed()) {
+      if (step === 'compile' && this.goToCompileStep({ fromHistory: true })) return;
+      this.setStep('editor', { fromHistory: true });
+      return;
+    }
+    this.setStep('upload', { fromHistory: true });
+  }
+
+  /** Opens a session from the URL by what the engine says it is doing. An ended session says so on Step 1. */
+  async restoreSession(id, step) {
+    let res = null;
+    try {
+      res = await fetch(`/api/builder/${encodeURIComponent(id)}/status`);
+    } catch (e) {
+      res = null;
+    }
+    if (!res || !res.ok) {
+      this.sessionEnded();
+      return;
+    }
+    const data = await res.json();
+    this.processRun++;
+    this.stopProgressUpdates();
+    this.resetSessionState();
+    this.sessionId = id;
+    this.uploadInRun = false;
+    this.restoreSessionDetails();
+    const status = data.status;
+
+    if (LINES_READY.includes(status)) {
+      let lines = {};
+      try {
+        const segRes = await fetch(`/api/builder/${encodeURIComponent(id)}/segments`);
+        if (segRes.ok) lines = await segRes.json();
+      } catch (e) {
+        console.warn('[PackBuilder] Could not read the lines:', e);
+      }
+      if (lines.duration > 0) this.duration = lines.duration;
+      const toBuild = step === 'compile' && (lines.segments || []).length > 0;
+      this.openEditor(
+        { segments: lines.segments || [], voices_separated: data.voices_separated, warning: data.warning },
+        { quiet: true, fromHistory: toBuild, replace: !toBuild },
+      );
+      if (toBuild) this.goToCompileStep({ replace: true });
+    } else if (status === 'error') {
+      this.setStep('process', { fromHistory: true });
+      this.renderProcessState(data);
+    } else if (status === 'cancelled' || status === 'idle') {
+      this.setStep('upload', { replace: true });
+    } else {
+      // Still processing: the processing screen follows the run.
+      this.setStep('process', { fromHistory: true });
+      this.renderProcessState(data);
+      this.listenToProgressSSE();
+    }
+  }
+
+  /** The session in the URL has ended (the engine restarted, or it expired): say so on Step 1 and clean the URL. */
+  sessionEnded() {
+    this.sessionEndedNotice.hidden = false;
+    history.replaceState(null, '', window.location.pathname);
+  }
+
+  /** The pack name, spoken language and video name are kept per session for this tab. */
+  saveSessionDetails() {
+    if (!this.sessionId) return;
+    const details = {
+      packName: this.inputPackTitle.value,
+      language: this.selectTranscribeLang.value,
+      videoName: this.selectedVideoName.textContent,
+    };
+    try {
+      sessionStorage.setItem(`dubmate_builder_session_${this.sessionId}`, JSON.stringify(details));
+    } catch (e) { /* storage full or blocked: only the details are lost */ }
+  }
+
+  restoreSessionDetails() {
+    let details = null;
+    try {
+      details = JSON.parse(sessionStorage.getItem(`dubmate_builder_session_${this.sessionId}`) || 'null');
+    } catch (e) { details = null; }
+    if (details && details.packName) this.inputPackTitle.value = details.packName;
+    if (details && Array.from(this.selectTranscribeLang.options).some((o) => o.value === details.language)) {
+      this.selectTranscribeLang.value = details.language;
+    }
+    this.showSelectedVideo((details && details.videoName) || 'Your video', '');
+  }
+
+  /** Leaving would lose something: a save that hasn't gone through, or lines on Edit lines or Build not built as they are. */
+  mustAskBeforeLeaving() {
+    if (this.leaving) return false;
+    if (this.save.wanted || this.save.inFlight || this.save.failed) return true;
+    return (this.currentStep === 'editor' || this.currentStep === 'compile') && !this.isBuiltCurrent();
+  }
+
+  /** Exit (or the menu's Studio) before the lines are built: Stay, or Leave to `href`. */
+  openLeaveDialog(href) {
+    this.leaveHref = href;
+    this.closeLeaveDialog = openDialog(this.leaveDialog, { returnFocus: this.btnExitBuilder });
   }
 
   // --- STEP 1: Video Selection & Ingestion ---
@@ -730,9 +987,11 @@ export class PackBuilderApp {
   handleVideoSelected(file) {
     this.videoFile = file;
     this.sessionId = null;
-    this.selectedVideoName.innerText = file.name;
+    this.resetSessionState();
+    this.updateVideoStepActions();
+    this.selectedVideoName.textContent = file.name;
     const mbSize = (file.size / (1024 * 1024)).toFixed(1);
-    this.selectedVideoStats.innerText = `${mbSize} MB`;
+    this.selectedVideoStats.textContent = `${mbSize} MB`;
 
     if (!this.inputPackTitle.value) {
       const base = file.name.replace(/\.[^/.]+$/, '').replace(/[_\-]+/g, ' ');
@@ -747,6 +1006,72 @@ export class PackBuilderApp {
     if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
     this.videoSelectedCard.style.display = 'flex';
     this.btnStartProcess.disabled = false;
+  }
+
+  /** Change: forgets the video and its session, and shows the dropzone again. */
+  changeVideo() {
+    this.videoFile = null;
+    this.sessionId = null;
+    this.resetSessionState();
+    this.writeUrl('upload');
+    this.videoSelectedCard.style.display = 'none';
+    if (this.ingestPanelFile) this.ingestPanelFile.style.display = this.currentIngestTab === 'file' ? 'block' : 'none';
+    if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = this.currentIngestTab === 'url' ? 'block' : 'none';
+    if (this.videoThumbContainer) {
+      this.videoThumbContainer.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    }
+    this.btnStartProcess.disabled = true;
+    // A link's subtitles belonged to the session that just went.
+    if (this.linkSubtitleCount) {
+      this.linkSubtitleCount = 0;
+      this.showFileChip(this.subChip, this.subDropzone, null);
+    }
+    this.updateVideoStepActions();
+  }
+
+  /** Shows the chosen video's card in place of the dropzone and the link field. */
+  showSelectedVideo(name, stats) {
+    this.selectedVideoName.textContent = name;
+    this.selectedVideoStats.textContent = stats;
+    if (this.ingestPanelFile) this.ingestPanelFile.style.display = 'none';
+    if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
+    this.videoSelectedCard.style.display = 'flex';
+    this.btnStartProcess.disabled = false;
+  }
+
+  /** A new video or session: nothing of the last one's steps, undo, build or Pack details carries over. */
+  resetSessionState() {
+    this.reachedStep = 0;
+    this.undoStack = [];
+    this.builtSignature = null;
+    this.compiledPackId = null;
+    this.compileFilled = false;
+    this.segments = [];
+    this.selectedSegmentIndex = null;
+    if (this.sessionEndedNotice) this.sessionEndedNotice.hidden = true;
+  }
+
+  /** Video on a processed session: the primary goes back to the lines, and processing again asks first. */
+  updateVideoStepActions() {
+    const processed = this.isProcessed();
+    this.btnReprocess.hidden = !processed;
+    if (!processed) {
+      this.reprocessConfirm.hidden = true;
+      this.changeConfirm.hidden = true;
+    }
+    this.updateStartButtonLabel();
+  }
+
+  /** Shows an inline question (a sentence, then its buttons) and moves focus to its Cancel. */
+  askInline(box, question) {
+    box.querySelector('.inline-confirm-text').textContent = question;
+    box.hidden = false;
+    box.querySelector('.btn-secondary').focus();
+  }
+
+  closeInline(box, returnFocus) {
+    box.hidden = true;
+    if (returnFocus) returnFocus.focus();
   }
 
   /** Shows a chosen file as a chip (name, summary, ×) in place of its dropzone; null shows the dropzone. */
@@ -886,6 +1211,7 @@ export class PackBuilderApp {
       }
 
       const data = await res.json();
+      this.resetSessionState();
       this.sessionId = data.session_id;
       this.duration = data.duration;
       this.videoFile = null;
@@ -904,8 +1230,8 @@ export class PackBuilderApp {
       await new Promise(r => setTimeout(r, 450));
 
       // Update selected card
-      this.selectedVideoName.innerText = data.title || data.filename;
-      this.selectedVideoStats.innerText = this.formatTime(data.duration);
+      this.selectedVideoName.textContent = data.title || data.filename;
+      this.selectedVideoStats.textContent = this.formatTime(data.duration);
 
       if (this.ingestPanelFile) this.ingestPanelFile.style.display = 'none';
       if (this.ingestPanelUrl) this.ingestPanelUrl.style.display = 'none';
@@ -918,7 +1244,9 @@ export class PackBuilderApp {
         const n = this.linkSubtitleCount;
         this.showFileChip(this.subChip, this.subDropzone, 'From the video', `${n} line${n === 1 ? '' : 's'}`);
       }
-      this.updateStartButtonLabel();
+      this.updateVideoStepActions();
+      this.saveSessionDetails();
+      this.writeUrl('upload', true);
       this.showToast('Video imported');
     } catch (e) {
       clearInterval(timerInterval);
@@ -963,6 +1291,9 @@ export class PackBuilderApp {
         if (run !== this.processRun) return;
         this.sessionId = uploaded.session_id;
         this.duration = uploaded.duration;
+        // From here a reload finds this session again.
+        this.saveSessionDetails();
+        this.writeUrl('upload', true);
       }
 
       if (this.coverFile) {
@@ -1300,18 +1631,22 @@ export class PackBuilderApp {
     return total >= 10 * 1024 * 1024 ? String(Math.round(mb)) : mb.toFixed(1);
   }
 
-  /** Opens the editor on finished processing: lines, the server's notice and a result toast. */
-  openEditor(data) {
+  /**
+   * Opens the editor on lines from the engine (processing finished, or a reopened session):
+   * the lines, the server's notice and a result toast (not with opts.quiet). opts also go to setStep.
+   */
+  openEditor(data, opts = {}) {
     this.segments = data.segments || this.segments;
+    this.selectedSegmentIndex = null;
+    this.undoStack = [];
     // Only an explicit false means no voice track; older engines don't send the flag.
     this.voicesSeparated = data.voices_separated !== false;
-    const notice = (data.warning || '').trim();
-    this.editorNotice.textContent = notice;
-    this.editorNotice.hidden = !notice;
-    this.setStep('editor');
+    this.editorWarning = (data.warning || '').trim();
+    this.renderEditorNotice();
+    this.setStep('editor', opts);
     const total = this.segments.length;
     // With no lines, the Lines column says what to do instead.
-    if (!total) return;
+    if (!total || opts.quiet) return;
     const noWords = this.segments.filter(s => s.nonverbal).length;
     let summary = `Found ${total} line${total === 1 ? '' : 's'}`;
     if (noWords) summary += `, ${noWords} without words`;
@@ -1834,13 +2169,10 @@ export class PackBuilderApp {
   fillCharacterOptions(select, idx) {
     const seg = this.segments[idx];
     if (!seg) return;
-    const cast = Array.from(new Set([
-      ...this.characterColors.keys(),
-      ...this.segments.map(s => s.character).filter(Boolean),
-    ]));
+    const cast = this.castNames();
     if (!cast.includes(seg.character)) cast.push(seg.character);
     select.innerHTML = cast.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
-      + '<option value="__ADD_NEW__">+ New character</option>';
+      + '<option value="__ADD_NEW__">+ New character…</option>';
     select.value = seg.character;
   }
 
@@ -1877,6 +2209,8 @@ export class PackBuilderApp {
       if (!row || e.target === row) return;
       const idx = idxOf(row);
       if (e.target.classList.contains('cue-char-select')) this.fillCharacterOptions(e.target, idx);
+      // A committed text edit is one undo step, from the text the field had when it took focus.
+      if (e.target.classList.contains('cue-text-input')) this.textBefore = { idx, text: this.segments[idx].text || '' };
       if (this.selectedSegmentIndex !== idx) this.selectSegment(idx);
     });
     // A click can open the select as it takes focus, so the press fills it too.
@@ -1901,6 +2235,13 @@ export class PackBuilderApp {
       if (!row) return;
       const idx = idxOf(row);
       if (e.target.classList.contains('cue-text-input')) {
+        const before = this.textBefore;
+        if (before && before.idx === idx && before.text !== e.target.value) {
+          const step = this.snapshot();
+          step.segments[idx].text = before.text;
+          this.pushUndo(step);
+          before.text = e.target.value;
+        }
         const block = this.segmentBlocks[idx];
         if (block) this.labelBlock(block, this.segments[idx]);
         this.syncSegmentsToServer();
@@ -1934,19 +2275,13 @@ export class PackBuilderApp {
   /** A line's new character: its dot, row name, block and the Cast row follow; nothing is rebuilt. */
   changeLineCharacter(idx, select) {
     const seg = this.segments[idx];
-    let name = select.value;
+    const name = select.value;
     if (name === '__ADD_NEW__') {
-      const entered = prompt('Character name');
-      if (!entered || !entered.trim()) {
-        select.value = seg.character;
-        return;
-      }
-      name = entered.trim();
-      if (!Array.from(select.options).some((o) => o.value === name)) {
-        select.add(new Option(name, name), select.options[select.options.length - 1]);
-      }
-      select.value = name;
+      this.askNewCharacter(idx, select);
+      return;
     }
+    if (name === seg.character) return;
+    this.pushUndo();
     seg.character = name;
     const color = this.getCharacterColor(name);
     const row = document.getElementById(`cue-card-${idx}`);
@@ -1963,6 +2298,49 @@ export class PackBuilderApp {
     this.syncSegmentsToServer();
   }
 
+  /**
+   * "+ New character…" in a row: the select makes way for a name field. Enter (or leaving the
+   * field with a name) creates the character and gives it the line; Esc puts the select back.
+   */
+  askNewCharacter(idx, select) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-input cue-char-input';
+    input.placeholder = 'Name';
+    input.maxLength = 40;
+    input.setAttribute('aria-label', 'New character name');
+    select.value = this.segments[idx].character;
+    select.hidden = true;
+    select.after(input);
+    let done = false;
+    const finish = (name, refocus) => {
+      if (done) return;
+      done = true;
+      input.remove();
+      select.hidden = false;
+      if (name) {
+        if (!Array.from(select.options).some((o) => o.value === name)) {
+          select.add(new Option(name, name), select.options[select.options.length - 1]);
+        }
+        select.value = name;
+        this.changeLineCharacter(idx, select);
+      }
+      if (refocus) select.focus();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(input.value.trim(), true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish('', true);
+      }
+    });
+    input.addEventListener('blur', () => finish(input.value.trim(), false));
+    input.focus();
+  }
+
   /** Start and End act on the selected line. With none they say so, and so do their keys. */
   updateMarkButtons() {
     const has = !!this.segments[this.selectedSegmentIndex];
@@ -1976,38 +2354,138 @@ export class PackBuilderApp {
     });
   }
 
+  /** Every character: the cast's colours first (their order), then any other line's character. */
+  castNames() {
+    return Array.from(new Set([
+      ...this.characterColors.keys(),
+      ...this.segments.map(s => s.character).filter(Boolean),
+    ]));
+  }
+
   renderCharacterChips() {
     const list = this.characterChipsList;
     list.innerHTML = '';
 
-    // Only include distinct characters that actually exist
-    const allChars = Array.from(new Set([
-      ...this.characterColors.keys(),
-      ...this.segments.map(s => s.character).filter(Boolean)
-    ]));
-
-    allChars.forEach(char => {
+    this.castNames().forEach(char => {
       const color = this.getCharacterColor(char);
       const count = this.segments.filter(s => s.character === char).length;
+      const name = escapeHtml(char);
       const chip = document.createElement('div');
       chip.className = 'char-color-chip';
       chip.innerHTML = `
         <span class="chip-color-dot" style="background: ${color};"></span>
-        <span class="chip-name" data-tip="Click to rename">${escapeHtml(char)}</span>
+        <button type="button" class="chip-name" data-char="${name}" aria-label="Rename ${name}" data-tip="Rename">${name}</button>
         <span class="chip-count-badge" aria-label="${count} line${count === 1 ? '' : 's'}">(${count})</span>
-        <button class="chip-del-btn" aria-label="Delete ${escapeHtml(char)}" data-tip="Delete character" data-char="${escapeHtml(char)}">
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button type="button" class="chip-del-btn" aria-label="Delete ${name}" data-tip="Delete character" data-char="${name}">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       `;
-
-      chip.querySelector('.chip-name').addEventListener('click', () => this.promptRenameCharacter(char));
-      chip.querySelector('.chip-del-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.deleteCharacter(char);
-      });
       list.appendChild(chip);
     });
     this.updateCastScroller();
+  }
+
+  /** The Cast row's names and × buttons, delegated once: a name edits in place, × deletes. */
+  initCastEditing() {
+    this.characterChipsList.addEventListener('click', (e) => {
+      const del = e.target.closest('.chip-del-btn');
+      if (del) {
+        this.deleteCharacter(del.dataset.char);
+        return;
+      }
+      const name = e.target.closest('button.chip-name');
+      if (name) this.editChipName(name.closest('.char-color-chip'), name.dataset.char);
+    });
+  }
+
+  /** + in the Cast row: a new chip with its name field open. */
+  addCharacterChip() {
+    const chip = document.createElement('div');
+    chip.className = 'char-color-chip is-editing';
+    chip.innerHTML = `<span class="chip-color-dot" style="background: ${PALETTE[this.characterColors.size % PALETTE.length]};"></span>`;
+    this.characterChipsList.appendChild(chip);
+    this.updateCastScroller();
+    chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    this.editChipName(chip, null);
+  }
+
+  /**
+   * A chip's name as a field: Enter or leaving the field keeps the name, Esc cancels.
+   * oldName null is a new chip, which an empty name removes.
+   */
+  editChipName(chip, oldName) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-input chip-name-input';
+    input.value = oldName || '';
+    input.placeholder = 'Name';
+    input.maxLength = 40;
+    input.setAttribute('aria-label', oldName ? `Rename ${oldName}` : 'New character name');
+    chip.classList.add('is-editing');
+    const nameEl = chip.querySelector('.chip-name');
+    if (nameEl) nameEl.replaceWith(input);
+    else chip.appendChild(input);
+    let done = false;
+    const finish = (commit, refocus) => {
+      if (done) return;
+      done = true;
+      const result = commit ? this.commitCharacterName(oldName, input.value.trim()) : oldName;
+      if (!commit) this.renderCharacterChips();
+      if (!refocus) return;
+      const target = result && Array.from(this.characterChipsList.querySelectorAll('button.chip-name'))
+        .find((b) => b.dataset.char === result);
+      (target || this.btnAddCharacter).focus();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true, true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false, true);
+      }
+    });
+    input.addEventListener('blur', () => finish(true, false));
+    input.focus();
+    input.select();
+  }
+
+  /**
+   * Keeps a chip's new name, and returns the name the chip ends with. A new name for a new
+   * chip adds the character; a rename moves its lines; a rename onto another character
+   * merges the two. An empty or unchanged name changes nothing.
+   */
+  commitCharacterName(oldName, name) {
+    if (!name || name === oldName) {
+      this.renderCharacterChips();
+      return oldName;
+    }
+    const exists = this.castNames().includes(name);
+    if (!oldName) {
+      if (!exists) {
+        this.pushUndo();
+        this.getCharacterColor(name);
+      }
+      this.renderCharacterChips();
+      const chip = Array.from(this.characterChipsList.children).find((c) => c.querySelector('.chip-name')?.dataset.char === name);
+      if (chip) chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      return name;
+    }
+    const step = this.pushUndo();
+    this.segments.forEach((s) => { if (s.character === oldName) s.character = name; });
+    if (exists) {
+      this.characterColors.delete(oldName);
+    } else {
+      // A renamed character keeps its colour and its place in the row.
+      this.characterColors = new Map(Array.from(this.characterColors, ([k, v]) => [k === oldName ? name : k, v]));
+    }
+    this.renderTimelineSegments();
+    this.renderSegmentsList();
+    this.renderCharacterChips();
+    this.syncSegmentsToServer();
+    if (exists) this.showToast(`Merged into ${name}`, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
+    return name;
   }
 
   // The Cast row scrolls sideways: a mouse wheel, a mouse or pen drag and the arrow keys
@@ -2084,55 +2562,21 @@ export class PackBuilderApp {
     else list.removeAttribute('tabindex');
   }
 
-  deleteCharacter(charName) {
-    const segmentsWithChar = this.segments.filter(s => s.character === charName);
-    const remainingChars = Array.from(this.characterColors.keys()).filter(c => c !== charName);
-    const fallbackChar = remainingChars.length > 0 ? remainingChars[0] : 'Lead';
-
-    if (segmentsWithChar.length > 0) {
-      if (!confirm(`Delete "${charName}"? Their ${segmentsWithChar.length} line${segmentsWithChar.length === 1 ? '' : 's'} will move to "${fallbackChar}".`)) {
-        return;
-      }
-      this.segments.forEach(s => {
-        if (s.character === charName) {
-          s.character = fallbackChar;
-        }
-      });
-    }
-
-    this.characterColors.delete(charName);
-    if (this.characterColors.size === 0) {
-      this.getCharacterColor(fallbackChar);
-    }
+  /** × on a chip: the character goes at once and its lines move to the first one left. The toast can undo it. */
+  deleteCharacter(name) {
+    const moved = this.segments.filter((s) => s.character === name).length;
+    const fallback = this.castNames().find((c) => c !== name) || 'Lead';
+    const step = this.pushUndo();
+    this.segments.forEach((s) => { if (s.character === name) s.character = fallback; });
+    this.characterColors.delete(name);
+    if (this.characterColors.size === 0) this.getCharacterColor(fallback);
 
     this.renderTimelineSegments();
     this.renderCharacterChips();
     this.renderSegmentsList();
     this.syncSegmentsToServer();
-    this.showToast(`"${charName}" deleted`);
-  }
-
-  promptRenameCharacter(oldName) {
-    const newName = prompt(`Rename "${oldName}" to`, oldName);
-    if (newName && newName.trim() && newName.trim() !== oldName) {
-      const cleanNew = newName.trim();
-      const existingColor = this.characterColors.get(oldName) || PALETTE[0];
-      this.characterColors.delete(oldName);
-      this.characterColors.set(cleanNew, existingColor);
-
-      // Rename across all segments
-      this.segments.forEach(seg => {
-        if (seg.character === oldName) {
-          seg.character = cleanNew;
-        }
-      });
-
-      this.renderTimelineSegments();
-      this.renderCharacterChips();
-      this.renderSegmentsList();
-      this.syncSegmentsToServer();
-      this.showToast(`"${oldName}" renamed to "${cleanNew}"`);
-    }
+    const message = moved ? `${name} deleted. ${plural(moved, 'line')} moved to ${fallback}` : `${name} deleted`;
+    this.showToast(message, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
   }
 
   /**
@@ -2346,6 +2790,14 @@ export class PackBuilderApp {
       document.body.style.userSelect = '';
 
       if (hadMovement) {
+        // One undo step per drop that moved the line, back to where the drag started.
+        const moved = this.segments[modifiedIdx];
+        if (moved && (moved.start !== this.dragOrigStart || moved.end !== this.dragOrigEnd)) {
+          const step = this.snapshot();
+          step.segments[modifiedIdx].start = this.dragOrigStart;
+          step.segments[modifiedIdx].end = this.dragOrigEnd;
+          this.pushUndo(step);
+        }
         const before = this.segments.slice();
         const selected = this.segments[this.selectedSegmentIndex];
         this.segments.sort((a, b) => a.start - b.start);
@@ -2586,6 +3038,7 @@ export class PackBuilderApp {
       character: defaultChar
     };
 
+    this.pushUndo();
     this.segments.push(newSeg);
     this.segments.sort((a, b) => a.start - b.start);
     const newIdx = this.segments.indexOf(newSeg);
@@ -2606,26 +3059,14 @@ export class PackBuilderApp {
     this.dragLanes = null;
     cancelAnimationFrame(this._dragFrameId);
     this._dragFrameId = null;
+    const step = this.pushUndo();
     this.segments.splice(idx, 1);
     this.selectedSegmentIndex = null;
     this.renderTimelineSegments();
     this.renderSegmentsList();
     this.renderCharacterChips();
     this.syncSegmentsToServer();
-    this.showToast('Line deleted');
-  }
-
-  promptAddCharacter() {
-    const name = prompt('Character name');
-    if (name && name.trim()) {
-      const clean = name.trim();
-      this.getCharacterColor(clean);
-      this.renderCharacterChips();
-      const chip = Array.from(this.characterChipsList.children)
-        .find(c => c.querySelector('.chip-del-btn')?.dataset.char === clean);
-      if (chip) chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-      this.showToast(`"${clean}" added`);
-    }
+    this.showToast(`Line ${idx + 1} deleted`, { action: { label: 'Undo', onClick: () => this.undo(step) }, duration: UNDO_TOAST_MS });
   }
 
   markInAtPlayhead() {
@@ -2636,6 +3077,7 @@ export class PackBuilderApp {
       return;
     }
     const t = Math.round(this.editorVideo.currentTime * 50) / 50;
+    this.pushUndo();
     seg.start = t;
     if (seg.end <= t) seg.end = Math.min(this.duration, t + 1.0);
     this.renderTimelineSegments();
@@ -2653,6 +3095,7 @@ export class PackBuilderApp {
     }
     const t = Math.round(this.editorVideo.currentTime * 50) / 50;
     if (t > seg.start) {
+      this.pushUndo();
       seg.end = t;
       this.renderTimelineSegments();
       this.updateCardTimecode(idx);
@@ -2669,17 +3112,96 @@ export class PackBuilderApp {
     this.stopAt = seg.end; // the playback loop pauses here
   }
 
-  async syncSegmentsToServer() {
+  /**
+   * Saves the lines. One PUT at a time: edits made meanwhile go in the next one, with the
+   * latest lines, so an older save never lands after a newer one. A failed save says so
+   * in the editor and tries again, waiting longer each time (1 s, 2 s, 4 s… up to 30 s).
+   */
+  syncSegmentsToServer() {
     if (!this.sessionId) return;
-    try {
-      await fetch(`/api/builder/${this.sessionId}/segments`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments: this.segments })
-      });
-    } catch (e) {
-      console.warn('Failed to sync segments to server:', e);
+    this.save.wanted = true;
+    if (!this.save.inFlight) this.flushSave();
+  }
+
+  async flushSave() {
+    const save = this.save;
+    clearTimeout(save.retryTimer);
+    save.retryTimer = null;
+    while (save.wanted && this.sessionId) {
+      save.wanted = false;
+      save.inFlight = true;
+      let ok = false;
+      try {
+        const res = await fetch(`/api/builder/${this.sessionId}/segments`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ segments: this.segments }),
+        });
+        ok = res.ok;
+      } catch (e) {
+        console.warn('Failed to sync segments to server:', e);
+      }
+      save.inFlight = false;
+      if (!ok) {
+        save.wanted = true;
+        save.failed = true;
+        save.delay = Math.min(30000, save.delay ? save.delay * 2 : 1000);
+        save.retryTimer = setTimeout(() => this.flushSave(), save.delay);
+        this.renderEditorNotice();
+        return;
+      }
+      if (save.failed) {
+        save.failed = false;
+        save.delay = 0;
+        this.renderEditorNotice();
+      }
     }
+  }
+
+  /** The editor's notice: a failed save while there is one, otherwise the engine's processing notice. */
+  renderEditorNotice() {
+    const failed = this.save.failed;
+    const text = failed ? SAVE_FAILED : this.editorWarning;
+    this.editorNotice.textContent = text;
+    this.editorNotice.hidden = !text;
+    this.editorNotice.classList.toggle('is-error', failed);
+  }
+
+  // --- Undo ---
+
+  /** The editor's state for undo: the lines, the cast's colours and the selected line. */
+  snapshot() {
+    return {
+      segments: this.segments.map((s) => ({ ...s })),
+      colors: Array.from(this.characterColors),
+      selected: this.selectedSegmentIndex,
+    };
+  }
+
+  /** Keeps the state from before a change, up to 50 steps. Returns the step, for a toast's Undo. */
+  pushUndo(step = this.snapshot()) {
+    this.undoStack.push(step);
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+    return step;
+  }
+
+  /**
+   * Undoes the last change (Ctrl+Z), or every change back to and including `step` (a toast's
+   * Undo, once later changes were made). Undo is rare, so the editor is drawn again in full.
+   */
+  undo(step = null) {
+    if (step && !this.undoStack.includes(step)) return;
+    let snap = this.undoStack.pop();
+    while (step && snap && snap !== step) snap = this.undoStack.pop();
+    if (!snap) return;
+    this.segments = snap.segments;
+    this.characterColors = new Map(snap.colors);
+    this.selectedSegmentIndex = this.segments[snap.selected] ? snap.selected : null;
+    this.textBefore = null;
+    this.renderTimelineSegments();
+    this.renderSegmentsList();
+    this.renderCharacterChips();
+    this.syncSegmentsToServer();
   }
 
   async transcribeSingleSegment(idx, btnEl, textInputEl) {
@@ -2709,6 +3231,7 @@ export class PackBuilderApp {
       if (res.ok) {
         const data = await res.json();
         if (data.text && data.text.trim()) {
+          this.pushUndo();
           seg.text = data.text.trim();
           if (textInputEl) textInputEl.value = seg.text;
           this.updateNonverbalBadge(idx);
@@ -2756,6 +3279,7 @@ export class PackBuilderApp {
       if (res.ok) {
         const data = await res.json();
         if (data.romaji && data.romaji.trim()) {
+          this.pushUndo();
           seg.text = data.romaji.trim();
           if (textInputEl) textInputEl.value = seg.text;
           this.updateNonverbalBadge(idx);
@@ -2791,31 +3315,61 @@ export class PackBuilderApp {
 
   // --- STEP 4: Compile & Launch ---
 
-  goToCompileStep() {
+  /** Build. The Pack details are filled in once per session, so going back and forth keeps your edits. Returns whether it opened. */
+  goToCompileStep(opts = {}) {
     if (this.segments.length === 0) {
       this.showToast('Add a line first.');
-      return;
+      return false;
     }
 
-    this.setStep('compile');
+    this.setStep('compile', opts);
     this.pauseMedia();
 
-    const savedUser = localStorage.getItem('dubmate_user_name') || '';
-    this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.innerText.replace(/\.[^/.]+$/, '');
-    this.compileAuthor.value = savedUser || 'Creator';
-    this.compileSubtitle.value = `${this.segments.length} lines, ${this.characterColors.size} characters`;
+    if (!this.compileFilled) {
+      this.compileFilled = true;
+      const savedUser = localStorage.getItem('dubmate_user_name') || '';
+      this.compilePackName.value = this.inputPackTitle.value || this.selectedVideoName.textContent.replace(/\.[^/.]+$/, '');
+      this.compileAuthor.value = savedUser || 'Creator';
+      this.compileSubtitle.value = `${this.segments.length} lines, ${this.characterColors.size} characters`;
+    }
 
     this.statValDuration.innerText = this.formatTime(this.duration);
     this.statValLines.innerText = this.segments.length;
     this.statValCast.innerText = this.characterColors.size;
+    this.updateBuildState();
+    return true;
+  }
+
+  /** What a build is made of: the lines and the Pack details. */
+  buildSignature() {
+    return JSON.stringify([this.segments, this.compilePackName.value.trim(), this.compileAuthor.value.trim(), this.compileSubtitle.value.trim()]);
+  }
+
+  /** The pack was built from exactly what is here now. */
+  isBuiltCurrent() {
+    return !!this.builtSignature && this.builtSignature === this.buildSignature();
+  }
+
+  /** Build shows Build pack until a build, Pack ready while nothing changed since, and Build again after a change. */
+  updateBuildState() {
+    if (this.compiling) return;
+    const built = !!this.builtSignature;
+    const current = built && this.isBuiltCurrent();
+    this.btnExecuteCompile.style.display = built ? 'none' : 'block';
+    this.compileSuccessBox.style.display = current ? 'block' : 'none';
+    this.compileStaleBox.hidden = !built || current;
   }
 
   async executePackCompilation() {
     const packName = this.compilePackName.value.trim() || 'Custom Dub Scene';
     const authors = [this.compileAuthor.value.trim() || 'Creator'];
     const subtitle = this.compileSubtitle.value.trim();
+    const signature = this.buildSignature();
 
+    this.compiling = true;
     this.btnExecuteCompile.style.display = 'none';
+    this.compileSuccessBox.style.display = 'none';
+    this.compileStaleBox.hidden = true;
     this.compileProgressBox.style.display = 'flex';
     this.compileStatusMsg.innerText = 'Building the pack';
 
@@ -2844,13 +3398,16 @@ export class PackBuilderApp {
         this.btnDownloadPackZip.setAttribute('download', `${packName}.zip`);
       }
 
+      // Pack ready: recording is the next step, so it takes the focus.
+      this.builtSignature = signature;
+      this.compiling = false;
       this.compileProgressBox.style.display = 'none';
-      this.compileSuccessBox.style.display = 'block';
-      this.showToast(`'${packName}' is ready`);
-
+      this.updateBuildState();
+      this.btnPlaytestNow.focus();
     } catch (ex) {
+      this.compiling = false;
       this.compileProgressBox.style.display = 'none';
-      this.btnExecuteCompile.style.display = 'block';
+      this.updateBuildState();
       this.showToast(ex.message);
     }
   }
@@ -2896,9 +3453,19 @@ export class PackBuilderApp {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
 
-  initModeDropdown() { initModeDropdown(); }
+  // The menu's Studio link leaves Pack Builder too, so it asks the same way as Exit.
+  initModeDropdown() {
+    initModeDropdown({
+      onStudioClick: (e, closeMenu) => {
+        if (!this.mustAskBeforeLeaving()) return;
+        e.preventDefault();
+        closeMenu();
+        this.openLeaveDialog(e.currentTarget.href);
+      },
+    });
+  }
 
-  showToast(message) { showToast(message); }
+  showToast(message, opts) { showToast(message, opts); }
 }
 
 // Instantiate Pack Builder Studio

@@ -703,8 +703,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(left === max && !ev.defaultPrevented, "at the end the wheel is left to the page");
 
     // A mouse drag past 5 px scrolls, and the click that follows doesn't rename.
-    let prompts = 0;
-    w.prompt = () => { prompts++; return null; };
+    const renaming = () => !!list.querySelector(".chip-name-input");
     const name = list.querySelector(".chip-name");
     left = 200;
     pointer(name, "pointerdown", 300, { buttons: 1 });
@@ -714,9 +713,10 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(left === 250, "dragging the row 50 px left scrolls it 50 px");
     pointer(list, "pointerup", 250);
     name.click();
-    check(prompts === 0, "the click after a drag doesn't rename the character");
+    check(!renaming(), "the click after a drag doesn't rename the character");
     name.click();
-    check(prompts === 1, "a plain click still renames");
+    check(renaming(), "a plain click still renames");
+    list.querySelector(".chip-name-input").dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     left = 200;
     pointer(name, "pointerdown", 300, { buttons: 1, type: "touch" });
     pointer(list, "pointermove", 250, { buttons: 1, type: "touch" });
@@ -746,10 +746,12 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     // Adding a character scrolls its chip into view.
     const seen = [];
     w.Element.prototype.scrollIntoView = function (opts) { seen.push([this, opts]); };
-    w.prompt = () => "Narrator";
-    app.promptAddCharacter();
-    const added = seen.find(([el]) => el.classList && el.classList.contains("char-color-chip"));
-    check(!!added && added[0].querySelector(".chip-name").textContent === "Narrator" && added[1] && added[1].inline === "nearest",
+    doc.getElementById("btn-add-character").click();
+    const field = list.querySelector(".chip-name-input");
+    field.value = "Narrator";
+    field.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    const added = seen.find(([el]) => el.classList && el.classList.contains("char-color-chip") && el.querySelector(".chip-name")?.textContent === "Narrator");
+    check(!!added && added[1] && added[1].inline === "nearest",
       "a new character's chip scrolls into view");
 
     // When everything fits: not focusable, no fades, the wheel goes to the page.

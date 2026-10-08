@@ -57,8 +57,8 @@
         </div>
       </div>
 
-      <!-- Step Wizard Indicator -->
-      <nav class="builder-stepper" aria-label="Pack Builder steps">
+      <!-- Step Wizard Indicator: steps already reached become buttons (pack_builder.js renderStepper) -->
+      <nav class="builder-stepper" id="builder-stepper" aria-label="Pack Builder steps">
         <div class="builder-step active" id="step-nav-upload" data-step="upload">
           <span class="step-num">1</span>
           <span class="step-label">Video</span>
@@ -94,7 +94,7 @@
       </div>
       <button id="btn-shortcuts" class="btn btn-ghost btn-sm btn-shortcuts" type="button"
         aria-label="Keyboard shortcuts" data-tip="Keyboard shortcuts (?)" aria-haspopup="dialog">?</button>
-      <a href="/" class="btn btn-ghost btn-sm" aria-label="Exit Pack Builder">
+      <a href="/" id="btn-exit-builder" class="btn btn-ghost btn-sm" aria-label="Exit Pack Builder">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
         <span>Exit</span>
       </a>
@@ -109,6 +109,7 @@
       <div class="builder-hero">
         <h1 class="hero-title">Make a scene pack <span class="hero-title-accent">from a video</span></h1>
         <p class="hero-subtitle" id="builder-hero-sub">Add a clip. DubMate separates the voices from the background and writes out each line for you to check.</p>
+        <p class="session-ended-notice" id="session-ended-notice" role="status" hidden>That session has ended. Add the video again.</p>
       </div>
 
       <div class="builder-upload-grid">
@@ -224,6 +225,14 @@
             </div>
             <button id="btn-change-video" class="btn btn-ghost btn-sm" aria-label="Change video">Change</button>
           </div>
+          <!-- On a processed session, Change asks first: its lines would go. -->
+          <div id="change-confirm" class="inline-confirm" role="group" aria-labelledby="change-confirm-text" hidden>
+            <p id="change-confirm-text" class="inline-confirm-text"></p>
+            <div class="inline-confirm-actions">
+              <button type="button" id="btn-change-confirm" class="btn btn-danger btn-sm">Change video</button>
+              <button type="button" id="btn-change-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+            </div>
+          </div>
         </div>
 
         <!-- Optional Subtitle & Pack Settings Sidebar -->
@@ -303,6 +312,15 @@
               <span id="label-start-process">Process video</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
+            <!-- On a processed session the primary goes back to the lines; processing again asks first. -->
+            <button type="button" id="btn-reprocess" class="btn btn-secondary btn-md btn-reprocess" hidden data-tip="Separates the voices and writes out the lines again">Process again</button>
+            <div id="reprocess-confirm" class="inline-confirm" role="group" aria-labelledby="reprocess-confirm-text" hidden>
+              <p id="reprocess-confirm-text" class="inline-confirm-text"></p>
+              <div class="inline-confirm-actions">
+                <button type="button" id="btn-reprocess-confirm" class="btn btn-danger btn-sm">Process again</button>
+                <button type="button" id="btn-reprocess-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -604,24 +622,26 @@
 
           <!-- Success Box -->
           <div id="compile-success-box" class="compile-success-box" style="display: none;">
-            <div class="success-icon">
+            <div class="success-icon" aria-hidden="true">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polyline points="16 9 10 15 7 12"/></svg>
             </div>
             <h3 class="success-title">Pack ready</h3>
-            <p class="success-desc">It is now in your scene list.</p>
+            <p class="success-desc">It's in your scene list.</p>
             <div class="success-actions">
-              <a id="btn-download-pack-zip" class="btn btn-primary btn-md" download href="#">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span>Download .zip</span>
-              </a>
-              <button id="btn-playtest-now" class="btn btn-secondary btn-md" data-tip="Open a room with this pack">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                <span>Try it</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+              <button type="button" id="btn-playtest-now" class="btn btn-primary btn-md" data-tip="Opens a room with this pack">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                <span>Record it now</span>
               </button>
-              <a href="/" class="btn btn-secondary btn-md">
-                <span>Go to Studio</span>
-              </a>
+            </div>
+            <a id="btn-download-pack-zip" class="success-zip-link" download href="#">Save a copy (.zip)</a>
+          </div>
+
+          <!-- After a build, a change to the lines or the details: build again, or record what was built. -->
+          <div id="compile-stale-box" class="compile-stale-box" hidden>
+            <p class="compile-stale-text">You changed the pack after building it.</p>
+            <div class="success-actions">
+              <button type="button" id="btn-build-again" class="btn btn-primary btn-md" data-tip="Replaces the pack you built with this version">Build again</button>
+              <button type="button" id="btn-stale-record" class="btn btn-secondary btn-md" data-tip="Opens a room with the pack as you last built it">Record it now</button>
             </div>
           </div>
         </div>
@@ -629,6 +649,19 @@
     </section>
 
   </main>
+
+  <!-- Exit while the lines aren't in a pack yet (pack_builder.js openLeaveDialog) -->
+  <div id="modal-leave-builder" class="studio-modal-overlay" role="dialog" aria-modal="true"
+    aria-labelledby="leave-builder-title" aria-describedby="leave-builder-text" hidden>
+    <div class="studio-modal-card builder-leave-card">
+      <h3 id="leave-builder-title" class="modal-title">Leave Pack Builder?</h3>
+      <p id="leave-builder-text" class="modal-status-text">Your lines aren't in a pack yet.</p>
+      <div class="modal-actions">
+        <button type="button" id="btn-leave-stay" class="btn btn-primary btn-md">Stay</button>
+        <button type="button" id="btn-leave-confirm" class="btn btn-secondary btn-md">Leave</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
