@@ -150,6 +150,34 @@ Before: the audit's drivers (`dm_shots/v2-join-flow/tools/`, copied from `flow/d
 
 C4: the mic card's clicks are counted where they happen (in the lobby), and the PR table shows the layout effect and the auto-cast effect on separate lines. Screen-level: landing ambers 2 → 1; scene cards focusable 0 → all; swatch tab stops 5/10 → 1; Escape/stacked modals → no modal; lobby panels 5 → 2 (+ mic card); roster copies 3 → 1; name limits 4 → 1; palettes 2 + 3 server fallbacks → 1.
 
+## Outcome (measured after G3)
+
+Measured with the same drivers, engines, 3 fixture scenes, first-run storage and counting rules as the before run (`dm_shots/v2-join-flow/tools/flow_after.js`, `geometry_after.js`, `keyboard_after.js`; data in `data/after_*.json`, shots `after-G4-*.png`). Keystrokes include the Space for the first take. The mic set-up is counted where it happens: before in the two launch dialogs, after as the lobby card's four steps (Allow, Next, Next, then Play clicks or Skip sync).
+
+| To the first take | Host before → after | Member before → after | Guest before → after |
+|---|---|---|---|
+| Screens | 5 → **3** | 6 + a tab state → **3** | 5 (2 stacked modals) → **3** (0 stacked) |
+| Clicks, layout effect | 5 → 5 | 6 → **3** | 1 → 1 |
+| Clicks, mic set-up | 2 → 4 | 2 → 4 | 2 → 4 |
+| Clicks, auto-cast effect | 6 → **0** | 0 → 0 | 0 → 0 (+1 to pick another) |
+| Clicks, total | 13 → **9** | 8 → **7** | 3 → 5 |
+| Keystrokes | 5 → 5 | 11 → 11 | 4 → 4 |
+| Decisions | 13 → **9** (4 are the mic card) | 8 → 8 (2 repeated → 0) | 4 → 7 (4 mic card, 1 keep or pick a character) |
+| Repeated questions | 0 → 0 | **2 → 0** | 0 → 0; rejoin 3 → **0** |
+| Colour sets seen / hues | 1 / 5 → 1 / 8 | 2 / 5 then 10 → **1 / 8** | 1 / 10 → 1 / 8, taken hues marked |
+
+- **The layout alone (C4)** saves the member 3 clicks (no tab, no second name and colour prompt) and the host and guest nothing; auto-cast saves the host 6. The mic card costs everyone 2 more clicks than the launch dialogs because it also does level and sync, which the dialogs left optional.
+- **Rejoin (guest):** 5 clicks, 6 keys and 3 repeated questions → 3 clicks (Leave, Leave, Rejoin), 0 keys, 0 questions.
+- **Colours in the run:** Tani Coral, Mika Lime (asked for Coral; the toast said why), Sam Mint (first free). Before, the host and the guest were both amber.
+- **Screen level, 1440x900 and 1280x720:** landing ambers 2 → 1; no tabs; no preselected scene; Start names the scene; scene cards focusable 0 → all (one tab stop, arrows choose, Enter starts); tabs from the name to the first scene 14 → 7; swatch tab stops 5 / 10 → 1 / 1; stacked modals 2 → 0 (the join prompt is a view); a wrong code is inline with the text kept, no toast; lobby panels 5 → 3 (casting, preview, mic card); roster copies besides the table 2 → 1 (the avatar stack); copy-invite controls in the lobby 2 → 1; name limits 4 → 1; palettes in the code 2 + 3 server fallbacks → 1. With 3 fixture scenes all cards sit clear of the pinned bar at both sizes (C3); the first card's top moved from 360 to 286 px with the hero shown.
+- **Palette B (`tools/colors.js`):** weakest espresso-initial contrast 5.38:1 (Pink), all ≥ 4.5; closest pair Orchid/Blush 15.3 ΔE; closest to a signal colour Coral/amber 16.9 ΔE.
+- **Console:** no errors in the three runs, apart from the member's own engine answering 404 for a code it doesn't host before asking the registry (the same lookup as on `main`).
+
+### Decided while finishing (G4), revisit
+
+- Joining a room no longer flashes "Back online" after the first "Connecting…" (a `main` bug that every link guest now met in the lobby, since no dialog covers it any more). It shows only after a real drop.
+- The `.tab-pill` styles stay: `main` now uses them for the premiere's Mix presets (PR #25), and deleting them here would have unstyled those on merge without a conflict. DESIGN.md keeps the segmented-tabs entry, now naming the Mix presets instead of Create Room vs Join Code.
+
 ## Implementation groups (build order)
 
 1. **Identity and the server.** `identity.js` + `identity.py`, legacy map, `loadUser` migration and empty first-run name, `pick_color`, name cap, fallbacks removed, `user_joined` payload, auto-cast, guest `assign_role`, `cast_evenly`, `RoomSocket.castEvenly`. Python and JS tests.
