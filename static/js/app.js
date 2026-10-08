@@ -286,7 +286,10 @@ class DubMateApp {
     this.modalAudioSettings = document.getElementById('modal-audio-settings');
     this.btnCloseAudioSettings = document.getElementById('btn-close-audio-settings');
     this.audioSetupStatusPill = document.getElementById('audio-setup-status-pill');
+    this.audioSetupTitle = document.getElementById('audio-setup-title');
     this.audioSetupSubtitle = document.getElementById('audio-setup-subtitle');
+    this.audioIntroPrivacy = document.getElementById('audio-intro-privacy');
+    this.audioIntroAsker = document.getElementById('audio-intro-asker');
     this.audioStepIntro = document.getElementById('audio-setup-step-intro');
     this.audioStepDenied = document.getElementById('audio-setup-step-denied');
     this.audioStepDevices = document.getElementById('audio-setup-step-devices');
@@ -349,6 +352,7 @@ class DubMateApp {
     this.roomCheckLoud = document.getElementById('room-check-loud');
     this.roomCheckLoudResult = document.getElementById('room-check-loud-result');
     this.btnRoomLoudLine = document.getElementById('btn-room-loud-line');
+    this.btnRoomCheckAgain = document.getElementById('btn-room-check-again');
     this.roomCheckRefresh = document.getElementById('room-check-refresh');
     this.roomCheckRefreshText = document.getElementById('room-check-refresh-text');
     this.btnRoomCheckRefresh = document.getElementById('btn-room-check-refresh');

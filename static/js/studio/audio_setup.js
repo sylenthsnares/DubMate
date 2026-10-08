@@ -283,17 +283,23 @@ export class AudioSetupMethods {
       this.audioSetupStatusPill.textContent = text;
       setStatusState(this.audioSetupStatusPill, state);
     }
-    if (this.audioSetupSubtitle) {
-      if (step === 'devices') {
-        this.audioSetupSubtitle.innerText =
-          'Choose your microphone and headphones.';
-      } else if (step === 'denied') {
-        this.audioSetupSubtitle.innerText =
-          'Recording is off until DubMate can use your microphone.';
-      } else {
-        this.audioSetupSubtitle.innerText =
-          'Set up your microphone before you record.';
-      }
+    if (this.audioSetupTitle) {
+      this.audioSetupTitle.textContent = this.audioSetup.firstRunMode ? 'Set up your mic' : 'Audio settings';
+    }
+    // The denied and first-run steps say it in their own words.
+    if (this.audioSetupSubtitle) this.audioSetupSubtitle.style.display = step === 'devices' ? '' : 'none';
+    if (step === 'intro') this.renderAudioIntro();
+  }
+
+  // First run: the privacy line only where it is true, and who asks for permission.
+  renderAudioIntro() {
+    if (this.audioIntroPrivacy) {
+      this.audioIntroPrivacy.textContent = this.isEngineLocal()
+        ? 'Audio stays on this computer.'
+        : "Your takes are saved on the host's computer.";
+    }
+    if (this.audioIntroAsker) {
+      this.audioIntroAsker.textContent = window.__TAURI__ ? 'Your computer may ask' : 'Your browser will ask';
     }
   }
 

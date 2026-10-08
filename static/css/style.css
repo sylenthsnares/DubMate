@@ -4343,6 +4343,28 @@ svg {
   display: none;
 }
 
+.audio-setup-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-right: 40px;
+}
+
+/* Done stays at the bottom of the scrolling card, over the card's own background,
+   and runs edge to edge (the negative margins cancel the card's padding). */
+.audio-settings-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 20px -28px -26px;
+  padding: 14px 28px 20px;
+  background: #13100d; /* the bottom of .studio-modal-card's gradient */
+  border-top: 1px solid var(--border);
+}
+
 /* --- Step 1: First-run explainer --- */
 .audio-intro-hero {
   display: flex;
@@ -4405,8 +4427,9 @@ svg {
 
 .audio-fact-icon {
   flex-shrink: 0;
-  font-size: 13px;
-  line-height: 1.4;
+  display: inline-flex;
+  padding-top: 2px;
+  color: var(--accent-brass);
 }
 
 /* --- Step 2: Denial & recovery --- */

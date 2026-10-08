@@ -220,6 +220,7 @@ export class RoomCheckMethods {
     if (this.btnCancelRoomCheck) this.btnCancelRoomCheck.addEventListener('click', () => this.cancelRoomCheck());
     if (this.btnRoomCheckStandard) this.btnRoomCheckStandard.addEventListener('click', () => this.useStandardCleanup());
     if (this.btnRoomLoudLine) this.btnRoomLoudLine.addEventListener('click', () => this.runLoudLineCheck());
+    if (this.btnRoomCheckAgain) this.btnRoomCheckAgain.addEventListener('click', () => this.openRoomCheckPanel());
     if (this.btnRoomCheckRefresh) this.btnRoomCheckRefresh.addEventListener('click', () => this.refreshOlderTakes());
   }
 
@@ -316,7 +317,7 @@ export class RoomCheckMethods {
     }
     if (this.btnStartRoomCheck) {
       this.btnStartRoomCheck.disabled = step === 'listening';
-      this.btnStartRoomCheck.textContent = step === 'listening' ? 'Listening…' : 'Start';
+      this.btnStartRoomCheck.textContent = { listening: 'Listening…', failed: 'Check again' }[step] || 'Start';
     }
     this.renderRoomCheckRow();
     this.renderMicSyncRow();
@@ -337,6 +338,7 @@ export class RoomCheckMethods {
     if (!model) return;
     const unusable = !!model.unusable;
     if (this.roomCheckLoud) this.roomCheckLoud.style.display = unusable ? 'none' : '';
+    if (this.btnRoomCheckAgain) this.btnRoomCheckAgain.style.display = unusable ? '' : 'none';
     this.roomCheckCard.classList.toggle('is-error', unusable);
     if (this.roomCheckVerdict) this.roomCheckVerdict.style.display = unusable ? 'none' : '';
     if (this.roomCheckLight) {
