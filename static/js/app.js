@@ -16,6 +16,7 @@ import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
 import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
+import { UpdateNoticeMethods } from './studio/update_notice.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
@@ -1880,7 +1881,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

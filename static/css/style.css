@@ -3932,6 +3932,78 @@ svg {
   display: none;
 }
 
+/* What only the DubMate 2.0 installer brings (update_notice.js): a quiet walnut row, no
+   amber (Play stays the one primary) and no red (nothing failed) */
+.update-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  background: var(--secondary);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+.update-notice[hidden] {
+  display: none;
+}
+.update-notice-icon {
+  flex: none;
+  color: var(--accent-brass);
+}
+.update-notice-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.update-notice-lead {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.update-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+@media (max-width: 1099px) {
+  .update-notice {
+    flex-wrap: wrap;
+  }
+  .update-notice-icon {
+    align-self: flex-start;
+    margin-top: 2px;
+  }
+  .update-notice-text {
+    flex-basis: calc(100% - 26px);
+  }
+  .update-notice-actions {
+    flex-basis: 100%;
+    padding-left: 26px;
+  }
+}
+
+/* "Open download page", and what happened when the app couldn't open it */
+.download-page-control {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  vertical-align: middle;
+}
+.download-page-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+}
+.download-page-hint.is-address {
+  color: var(--foreground);
+  user-select: all;
+}
+
 /* Mix and In this dub: disclosures under the controls, side by side on wide windows */
 .screening-sections {
   display: grid;
@@ -5088,6 +5160,17 @@ svg {
   line-height: 1.45;
   color: var(--foreground-muted);
 }
+/* Room row: the stronger cleanup needs the 2.0 installer, with Open download page */
+.room-check-cleanup-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 0;
+}
+.room-check-cleanup-note[hidden] {
+  display: none;
+}
 
 .audio-unsupported-box {
   padding: 13px 15px;
@@ -5420,6 +5503,8 @@ svg {
   text-transform: none;
   text-align: left;
   white-space: normal;
+  /* An address has no spaces: it wraps instead of running out of the box. */
+  overflow-wrap: anywhere;
   pointer-events: none;
   visibility: hidden;
   opacity: 0;

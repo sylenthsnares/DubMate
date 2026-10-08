@@ -520,6 +520,7 @@ export class ScreeningMethods {
     this.renderMixSummary();
     this.renderSourceLabel();
     this.renderSaveControl();
+    this.renderUpdateNotice();
   }
 
   /** The scene's length: the theater's video once it knows, else the pack's. */
