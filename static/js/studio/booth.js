@@ -419,13 +419,30 @@ export class BoothMethods {
         return; // Filter out other characters' lines when in "My Lines Only" mode
       }
 
-      const chip = document.createElement('div');
-      const hasTake = takeCount(this.roomState.takes, l) > 0;
+      const chip = document.createElement('button');
+      const count = takeCount(this.roomState.takes, l);
       const isActive = idx === this.currentLineIndex;
 
-      chip.className = `chip-item ${isActive ? 'active' : ''} ${hasTake ? 'done' : ''} ${isMyLine ? 'my-line' : ''}`;
-      chip.dataset.tip = `Line ${idx + 1}: ${l.character}${hasTake ? ' · recorded' : ''}`;
-      chip.innerText = String(idx + 1);
+      chip.type = 'button';
+      chip.className = `chip-item ${isActive ? 'active' : ''} ${count ? 'done' : ''} ${isMyLine ? 'my-line' : ''}`;
+      if (isActive) chip.setAttribute('aria-current', 'step');
+      // The tooltip says the same as the label, so it isn't read twice.
+      const name = `Line ${idx + 1}, ${l.character}, ${count ? `recorded, ${plural(count, 'take')}` : 'not recorded'}`;
+      chip.setAttribute('aria-label', name);
+      chip.dataset.tip = name;
+      const num = document.createElement('span');
+      num.className = 'chip-num';
+      num.textContent = String(idx + 1);
+      chip.appendChild(num);
+      if (count) {
+        const tick = document.createElement('span');
+        tick.className = 'chip-tick';
+        tick.textContent = '✓';
+        const n = document.createElement('span');
+        n.className = 'chip-count';
+        n.textContent = plural(count, 'take');
+        chip.append(tick, n);
+      }
 
       chip.addEventListener('click', () => {
         this.loadBoothLine(idx);

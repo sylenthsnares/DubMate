@@ -6,7 +6,8 @@
  * dub" or Use, the ⋯ menu), picking by Use and by Enter, the deferred delete with its
  * in-place Undo (no confirm; the DELETE goes out when the 6 s run out, at once on a
  * line change, or on pagehide with keepalive), the roving focus and the T, arrow, P,
- * Enter, Delete, A, "," and "." keys, and read-only rows on someone else's line.
+ * Enter, Delete, A, "," and "." keys, read-only rows on someone else's line, and the
+ * line chips (buttons with aria-current, spoken labels and a visible take count).
  * Socket and fetch are stubbed; the 6 s timer is captured, not waited for.
  */
 const jsdom = require("jsdom");
@@ -499,6 +500,25 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     await show(env, room(), 2);
     if ($(env, "btn-next-line").dataset.tip !== "Marks you ready for the premiere (.)") fail(`Done tip: ${$(env, "btn-next-line").dataset.tip}`);
     console.log("PASS: A switches the transport side, ',' and '.' change lines, and the tooltips carry the keys");
+  }
+
+  // 9. Line chips: buttons, aria-current, spoken labels, a visible take count.
+  {
+    await show(env, room({ ...threeTakes(), t2000: { picked: "x1", next_number: 2, takes: [mk("x1", 1)] } }), 0);
+    const chips = [...$(env, "timeline-chips").children];
+    if (chips.length !== 3 || chips.some((c) => c.tagName !== "BUTTON" || c.type !== "button")) fail("chips aren't buttons");
+    if (chips[0].getAttribute("aria-current") !== "step" || chips[1].hasAttribute("aria-current")) fail("aria-current on the wrong chip");
+    const labels = chips.map((c) => c.getAttribute("aria-label"));
+    if (labels.join("|") !== "Line 1, Ana, recorded, 3 takes|Line 2, Ana, recorded, 1 take|Line 3, Ben, not recorded") fail(`chip labels: ${labels.join("|")}`);
+    const counts = chips.map((c) => text(c.querySelector(".chip-count")));
+    if (counts.join("|") !== "3 takes|1 take|") fail(`visible counts: ${JSON.stringify(counts)}`);
+    if (text(chips[0].querySelector(".chip-num")) !== "1") fail("chip number");
+    chips[2].click();
+    await tick();
+    if (app.currentLineIndex !== 2) fail("a chip click did not load its line");
+    const after = [...$(env, "timeline-chips").children];
+    if (after[2].getAttribute("aria-current") !== "step") fail("aria-current did not follow the line");
+    console.log("PASS: line chips are buttons with aria-current, 'Line 1, Ana, recorded, 3 takes' and a visible count");
   }
 
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
