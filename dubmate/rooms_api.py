@@ -7,6 +7,7 @@ voice chains and level matching, export render, video streaming and downloads.
 Works on the room model in dubmate.rooms and never imports app.
 """
 
+import json
 import os
 import time
 import uuid
@@ -282,6 +283,8 @@ async def upload_take(
     auto_gain: bool = Form(False),
     guide_voice: bool = Form(False),
     noise_profile_id: str = Form(""),
+    # The sound picked for this take before it existed (a JSON chain); absent keeps the picked take's.
+    chain: Optional[str] = Form(None),
 ):
     common.require_safe_identifier(user_id, "user_id")
     room = rooms.room_or_404(room_id)
@@ -290,6 +293,12 @@ async def upload_take(
     if not line:
         raise HTTPException(status_code=400, detail="That line isn't in this scene.")
     _require_line_actor(room, line, user_id)
+    chosen_chain = None
+    if chain is not None:
+        try:
+            chosen_chain = vocal_chain.normalize_chain(json.loads(chain))
+        except ValueError:   # json.JSONDecodeError is a ValueError
+            raise HTTPException(status_code=400, detail="That sound couldn't be read.")
 
     # Recording again adds a take next to the line's earlier ones; nothing is overwritten.
     take_id = uuid.uuid4().hex[:8]
@@ -328,6 +337,8 @@ async def upload_take(
     # A new take keeps the sound of the take it replaces in the dub (its own chain, if any).
     previous = room.picked_take(line_id) or {}
     sound = {"chain": previous["chain"]} if isinstance(previous.get("chain"), dict) else {}
+    if chosen_chain is not None:
+        sound = {"chain": chosen_chain}
     sliders = {k: v for k, v in (("pitch_semitones", pitch_semitones), ("reverb_wet", reverb_wet)) if v is not None}
     legacy = legacy_sliders_onto_chain(room, line, sound, sliders, previous)
     if legacy is not None:
