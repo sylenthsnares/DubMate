@@ -8,6 +8,7 @@
     "allow-get-engine-port",
     "allow-trigger-start-sidecars",
     "allow-apply-update",
+    "allow-cancel-update",
     "allow-get-packbuilder-status",
     "allow-install-packbuilder"
   ]

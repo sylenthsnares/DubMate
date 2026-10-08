@@ -128,7 +128,9 @@ async function init() {
           isUpdating = true;
           showUpdater();
           if (updaterMsg) {
-            updaterMsg.innerText = payload.data.changelog || "Downloading the update";
+            updaterMsg.innerText = payload.data.first_download
+              ? "Downloading DubMate. This happens once."
+              : payload.data.changelog || "Downloading the update";
           }
 
           try {

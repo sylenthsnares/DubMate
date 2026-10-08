@@ -74,6 +74,7 @@ fn main() {
             get_engine_port,
             trigger_start_sidecars,
             apply_update,
+            updater::cancel_update,
             packbuilder::get_packbuilder_status,
             packbuilder::install_packbuilder,
             packbuilder::remove_packbuilder,
@@ -102,6 +103,9 @@ async fn trigger_start_sidecars(app: tauri::AppHandle) {
 
 #[tauri::command]
 async fn apply_update(download_url: String, app: tauri::AppHandle) -> Result<(), String> {
+    // A Skip from an earlier update must not stop this one.
+    updater::clear_update_cancel();
+
     // Only ever fetch from this project's own release assets. Without this the
     // command would extract whatever zip the caller names over the install dir.
     if !updater::is_trusted_update_url(&download_url) {

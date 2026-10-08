@@ -13,6 +13,7 @@ fn main() {
         "get_engine_port",
         "trigger_start_sidecars",
         "apply_update",
+        "cancel_update",
         "get_packbuilder_status",
         "install_packbuilder",
         "remove_packbuilder",
