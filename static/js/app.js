@@ -14,6 +14,7 @@ import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
+import { TakesCardMethods } from './studio/takes_card.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
@@ -93,6 +94,7 @@ class DubMateApp {
   // Per-room state that must not leak from one room into the next. Called by
   // leaveRoom() and at the start of joinRoom().
   resetRoomSession() {
+    this.flushPendingDelete();
     this.stopShareWatch();
     this.stopTakeVoice();
     this.roomShare = null;
@@ -254,8 +256,11 @@ class DubMateApp {
     this.recordStatusSub = document.getElementById('record-status-sub');
     this.micSyncHint = document.getElementById('mic-sync-hint');
     this.cardTakes = document.getElementById('card-takes');
-    this.btnTakeHistory = document.getElementById('btn-take-history');
-    this.takeHistoryPanel = document.getElementById('take-history-panel');
+    this.takesCardTitle = document.getElementById('takes-card-title');
+    this.takesKeyHint = this.cardTakes?.querySelector('.takes-key-hint');
+    this.takesEmpty = document.getElementById('takes-empty');
+    this.takesList = document.getElementById('takes-list');
+    this.takesHint = document.getElementById('takes-hint');
     this.btnPlayOrig = document.getElementById('btn-play-orig');
     this.btnPreviewTake = document.getElementById('btn-preview-take');
     this.labelPreviewTake = document.getElementById('label-preview-take');
@@ -804,14 +809,6 @@ class DubMateApp {
       this.hideDoneAsk();
       this.finishMyLines();
     });
-    this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
-    // Escape inside the take history closes it and returns to the button, and nothing else.
-    this.btnTakeHistory.parentElement.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape' || !this.takeHistoryOpen) return;
-      e.stopPropagation();
-      this.toggleTakeHistory();
-      this.btnTakeHistory.focus();
-    });
     this.btnOriginalSpeed?.addEventListener('click', () => this.playAtOriginalSpeed());
 
     // Studio Noise Reduction Synchronization Listeners
@@ -835,10 +832,13 @@ class DubMateApp {
     this.initAudioSettingsEvents();
     this.initMicSyncEvents();
     this.initVoiceRackEvents();
+    this.initTakesCardEvents();
     this.initRoomCheckEvents();
 
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift most layouts report { / }.
+    // T (the take in the dub), A (switch Original/Take), , and . (previous/next line); the
+    // Takes card handles its own arrows, P, Enter and Delete (takes_card.js).
     // The list the user sees is SHORTCUT_GROUPS in shortcuts.js; keep the two in step.
     // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
     window.addEventListener('keydown', (e) => {
@@ -889,6 +889,14 @@ class DubMateApp {
           e.preventDefault();
           const delta = e.shiftKey ? 100 : 25;
           this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('.analog-dial-wrapper')) {
+          const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+          const action = { t: () => this.focusPickedTake(), a: () => this.switchTransportSide(),
+            ',': () => this.stepLine(-1), '.': () => this.stepLine(1) }[key];
+          if (action) {
+            e.preventDefault();
+            action();
+          }
         }
       } else if (this.views.screening.classList.contains('active')) {
         if (e.code === 'Space') {
@@ -968,7 +976,7 @@ class DubMateApp {
       }
       if (this.currentView === 'booth') {
         this.renderTimelineChips();
-        this.renderTakeHistory();
+        this.renderTakesCard();
       }
       this.renderCastActivityHUD();
       this.updateScreeningControls();
@@ -988,7 +996,7 @@ class DubMateApp {
         }
         if (this.currentView === 'booth') {
           this.renderTimelineChips();
-          this.renderTakeHistory();
+          this.renderTakesCard();
         }
         this.renderCastActivityHUD();
         this.updateScreeningControls();
@@ -1053,7 +1061,9 @@ class DubMateApp {
       }
       if (!this.applyIncomingState(data)) return;
       if (lineIdx === this.currentLineIndex) {
-        this.loadBoothLine(lineIdx);
+        // A delete that went out after its Undo time can land mid-take: don't cancel it.
+        if (this.recordState === 'countdown' || this.recordState === 'recording') this.renderTakesCard();
+        else this.loadBoothLine(lineIdx);
       }
       this.renderTimelineChips();
       this.renderCastActivityHUD();
@@ -1411,6 +1421,7 @@ class DubMateApp {
     // must not fall back to the host's home screen).
     if (viewName === 'landing' && this.currentView === 'left') viewName = 'left';
     document.body.classList.remove('resizing');
+    if (viewName !== 'booth') this.flushPendingDelete();
     this.currentView = viewName;
     this.cancelCurrentCountdown();
     this.stopScreeningSyncMonitor();
@@ -1745,7 +1756,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

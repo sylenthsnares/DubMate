@@ -762,9 +762,9 @@
               <!-- One transport: the original line or the take in the dub -->
               <div class="transport-seg" role="group" aria-label="Listen">
                 <button id="btn-play-orig" class="transport-seg-btn" type="button" aria-pressed="false"
-                  data-tip="Play the original line">▶ Original</button>
+                  data-tip="Play the original line (A)">▶ Original</button>
                 <button id="btn-preview-take" class="transport-seg-btn" type="button" aria-pressed="false" disabled
-                  data-tip="Play your take over the scene's music">▶ <span id="label-preview-take">Take</span></button>
+                  data-tip="Play your take over the scene's music (A)">▶ <span id="label-preview-take">Take</span></button>
               </div>
 
               <div id="mic-sync-hint" class="mic-sync-hint" hidden>
@@ -779,18 +779,17 @@
           <!-- Row 2: the scrolling middle -->
           <div class="booth-column-scroll" id="booth-column-scroll">
 
-          <!-- Takes -->
-          <div class="takes-card glass-card rack-wood-frame" id="card-takes" style="display: none;">
-            <div class="panel-header-sm amp-faceplate">
-              <span>TAKES</span>
+          <!-- Takes: every take of this line, newest first. The green row is the take in
+               the dub (takes_card.js). -->
+          <div class="takes-card glass-card rack-wood-frame" id="card-takes">
+            <div class="panel-header-sm amp-faceplate takes-card-header">
+              <span id="takes-card-title">TAKES</span>
+              <span class="takes-key-hint" hidden><kbd>T</kbd> to pick</span>
             </div>
             <div class="takes-card-body">
-              <div id="take-history" class="take-history" style="display: none;">
-                <button id="btn-take-history" class="btn btn-secondary btn-xs" aria-expanded="false"
-                  aria-controls="take-history-panel"
-                  data-tip="Listen to your takes and choose the one used in the dub"><span class="take-history-count">Takes (1)</span><span aria-hidden="true" class="take-history-chevron"></span></button>
-                <div id="take-history-panel" class="take-history-panel" style="display: none;"></div>
-              </div>
+              <p id="takes-empty" class="takes-empty">No takes yet. Press Space to record.</p>
+              <div id="takes-list" class="takes-list" role="radiogroup" aria-labelledby="takes-card-title"></div>
+              <p id="takes-hint" class="takes-hint" hidden>Record again to compare takes.</p>
             </div>
           </div>
           <!-- Deck 3: Voice. Presets and Level first; the full rack one click away.
@@ -1087,8 +1086,9 @@
           <!-- Row 3: line navigation -->
           <div class="booth-nav-group">
             <button id="btn-prev-line" class="btn btn-secondary btn-sm booth-nav-prev" type="button"
-              aria-label="Previous line">‹ Prev</button>
-            <button id="btn-next-line" class="btn btn-primary btn-sm booth-nav-next" type="button">Next line ›</button>
+              aria-label="Previous line" data-tip="Previous line (,)">‹ Prev</button>
+            <button id="btn-next-line" class="btn btn-primary btn-sm booth-nav-next" type="button"
+              data-tip="Next line (.)">Next line ›</button>
             <div id="booth-done-ask" class="booth-done-ask" role="group" aria-labelledby="booth-done-ask-text" hidden>
               <span id="booth-done-ask-text" class="booth-done-ask-text"></span>
               <div class="booth-done-ask-actions">

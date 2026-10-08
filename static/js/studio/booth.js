@@ -132,6 +132,10 @@ export class BoothMethods {
     if (!this.roomState || !this.roomState.pack.lines[index]) return;
     this.cancelCurrentCountdown();
     this.flushVoiceSave();
+    // A delete waiting on its Undo goes out once you leave its line.
+    if (this.pendingDelete && this.pendingDelete.lineId !== this.roomState.pack.lines[index].line_id) {
+      this.flushPendingDelete();
+    }
     this.currentLineIndex = index;
     const line = this.roomState.pack.lines[index];
     this.loadLineSeq = (this.loadLineSeq || 0) + 1;
@@ -192,7 +196,7 @@ export class BoothMethods {
     this.recordState = 'idle';
     this.updateRecordButtonUI(take);
     this.updateTimingCaption();
-    this.renderTakeHistory();
+    this.renderTakesCard();
     this.setABMode('A');
 
     // 1. INSTANT WAVEFORM RENDERING (0ms latency via precomputed peaks)
@@ -280,8 +284,7 @@ export class BoothMethods {
 
     if (this.btnNextLine) {
       this.btnNextLine.textContent = isLast ? 'Done ›' : 'Next line ›';
-      if (isLast) this.btnNextLine.dataset.tip = "Marks you ready for the premiere";
-      else this.btnNextLine.removeAttribute('data-tip');
+      this.btnNextLine.dataset.tip = isLast ? 'Marks you ready for the premiere (.)' : 'Next line (.)';
     }
     this.renderBoothToolbar();
   }
@@ -394,6 +397,17 @@ export class BoothMethods {
     }
   }
 
+  /** The A key: while the take plays it swaps what you hear in place; otherwise it plays
+   *  the take, or the original on a line with no take yet. */
+  switchTransportSide() {
+    if (this.isPlayingCurrentTake()) {
+      this.setABMode(this.audio.abState === 'B' ? 'A' : 'B');
+      return;
+    }
+    this.pressTransport(this.takeForLine(this.currentLineIndex) ? 'take' : 'original');
+  }
+
+  /** One button per line, numbered as in the scene: "1 ✓ 3 takes". */
   renderTimelineChips() {
     if (!this.roomState || !this.timelineChips) return;
     this.timelineChips.innerHTML = '';
@@ -1259,113 +1273,7 @@ export class BoothMethods {
     }
   }
 
-  /** Deletes one of the current line's takes after a confirm. */
-  async deleteTake(take) {
-    if (this.isProcessingTake) return;
-    this.cancelCurrentCountdown();
-    const lineIndex = this.currentLineIndex;
-    const line = this.roomState?.pack?.lines?.[lineIndex];
-    if (!line || !take) {
-      this.showToast("Record a take first");
-      return;
-    }
-    if (!confirm(`Delete take ${take.number}? This can't be undone.`)) return;
-
-    try {
-      const res = await fetch(
-        `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}?user_id=${encodeURIComponent(this.user.id)}`,
-        { method: 'DELETE' },
-      );
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      this.audio.evictTakeCache(take);
-      if (data.line) {
-        this.roomState.takes[line.line_id] = data.line;
-      } else {
-        delete this.roomState.takes[line.line_id];
-      }
-      this.showToast("Take deleted");
-      if (lineIndex === this.currentLineIndex) this.loadBoothLine(lineIndex);
-    } catch (err) {
-      this.showToast(this.friendlyError(err, "That take wasn't deleted. Try again."));
-    }
-  }
-
-  // --- Take history ---
-
-  toggleTakeHistory() {
-    this.takeHistoryOpen = !this.takeHistoryOpen;
-    this.renderTakeHistory();
-  }
-
-  /** The "Takes (N)" button and its panel. Shown from the first take on a line you can record. */
-  renderTakeHistory() {
-    if (!this.btnTakeHistory || !this.takeHistoryPanel) return;
-    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
-    if (line?.line_id !== this.takeHistoryLineId) {
-      // A different line starts with the history closed.
-      this.takeHistoryLineId = line?.line_id;
-      this.takeHistoryOpen = false;
-    }
-    const takes = line ? lineTakes(this.roomState.takes, line) : [];
-    const show = !!line && takes.length >= 1 && this.canRecordLine(line);
-    const open = show && !!this.takeHistoryOpen;
-    this.btnTakeHistory.parentElement.style.display = show ? '' : 'none';
-    if (this.cardTakes) this.cardTakes.style.display = show ? '' : 'none';
-    const label = this.btnTakeHistory.querySelector('.take-history-count');
-    if (label) label.textContent = `Takes (${takes.length})`;
-    this.btnTakeHistory.setAttribute('aria-expanded', String(open));
-    this.takeHistoryPanel.style.display = open ? '' : 'none';
-    this.takeHistoryPanel.innerHTML = '';
-    if (!open) return;
-
-    const picked = pickedTake(this.roomState.takes, line);
-    const scored = (t) => Number.isFinite(t.timing_score) && t.timing_score >= 0;
-    let bestTimed = null;
-    for (const take of takes) {
-      if (scored(take) && take.timing_score > 0 && (!bestTimed || take.timing_score >= bestTimed.timing_score)) bestTimed = take;
-    }
-    for (const take of takes) {
-      const row = document.createElement('div');
-      row.className = 'take-history-row' + (take === picked ? ' picked' : '');
-      const label = document.createElement('span');
-      label.className = 'take-history-label';
-      label.textContent = `Take ${take.number} · ${take.user_name || 'Cast member'} · ${(Number(take.duration) || 0).toFixed(1)}s`;
-      row.appendChild(label);
-      if (scored(take)) {
-        const timing = document.createElement('span');
-        timing.className = 'take-history-timing' + (take === bestTimed ? ' best' : '');
-        timing.textContent = `Timing ${Math.round(take.timing_score * 100)}%`;
-        timing.dataset.tip = "How closely this take follows the original line's timing";
-        timing.tabIndex = 0;
-        row.appendChild(timing);
-      }
-
-      const addButton = (text, cls, onClick, tip) => {
-        const btn = document.createElement('button');
-        btn.className = `btn btn-xs ${cls}`;
-        btn.textContent = text;
-        if (tip) btn.dataset.tip = tip;
-        btn.addEventListener('click', onClick);
-        row.appendChild(btn);
-        return btn;
-      };
-      addButton('Play', 'btn-secondary take-history-play', (e) => this.playHistoryTake(take, e.currentTarget));
-      if (take === picked) {
-        const badge = document.createElement('span');
-        badge.className = 'take-history-picked';
-        badge.textContent = 'In the dub';
-        row.appendChild(badge);
-      } else {
-        addButton('Use', 'btn-primary take-history-use', () => this.pickTake(take), 'Use this take in the dub');
-      }
-      const del = addButton('✕', 'btn-ghost take-history-delete', () => this.deleteTake(take), 'Delete this take');
-      del.setAttribute('aria-label', `Delete take ${take.number}`);
-      this.takeHistoryPanel.appendChild(row);
-    }
-  }
+  // --- Takes (the card itself: takes_card.js) ---
 
   /** Plays a take from the history over the scene with its own sound, timing and level,
    *  once the engine has rendered it (the button pulses meanwhile); the controls stay put. */

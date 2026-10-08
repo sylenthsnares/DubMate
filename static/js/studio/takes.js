@@ -27,6 +27,15 @@ export function takeCount(takes, line) {
   return lineTakes(takes, line).length;
 }
 
+/** How well a take follows the original line's timing, in words: "Tight sync" from 0.8,
+ *  "Good sync" from 0.6, "Loose sync" below, "–" when it wasn't measured. Negative
+ *  scores come from older takes and count as not measured. */
+export function syncWords(score) {
+  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0) return '–';
+  if (score >= 0.8) return 'Tight sync';
+  return score >= 0.6 ? 'Good sync' : 'Loose sync';
+}
+
 /** The take's audio URL without its cache-busting ?v=, or null. */
 export function takeAudioKey(take) {
   if (!take || !take.url) return null;
