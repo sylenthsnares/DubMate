@@ -6,9 +6,14 @@
   "permissions": [
     "core:default",
     "allow-get-engine-port",
+    "allow-get-last-failure",
     "allow-trigger-start-sidecars",
     "allow-apply-update",
+    "allow-cancel-update",
     "allow-get-packbuilder-status",
-    "allow-install-packbuilder"
+    "allow-start-packbuilder-install",
+    "allow-get-packbuilder-install",
+    "allow-open-mic-settings",
+    "allow-open-studio-in-browser"
   ]
 }

@@ -29,9 +29,9 @@ const CLAP_LEAD_SEC = 0.8;
 const CLICKS_COPY = "The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic.";
 const CLICKS_FAILED_COPY = "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again.";
 const CLAP_COPY = "Put your headphones back on, then clap on each beat you hear.";
-const UNEVEN_COPY = "Your claps were uneven. Try again, clapping right on each click.";
-const QUIET_COPY = "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.";
-const NOISY_COPY = "DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each click.";
+const UNEVEN_COPY = "Your claps were uneven. Try again, clapping right on each beat.";
+const QUIET_COPY = "DubMate couldn't hear your claps. Clap closer to the mic, right on each beat.";
+const NOISY_COPY = "DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each beat.";
 const GUEST_TIP = "Your browser keeps this until the host restarts DubMate.";
 
 function fail(msg) {

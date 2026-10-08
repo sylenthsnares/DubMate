@@ -6,7 +6,8 @@
  *  - one avatar per person online (their initial on their colour); offline people are left out,
  *  - after 5 avatars a "+N" disc,
  *  - the stack is one button named "Who's here: Tani, Mika, 1 of 2 ready",
- *  - its popover opens on focus, on hover and on click, and Esc closes it and keeps focus
+ *  - its popover opens on focus and on click at once, on hover after a short pause (a pointer
+ *    passing over doesn't flash it, and crossing the gap to it doesn't close it), and Esc closes it and keeps focus
  *    on the button without reaching the booth's own Esc handling,
  *  - one popover row per person: roles, where they are, their progress and Ready,
  *  - an unchanged update leaves the stack and popover alone, so an open popover survives.
@@ -197,14 +198,40 @@ const rgb = (hex) => {
     check(text(pop).includes("Sam <b>") && !pop.querySelector("b"), "names are escaped");
     check(btn.getAttribute("aria-label").startsWith("Who's here: Tani, Mika, Sam <b>, Guest1"), "the accessible name lists everyone", btn.getAttribute("aria-label"));
 
-    // Hover opens it, leaving closes it.
-    slot.querySelector(".presence").dispatchEvent(new w.MouseEvent("mouseenter", { bubbles: false }));
+    // Hover opens it after a short pause, so a pointer passing over doesn't flash it.
+    const presence = slot.querySelector(".presence");
+    const enter = () => presence.dispatchEvent(new w.MouseEvent("mouseenter", { bubbles: false }));
+    const leave = () => presence.dispatchEvent(new w.MouseEvent("mouseleave", { bubbles: false }));
+    enter();
+    check(pop.hidden, "a pointer that just arrived doesn't open the popover yet");
+    leave();
+    await tick(250);
+    check(pop.hidden, "a pointer passing over the stack never opens the popover");
+    enter();
+    await tick(250);
     check(!pop.hidden, "hovering the stack opens the popover");
-    slot.querySelector(".presence").dispatchEvent(new w.MouseEvent("mouseleave", { bubbles: false }));
+    // Crossing the gap to the popover doesn't close it; leaving for good does.
+    leave();
+    check(!pop.hidden, "the popover stays while the pointer crosses the gap to it");
+    enter();
+    await tick(250);
+    check(!pop.hidden, "the pointer reaching the popover keeps it open");
+    leave();
+    await tick(250);
     check(pop.hidden, "the pointer leaving closes it");
 
+    // A click decides: the pointer arriving and clicking twice leaves it closed.
+    enter();
+    btn.click();
+    btn.click();
+    await tick(250);
+    check(pop.hidden, "a hover still waiting doesn't reopen a popover a click closed");
+    leave();
+    await tick(250);
+
     // Esc on a hovered popover closes it without moving focus.
-    slot.querySelector(".presence").dispatchEvent(new w.MouseEvent("mouseenter", { bubbles: false }));
+    enter();
+    await tick(250);
     const other = doc.getElementById("btn-toggle-ready");
     other.focus();
     key(w, doc.body, "Escape");

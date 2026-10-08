@@ -6,17 +6,18 @@ import { openDialog, plural, announce } from '../ui_common.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
 import { micErrorMessage } from './audio_setup.js';
-import { renderPresenceStack } from './presence.js';
+import { renderPresenceStack, closePresence } from './presence.js';
 
 const LOCK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 const SAVING_ICON = '<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>';
 const IDLE_HINT = '<kbd>Space</kbd> · 3-beat count-in';
 // Inert and dimmed during the count-in and while recording: only the record button, the
 // picture, the line and the waveform stay (the waveform shows the live trace, undimmed and
-// not draggable: renderTakeDependents). The connection banner always stays live.
+// not draggable: renderTakeDependents). The header goes as a whole, so a control added to
+// it later is covered too; only the connection banner always stays live.
 const INERT_WHILE_TAKING = [
-  'header .logo-dropdown-container', '#studio-breadcrumbs', '#header-room-badge', '#btn-audio-settings',
-  '#btn-shortcuts', '#btn-leave-room', '#view-booth .stage-top-bar', '#view-booth .nudge-preset-bar',
+  'header.app-header > .header-left', 'header.app-header > .header-status',
+  '#view-booth .stage-top-bar', '#view-booth .nudge-preset-bar',
   '#btn-expand-video', '#prompter-resize-handle', '#view-booth .transport-seg', '#mic-sync-hint',
   '#booth-column-scroll', '#view-booth .booth-nav-group',
 ].join(', ');
@@ -69,8 +70,8 @@ export class BoothMethods {
   }
 
   /** The Voice card's summary of what All effects holds: "level matched · noise cleanup on",
-   *  the level you set ("level +2 dB") once you turned it, and "level matched when you
-   *  record" before the first take. */
+   *  the level you set ("level +2 dB") once you turned it, "level as recorded" at 0 dB on a
+   *  take the engine couldn't level, and "level matched when you record" before the first take. */
   renderVoiceSummary(take = this.takeForLine(this.currentLineIndex), matched = null) {
     const summary = document.getElementById('voice-summary');
     if (!summary) return;
@@ -78,8 +79,9 @@ export class BoothMethods {
       matched = !!take && take.auto_gain_db != null
         && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
     }
-    const level = !take ? 'level matched when you record'
-      : (matched ? 'level matched' : `level ${this.gainText(take.gain_db)}`);
+    let level = 'level matched when you record';
+    if (take && matched) level = 'level matched';
+    else if (take) level = this.gainText(take.gain_db) === '0 dB' ? 'level as recorded' : `level ${this.gainText(take.gain_db)}`;
     summary.textContent = `${level} · noise cleanup ${this.checkNoiseReduction?.checked ? 'on' : 'off'}`;
   }
 
@@ -158,6 +160,12 @@ export class BoothMethods {
     document.body.classList.toggle('is-taking', taking);
     document.querySelectorAll(INERT_WHILE_TAKING).forEach((el) => el.toggleAttribute('inert', taking));
     this.renderTakeDependents();
+    if (!taking) return;
+    // The who's-here popover would sit over the picture for the whole take.
+    closePresence(document.getElementById('booth-presence'));
+    // A take started from a take row, Next line or the stack: focus goes to Record, the one
+    // control left, instead of falling to the page.
+    if (document.activeElement?.closest?.('[inert]')) this.btnRecordMain?.focus();
   }
 
   cancelCurrentCountdown() {
@@ -418,8 +426,10 @@ export class BoothMethods {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const badge = this.recordEngineBadge;
     const sub = this.recordStatusSub;
-    // On a line you can't record: no record button, and Monitor keeps only Backing.
-    const readOnly = !this.canRecordLine(line);
+    // On a line you can't record: no record button, and Monitor keeps only Backing. A take
+    // under way keeps its Stop, even if the host took the role away meanwhile.
+    const taking = this.recordState === 'countdown' || this.recordState === 'recording';
+    const readOnly = !taking && !this.canRecordLine(line);
     const bezel = this.btnRecordMain.closest('.record-bezel-wrapper');
     if (bezel) bezel.hidden = readOnly;
     const switches = document.querySelector('#card-studio-monitoring .monitor-switches');
@@ -986,22 +996,16 @@ export class BoothMethods {
         }
       }
 
-      this.showToast(enable ? "Noise reduction on" : "Noise reduction off. Original take restored.");
+      this.showToast(enable ? "Noise cleanup on" : "Noise cleanup off. Original take restored.");
     } catch (err) {
       console.warn("[App] Error toggling take noise reduction:", err);
-      this.showToast(this.friendlyError(err, "Couldn't change the noise reduction setting."));
+      this.showToast(this.friendlyError(err, "Couldn't change noise cleanup."));
     }
   }
 
   async toggleRecording() {
     if (!this.roomState) return;
-    const line = this.roomState.pack.lines[this.currentLineIndex];
-    const isMyLine = this.canRecordLine(line);
-    if (!isMyLine) {
-      this.showToast(`Line ${this.currentLineIndex + 1} belongs to ${line.character}. Only their actor can record it.`);
-      return;
-    }
-
+    // A take under way can always be ended, even if the host took the role away meanwhile.
     if (this.recordState === 'countdown') {
       this.cancelCurrentCountdown();
       return;
@@ -1009,6 +1013,12 @@ export class BoothMethods {
 
     if (this.recordState === 'recording') {
       await this.finishRecording();
+      return;
+    }
+
+    const line = this.roomState.pack.lines[this.currentLineIndex];
+    if (!this.canRecordLine(line)) {
+      this.showToast(`Line ${this.currentLineIndex + 1} belongs to ${line.character}. Only their actor can record it.`);
       return;
     }
 

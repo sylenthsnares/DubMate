@@ -11,6 +11,9 @@ pub struct DubMateState {
     /// Port the Python engine actually bound to; 8000 unless it was taken.
     pub engine_port: Option<u16>,
     pub is_tunnel_ready: bool,
+    /// The last `server-error`, until the next start. A failure in the first moments
+    /// can come before the launcher listens, so it asks for this once it does.
+    pub last_failure: Option<crate::sidecars::EngineFailure>,
 }
 
 pub struct SharedState(pub Mutex<DubMateState>);

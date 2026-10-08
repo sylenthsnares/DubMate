@@ -12,7 +12,11 @@
  *    cancelling the count-in (Space, click, Esc), a mic that fails to open, loading
  *    another line, leaving the booth or the room, and "Nothing was recorded",
  *  - saving is live; the timing row keeps its own "no take yet" inert,
- *  - Esc cancels the count-in and does nothing while recording; ? and [ ] wait too.
+ *  - Esc cancels the count-in and does nothing while recording; ? and [ ] wait too,
+ *  - the whole header but the connection banner is inert (new header controls included),
+ *  - Space on the who's-here stack presses it, and a take closes its popover,
+ *  - a take started away from Record moves focus to Record,
+ *  - a take whose role the host took away can still be stopped.
  * Fetch, the recorder and the socket are stubbed; the count-in runs 20x faster.
  */
 const jsdom = require("jsdom");
@@ -37,12 +41,18 @@ process.on("unhandledRejection", (err) => fail(`unhandled rejection: ${err && er
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
 const INERT_WHILE_TAKING = [
-  "header .logo-dropdown-container", "#studio-breadcrumbs", "#header-room-badge", "#btn-audio-settings",
-  "#btn-shortcuts", "#btn-leave-room", "#view-booth .stage-top-bar", "#view-booth .nudge-preset-bar",
+  "header.app-header > .header-left", "header.app-header > .header-status",
+  "#view-booth .stage-top-bar", "#view-booth .nudge-preset-bar",
   "#btn-expand-video", "#prompter-resize-handle", "#view-booth .transport-seg", "#mic-sync-hint",
   "#booth-column-scroll", "#view-booth .booth-nav-group",
 ];
 const ALWAYS_LIVE = ["#connection-banner", "#btn-record-main", "#stage-video", "#stage-caption-text"];
+// Every header control is covered by default, the Pack Builder chip and the user pill too.
+const HEADER_PARTS = [
+  "#btn-mode-dropdown", "#nav-step-lobby", "#nav-step-screening", "#header-room-badge", "#header-user-pill",
+  "#packbuilder-install-chip", "#btn-packbuilder-install-retry", "#btn-packbuilder-restart",
+  "#btn-confirm-packbuilder-restart", "#btn-audio-settings", "#btn-shortcuts", "#btn-leave-room",
+];
 
 // 1. Static: recordState is assigned in one place (the constructor's first value aside).
 {
@@ -201,6 +211,14 @@ function expectFocus(env, where) {
   for (const sel of ALWAYS_LIVE) {
     const el = q(env, sel);
     if (!el || el.closest("[inert]")) fail(`${where}: ${sel} is inert`);
+  }
+  for (const sel of HEADER_PARTS) {
+    const el = q(env, sel);
+    if (!el) fail(`${where}: ${sel} is missing`);
+    if (!el.closest("[inert]")) fail(`${where}: ${sel} is live`);
+  }
+  for (const el of env.w.document.querySelectorAll("header.app-header > *")) {
+    if (el.id !== "connection-banner" && !el.hasAttribute("inert")) fail(`${where}: a header part (${el.className}) is live`);
   }
 }
 
@@ -398,6 +416,77 @@ async function answerUploads(env) {
     await tick();
     expectClear(env, "leaving the room");
     console.log("PASS: leaving the booth or the room clears it");
+  }
+
+  // 10. The who's-here popover: Space on the stack is a button press, and a take closes it.
+  {
+    app.roomState = room();
+    app.showView("booth");
+    await app.loadBoothLine(0);
+    await tick();
+    const stack = q(env, "#booth-presence .presence-stack");
+    const pop = q(env, "#booth-presence .presence-pop");
+    if (!stack || !pop) fail("no who's-here stack in the booth bar");
+    stack.focus();
+    stack.click();
+    if (pop.hidden) fail("a click didn't open the who's-here popover");
+    const ev = new w.KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "Space", key: " " });
+    stack.dispatchEvent(ev);
+    await tick();
+    if (app.recordState !== "idle") fail(`Space on the who's-here stack started a take (${app.recordState})`);
+    if (ev.defaultPrevented) fail("Space on the who's-here stack didn't reach the button");
+    w.document.body.focus();
+    if (pop.hidden) stack.click();
+    if (pop.hidden) fail("the pinned popover closed before the take");
+    app.toggleRecording();
+    await until(env, "countdown", "take with the popover open");
+    if (!pop.hidden) fail("the who's-here popover stays open over the picture during the take");
+    if (stack.getAttribute("aria-expanded") !== "false") fail("the closed popover's button still says expanded");
+    esc(env);
+    expectClear(env, "count-in cancelled after the popover");
+    console.log("PASS: Space on the who's-here stack presses it; a take closes its popover");
+  }
+
+  // 11. Focus: a take started away from Record moves focus to it, never to the page.
+  {
+    await app.loadBoothLine(2);
+    const next = q(env, "#btn-next-line");
+    next.focus();
+    space(env);
+    await until(env, "countdown", "Space from Next line");
+    if (w.document.activeElement !== rec) fail(`a take started from Next line left focus on ${w.document.activeElement?.id || w.document.activeElement?.tagName}`);
+    space(env);
+    expectClear(env, "count-in cancelled from Next line");
+    const row = q(env, "#takes-list .take-pick");
+    if (!row) fail("no take row on line 3");
+    row.focus();
+    space(env);
+    await until(env, "countdown", "Space from a take row");
+    if (w.document.activeElement !== rec) fail(`a take started from a take row left focus on ${w.document.activeElement?.className || w.document.activeElement?.tagName}`);
+    space(env);
+    expectClear(env, "count-in cancelled from a take row");
+    console.log("PASS: a take started away from Record moves focus to Record");
+  }
+
+  // 12. The host takes your role away mid-take: Space and Stop still end it.
+  {
+    await app.loadBoothLine(0);
+    space(env);
+    await until(env, "recording", "before the role goes");
+    app.roomState.host_id = "u9";
+    app.roomState.role_assignments = { Ana: ["u9"], Ben: ["u9"] };
+    app.updateRecordButtonUI();
+    if (rec.closest(".record-bezel-wrapper").hidden) fail("the record button hid mid-take, so the take can't be stopped");
+    env.toasts.length = 0;
+    space(env);
+    await tick();
+    if (app.recordState === "recording") fail(`Space didn't stop a take whose role was taken away (${env.toasts})`);
+    expectClear(env, "role taken away mid-take");
+    if (!rec.closest(".record-bezel-wrapper").hidden) fail(`after the take the line you can't record still shows the record button (${app.recordState}, mine=${app.canRecordLine(app.roomState.pack.lines[0])}, line ${app.currentLineIndex})`);
+    await answerUploads(env);
+    app.roomState.host_id = "u1";
+    app.roomState.role_assignments = { Ana: ["u1"], Ben: ["u9"] };
+    console.log("PASS: a take whose role was taken away can still be stopped");
   }
 
   console.log("All recording focus checks passed");

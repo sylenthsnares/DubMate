@@ -7,6 +7,9 @@ import { takeCount } from './takes.js';
 
 // Avatars shown before the "+N" disc.
 const PRESENCE_MAX = 5;
+// Hover waits this long to open, so a pointer passing over doesn't flash the popover, and
+// to close, so crossing the gap to the popover doesn't close it.
+const HOVER_DELAY_MS = 150;
 // Each container's stack: its elements, the last drawn content and the open state.
 const presenceStacks = new WeakMap();
 
@@ -63,6 +66,7 @@ function buildPresenceStack(container) {
     list: root.querySelector('.presence-list'),
     html: '',
     hover: false,
+    hoverTimer: 0,
     pinned: false, // opened by a click: stays open until a second click, Esc or focus leaving
     ctrl: new AbortController(),
   };
@@ -72,16 +76,25 @@ function buildPresenceStack(container) {
     stack.button.setAttribute('aria-expanded', String(open));
     if (!open) stack.pinned = false;
   };
-  root.addEventListener('mouseenter', () => { stack.hover = true; show(true); }, { signal });
+  stack.show = show;
+  const later = (fn) => {
+    clearTimeout(stack.hoverTimer);
+    stack.hoverTimer = setTimeout(fn, HOVER_DELAY_MS);
+  };
+  root.addEventListener('mouseenter', () => {
+    stack.hover = true;
+    later(() => { if (stack.hover && !root.closest('[inert]')) show(true); });
+  }, { signal });
   root.addEventListener('mouseleave', () => {
     stack.hover = false;
-    if (!root.contains(document.activeElement)) show(false);
+    later(() => { if (!stack.hover && !root.contains(document.activeElement)) show(false); });
   }, { signal });
   root.addEventListener('focusin', () => show(true), { signal });
   root.addEventListener('focusout', (e) => {
     if (!root.contains(e.relatedTarget) && !stack.hover) show(false);
   }, { signal });
   stack.button.addEventListener('click', () => {
+    clearTimeout(stack.hoverTimer); // a click decides, not a hover still waiting
     if (stack.pinned) show(false);
     else { show(true); stack.pinned = true; }
   }, { signal });
@@ -97,6 +110,14 @@ function buildPresenceStack(container) {
   }, { signal });
   presenceStacks.set(container, stack);
   return stack;
+}
+
+/** Closes the popover of the stack in `container`, if it is open. */
+export function closePresence(container) {
+  const stack = container && presenceStacks.get(container);
+  if (!stack) return;
+  clearTimeout(stack.hoverTimer);
+  if (!stack.pop.hidden) stack.show(false);
 }
 
 /**

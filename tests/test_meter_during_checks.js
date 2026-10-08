@@ -25,6 +25,7 @@ const SR = 16000;
 const LEAD_SEC = 0.3;
 const BUSY_LINE = "Another app is using your microphone. Close it and try again.";
 const NOT_FOUND_LINE = "No microphone was found. Plug one in and press Rescan.";
+const SYNC_HINT = "Syncing. The clicks and claps read loud here, and that's fine.";
 const OK_REPORT = {
   verdict: "ok", speech_floor_db: -52.4, rumble_share: 0.71, hum_hz: 50, tones_hz: [50.0, 150.0],
   hiss: false, unstable: true, suppressed: false, clipped: false,
@@ -203,7 +204,8 @@ async function boot() {
 }
 
 const $ = (env, id) => env.w.document.getElementById(id);
-const maskWidth = (env) => parseFloat($(env, "level-meter-mask").style.width);
+// How far the bar reaches, in percent of the meter.
+const fillWidth = (env) => parseFloat($(env, "level-meter-fill").style.width);
 const liveStreams = (env) => env.streams.filter((s) => s.track.readyState === "live");
 
 function done(env) {
@@ -220,7 +222,7 @@ async function expectMeterLive(env, what) {
   if (env.app.audioSetup.meterRaf === null) fail(`${what}: meter loop not scheduled`);
   if (env.raf.size !== 1) fail(`${what}: ${env.raf.size} frame loops`);
   if (liveStreams(env)[0] !== env.audio.monitorStream) fail(`${what}: the live stream is not the meter's`);
-  if (!(maskWidth(env) < 50)) fail(`${what}: bar did not move (mask ${maskWidth(env)}%)`);
+  if (!(fillWidth(env) > 50)) fail(`${what}: bar did not move (fill ${fillWidth(env)}%)`);
   if (env.gaps) fail(`${what}: the meter stopped for ${env.gaps} samples`);
 }
 
@@ -265,7 +267,15 @@ const CHECKS = {
       if (env.raf.size !== 1) fail(`${name}: meter loop not running during the check (${env.raf.size})`);
       const level = env.audio.readInputLevel();
       if (!level || Math.abs(level.rms - 0.5) > 1e-6) fail(`${name}: readInputLevel during the check: ${JSON.stringify(level)}`);
-      if (!(maskWidth(env) < 50)) fail(`${name}: bar frozen during the check (mask ${maskWidth(env)}%)`);
+      if (!(fillWidth(env) > 50)) fail(`${name}: bar frozen during the check (fill ${fillWidth(env)}%)`);
+      if (name === "mic sync") {
+        // The sync clicks and claps peak near full scale: the hint must not ask for a quieter mic.
+        env.amp = 0.99;
+        await tick(60);
+        const hint = $(env, "level-meter-hint").textContent;
+        if (hint !== SYNC_HINT) fail(`mic sync: the hint reads "${hint}" during the sync`);
+        env.amp = 0.5;
+      }
       await expectMeterLive(env, `${name} done`);
       if (name === "mic sync" && !/140 ms/.test($(env, "mic-sync-status").textContent)) fail("mic sync did not save");
       console.log(`PASS: ${name}: the bar follows the check's stream and the meter is live after it`);
@@ -313,11 +323,10 @@ const CHECKS = {
     await until(() => env.failNext === 0 && !env.app.micSyncBusy, "the failed reopen");
     await tick(100);
     const hint = $(env, "level-meter-hint");
-    // The studio sets the hint through innerText, which JSDOM keeps as a plain property.
-    if (hint.innerText !== BUSY_LINE) fail(`hint after a failed reopen: ${hint.innerText}`);
+    if (hint.textContent !== BUSY_LINE) fail(`hint after a failed reopen: ${hint.textContent}`);
     if (!hint.classList.contains("is-error")) fail("hint not shown as an error");
     if (env.raf.size !== 1 || env.gaps) fail(`loop after a failed reopen: ${env.raf.size} pending, ${env.gaps} gaps`);
-    if (maskWidth(env) !== 100) fail(`bar not at the floor: ${maskWidth(env)}%`);
+    if (fillWidth(env) !== 0) fail(`bar not at the floor: ${fillWidth(env)}%`);
     if (liveStreams(env).length) fail("a stream is still open");
     console.log("PASS: when the meter can't reopen the mic the hint says so and the bar rests at the floor");
     done(env);

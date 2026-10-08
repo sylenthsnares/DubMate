@@ -237,8 +237,11 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     // The cue shows only on hover and keyboard focus; its slot keeps its width so ▶ never moves.
     const css = fs.readFileSync(path.join(PROJECT_ROOT, "static", "css", "style.css"), "utf8");
     if (!/\.take-use-cue\s*\{[^}]*visibility:\s*hidden/.test(css)) fail("the cue isn't hidden by default");
-    if (!/\.take-row:hover \.take-use-cue/.test(css) || !/\.take-pick:focus \.take-use-cue/.test(css)) fail("the cue doesn't show on hover and focus");
-    if (!/\.take-slot\s*\{[^}]*width:/.test(css)) fail("the slot has no fixed width");
+    // Only over the part a click uses (not ▶ or ⋯), and on keyboard focus.
+    if (!/\.take-pick:hover \.take-use-cue/.test(css) || !/\.take-pick:focus-visible \.take-use-cue/.test(css)) fail("the cue doesn't show on hover and keyboard focus of the row's pick area");
+    if (/\.take-row:hover \.take-use-cue/.test(css)) fail("the cue shows while the pointer is on ▶ or ⋯");
+    if (!/\.take-use-cue\s*\{[^}]*font-size:\s*12px/.test(css)) fail("the cue isn't 12px hint text");
+    if (!/\.take-slot\s*\{[^}]*width:/.test(css) || !/\.take-slot\s*\{[^}]*overflow:\s*hidden/.test(css)) fail("the slot has no fixed width, or lets a wide cue spill over the sync word");
     const tabStops = rs.filter((r) => r.tabIndex === 0);
     if (tabStops.length !== 1 || tabStops[0] !== rs[0]) fail("one tab stop, on the take in the dub");
 
