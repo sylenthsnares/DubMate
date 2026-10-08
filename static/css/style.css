@@ -4331,16 +4331,23 @@ svg {
   50% { opacity: 0.45; transform: scale(0.82); }
 }
 
+/* The bottom padding sits on the steps, not the scrolling card: a sticky footer
+   would otherwise stop that far above the card's edge. */
 .audio-setup-card {
   max-width: 620px;
   text-align: left;
-  padding: 30px 28px 26px;
+  padding: 30px 28px 0;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
 }
 
 .audio-setup-step {
   display: none;
+  padding-bottom: 26px;
+}
+
+#audio-setup-step-devices {
+  padding-bottom: 0;
 }
 
 .audio-setup-title-row {
@@ -4352,15 +4359,15 @@ svg {
 }
 
 /* Done stays at the bottom of the scrolling card, over the card's own background,
-   and runs edge to edge (the negative margins cancel the card's padding). */
+   and runs edge to edge (the negative margins cancel the card's side padding). */
 .audio-settings-footer {
   position: sticky;
   bottom: 0;
   z-index: 1;
   justify-content: flex-end;
   gap: 10px;
-  margin: 20px -28px -26px;
-  padding: 14px 28px 20px;
+  margin: 20px -28px 0;
+  padding: 14px 28px 22px;
   background: #13100d; /* the bottom of .studio-modal-card's gradient */
   border-top: 1px solid var(--border);
 }
@@ -4679,7 +4686,7 @@ svg {
   bottom: 0;
   width: 0;
   background: var(--accent-brass);
-  transition: width 60ms linear, background-color var(--duration-fast) var(--ease-out);
+  transition: width 60ms linear;
 }
 
 .level-meter-track.is-good .level-meter-fill {
