@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -453,6 +454,68 @@ class TestMigration(MigrationCase):
                 return real_rename(src, dst)
             raise OSError(errno.EXDEV, "Invalid cross-device link")
         return rename
+
+
+class TestMoveSafety(MigrationCase):
+    """A power cut or a second DubMate during the move never costs the user a file."""
+
+    def test_a_copy_reaches_the_disk_before_the_original_is_removed(self):
+        base, old = windows_layout(self.tmp)
+        before = {k: snapshot(v) for k, v in old.items()}
+        synced, removed_after = [], {}
+        real_fsync, real_remove = os.fsync, data_home._remove
+
+        def fsync(fd):
+            synced.append(fd)
+            return real_fsync(fd)
+
+        def remove(path):
+            for item, p in old.items():
+                if path == p:
+                    removed_after[item] = len(synced)
+            return real_remove(path)
+
+        with mock.patch.object(data_home.os, "rename", side_effect=TestMigration._exdev_unless_partial()),                 mock.patch.object(data_home.os, "fsync", side_effect=fsync),                 mock.patch.object(data_home, "_remove", side_effect=remove):
+            self.migrate(base)
+        self.assert_moved(old, before)
+        files = 0
+        for item in data_home.ITEMS:
+            files += len(before[item])
+            self.assertGreaterEqual(removed_after.get(item, -1), files, f"{item} removed before its copy was on disk")
+
+    def test_a_read_only_file_is_copied_and_flushed_too(self):
+        base, old = windows_layout(self.tmp)
+        locked = os.path.join(old["data"], "rooms", "ABCD", "room.json")
+        os.chmod(locked, 0o444)
+        self.addCleanup(lambda: [os.chmod(os.path.join(d, n), 0o666) for d, _s, fs in os.walk(self.tmp) for n in fs])
+        before = {k: snapshot(v) for k, v in old.items()}
+        with mock.patch.object(data_home.os, "rename", side_effect=TestMigration._exdev_unless_partial()):
+            self.migrate(base, include_packbuilder=False)
+        self.assertEqual(snapshot(self.new("data")), before["data"])
+        self.assertFalse(os.access(os.path.join(self.new("data"), "rooms", "ABCD", "room.json"), os.W_OK))
+
+    def test_two_moves_at_once_take_turns(self):
+        """Two DubMate windows started together: the second waits, then finds the move done."""
+        base, old = windows_layout(self.tmp)
+        before = {k: snapshot(v) for k, v in old.items()}
+        results = []
+        with data_home._move_lock(self.root):
+            second = threading.Thread(target=lambda: results.append(self.migrate(base)))
+            second.start()
+            second.join(0.8)
+            self.assertTrue(second.is_alive(), "moved while another DubMate was moving")
+            self.assertEqual(snapshot(old["data"]), before["data"])
+        second.join(30)
+        self.assertFalse(second.is_alive())
+        self.assert_moved(old, before)
+        self.assertEqual({r["status"] for r in results[0]}, {"moved"})
+
+    def test_nothing_to_move_takes_no_lock(self):
+        """The engine checks at every start; with nothing left it makes no folder or lock."""
+        base, _old = windows_layout(self.tmp)
+        self.migrate(base)
+        with data_home._move_lock(self.root):
+            self.assertEqual(self.migrate(base), [])
 
 
 class TestEngineUsesTheDataHome(MigrationCase):

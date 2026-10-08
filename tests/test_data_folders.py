@@ -132,6 +132,21 @@ class TestListFolders(DataFoldersCase):
         self.assertEqual(folders[-2]["path"], os.path.normpath(addon))
         self.assertEqual(folders[-2]["label"], "Pack Builder add-on")
 
+    def test_the_addon_row_follows_the_data_folder_in_the_desktop_app(self):
+        """Pack Builder moved to the per-user folder: About shows it there, even before the
+        engine has loaded it (an install that finished after the engine started)."""
+        root = os.path.join(self.tmp, "LocalAppData", "DubMate")
+        addon = os.path.join(root, "ai-packages")
+        os.makedirs(addon)
+        with mock.patch.object(data_folders.data_home, "is_packaged", return_value=True),                 mock.patch.object(data_folders.data_home, "resolve",
+                                  side_effect=lambda item, **kw: os.path.join(root, item)),                 mock.patch.object(data_folders.data_home, "left_behind", return_value=[]):
+            folders = {f["key"]: f for f in self.local.get("/api/data-folders").json()["folders"]}
+        self.assertEqual(folders["addon"]["path"], os.path.normpath(addon))
+        with mock.patch.object(data_folders.data_home, "is_packaged", return_value=True),                 mock.patch.object(data_folders.data_home, "resolve",
+                                  side_effect=lambda item, **kw: os.path.join(self.tmp, "nowhere", item)),                 mock.patch.object(data_folders.data_home, "left_behind", return_value=[]):
+            keys = [f["key"] for f in self.local.get("/api/data-folders").json()["folders"]]
+        self.assertNotIn("addon", keys)
+
     def test_old_folders_an_earlier_version_left_are_listed_last(self):
         """2.0 moved the data out of the install folder; a copy it couldn't remove stays on disk."""
         old = os.path.join(self.tmp, "DubMate Studio", "data")

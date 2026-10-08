@@ -20,13 +20,16 @@ See documentation/design/v2-installer.md, sections 1 and 2.
 """
 
 import argparse
+import contextlib
 import errno
 import json
 import ntpath
 import os
 import posixpath
 import shutil
+import stat
 import sys
+import time
 
 APP_FOLDER = "DubMate"
 ITEMS = ("data", "ai-packages", "packbuilder.optin")
@@ -37,6 +40,9 @@ PACK_BUILDER_ITEMS = ("ai-packages", "packbuilder.optin")
 # (paths.rs) skips a kept item, and a failed one once it has failed MOVE_TRIES times.
 MOVE_STATUS = ".move-status.json"
 MOVE_TRIES = 2
+# Held while a move runs, so a second DubMate started meanwhile waits for it instead of
+# reading the old folder or copying over the first one's .partial.
+MOVE_LOCK = ".move.lock"
 
 # The folder holding app.py: <install root>/resources in the desktop app, the repo otherwise.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -223,6 +229,68 @@ def _sizes(path: str) -> dict:
     return out
 
 
+def _flush_to_disk(path: str) -> None:
+    """Waits until the copied file is on the disk itself, not only in the system's write
+    cache, so a power cut after the original is removed can't lose it."""
+    flags = (os.O_RDWR if os.name == "nt" else os.O_RDONLY) | getattr(os, "O_BINARY", 0)
+    mode = None
+    try:
+        fd = os.open(path, flags)
+    except PermissionError:  # read-only on Windows, where flushing needs write access
+        mode = os.stat(path).st_mode
+        os.chmod(path, mode | stat.S_IWRITE)
+        fd = os.open(path, flags)
+    try:
+        os.fsync(fd)
+        if sys.platform == "darwin":  # macOS's fsync stops at the drive's own cache
+            import fcntl
+            try:
+                fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+        if mode is not None:
+            os.chmod(path, mode)
+
+
+def _copy_file(src: str, dst: str, **_kw) -> str:
+    shutil.copy2(src, dst)
+    _flush_to_disk(dst)
+    return dst
+
+
+@contextlib.contextmanager
+def _move_lock(root: str):
+    """One move at a time on this computer. The system lets go if the process dies, so a
+    killed move never leaves DubMate waiting."""
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, MOVE_LOCK), "a+b") as f:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as ex:
+                    if ex.errno not in (errno.EACCES, errno.EDEADLK):  # anything but "held"
+                        raise
+                    time.sleep(0.25)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def _remove(path: str) -> None:
     if os.path.isdir(path) and not os.path.islink(path):
         shutil.rmtree(path)
@@ -248,9 +316,9 @@ def _move(item, old, new, allow_copy, log) -> dict:
             _remove(partial)  # only ever our own copy from an earlier attempt
             _check_free_space(old, new)
             if os.path.isdir(old):
-                shutil.copytree(old, partial, copy_function=shutil.copy2)
+                shutil.copytree(old, partial, copy_function=_copy_file)
             else:
-                shutil.copy2(old, partial)
+                _copy_file(old, partial)
             if _sizes(partial) != _sizes(old):
                 raise OSError("the copy didn't match the original")
             os.rename(partial, new)
@@ -288,12 +356,29 @@ def migrate(allow_copy: bool, include_packbuilder: bool, log=_log, *, base_dir: 
     if not is_packaged(base_dir):
         return []
     root = root or user_data_root(env=env, home=home)
+    items = [i for i in ITEMS if include_packbuilder or i not in PACK_BUILDER_ITEMS]
+    if not any(_legacy(item, base_dir, home) for item in items):
+        return []
+    try:
+        lock = _move_lock(root)
+        lock.__enter__()
+    except OSError as ex:
+        log(f"Could not move anything to {root}: {ex.strerror or ex}. DubMate keeps using the old folders.")
+        return [{"item": item, "status": "failed", "from": None, "to": os.path.join(root, item),
+                 "reason": str(ex)} for item in items if _legacy(item, base_dir, home)]
+    try:
+        return _migrate_locked(allow_copy, items, log, base_dir, root, env, home)
+    finally:
+        lock.__exit__(None, None, None)
+
+
+def _migrate_locked(allow_copy, items, log, base_dir, root, env, home) -> list:
+    """migrate() with the move lock held: everything is checked again, since another
+    DubMate may have moved it while this one waited."""
     status = _read_status(root)
     before = json.dumps(status, sort_keys=True)
     results = []
-    for item in ITEMS:
-        if item in PACK_BUILDER_ITEMS and not include_packbuilder:
-            continue
+    for item in items:
         last = status.pop(item, None)
         last = last if isinstance(last, dict) else {}
         old = _legacy(item, base_dir, home)
