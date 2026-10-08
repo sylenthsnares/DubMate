@@ -203,6 +203,19 @@ C4: the mic card's clicks are counted where they happen (in the lobby), and the 
 - Take uploads cut the uploader's name to 24 too, so the "every name is 24" rule has no back door.
 - The landing's and the join prompt's swatches already use the new picker in G1 (the palette must be one list from the first commit); G2 restyles those screens.
 
+### Decided while building G2 (landing, join card, You left), revisit
+
+- The join card hides the header's name pill: it is the screen where you choose the name and colour. Every other screen shows it.
+- The first-run Audio settings dialog no longer opens on a `?room=` or `?left=` page, so nothing stacks on the join card or You left (the lobby's mic card, G3, takes over there). The landing keeps it until G3 removes it.
+- Someone the room already knows (same id on this origin, with a name), for example a reload of `?room=`, goes straight back in without the card.
+- The code-or-link fields on the join card's "isn't open" state and on You left: someone with no name yet who finds a room on this engine gets the join card for it; everyone else goes straight in.
+- You left after a reload looks the room up: an open room shows "You left <scene>" and Rejoin; a closed one says "The room has closed." and hides Rejoin (no claim the app can't back). The takes sentence holds: leaving only marks you offline, and takes stay in the room on the host's engine.
+- The leave question reads "Leave the room?" / "Your takes stay in it. Rejoin any time with the code X." with Stay (secondary, focused first) and Leave (amber, the dialog's one action). Not red: leaving can be undone.
+- A pasted link is read as a code when it is a `/join/CODE` path (any host) or a `?room=` link to this page; a `?room=` link to another page opens that page directly. A code is 3 to 16 letters, digits or dashes.
+- The poster on the join card is the video at the first line through a `#t=` media fragment (`preload=metadata`, muted). It is at most 30% of the window's height, so Join stays in view at 960x680.
+- The "You" card stays in view (sticky) while the scenes scroll; the scene bar sticks to the bottom of the window (`overflow: clip` on the panel keeps it sticky).
+- The hero's accent is solid amber (no gradient text) and scene cards no longer lift on hover. The `.tab-pill` styles went with the tabs (nothing else used them), and DESIGN.md's segmented-tabs entry with them.
+
 ## Hands-on checks (owner, in the morning)
 
 1. First run as a host: does the landing read "who, what, go"? Pick a scene with the keyboard and press Enter.
