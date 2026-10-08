@@ -427,16 +427,25 @@ async def builder_get_waveform(session_id: str, columns: int = 800, track: str =
     if not audio_path or not os.path.isfile(audio_path):
         return {"peaks": [], "duration": session.get("duration", 0.0), "count": 0}
 
-    loop = asyncio.get_running_loop()
-    def _calc_peaks():
-        try:
-            arr = audio_processor.read_wav_mono(audio_path, sr=22050)
-            return audio_processor.compute_waveform_peaks(arr, columns=max(100, min(2400, columns)))
-        except Exception as e:
-            print(f"[Waveform] Error computing peaks for {audio_path}: {e}")
-            return []
+    columns = max(100, min(2400, columns))
+    # The editor asks again on every open and audio switch; the file only changes if
+    # processing runs again, which the modification time catches.
+    cache = session.setdefault("waveform_cache", {})
+    key = (audio_path, os.stat(audio_path).st_mtime_ns, columns)
+    peaks = cache.get(key)
+    if peaks is None:
+        loop = asyncio.get_running_loop()
+        def _calc_peaks():
+            try:
+                arr = audio_processor.read_wav_mono(audio_path, sr=22050)
+                return audio_processor.compute_waveform_peaks(arr, columns=columns)
+            except Exception as e:
+                print(f"[Waveform] Error computing peaks for {audio_path}: {e}")
+                return []
 
-    peaks = await loop.run_in_executor(None, _calc_peaks)
+        peaks = await loop.run_in_executor(None, _calc_peaks)
+        if peaks:
+            cache[key] = peaks
     return {
         "peaks": peaks,
         "duration": session.get("duration", 0.0),

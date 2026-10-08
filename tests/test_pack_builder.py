@@ -526,6 +526,47 @@ NOTE This is a test subtitle file
         finally:
             BUILDER_SESSIONS.pop(session_id, None)
 
+    def test_10b_builder_waveform_is_computed_once(self):
+        """A second /waveform call for the same track and width reuses the peaks."""
+        import audio_processor
+        test_wav = os.path.join(self.tmp_dir, "session_vocals.wav")
+        create_dummy_wav(test_wav, duration_sec=2.0)
+        session_id = "test_wf_cache"
+        BUILDER_SESSIONS[session_id] = {
+            "session_id": session_id,
+            "folder": self.tmp_dir,
+            "vocals_path": test_wav,
+            "full_audio_path": test_wav,
+            "duration": 2.0,
+            "progress": pack_builder.BuildProgress(session_id),
+        }
+        real = audio_processor.compute_waveform_peaks
+        calls = []
+
+        def counting(*args, **kwargs):
+            calls.append(kwargs.get("columns"))
+            return real(*args, **kwargs)
+
+        audio_processor.compute_waveform_peaks = counting
+        try:
+            first = self.client.get(f"/api/builder/{session_id}/waveform?columns=120").json()
+            second = self.client.get(f"/api/builder/{session_id}/waveform?columns=120").json()
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(second["peaks"], first["peaks"])
+            self.assertEqual(second["count"], 120)
+            # Another width is a different drawing, so it is computed.
+            self.client.get(f"/api/builder/{session_id}/waveform?columns=200")
+            self.assertEqual(len(calls), 2)
+            # New audio in the session (processing run again) is never served stale peaks.
+            create_dummy_wav(test_wav, duration_sec=3.0)
+            st = os.stat(test_wav)
+            os.utime(test_wav, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+            self.client.get(f"/api/builder/{session_id}/waveform?columns=120")
+            self.assertEqual(len(calls), 3)
+        finally:
+            audio_processor.compute_waveform_peaks = real
+            BUILDER_SESSIONS.pop(session_id, None)
+
     def test_11_pack_zip_export_and_roundtrip(self):
         """Tests pack_loader.export_pack_archive creates valid .zip archives and roundtrips with import_pack_archive."""
         import zipfile
