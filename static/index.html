@@ -683,16 +683,14 @@
                 <span>Timing</span>
               </div>
               <div class="nudge-buttons">
-                <button class="btn-nudge" data-nudge="-100" data-tip="100 ms earlier">-100ms</button>
                 <button class="btn-nudge" data-nudge="-25" data-tip="25 ms earlier">-25ms</button>
                 <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Back to the automatic timing">Reset to auto</button>
                 <button class="btn-nudge" data-nudge="25" data-tip="25 ms later">+25ms</button>
-                <button class="btn-nudge" data-nudge="100" data-tip="100 ms later">+100ms</button>
               </div>
               <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0"
                 aria-label="Timing offset" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0"
                 aria-valuetext="0 milliseconds"
-                data-tip="Move your take earlier or later. Shortcut: [ and ]. You can also drag your waveform.">
+                data-tip="Move your take earlier or later: [ and ] by 25 ms, Shift+[ and ] by 100 ms. You can also drag your waveform.">
               <span id="nudge-display" class="nudge-value-readout">0 ms</span>
               <span id="timing-caption" class="timing-caption" tabindex="0" style="display: none;"
                 data-tip="DubMate matched this take to the original line. Use [ and ] to adjust it."></span>
@@ -765,8 +763,9 @@
               <p id="takes-hint" class="takes-hint" hidden>Record again to compare takes.</p>
             </div>
           </div>
-          <!-- Voice: presets, who the sound is for, and Level; All effects turns the column's
-               middle into the full rack (voice_rack.js). Shown on every line you can record. -->
+          <!-- Voice: presets, who the sound is for, and a summary of Level and noise cleanup;
+               All effects turns the column's middle into the full rack (voice_rack.js). Shown on
+               every line you can record. -->
           <div class="fx-panel glass-card rack-wood-frame" id="card-voice-dsp" style="display: none;">
             <div class="panel-header-sm amp-faceplate voice-card-header">
               <div class="voice-card-title">
@@ -788,7 +787,7 @@
                 <span id="voice-preset-custom" class="voice-chip is-active" style="display: none;">Custom</span>
               </div>
 
-              <div class="voice-row">
+              <div class="voice-row voice-for-row">
                 <label class="voice-row-label" for="voice-scope">For</label>
                 <select id="voice-scope" class="form-input device-select voice-scope-select"
                   data-tip="Where your changes to the sound go">
@@ -796,6 +795,8 @@
                   <option value="character">All of this character's lines</option>
                   <option value="session">Every line</option>
                 </select>
+                <!-- What All effects holds: the level and noise cleanup -->
+                <span id="voice-summary" class="voice-summary">level matched when you record · noise cleanup on</span>
               </div>
               <div id="voice-scope-ask" class="voice-scope-ask" role="group" aria-labelledby="voice-scope-ask-text" hidden>
                 <span id="voice-scope-ask-text" class="voice-scope-ask-text"></span>
@@ -805,9 +806,17 @@
                 </div>
               </div>
               <p id="voice-scope-status" class="voice-scope-status" role="status" hidden></p>
+            </div>
 
-              <div class="voice-row voice-level-row">
-                <span class="voice-row-label">Level</span>
+            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
+
+            <!-- All effects: Level, then the effects in a fixed order, each with an on/off switch
+                 (an effect that's off is one row), then Clean up noise -->
+            <div id="voice-rack" class="voice-rack">
+              <div class="voice-fx voice-fx-level">
+                <div class="voice-fx-head">
+                  <span>Level</span>
+                </div>
                 <div id="voice-level-take" class="voice-level-take">
                   <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0"
                     aria-label="Level (dB)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
@@ -819,12 +828,7 @@
                 </div>
                 <p id="voice-level-note" class="voice-level-note" hidden>Level is matched to the scene when you record.</p>
               </div>
-            </div>
 
-            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
-
-            <!-- All effects: fixed order, each with an on/off switch; an effect that's off is one row -->
-            <div id="voice-rack" class="voice-rack">
               <div class="voice-fx" data-node="lowcut">
                 <label class="voice-fx-head" data-tip="Cuts low rumble and hum">
                   <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Low cut">
@@ -1014,7 +1018,7 @@
           </div>
 
           <!-- Monitor: what you hear while you record -->
-          <div class="monitor-strip glass-card" id="card-studio-monitoring">
+          <div class="monitor-strip" id="card-studio-monitoring">
             <div class="monitor-row">
               <label class="monitor-label" for="slider-backing-vol">Backing</label>
               <input type="range" id="slider-backing-vol" class="monitor-slider" min="0" max="100" step="5" value="60"

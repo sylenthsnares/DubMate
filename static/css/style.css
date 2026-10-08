@@ -2622,6 +2622,10 @@ body.resizing .resize-grip-pill {
   margin-top: var(--space-2);
   flex-wrap: wrap;
 }
+/* No take yet: nothing to move. The row is inert (booth.js) and dimmed. */
+.nudge-preset-bar.is-idle-empty {
+  opacity: 0.45;
+}
 
 .nudge-label {
   display: flex;
@@ -3085,8 +3089,8 @@ body.resizing .resize-grip-pill {
   align-self: stretch;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 6px 0 10px;
+  gap: var(--space-1);
+  padding: 0 0 0 var(--space-2);
   border-radius: var(--radius-md);
   font-size: 12px;
   color: var(--foreground-muted);
@@ -3123,34 +3127,63 @@ body.resizing .resize-grip-pill {
   font-size: 11px;
   white-space: nowrap;
 }
-.take-by {
+.take-sync {
+  margin-left: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.take-sync {
-  margin-left: auto;
-  white-space: nowrap;
+/* A take by someone else on a line you share: their avatar takes the duration's room. */
+.take-row:has(.take-more) .take-pick:has(.avatar) .take-dur {
+  display: none;
 }
 /* The best-timed take's sync, lightly lifted */
 .take-sync.best {
   color: var(--accent-brass);
   font-weight: 700;
 }
+/* One fixed slot after the sync: "In the dub" on the picked row, "Use this take" on your
+   other rows while the pointer is on the row or it has keyboard focus. Its width never
+   changes, so ▶ sits at the same x on every row. */
+.take-slot {
+  flex: 0 0 auto;
+  width: 70px;
+  margin-left: var(--space-1);
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
 .take-in-dub {
   font-weight: 700;
   color: var(--accent-green-light);
-  white-space: nowrap;
 }
-.take-use {
+.take-use-cue {
+  visibility: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+}
+.take-row:hover .take-use-cue,
+.take-pick:focus .take-use-cue {
+  visibility: visible;
+}
+.take-play {
   flex-shrink: 0;
+  min-width: 24px;
+  padding-left: 4px;
+  padding-right: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.take-play[aria-pressed="true"] {
+  color: var(--primary);
 }
 .take-more {
   flex-shrink: 0;
-  min-width: 28px;
-  padding-left: 6px;
-  padding-right: 6px;
+  min-width: 24px;
+  padding-left: 4px;
+  padding-right: 4px;
   font-size: 16px;
   font-weight: 700;
   line-height: 1;
@@ -3243,9 +3276,11 @@ body.resizing .resize-grip-pill {
   border-color: var(--border-wood);
 }
 
-/* Monitor: one row for the backing level, one for the two switches */
+/* Monitor: no frame. One row for the backing level, one for the two switches, on the
+   same content line as the cards above (the clear border stands in for their frame). */
 .monitor-strip {
-  padding: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 1.5px solid transparent;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -4001,7 +4036,6 @@ svg {
     gap: var(--space-2);
   }
   .monitor-strip {
-    padding: var(--space-2) var(--space-3);
     gap: var(--space-2);
   }
 }
@@ -5336,6 +5370,18 @@ span.voice-chip {
   font-weight: 600;
   color: var(--foreground-muted);
 }
+.voice-for-row {
+  flex-wrap: wrap;
+}
+.voice-summary {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  text-align: right;
+}
+.booth-controls.rack-open .voice-summary {
+  display: none;
+}
 .voice-scope-select {
   width: auto;
   min-width: 0;
@@ -5380,7 +5426,10 @@ span.voice-chip {
   align-items: center;
   gap: var(--space-2);
 }
-.voice-level-take .btn-auto-match {
+.voice-fx-level .voice-fx-head {
+  cursor: default;
+}
+.voice-fx-level .btn-auto-match {
   margin-left: auto;
 }
 .voice-level-matched {
@@ -5396,8 +5445,8 @@ span.voice-chip {
   color: var(--foreground-muted);
 }
 
-/* All effects: the column's page, on the plain card surface. An effect that's on shows its
-   dials; one that's off is a single row: switch, name, "off". */
+/* All effects: the column's page, on the plain card surface. Level comes first; an effect
+   that's on shows its dials, one that's off is a single row: switch, name, "off". */
 .voice-rack {
   display: none;
   flex-direction: column;

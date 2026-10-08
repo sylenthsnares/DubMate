@@ -369,11 +369,23 @@ async function show(env, state, index = 0) {
     const ready = $(env, "btn-toggle-ready");
     const start = $(env, "btn-launch-premiere");
     const jump = $(env, "btn-jump-screening");
-    // Host, lines left to record.
+    // Host, lines left to record. Start premiere waits, secondary, until everyone is ready.
     await show(env, room(oneTake()));
     app.renderCastActivityHUD();
-    if (!visible(start) || text(start) !== "Start premiere · 0/2 ready" || !start.classList.contains("btn-primary")) {
+    if (!visible(start) || text(start) !== "Start premiere · 0/2 ready" || !start.classList.contains("btn-secondary")
+      || start.classList.contains("btn-primary")) {
       fail(`host start: ${visible(start)} ${text(start)} ${start.className}`);
+    }
+    const someReady = room(oneTake());
+    someReady.users.u9.is_ready = true;
+    await show(env, someReady);
+    if (text(start) !== "Start premiere · 1/2 ready" || !start.classList.contains("btn-secondary")) fail(`one of two ready: ${text(start)} ${start.className}`);
+    const allReady = room(oneTake());
+    allReady.users.u1.is_ready = true;
+    allReady.users.u9.is_ready = true;
+    await show(env, allReady);
+    if (text(start) !== "Start premiere · 2/2 ready" || !start.classList.contains("btn-primary") || start.classList.contains("btn-secondary")) {
+      fail(`everyone ready: ${text(start)} ${start.className}`);
     }
     if (visible(jump)) fail("host sees Premiere ›");
     if (text(ready) !== "Mark ready" || !ready.classList.contains("btn-secondary")) fail(`host ready: ${text(ready)} ${ready.className}`);
@@ -382,7 +394,7 @@ async function show(env, state, index = 0) {
     await show(env, room(allMine));
     app.renderCastActivityHUD();
     if (text(ready) !== "All recorded · Mark ready" || !ready.classList.contains("btn-secondary")) fail(`host all recorded: ${text(ready)} ${ready.className}`);
-    if (doc.querySelectorAll("#view-booth .stage-top-bar .btn-primary:not([hidden])").length !== 1) fail("host toolbar has more than one primary");
+    if (doc.querySelectorAll("#view-booth .stage-top-bar .btn-primary:not([hidden])").length > 1) fail("host toolbar has more than one primary");
 
     // Guest: no Start; Back to the premiere only while it's on; All recorded is the primary.
     await show(env, room(allMine, { host_id: "u9" }));
@@ -407,7 +419,7 @@ async function show(env, state, index = 0) {
     if (text(next) !== "Next line ›") fail(`first line footer: ${text(next)}`);
     if ($(env, "btn-clear-take")) fail("the trash button is still in the footer");
     await show(env, room(oneTake()), 1);
-    if (text(next) !== "Done ›" || !next.classList.contains("btn-primary")) fail(`last line footer: ${text(next)} ${next.className}`);
+    if (text(next) !== "Done ›" || !next.classList.contains("btn-secondary")) fail(`last line footer, no take: ${text(next)} ${next.className}`);
     next.click();
     if (!visible(ask) || text($(env, "booth-done-ask-text")) !== "1 of 2 lines recorded. Mark ready anyway?") {
       fail(`inline ask: ${visible(ask)} ${text(ask)}`);
@@ -451,6 +463,59 @@ async function show(env, state, index = 0) {
     app.showView = realShowView;
     app.setupScreeningView = realSetup;
     console.log("PASS: Done marks you ready, asks inline when lines are missing, and the host's premiere question is a dialog");
+  }
+
+  // 7b. Earned emphasis: Next line (and Done) is amber only once your line has a take; on
+  //     someone else's line it's amber. A take saving in, or a delete, changes it at once.
+  {
+    const next = $(env, "btn-next-line");
+    const isPrimary = () => next.classList.contains("btn-primary") && !next.classList.contains("btn-secondary");
+    const isSecondary = () => next.classList.contains("btn-secondary") && !next.classList.contains("btn-primary");
+    await show(env, room(), 0);
+    if (text(next) !== "Next line ›" || !isSecondary()) fail(`own line, no take: ${text(next)} ${next.className}`);
+    await show(env, room(oneTake()), 0);
+    if (!isPrimary()) fail(`own line with a take: ${next.className}`);
+    await show(env, room(oneTake()), 1);
+    if (text(next) !== "Done ›" || !isSecondary()) fail(`Done, no take: ${next.className}`);
+    await show(env, room({ t2000: { picked: "c1", next_number: 2, takes: [mk("c1", 1)] } }), 1);
+    if (text(next) !== "Done ›" || !isPrimary()) fail(`Done with a take: ${next.className}`);
+    await show(env, room(), 2);
+    if (!isPrimary()) fail(`someone else's line: ${next.className}`);
+
+    // The first take saves: amber.
+    await show(env, room(), 0);
+    env.reply = (u) => (/\/takes$/.test(u) ? { take: mk("n1", 1), line: { picked: "n1", next_number: 2, takes: [mk("n1", 1)] } } : {});
+    await app.uploadTake(0, new w.Blob(["x"], { type: "audio/webm" }));
+    await tick();
+    env.reply = null;
+    if (!isPrimary()) fail(`after the first take saved: ${next.className}`);
+    // Deleting it (waiting on Undo): secondary again; Undo: amber.
+    app.deleteTake(app.takeForLine(0));
+    if (!isSecondary()) fail(`after deleting the only take: ${next.className}`);
+    app.undoDeleteTake();
+    if (!isPrimary()) fail(`after Undo: ${next.className}`);
+    console.log("PASS: Next line and Done are amber only once your line has a take");
+  }
+
+  // 7c. Someone else's line is read-only: no record button or badge, who voices it over the
+  //     transport, no Voice card, and Monitor keeps only Backing (unboxed).
+  {
+    const bezel = doc.querySelector(".record-bezel-wrapper");
+    const monitor = $(env, "card-studio-monitoring");
+    const switches = monitor.querySelector(".monitor-switches");
+    const backing = $(env, "slider-backing-vol").closest(".monitor-row");
+    if (monitor.classList.contains("glass-card")) fail("Monitor still has a card frame");
+    await show(env, room(oneTake()), 0);
+    if (!visible(bezel) || !visible(switches) || !visible(backing)) fail("own line: record button or Monitor rows hidden");
+    await show(env, room({ t3000: { picked: "m1", next_number: 2, takes: [mk("m1", 1, { user_id: "u9", user_name: "Mika" })] } }), 2);
+    if (visible(bezel) || visible(badge)) fail("record button or badge on someone else's line");
+    if (text(label) !== "Ben is voiced by Mika") fail(`read-only label: ${text(label)}`);
+    if (!visible($(env, "btn-play-orig")) || !visible($(env, "btn-preview-take"))) fail("the transport is hidden on someone else's line");
+    if (visible($(env, "card-voice-dsp"))) fail("Voice card on someone else's line");
+    if (visible(switches) || !visible(backing)) fail("Monitor on someone else's line isn't Backing only");
+    await show(env, room(oneTake()), 0);
+    if (!visible(bezel) || !visible(switches)) fail("record button or Monitor switches didn't come back");
+    console.log("PASS: someone else's line shows who voices it over the transport, no record button, and Backing only");
   }
 
   // 8. An open tooltip follows the record button's state.

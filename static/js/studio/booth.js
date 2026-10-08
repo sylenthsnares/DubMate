@@ -52,10 +52,26 @@ export class BoothMethods {
   renderGainMatchBadge(take) {
     const hasAuto = !!take && take.auto_gain_db !== undefined && take.auto_gain_db !== null;
     if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = hasAuto ? 'inline-flex' : 'none';
-    if (!this.badgeGainMatch) return;
     const matched = hasAuto && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    this.renderVoiceSummary(take, matched);
+    if (!this.badgeGainMatch) return;
     this.badgeGainMatch.textContent = '✓ Matched';
     this.badgeGainMatch.style.display = matched ? 'inline-block' : 'none';
+  }
+
+  /** The Voice card's summary of what All effects holds: "level matched · noise cleanup on",
+   *  the level you set ("level +2 dB") once you turned it, and "level matched when you
+   *  record" before the first take. */
+  renderVoiceSummary(take = this.takeForLine(this.currentLineIndex), matched = null) {
+    const summary = document.getElementById('voice-summary');
+    if (!summary) return;
+    if (matched === null) {
+      matched = !!take && take.auto_gain_db != null
+        && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    }
+    const level = !take ? 'level matched when you record'
+      : (matched ? 'level matched' : `level ${this.gainText(take.gain_db)}`);
+    summary.textContent = `${level} · noise cleanup ${this.checkNoiseReduction?.checked ? 'on' : 'off'}`;
   }
 
   /** "+1.9 dB", one decimal. */
@@ -217,14 +233,13 @@ export class BoothMethods {
     const take = pickedTake(this.roomState.takes, line);
     this.hideDoneAsk();
     this.setNudgeValue(take ? (take.offset_ms || 0) : 0, false);
+    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
+    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
+    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
     const gainDb = take ? (parseFloat(take.gain_db) || 0) : 0;
     this.sliderGain.value = gainDb;
     this.valGain.textContent = this.gainText(gainDb);
     this.renderGainMatchBadge(take);
-
-    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
-    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
-    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
 
     this.startTakeVoice(line, take);
     this.updateKnobsVisuals();
@@ -326,6 +341,30 @@ export class BoothMethods {
     this.renderBoothToolbar();
   }
 
+  /** What follows whether the line has a take (one waiting on its Undo doesn't count):
+   *  - the timing row and the waveform are inert before the first take, the row dimmed,
+   *    since there is nothing to move yet; on a line you can't record the row is hidden
+   *    and the waveform is view only;
+   *  - Next line (and Done) is amber only once your line has a take. */
+  renderTakeDependents() {
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (!line) return;
+    const count = takeCount(this.roomState.takes, line) - (this.pendingDelete?.lineId === line.line_id ? 1 : 0);
+    const mine = this.canRecordLine(line);
+    const empty = count <= 0;
+    const row = document.querySelector('#view-booth .nudge-preset-bar');
+    if (row) {
+      row.hidden = !mine;
+      row.toggleAttribute('inert', mine && empty);
+      row.classList.toggle('is-idle-empty', mine && empty);
+    }
+    document.querySelector('#view-booth .waveform-canvas-box')?.toggleAttribute('inert', empty || !mine);
+    if (this.btnNextLine) {
+      this.btnNextLine.classList.toggle('btn-primary', !(mine && empty));
+      this.btnNextLine.classList.toggle('btn-secondary', mine && empty);
+    }
+  }
+
   prefetchAdjacentLines(currentIndex) {
     if (!this.roomState || !this.roomState.pack || !this.roomState.pack.lines) return;
     const lines = this.roomState.pack.lines;
@@ -358,6 +397,12 @@ export class BoothMethods {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const badge = this.recordEngineBadge;
     const sub = this.recordStatusSub;
+    // On a line you can't record: no record button, and Monitor keeps only Backing.
+    const readOnly = !this.canRecordLine(line);
+    const bezel = this.btnRecordMain.closest('.record-bezel-wrapper');
+    if (bezel) bezel.hidden = readOnly;
+    const switches = document.querySelector('#card-studio-monitoring .monitor-switches');
+    if (switches) switches.hidden = readOnly;
     const show = ({ state = null, glyph, html = false, cls = '', main, hint = '', hintHtml = false, name }) => {
       if (badge) {
         badge.hidden = !state;
@@ -378,7 +423,7 @@ export class BoothMethods {
       this.btnRecordMain.dataset.tip = name;
     };
 
-    if (!this.canRecordLine(line)) {
+    if (readOnly) {
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
       const main = assignedNames.length > 0
@@ -417,6 +462,7 @@ export class BoothMethods {
     const hearOriginal = !!this.isPlayingReference || (playingTake && this.audio.abState === 'B');
     this.btnPlayOrig.setAttribute('aria-pressed', String(hearOriginal));
     this.btnPreviewTake.setAttribute('aria-pressed', String(playingTake && this.audio.abState !== 'B'));
+    this.renderTakePlayButtons();
   }
 
   /** A transport press. While the take plays, the other side switches what you hear in
@@ -839,12 +885,14 @@ export class BoothMethods {
     const wait = { button };
     this.soundWait = wait;
     if (button) button.classList.add('is-waiting-sound');
+    this.renderTakePlayButtons();
     return wait;
   }
 
   endSoundWait(wait) {
     if (wait.button) wait.button.classList.remove('is-waiting-sound');
     if (this.soundWait === wait) this.soundWait = null;
+    this.renderTakePlayButtons();
   }
 
   // --- Studio Noise Reduction ---
@@ -859,6 +907,7 @@ export class BoothMethods {
     if (this.checkNoiseReduction && this.checkNoiseReduction.checked !== this.applyNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
     }
+    this.renderVoiceSummary();
 
     const currentTake = this.takeForLine(this.currentLineIndex);
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
@@ -1368,7 +1417,8 @@ export class BoothMethods {
     };
   }
 
-  /** The stage bar's actions. The host's one primary is Start premiere; guests get
+  /** The stage bar's actions. The host's one primary is Start premiere, once everyone is
+   *  ready; guests get
    *  "Back to the premiere" while it's on, and Mark ready turns into "All recorded ·
    *  Mark ready" once every line they can record has a take (their primary). */
   renderBoothToolbar() {
@@ -1388,6 +1438,10 @@ export class BoothMethods {
       this.btnLaunchPremiere.style.display = isHost ? 'inline-flex' : 'none';
       const label = document.getElementById('label-launch-premiere');
       if (label) label.textContent = `Start premiere · ${readyCount}/${users.length} ready`;
+      // Amber only once everyone here is ready; until then it's there, but not the next step.
+      const allReady = users.length > 0 && readyCount === users.length;
+      this.btnLaunchPremiere.classList.toggle('btn-primary', allReady);
+      this.btnLaunchPremiere.classList.toggle('btn-secondary', !allReady);
     }
     if (this.btnJumpScreening) this.btnJumpScreening.hidden = isHost || !screening;
     if (this.btnToggleReady) {

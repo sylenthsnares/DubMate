@@ -2,9 +2,10 @@
  * test_voice_panel.js
  *
  * The booth's Voice card (static/js/studio/voice_rack.js, documentation/design/ui-u2-booth.md
- * "VOICE card" and "All effects: the rack as the column's page"; effects-rack.md): presets,
- * "For" and Level by default, no meter; "All effects › · N on" opens the rack as the column's
- * page (Back, Esc and E), with plain dial labels and no Mix on Low cut and Gate; the card shows
+ * "VOICE card" and "All effects: the rack as the column's page"; effects-rack.md; v2-booth-layout.md
+ * "Right column"): presets, "For" and a summary of the level and noise cleanup by default, no
+ * meter; "All effects › · N on" opens the rack as the column's page (Back, Esc and E), Level
+ * first, with plain dial labels and no Mix on Low cut and Gate; the card shows
  * on every line you can record, before the first take too, and is hidden on other people's;
  * "For" starts where the sound comes from and sends edits there (the take's PUT …/chain, or
  * PUT /voice after 400 ms of quiet and on release); widening asks inline (no confirm()),
@@ -149,6 +150,16 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
       "Thin and boxy, like a speaker or a phone", "Lower and bigger"])) fail(`chip tips: ${JSON.stringify(tips)}`);
     if (!same(activeChips(), ["Warm"]) || shown(custom)) fail(`active chip: ${activeChips()} custom ${shown(custom)}`);
     if (!$("slider-gain") || !$("val-gain")) fail("Level missing");
+    // Level lives on the All effects page, as its first module; the card keeps For and a summary.
+    const levelModule = rack.firstElementChild;
+    if (!levelModule || !levelModule.classList.contains("voice-fx-level") || levelModule.hasAttribute("data-node")) fail("Level isn't the rack's first module");
+    for (const id of ["slider-gain", "val-gain", "badge-gain-match", "btn-auto-match-gain", "voice-level-take", "voice-level-note"]) {
+      if (!levelModule.contains($(id))) fail(`#${id} isn't in the Level module`);
+    }
+    if (panel.querySelector(".voice-main").contains($("slider-gain"))) fail("Level is still on the card");
+    const forRow = scope.closest(".voice-row");
+    const summaryLine = $("voice-summary");
+    if (!summaryLine || summaryLine.parentElement !== forRow || forRow.lastElementChild !== summaryLine) fail("the summary isn't at the end of the For row");
     if ($("voice-meter-fill") || panel.querySelector(".voice-meter")) fail("the unlabelled meter is still there");
     if (typeof app.startVoiceMeter === "function") fail("startVoiceMeter is still there");
     const levelTip = $("slider-gain").closest("[data-tip]")?.dataset.tip;
@@ -186,7 +197,7 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
       if (!el.querySelector("[data-voice-on]") || mixes !== want) fail(`${el.dataset.node}: switch or Mix dials (${mixes})`);
     }
     const heads = [...rack.querySelectorAll(".voice-fx-head")].map((h) => h.textContent.trim());
-    if (heads.join("|") !== "Low cut|Gate|Tone|De-ess|Compress|Pitch|Reverb|Clean up noise") fail(`effect names: ${heads.join("|")}`);
+    if (heads.join("|") !== "Level|Low cut|Gate|Tone|De-ess|Compress|Pitch|Reverb|Clean up noise") fail(`effect names: ${heads.join("|")}`);
     const tip = (node) => fx(node).querySelector(".voice-fx-head").dataset.tip;
     if (tip("gate") !== "Silences the gaps between words" || tip("eq") !== "Shape the low, middle and high end"
         || tip("deess") !== "Softens harsh S sounds" || tip("comp") !== "Evens out loud and quiet words"
@@ -239,6 +250,33 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     if ($("voice-level-take").hidden || !$("voice-level-note").hidden) fail("Level row with a take");
     if (scopeOption("take").textContent !== "This take" || scopeOption("character").textContent !== "All of Ana's lines") fail("For option texts");
     console.log("PASS: the card is hidden on other people's lines and shows on yours before the first take");
+  }
+
+  // 3b. The summary: the level ("level matched", or the level you set) and noise cleanup.
+  {
+    const summaryText = () => $("voice-summary").textContent;
+    await showLine(env, { takes: [mkTake({ gain_db: 1.87, auto_gain_db: 1.87 })] });
+    if (summaryText() !== "level matched · noise cleanup on") fail(`matched take: "${summaryText()}"`);
+    await showLine(env, { takes: [mkTake({ gain_db: 2, auto_gain_db: 0.5, noise_reduction: false })] });
+    if (summaryText() !== "level +2 dB · noise cleanup off") fail(`a level set by hand, noise off: "${summaryText()}"`);
+    // Turning the Level knob, and the noise switch, update it at once.
+    const gain = $("slider-gain");
+    gain.value = "-3";
+    gain.dispatchEvent(new w.Event("input", { bubbles: true }));
+    if (summaryText() !== "level -3 dB · noise cleanup off") fail(`after turning Level: "${summaryText()}"`);
+    $("btn-auto-match-gain").click();
+    if (summaryText() !== "level matched · noise cleanup off") fail(`after Auto: "${summaryText()}"`);
+    const noise = $("check-noise-reduction");
+    noise.checked = true;
+    noise.dispatchEvent(new w.Event("change", { bubbles: true }));
+    if (summaryText() !== "level matched · noise cleanup on") fail(`after switching noise cleanup on: "${summaryText()}"`);
+    // Before the first take.
+    await showLine(env, { takes: [] });
+    if (summaryText() !== "level matched when you record · noise cleanup on") fail(`before the first take: "${summaryText()}"`);
+    app.setNoiseReduction(false);
+    if (summaryText() !== "level matched when you record · noise cleanup off") fail(`noise off before the first take: "${summaryText()}"`);
+    app.setNoiseReduction(true);
+    console.log("PASS: the Voice card sums up Level and noise cleanup, which live on the All effects page");
   }
 
   // 4. "Every line" is the host's.
