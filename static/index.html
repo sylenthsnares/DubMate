@@ -696,16 +696,14 @@
                 <span>Timing</span>
               </div>
               <div class="nudge-buttons">
-                <button class="btn-nudge" data-nudge="-100" data-tip="100 ms earlier">-100ms</button>
                 <button class="btn-nudge" data-nudge="-25" data-tip="25 ms earlier">-25ms</button>
                 <button class="btn-nudge btn-nudge-reset" data-nudge="reset" data-tip="Back to the automatic timing">Reset to auto</button>
                 <button class="btn-nudge" data-nudge="25" data-tip="25 ms later">+25ms</button>
-                <button class="btn-nudge" data-nudge="100" data-tip="100 ms later">+100ms</button>
               </div>
               <input type="range" id="slider-nudge" class="nudge-slider" min="-800" max="800" step="5" value="0"
                 aria-label="Timing offset" aria-valuemin="-800" aria-valuemax="800" aria-valuenow="0"
                 aria-valuetext="0 milliseconds"
-                data-tip="Move your take earlier or later. Shortcut: [ and ]. You can also drag your waveform.">
+                data-tip="Move your take earlier or later: [ and ] by 25 ms, Shift+[ and ] by 100 ms. You can also drag your waveform.">
               <span id="nudge-display" class="nudge-value-readout">0 ms</span>
               <span id="timing-caption" class="timing-caption" tabindex="0" style="display: none;"
                 data-tip="DubMate matched this take to the original line. Use [ and ] to adjust it."></span>
@@ -1033,7 +1031,7 @@
           </div>
 
           <!-- Monitor: what you hear while you record -->
-          <div class="monitor-strip glass-card" id="card-studio-monitoring">
+          <div class="monitor-strip" id="card-studio-monitoring">
             <div class="monitor-row">
               <label class="monitor-label" for="slider-backing-vol">Backing</label>
               <input type="range" id="slider-backing-vol" class="monitor-slider" min="0" max="100" step="5" value="60"

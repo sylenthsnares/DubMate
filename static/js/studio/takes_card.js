@@ -92,6 +92,8 @@ export class TakesCardMethods {
         : this.takeRow(take, { inDub: take.take_id === inDub?.take_id, mine, best: take === best, locked: !!saving }));
     }
 
+    this.renderTakeDependents();
+
     const radios = [...this.takesList.querySelectorAll('[role="radio"]')];
     const row = focusedId ? [...this.takesList.children].find((r) => r.dataset.takeId === focusedId) : null;
     const stop = row?.querySelector('[role="radio"]')

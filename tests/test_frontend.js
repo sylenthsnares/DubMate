@@ -332,7 +332,7 @@ try {
       console.log("PASS: B3 re-takes get their own auto gain and the preview plays the engine's render!");
     }
 
-    // Test 4: the last line's footer reads "Done ›" (the amber primary)
+    // Test 4: the last line's footer reads "Done ›" (amber only once the line has a take)
     app.roomState = {
       room_id: "TEST12",
       host_id: app.user.id,
@@ -349,7 +349,7 @@ try {
 
     await app.loadBoothLine(1); // Last line of mockPack
     const lastText = btnNext.textContent || btnNext.innerHTML;
-    if (lastText.trim() === "Done ›" && btnNext.classList.contains("btn-primary")) {
+    if (lastText.trim() === "Done ›" && btnNext.classList.contains("btn-secondary")) {
       console.log("PASS: Last line correctly transforms to 'Done ›'!");
     } else {
       console.error("FAIL: Last line did not transform to 'Done ›':", lastText);

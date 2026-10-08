@@ -341,6 +341,30 @@ export class BoothMethods {
     this.renderBoothToolbar();
   }
 
+  /** What follows whether the line has a take (one waiting on its Undo doesn't count):
+   *  - the timing row and the waveform are inert before the first take, the row dimmed,
+   *    since there is nothing to move yet; on a line you can't record the row is hidden
+   *    and the waveform is view only;
+   *  - Next line (and Done) is amber only once your line has a take. */
+  renderTakeDependents() {
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (!line) return;
+    const count = takeCount(this.roomState.takes, line) - (this.pendingDelete?.lineId === line.line_id ? 1 : 0);
+    const mine = this.canRecordLine(line);
+    const empty = count <= 0;
+    const row = document.querySelector('#view-booth .nudge-preset-bar');
+    if (row) {
+      row.hidden = !mine;
+      row.toggleAttribute('inert', mine && empty);
+      row.classList.toggle('is-idle-empty', mine && empty);
+    }
+    document.querySelector('#view-booth .waveform-canvas-box')?.toggleAttribute('inert', empty || !mine);
+    if (this.btnNextLine) {
+      this.btnNextLine.classList.toggle('btn-primary', !(mine && empty));
+      this.btnNextLine.classList.toggle('btn-secondary', mine && empty);
+    }
+  }
+
   prefetchAdjacentLines(currentIndex) {
     if (!this.roomState || !this.roomState.pack || !this.roomState.pack.lines) return;
     const lines = this.roomState.pack.lines;
@@ -373,6 +397,12 @@ export class BoothMethods {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const badge = this.recordEngineBadge;
     const sub = this.recordStatusSub;
+    // On a line you can't record: no record button, and Monitor keeps only Backing.
+    const readOnly = !this.canRecordLine(line);
+    const bezel = this.btnRecordMain.closest('.record-bezel-wrapper');
+    if (bezel) bezel.hidden = readOnly;
+    const switches = document.querySelector('#card-studio-monitoring .monitor-switches');
+    if (switches) switches.hidden = readOnly;
     const show = ({ state = null, glyph, html = false, cls = '', main, hint = '', hintHtml = false, name }) => {
       if (badge) {
         badge.hidden = !state;
@@ -393,7 +423,7 @@ export class BoothMethods {
       this.btnRecordMain.dataset.tip = name;
     };
 
-    if (!this.canRecordLine(line)) {
+    if (readOnly) {
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
       const main = assignedNames.length > 0
@@ -1384,7 +1414,8 @@ export class BoothMethods {
     };
   }
 
-  /** The stage bar's actions. The host's one primary is Start premiere; guests get
+  /** The stage bar's actions. The host's one primary is Start premiere, once everyone is
+   *  ready; guests get
    *  "Back to the premiere" while it's on, and Mark ready turns into "All recorded ·
    *  Mark ready" once every line they can record has a take (their primary). */
   renderBoothToolbar() {
@@ -1404,6 +1435,10 @@ export class BoothMethods {
       this.btnLaunchPremiere.style.display = isHost ? 'inline-flex' : 'none';
       const label = document.getElementById('label-launch-premiere');
       if (label) label.textContent = `Start premiere · ${readyCount}/${users.length} ready`;
+      // Amber only once everyone here is ready; until then it's there, but not the next step.
+      const allReady = users.length > 0 && readyCount === users.length;
+      this.btnLaunchPremiere.classList.toggle('btn-primary', allReady);
+      this.btnLaunchPremiere.classList.toggle('btn-secondary', !allReady);
     }
     if (this.btnJumpScreening) this.btnJumpScreening.hidden = isHost || !screening;
     if (this.btnToggleReady) {

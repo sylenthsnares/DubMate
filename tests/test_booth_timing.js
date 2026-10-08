@@ -338,6 +338,42 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     console.log("PASS: guide_voice follows the checkbox at recording start, not at save");
   }
 
+  // 9. The timing row: -25, Reset to auto, +25, the slider and the readout. Shift+[ ] still
+  //    moves 100 ms. Before the first take the row and the waveform are inert (the row dimmed);
+  //    on a line you can't record the row is hidden.
+  {
+    const { app, w } = env;
+    const doc = w.document;
+    const row = doc.querySelector(".nudge-preset-bar");
+    const canvasBox = doc.querySelector(".waveform-canvas-box");
+    const nudges = [...row.querySelectorAll(".btn-nudge")].map((b) => b.dataset.nudge);
+    if (nudges.join(",") !== "-25,reset,25") fail(`timing buttons: ${nudges}`);
+    if (!/Shift\+\[ and \] by 100 ms/.test(app.sliderNudge.dataset.tip)) fail(`slider tip: ${app.sliderNudge.dataset.tip}`);
+
+    await showLine(env, [mk("s1", 1, { offset_ms: 0 })], "s1");
+    for (const [k, el] of Object.entries(app.views)) el.classList.toggle("active", k === "booth");
+    if (app.isAudioSettingsOpen()) app.closeAudioSettings();
+    if (row.hasAttribute("inert") || row.classList.contains("is-idle-empty") || canvasBox.hasAttribute("inert") || row.hidden) fail("the timing row is off with a take");
+    const key = (k) => doc.body.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, shiftKey: true, bubbles: true, cancelable: true }));
+    key("}");
+    if (app.sliderNudge.value !== "100") fail(`Shift+] moved to ${app.sliderNudge.value}`);
+    key("{");
+    key("{");
+    if (app.sliderNudge.value !== "-100") fail(`Shift+[ moved to ${app.sliderNudge.value}`);
+
+    await showLine(env, [], null);
+    if (!row.hasAttribute("inert") || !row.classList.contains("is-idle-empty")) fail("the timing row isn't inert and dimmed before the first take");
+    if (!canvasBox.hasAttribute("inert")) fail("the waveform can be dragged before the first take");
+    if (row.hidden) fail("the timing row is hidden on your own line");
+
+    await showLine(env, [mk("s2", 1)], "s2", { host_id: "h9", role_assignments: { Ana: ["u9"] } });
+    if (!row.hidden) fail("the timing row shows on a line you can't record");
+    if (!canvasBox.hasAttribute("inert")) fail("the waveform can be dragged on a line you can't record");
+    await showLine(env, [mk("s3", 1)], "s3");
+    if (row.hidden || row.hasAttribute("inert") || canvasBox.hasAttribute("inert")) fail("the timing row or the waveform didn't come back on your line");
+    console.log("PASS: the timing row has -25, Reset to auto and +25; Shift+[ ] moves 100 ms; it is inert with no take and hidden on others' lines, where the waveform is view only");
+  }
+
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
   console.log("All booth timing tests passed.");
   process.exit(0);
