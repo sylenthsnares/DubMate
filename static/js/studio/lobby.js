@@ -4,6 +4,7 @@
 import { escapeHtml, plural } from '../ui_common.js';
 import { takeCount } from './takes.js';
 import { MIC_SYNC_KEY, deviceLabel, validEntry } from './mic_sync.js';
+import { normalizeColor, cleanName, renderColorPicker } from '../identity.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
 const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
@@ -149,9 +150,11 @@ export function captureJoinHandoff() {
   try {
     const incoming = data.user && typeof data.user === 'object' ? data.user : {};
     const user = readJson('dubmate_user') || {};
-    const name = typeof incoming.name === 'string' ? incoming.name.trim() : '';
-    const color = typeof incoming.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(incoming.color) ? incoming.color : '';
-    const nameOk = !!name && name.length <= 40;
+    // Older members could save up to 40 characters; rooms show 24.
+    const raw = typeof incoming.name === 'string' ? incoming.name.trim() : '';
+    const name = raw.length <= 40 ? cleanName(raw) : '';
+    const color = normalizeColor(incoming.color);
+    const nameOk = !!name;
     if (nameOk) user.name = name;
     if (color) user.color = color;
     // The id stays the one this origin already has (loadUser() adds one when missing).
@@ -366,10 +369,10 @@ export class LobbyMethods {
     if (this.inputJoinActorName) {
       this.inputJoinActorName.addEventListener('input', (e) => {
         const name = (e.target.value || '').trim();
-        const initial = name ? name.charAt(0).toUpperCase() : 'A';
         if (this.joinModalAvatarPreview) {
-          this.joinModalAvatarPreview.innerText = initial;
+          this.joinModalAvatarPreview.innerText = (Array.from(name)[0] || '?').toUpperCase();
         }
+        this.renderJoinColorPicker();
       });
 
       this.inputJoinActorName.addEventListener('keydown', (e) => {
@@ -377,19 +380,6 @@ export class LobbyMethods {
           e.preventDefault();
           this.confirmJoinModal();
         }
-      });
-    }
-
-    if (this.joinColorPalette) {
-      this.joinColorPalette.querySelectorAll('.color-option').forEach((opt) => {
-        opt.addEventListener('click', () => {
-          this.joinColorPalette.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
-          opt.classList.add('selected');
-          this.user.color = opt.dataset.color;
-          if (this.joinModalAvatarPreview) {
-            this.joinModalAvatarPreview.style.backgroundColor = this.user.color;
-          }
-        });
       });
     }
 
@@ -426,19 +416,12 @@ export class LobbyMethods {
     }
     if (this.inputJoinActorName) {
       this.inputJoinActorName.value = this.user.name || '';
-      const initial = (this.user.name || 'Actor').trim().charAt(0).toUpperCase() || 'A';
       if (this.joinModalAvatarPreview) {
-        this.joinModalAvatarPreview.innerText = initial;
-        this.joinModalAvatarPreview.style.backgroundColor = this.user.color || '#d97706';
+        this.joinModalAvatarPreview.innerText = (Array.from((this.user.name || '').trim())[0] || '?').toUpperCase();
+        this.joinModalAvatarPreview.style.backgroundColor = this.user.color;
       }
     }
-    if (this.joinColorPalette) {
-      this.joinColorPalette.querySelectorAll('.color-option').forEach((opt) => {
-        const isMatch = (opt.dataset.color === this.user.color);
-        opt.classList.toggle('selected', isMatch);
-        opt.setAttribute('aria-checked', isMatch ? 'true' : 'false');
-      });
-    }
+    this.renderJoinColorPicker();
     if (this.modalJoinRoom) {
       this.modalJoinRoom.style.display = 'flex';
       setTimeout(() => {
@@ -484,8 +467,27 @@ export class LobbyMethods {
     note.hidden = false;
   }
 
+  /** The join prompt's colour picker, with the initial of the name typed so far. */
+  renderJoinColorPicker() {
+    if (!this.joinColorPalette || this.joinColorPalette.contains(document.activeElement)) return;
+    renderColorPicker(this.joinColorPalette, {
+      selected: this.user.color,
+      label: 'Your colour',
+      name: this.inputJoinActorName?.value || this.user.name,
+      onChange: (hex) => {
+        this.user.color = hex;
+        if (this.joinModalAvatarPreview) this.joinModalAvatarPreview.style.backgroundColor = hex;
+      },
+    });
+  }
+
   confirmJoinModal() {
-    const name = (this.inputJoinActorName?.value || '').trim() || ('Actor ' + Math.floor(Math.random() * 900 + 100));
+    const name = cleanName(this.inputJoinActorName?.value || '');
+    if (!name) {
+      this.showToast('Type your name first.');
+      this.inputJoinActorName?.focus();
+      return;
+    }
     this.user.name = name;
     this.saveUser();
     this.updateUserUI();

@@ -27,6 +27,7 @@ const ROOM = "ABCD";
 const MEMBER_URL = `${TUNNEL}/?room=${ROOM}&home=${encodeURIComponent(HOME)}`;
 const GUEST_URL = `${TUNNEL}/?room=${ROOM}`;
 const PAIR = "Mic X|Phones";
+const CORAL = "#f08a6c";
 
 function fail(msg) {
   console.error("FAIL: " + msg);
@@ -162,7 +163,8 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
     if (!target.hash.startsWith("#dm=")) fail(`no handoff in the link: ${navigations[0]}`);
     const payload = decode(target.hash.slice(4));
     if (payload.v !== 1) fail(`handoff version: ${payload.v}`);
-    if (payload.user.name !== "Ana Lúcia" || payload.user.color !== "#123abc") fail(`user: ${JSON.stringify(payload.user)}`);
+    // An unknown saved colour became Coral on load (identity.js); the handoff carries that.
+    if (payload.user.name !== "Ana Lúcia" || payload.user.color !== CORAL) fail(`user: ${JSON.stringify(payload.user)}`);
     if (JSON.stringify(payload).includes("u_home") || "id" in payload.user) fail("the user id travelled in the handoff");
     if (!payload.audio.setup_done || payload.audio.input_label !== "Mic X" || payload.audio.output_label !== "Phones") fail(`audio: ${JSON.stringify(payload.audio)}`);
     if (payload.mic_sync[PAIR]?.latency_ms !== 85 || payload.mic_sync["Other|Speakers"]?.latency_ms !== 40) fail(`mic sync (local + engine): ${JSON.stringify(payload.mic_sync)}`);
@@ -175,7 +177,7 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
       storage: { dubmate_user: JSON.stringify({ id: "u_tunnel", name: "Old name", color: "#000000" }) },
     });
     const user = storedJson("dubmate_user");
-    if (user.id !== "u_tunnel" || user.name !== "Ana Lúcia" || user.color !== "#123abc") fail(`stored user: ${JSON.stringify(user)}`);
+    if (user.id !== "u_tunnel" || user.name !== "Ana Lúcia" || user.color !== CORAL) fail(`stored user: ${JSON.stringify(user)}`);
     if (app.user.id !== "u_tunnel" || app.user.name !== "Ana Lúcia") fail(`app user: ${JSON.stringify(app.user)}`);
     if (stored("dubmate_audio_setup_done") !== "1" || !app.audioSetup.setupComplete) fail("setup not marked done");
     const pending = storedJson("dubmate_audio_handoff");
@@ -253,9 +255,18 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
       v: 1, user: { name: "n".repeat(500), color: "#ABCDEF" }, mic_sync: [1, 2],
     })}`);
     const user = storedJson("dubmate_user");
-    if (user.name === "n".repeat(500) || user.color !== "#ABCDEF") fail(`500-char name or colour: ${JSON.stringify(user).slice(0, 80)}`);
+    if (user.name === "n".repeat(500) || user.color !== CORAL) fail(`500-char name or colour: ${JSON.stringify(user).slice(0, 80)}`);
     if (stored("dubmate_mic_sync")) fail("a non-object mic sync was stored");
-    console.log("PASS: a 500-character name and a non-object mic sync are dropped");
+    console.log("PASS: a 500-character name and a non-object mic sync are dropped; an unknown colour becomes Coral");
+  }
+  {
+    // Older members could save names up to 40 characters: kept, cut to the 24 rooms show.
+    const { storedJson } = await boot(`${MEMBER_URL}#dm=${encode({ v: 1, user: { name: "  Ana   " + "l".repeat(30), color: "#7c5cff" } })}`);
+    const user = storedJson("dubmate_user");
+    if (user.name !== ("Ana " + "l".repeat(30)).slice(0, 24) || user.color !== "#7d9cf0") fail(`long name or old colour: ${JSON.stringify(user)}`);
+    const longer = await boot(`${MEMBER_URL}#dm=${encode({ v: 1, user: { name: "m".repeat(41) } })}`);
+    if ((longer.storedJson("dubmate_user") || {}).name === "m".repeat(24)) fail("a 41-character name was used");
+    console.log("PASS: a handoff name up to 40 characters is cut to 24, and an old colour becomes its new hue");
   }
   {
     const { stored } = await boot(`${MEMBER_URL}#dm=${encode({ v: 2, user: { name: "Future" } })}`);

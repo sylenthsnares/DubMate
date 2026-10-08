@@ -17,6 +17,7 @@ import { SessionMethods } from './studio/sessions.js';
 import { TakesCardMethods } from './studio/takes_card.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
+import { IDENTITY_COLORS, normalizeColor, cleanName, colorName, renderColorPicker } from './identity.js';
 
 // What the connection pill says. Casting and ready changes wait in the socket's
 // queue; takes and voice changes go over HTTP and don't, hence the careful tip.
@@ -101,6 +102,8 @@ class DubMateApp {
     this.stopTakeVoice();
     this.roomShare = null;
     this.roomState = null;
+    // The character the room cast you as on joining, for the lobby's one-time notice.
+    this.autoCastNotice = null;
     this.currentLineIndex = 0;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
@@ -112,18 +115,30 @@ class DubMateApp {
       this.screeningBuffers.clear();
     }
     if (this.screeningRenders) this.screeningRenders.clear();
+    // Back to your own colour until the next room gives you one.
+    this.updateUserUI();
   }
 
+  // A first run has no name yet (Start and Join ask for it) and the first person colour.
   loadUser() {
     const user = {
       id: 'u_' + Math.random().toString(36).substring(2, 9),
-      name: 'Actor ' + Math.floor(Math.random() * 900 + 100),
-      color: '#d97706',
+      name: '',
+      color: IDENTITY_COLORS[0].hex,
     };
     try {
       // A join handoff can leave a name and colour without an id; the defaults fill the gaps.
       const saved = JSON.parse(localStorage.getItem('dubmate_user') || 'null');
-      if (saved && typeof saved === 'object') return { ...user, ...saved };
+      if (saved && typeof saved === 'object') {
+        const merged = { ...user, ...saved };
+        // A colour from an older version becomes its new hue, saved back once.
+        const color = normalizeColor(merged.color) || user.color;
+        if (color !== merged.color) {
+          merged.color = color;
+          localStorage.setItem('dubmate_user', JSON.stringify(merged));
+        }
+        return merged;
+      }
     } catch (e) { }
     return user;
   }
@@ -136,22 +151,48 @@ class DubMateApp {
     if (this.inputUserName && document.activeElement !== this.inputUserName) {
       this.inputUserName.value = this.user.name || '';
     }
-    const displayName = (this.user.name || '').trim() || 'Actor';
+    const name = (this.user.name || '').trim();
     if (this.headerUserName) {
-      this.headerUserName.innerText = displayName;
+      this.headerUserName.innerText = name || 'You';
     }
     if (this.headerUserAvatar) {
-      const initial = displayName.charAt(0).toUpperCase() || 'A';
-      this.headerUserAvatar.innerText = initial;
-      this.headerUserAvatar.style.backgroundColor = this.user.color || '#d97706';
+      this.headerUserAvatar.innerText = (Array.from(name)[0] || '?').toUpperCase();
+      // In a room, the colour the room gave you (yours may be taken there).
+      this.headerUserAvatar.style.backgroundColor = this.roomState?.users?.[this.user.id]?.color || this.user.color;
     }
-    if (this.colorPalette) {
-      this.colorPalette.querySelectorAll('.color-option').forEach((opt) => {
-        const isMatch = opt.dataset.color === this.user.color;
-        opt.classList.toggle('selected', isMatch);
-        opt.setAttribute('aria-checked', isMatch ? 'true' : 'false');
+    // Redrawn for the initial on your swatch, but never under a focused swatch.
+    if (this.colorPalette && !this.colorPalette.contains(document.activeElement)) {
+      renderColorPicker(this.colorPalette, {
+        selected: this.user.color,
+        label: 'Your colour',
+        name: this.user.name,
+        onChange: (hex) => {
+          this.user.color = hex;
+          this.saveUser();
+          this.updateUserUI();
+        },
       });
     }
+  }
+
+  /**
+   * Your own user_joined: keeps the character the room cast you as for the lobby's
+   * notice, and says once per room and colour when your colour was taken there. Your
+   * saved colour doesn't change; the room's shows while you're in it.
+   */
+  noteOwnJoin(payload) {
+    if (!payload || payload.user_id !== this.user.id) return;
+    if (payload.cast) this.autoCastNotice = payload.cast;
+    const wanted = colorName(payload.wanted_color);
+    const given = colorName(payload.color);
+    if (wanted && given && wanted !== given) {
+      const key = `dubmate_color_notice_${this.roomState?.room_id || ''}`;
+      if (sessionStorage.getItem(key) !== payload.color) {
+        sessionStorage.setItem(key, payload.color);
+        this.showToast(`${wanted} is taken here, so you're ${given} in this room.`);
+      }
+    }
+    this.updateUserUI();
   }
 
   initDOM() {
@@ -515,22 +556,12 @@ class DubMateApp {
     });
 
     this.inputUserName.addEventListener('blur', () => {
-      if (!this.user.name || !this.user.name.trim()) {
-        this.user.name = 'Actor ' + Math.floor(Math.random() * 900 + 100);
-        this.inputUserName.value = this.user.name;
-        this.saveUser();
-        this.updateUserUI();
-      }
-    });
-
-    this.colorPalette.querySelectorAll('.color-option').forEach((opt) => {
-      opt.addEventListener('click', () => {
-        this.colorPalette.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
-        opt.classList.add('selected');
-        this.user.color = opt.dataset.color;
-        this.saveUser();
-        this.updateUserUI();
-      });
+      const name = cleanName(this.user.name);
+      if (name === this.user.name) return;
+      this.user.name = name;
+      this.inputUserName.value = name;
+      this.saveUser();
+      this.updateUserUI();
     });
 
     // Landing Tabs
@@ -1043,6 +1074,7 @@ class DubMateApp {
         const before = this.roomState?.users;
         if (!this.applyIncomingState(data)) return;
         this.announceCastChange(type, before, this.roomState.users?.[data.payload?.user_id]);
+        if (type === 'user_joined') this.noteOwnJoin(data.payload);
       });
     }
 

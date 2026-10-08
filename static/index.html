@@ -239,21 +239,8 @@
               autocomplete="nickname">
           </div>
 
-          <div class="form-group">
-            <label class="form-label">Color</label>
-            <div class="color-palette" id="color-palette" role="radiogroup" aria-label="Color">
-              <div class="color-option selected" data-color="#d97706" style="background: #d97706;" data-tip="Amber"
-                role="radio" aria-checked="true" tabindex="0"></div>
-              <div class="color-option" data-color="#cca458" style="background: #cca458;" data-tip="Gold"
-                role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#dc2626" style="background: #dc2626;" data-tip="Red" role="radio"
-                aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#16a34a" style="background: #16a34a;" data-tip="Green"
-                role="radio" aria-checked="false" tabindex="0"></div>
-              <div class="color-option" data-color="#b45309" style="background: #b45309;" data-tip="Bronze"
-                role="radio" aria-checked="false" tabindex="0"></div>
-            </div>
-          </div>
+          <!-- The colour picker (identity.js renderColorPicker). -->
+          <div class="form-group" id="color-palette"></div>
 
           <hr class="card-divider">
 
@@ -1511,25 +1498,12 @@
           <div id="join-modal-avatar-preview" class="join-modal-avatar-preview" style="background-color: var(--primary);">A</div>
           <div style="flex: 1; min-width: 0;">
             <label for="input-join-actor-name" style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; display: block;">Name</label>
-            <input type="text" id="input-join-actor-name" class="form-input" placeholder="e.g. Spike" maxlength="28" style="width: 100%; font-size: 14px; font-weight: 600; padding: 7px 10px;" autocomplete="off" autocorrect="off">
+            <input type="text" id="input-join-actor-name" class="form-input" placeholder="e.g. Spike" maxlength="24" style="width: 100%; font-size: 14px; font-weight: 600; padding: 7px 10px;" autocomplete="off" autocorrect="off">
           </div>
         </div>
 
-        <div class="form-group" style="text-align: left;">
-          <label style="font-size: 11px; font-weight: 700; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">Color</label>
-          <div id="join-color-palette" class="color-palette" style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <div class="color-option selected" data-color="#d97706" style="background-color: #d97706;" data-tip="Amber" role="radio" aria-checked="true" tabindex="0"></div>
-            <div class="color-option" data-color="#cca458" style="background-color: #cca458;" data-tip="Gold" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#dc2626" style="background-color: #dc2626;" data-tip="Red" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#16a34a" style="background-color: #16a34a;" data-tip="Green" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#b45309" style="background-color: #b45309;" data-tip="Bronze" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#7c5cff" style="background-color: #7c5cff;" data-tip="Violet" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#ec4899" style="background-color: #ec4899;" data-tip="Pink" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#06b6d4" style="background-color: #06b6d4;" data-tip="Cyan" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#8b5cf6" style="background-color: #8b5cf6;" data-tip="Purple" role="radio" aria-checked="false" tabindex="0"></div>
-            <div class="color-option" data-color="#f59e0b" style="background-color: #f59e0b;" data-tip="Yellow" role="radio" aria-checked="false" tabindex="0"></div>
-          </div>
-        </div>
+        <!-- The colour picker (identity.js renderColorPicker). -->
+        <div id="join-color-palette" class="form-group" style="text-align: left;"></div>
       </div>
 
       <div class="modal-actions" style="margin-top: 22px; justify-content: flex-end; gap: 10px;">

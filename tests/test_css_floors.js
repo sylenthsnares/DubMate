@@ -132,7 +132,8 @@ const selectorList = (b) => b.selector.split(",").map((s) => s.trim());
 
 // One focus style: every :focus-visible rule draws a 2px solid brass outline.
 // .btn-danger keeps that outline and only recolours it against its red fill.
-const FOCUS_REQUIRED = [".btn", ".btn-big-record", ".pack-card", ".color-option", ".chip-item"];
+const FOCUS_REQUIRED = [".btn:focus-visible", ".btn-big-record:focus-visible", ".pack-card:focus-visible",
+  ".id-swatch input:focus-visible + .id-swatch-dot", ".chip-item:focus-visible"];
 const FOCUS_RECOLOURED = [".btn-danger:focus-visible"];
 let focusRules = 0;
 for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/css/builder.css", builderBlocks]]) {
@@ -149,8 +150,7 @@ for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/cs
     if (/box-shadow\s*:[^;]*--ring/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: focus uses the --ring glow; use the brass outline`);
   }
 }
-for (const sel of FOCUS_REQUIRED) {
-  const want = `${sel}:focus-visible`;
+for (const want of FOCUS_REQUIRED) {
   if (!styleBlocks.some((b) => selectorList(b).includes(want))) fail(`style.css has no ${want} rule`);
 }
 

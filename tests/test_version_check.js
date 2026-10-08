@@ -120,6 +120,7 @@ const memberUrl = `${TUNNEL}/?room=DUB-AB12&home=${encodeURIComponent(HOME)}`;
     if (!note.hidden) fail("note shown when the member's version is unknown");
     let joined = null;
     app.joinRoom = (code) => { joined = code; };
+    app.inputJoinActorName.value = "Ana";
     app.confirmJoinModal();
     if (joined !== "DUB-AB12") fail(`joining was blocked: ${joined}`);
     if (modal.style.display !== "none") fail("join prompt stayed open");
