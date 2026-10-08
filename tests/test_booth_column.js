@@ -330,6 +330,12 @@ async function show(env, state, index = 0) {
     if ($(env, "booth-time-badge").parentElement !== caption) fail("the line length isn't in the prompter");
     const cells = [...caption.children].filter((c) => c.id !== "prompter-resize-handle").map((c) => c.id);
     if (cells.join(",") !== "stage-caption-char,stage-caption-text,booth-time-badge") fail(`prompter cells: ${cells}`);
+    // The prompter reads each new line out; the length isn't read with it.
+    if (caption.getAttribute("aria-live") !== "polite" || $(env, "booth-time-badge").getAttribute("aria-live") !== "off") fail("the line length is read out with every line");
+    // The chip strip leaves room for a chip's focus ring (2px at 2px) and the active glow.
+    const css = fs.readFileSync(path.join(PROJECT_ROOT, "static", "css", "style.css"), "utf8");
+    const strip = (css.match(/\n\.timeline-chips-box\s*\{([^}]*)\}/) || [])[1] || "";
+    if (!/padding:\s*var\(--space-[12]\)/.test(strip) || !/margin:\s*calc\(-1 \* var\(--space-[12]\)\)/.test(strip)) fail("the chip strip clips the chips' focus ring");
     console.log("PASS: one booth bar holds the line chips; the line length sits in the prompter; ‹ Lobby is gone");
   }
 

@@ -259,6 +259,10 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     if (summaryText() !== "level matched · noise cleanup on") fail(`matched take: "${summaryText()}"`);
     await showLine(env, { takes: [mkTake({ gain_db: 2, auto_gain_db: 0.5, noise_reduction: false })] });
     if (summaryText() !== "level +2 dB · noise cleanup off") fail(`a level set by hand, noise off: "${summaryText()}"`);
+    // A take the engine couldn't level (no auto_gain_db) at 0 dB wasn't turned by anyone.
+    await showLine(env, { takes: [mkTake({ gain_db: 0, auto_gain_db: null, noise_reduction: false })] });
+    if (summaryText() !== "level as recorded · noise cleanup off") fail(`a take with no matched level: "${summaryText()}"`);
+    await showLine(env, { takes: [mkTake({ gain_db: 2, auto_gain_db: 0.5, noise_reduction: false })] });
     // Turning the Level knob, and the noise switch, update it at once.
     const gain = $("slider-gain");
     gain.value = "-3";

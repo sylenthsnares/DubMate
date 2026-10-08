@@ -915,8 +915,8 @@ class DubMateApp {
         // and the timing row is inert.
         const taking = this.recordState === 'countdown' || this.recordState === 'recording';
         if (e.code === 'Space') {
-          // Space presses a focused ▶, ⋯, Undo or answer button instead of recording.
-          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button')) return;
+          // Space presses a focused ▶, ⋯, Undo, answer or who's-here button instead of recording.
+          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button, .presence-stack')) return;
           e.preventDefault();
           this.toggleRecording();
         } else if (e.key === '[' || e.key === '{') {

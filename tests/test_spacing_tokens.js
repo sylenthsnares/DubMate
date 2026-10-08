@@ -5,7 +5,8 @@
  *  - :root defines --space-1..5 as 4/8/12/16/24, numbered with no gaps,
  *  - the booth's containers (the bar, both columns, every card's inner gutter, the
  *    prompter, the waveform panel) set gap, padding and margin only from those tokens
- *    or 0, in every block that names them (media queries included),
+ *    or 0 (a negative token undoing a padding counts), in every block that names them
+ *    (media queries included),
  *  - the mic-sync hint is one unboxed line: no frame, no background.
  * Component insides (button, chip and badge padding) belong to the look and aren't checked.
  */
@@ -81,7 +82,8 @@ const BOOTH_CONTAINERS = [
   ".monitor-strip", ".monitor-row", ".booth-nav-group", ".booth-done-ask",
 ];
 const SPACING = /^(gap|row-gap|column-gap|padding(-(top|right|bottom|left|inline|block)(-(start|end))?)?|margin(-(top|right|bottom|left|inline|block)(-(start|end))?)?)$/;
-const ON_SCALE = /^(0|auto|var\(--space-[1-5]\))$/;
+// A step back by a token (calc(-1 * var(--space-2))) is on the scale too.
+const ON_SCALE = /^(0|auto|-?var\(--space-[1-5]\))$/;
 let checked = 0;
 for (const sel of BOOTH_CONTAINERS) {
   const mine = blocks.filter((b) => b.selectors.includes(sel));
@@ -90,7 +92,8 @@ for (const sel of BOOTH_CONTAINERS) {
     for (const d of decls(b.body)) {
       if (!SPACING.test(d.prop)) continue;
       checked++;
-      const parts = d.value.replace(/\s*!important$/, "").split(/\s+/);
+      const parts = d.value.replace(/\s*!important$/, "")
+        .replace(/calc\(-1 \* (var\(--space-[1-5]\))\)/g, "-$1").split(/\s+/);
       const off = parts.filter((p) => !ON_SCALE.test(p));
       if (off.length) fail(`style.css:${b.line} ${b.selector} { ${d.prop}: ${d.value} } is off the --space-* scale`);
     }

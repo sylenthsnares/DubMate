@@ -134,6 +134,9 @@ const selectorList = (b) => b.selector.split(",").map((s) => s.trim());
 // .btn-danger keeps that outline and only recolours it against its red fill.
 const FOCUS_REQUIRED = [".btn", ".btn-big-record", ".pack-card", ".color-option", ".chip-item"];
 const FOCUS_RECOLOURED = [".btn-danger:focus-visible"];
+// Rules that only reveal a hint inside a focused element (the row's own ring is drawn
+// by its own :focus-visible rule): they may set visibility and nothing else.
+const FOCUS_REVEALS = [".take-pick:hover .take-use-cue, .take-pick:focus-visible .take-use-cue"];
 let focusRules = 0;
 for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/css/builder.css", builderBlocks]]) {
   for (const b of blocks) {
@@ -141,6 +144,10 @@ for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/cs
     focusRules += 1;
     if (FOCUS_RECOLOURED.includes(b.selector)) {
       if (!/outline-color\s*:/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: expected an outline-color`);
+      continue;
+    }
+    if (FOCUS_REVEALS.includes(b.selector)) {
+      if (!/^\s*visibility\s*:\s*visible;?\s*$/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: a focus reveal sets only visibility`);
       continue;
     }
     if (!/outline\s*:\s*2px solid var\(--accent-brass\)/.test(b.body) || !/outline-offset\s*:\s*2px/.test(b.body)) {
