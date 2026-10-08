@@ -432,55 +432,59 @@ Suggested PR split, one PR per phase: U1 floors and guards, U2 booth column, U3 
 
 ### Phase U3: lobby
 
-25. **S** `dubmate/room_ws.py`, `static/js/studio/lobby.js`, tests: the guest lobby.
+Replaced as a whole by [v2-join-flow.md](v2-join-flow.md) (branch `ui/v2-join-flow`), which carries over what still applies. The steps are kept below for reference.
+
+25. **S** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `dubmate/room_ws.py`, `static/js/studio/lobby.js`, tests: the guest lobby.
     - The server accepts `assign_role` from a non-host only when the target is that guest and the character is unassigned.
     - The UI headline is "Pick who you'll voice", with one-click "I'll voice Black Guy 5 · 1 line" buttons.
     - Characters held by others are read-only.
-26. **S** `static/js/studio/lobby.js`, `static/index.html`, `static/css/style.css`: the right rail.
+26. **S** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/studio/lobby.js`, `static/index.html`, `static/css/style.css`: the right rail.
     - The Scene panel shows a video poster, plus the hovered or selected character's first line with "Play this line".
     - Remove the sidebar Cast list and the noise card. Noise reduction moves to the Voice card from step 18, with a one-line description.
     - Remove the 480px height cap.
-27. **S** `static/js/studio/lobby.js`: casting table additions.
+27. **S** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/studio/lobby.js`: casting table additions.
     - A Takes column ("2 of 3 recorded"). Clicking it opens the booth on that character's first line with the TAKES card focused (**dep: step 14**).
     - A "Cast evenly" secondary action.
     - An inline note "2 characters keep the original voice".
 
 ### Phase U4: landing, join and packs
 
-28. **Q** `static/js/studio/packs.js`, `static/js/studio/lobby.js`, `static/index.html`: scene choice.
+Steps 28 to 30 and 33 to 35a are replaced by [v2-join-flow.md](v2-join-flow.md) (branch `ui/v2-join-flow`). Steps 31 and 32 are not about joining and stay open.
+
+28. **Q** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/studio/packs.js`, `static/js/studio/lobby.js`, `static/index.html`: scene choice.
     - `renderPacks()` never writes `selectedPackId`. When search hides the selected pack, show a chip "Selected: … (hidden by search)".
     - No pre-selection on first run.
     - The button reads "Create room · <scene>", or is disabled with "Pick a scene to start".
-29. **Q** `static/js/studio/packs.js`, `static/css/style.css`: pack cards.
+29. **Q** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/studio/packs.js`, `static/css/style.css`: pack cards.
     - A `role=radiogroup` with a roving tabindex; Enter on the selected card creates the room.
     - One meta line ("6 lines · 5 characters · 6s · by Tani").
     - A format badge only for CV packs; chips sorted naturally, capped at about 4 with "+N", in sans 12px.
     - Share as `btn-secondary btn-sm`, at least 28px, in a fixed slot.
     - No hover lift.
     - JS-rendered states use token classes: `.empty-state`, `.search-match-quote`, the SVG spinner.
-30. **Q** `static/index.html`, `static/css/style.css`, `static/js/app.js`: landing hierarchy (**dep: BF-2**, which gates `#btn-open-pack-folder`).
+30. **Q** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/index.html`, `static/css/style.css`, `static/js/app.js`: landing hierarchy (**dep: BF-2**, which gates `#btn-open-pack-folder`).
     - One amber primary; "Create pack" becomes secondary.
     - Packs folder and Rescan move into a "⋯" menu.
     - A neutral "4 scenes" count.
     - The hero shows only on first run; the accent is solid instead of gradient.
     - The toolbar wraps.
     - Tablist ARIA; headings become h2.
-31. **Q** `dubmate/packs_api.py`, `static/js/app.js` (`friendlyError`), `static/js/studio/packs.js`: import errors.
+31. **Q** **Still open.** `dubmate/packs_api.py`, `static/js/app.js` (`friendlyError`), `static/js/studio/packs.js`: import errors.
     - Plain copy for zip and signature errors.
     - One toast per import, updated in place.
     - Drop the duplicate loading modal (**dep: step 7**).
-32. **S** `static/js/studio/sessions.js`, `static/js/app.js` (router), session API module if fields are missing: the session rows.
+32. **S** **Still open.** `static/js/studio/sessions.js`, `static/js/app.js` (router), session API module if fields are missing: the session rows.
     - Rows show the take count and who recorded, cast dots and the room code.
     - A "Takes" deep link (`?takes=1`, opens booth step 14).
     - Rooms with no takes are listed too.
     - Delete uses `openDialog` with the take count.
     - A quiet "2 sessions · 14 takes" chip on pack cards.
-33. **Q** `static/index.html`, `static/js/app.js`, `static/js/studio/lobby.js`, `static/css/style.css`: one shared 8-hue palette.
+33. **Q** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/index.html`, `static/js/app.js`, `static/js/studio/lobby.js`, `static/css/style.css`: one shared 8-hue palette.
     - Native radio inputs styled as swatches, a 40px hit area.
     - Default to the first hue nobody in the room has.
     - Used by both pickers.
-34. **Q** `static/js/studio/lobby.js`, `static/js/studio/packs.js`: the join modal and the Packs folder modal open through `openDialog`, which gives Escape, a focus trap and returned focus. Remove the custom backdrop and Escape code.
-35. **S** `static/js/studio/lobby.js`, `static/index.html`, `static/css/style.css`: join flow (**dep: BF-6, BF-7**).
+34. **Q** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/studio/lobby.js`, `static/js/studio/packs.js`: the join modal and the Packs folder modal open through `openDialog`, which gives Escape, a focus trap and returned focus. Remove the custom backdrop and Escape code.
+35. **S** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/studio/lobby.js`, `static/index.html`, `static/css/style.css`: join flow (**dep: BF-6, BF-7**).
     - Check the code before the name step; show "Finding room…" on the button.
     - An inline `aria-invalid` error under the code field.
     - A persistent "Joining Tani's room · 9SL94U" interstitial.
@@ -489,7 +493,7 @@ Suggested PR split, one PR per phase: U1 floors and guards, U2 booth column, U3 
     - The landing "Join" submit becomes primary, with a 6-character mask and paste-a-link support.
     - Rename "Copy invite" to "Copy code" when it copies a code.
     - (added from full critique) Wrap the field and button in a `<form>` so Enter submits, and give every `.code-input` a normal placeholder (`::placeholder { text-transform:none; letter-spacing:normal; font-family:var(--font-sans) }`). Remove `maxlength=6` and take the code from a pasted link (`searchParams.get('room')`), with the hint "Room code or invite link".
-35a. **S** `static/js/app.js` (`leaveRoom`, `showView`, init routing), `static/js/studio/lobby.js`, `static/index.html`, `static/css/style.css`: the "You left" view (**dep: BF-2, BF-6, BF-7, step 35**). (added from full critique)
+35a. **S** **Replaced by [v2-join-flow.md](v2-join-flow.md).** `static/js/app.js` (`leaveRoom`, `showView`, init routing), `static/js/studio/lobby.js`, `static/index.html`, `static/css/style.css`: the "You left" view (**dep: BF-2, BF-6, BF-7, step 35**). (added from full critique)
     - When the page isn't served by the guest's own engine, hide Audio, `?`, the mode-switch chevron and the logo menu, and show the plain wordmark. Today Audio opens the host's settings and the menu links to the host's Studio and Pack Builder. BF-2 already stops the server sending the export path.
     - Keep the left state across reloads: `replaceState` to `/?left=CODE` (which also fixes Back reopening `?room=` without a view change), and route it to view-left on init. A tunnel page with no home origin never renders the landing view.
     - Keep the code: "You left room DUB789" with a primary "Rejoin DUB789" (`promptJoinRoom(code)`, keeping the name and colour), and a secondary "Join a different room" field prefilled with the code.

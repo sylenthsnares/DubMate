@@ -205,7 +205,8 @@ class TestWebSocketAuthorization(unittest.TestCase):
             room = rooms.ROOMS.get(room_id.upper())
             if not room or not room.role_assignments:
                 self.skipTest("pack has no characters to assign")
-            character = list(room.role_assignments.keys())[0]
+            # A guest may claim a free character for themselves, never one someone voices.
+            character = next(c for c, ids in room.role_assignments.items() if host_id in ids)
 
             with client.websocket_connect(f"/ws/{room_id}/intruder") as guest_ws:
                 guest_ws.send_json({"type": "join", "payload": {
@@ -217,6 +218,7 @@ class TestWebSocketAuthorization(unittest.TestCase):
                     "intruder", room.role_assignments.get(character, []),
                     "an unauthorized client reassigned a character role",
                 )
+                self.assertEqual(room.role_assignments[character], [host_id])
 
 
 class TestConfigLocalOnly(unittest.TestCase):

@@ -6,7 +6,7 @@ import { escapeHtml } from '../ui_common.js';
 import { levelHint, levelZone } from './level_target.js';
 
 // --- Audio Device Setup persistence keys & meter constants ---
-const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
+export const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
 const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
 const AUDIO_OUTPUT_DEVICE_KEY = 'dubmate_audio_output_device';
 const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
@@ -56,6 +56,10 @@ const STILL_BLOCKED = {
 };
 // Errors these steps can fix; '' is a permission the browser already reports as denied.
 const PERMISSION_ERRORS = ['', 'NotAllowedError', 'SecurityError'];
+
+// Where the takes go, in Audio settings and the lobby's mic card (documentation/design/v2-notices.md, section 5).
+export const TAKES_OWN_PRIVACY = 'Your takes are saved on this computer.';
+export const TAKES_GUEST_PRIVACY = "Your takes are sent to the host's computer, and the host can export and share them.";
 
 /** 'windows' | 'mac' | 'other', from what the browser says about this computer. */
 export function detectOs(nav) {
@@ -277,7 +281,6 @@ export class AudioSetupMethods {
   // Runs once on boot, before anything can trigger a bare permission prompt.
   async initAudioSetupOnBoot() {
     const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-    const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
 
     // Re-apply the remembered output device to the <video> elements that
     // already exist in the document.
@@ -309,12 +312,9 @@ export class AudioSetupMethods {
       this.audioSetup.permission = 'denied';
     }
 
+    // No dialog at launch: the lobby's "Check your mic" card sets the mic up while
+    // friends join (mic_card.js), and the booth still asks anyone who skipped it.
     this.updateAudioSettingsAffordance();
-
-    const skippedThisSession = safeStorageGet(ss, AUDIO_SETUP_SKIP_KEY) === '1';
-    if (!this.audioSetup.setupComplete && !skippedThisSession) {
-      this.openAudioSettings({ firstRun: true });
-    }
   }
 
   updateAudioSettingsAffordance() {
@@ -351,9 +351,7 @@ export class AudioSetupMethods {
   // First run: the privacy line only where it is true, and who asks for permission.
   renderAudioIntro() {
     if (this.audioIntroPrivacy) {
-      this.audioIntroPrivacy.textContent = this.isEngineLocal()
-        ? 'Your takes are saved on this computer.'
-        : "Your takes are sent to the host's computer, and the host can export and share them.";
+      this.audioIntroPrivacy.textContent = this.isEngineLocal() ? TAKES_OWN_PRIVACY : TAKES_GUEST_PRIVACY;
     }
     if (this.audioIntroAsker) {
       this.audioIntroAsker.textContent = window.__TAURI__ ? 'Your computer may ask' : 'Your browser will ask';

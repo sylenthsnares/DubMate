@@ -126,8 +126,12 @@ const selectorList = (b) => b.selector.split(",").map((s) => s.trim());
 
 // One focus style: every :focus-visible rule draws a 2px solid brass outline.
 // .btn-danger keeps that outline and only recolours it against its red fill.
-const FOCUS_REQUIRED = [".btn", ".btn-big-record", ".pack-card", ".color-option", ".chip-item"];
+const FOCUS_REQUIRED = [".btn:focus-visible", ".btn-big-record:focus-visible", ".pack-card:focus-visible",
+  ".id-swatch input:focus-visible + .id-swatch-dot", ".chip-item:focus-visible"];
 const FOCUS_RECOLOURED = [".btn-danger:focus-visible"];
+// Rules that only reveal a hint inside a focused element (the row's own ring is drawn
+// by its own :focus-visible rule): they may set visibility and nothing else.
+const FOCUS_REVEALS = [".take-pick:hover .take-use-cue, .take-pick:focus-visible .take-use-cue"];
 let focusRules = 0;
 for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/css/builder.css", builderBlocks]]) {
   for (const b of blocks) {
@@ -137,14 +141,17 @@ for (const [file, blocks] of [["static/css/style.css", styleBlocks], ["static/cs
       if (!/outline-color\s*:/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: expected an outline-color`);
       continue;
     }
+    if (FOCUS_REVEALS.includes(b.selector)) {
+      if (!/^\s*visibility\s*:\s*visible;?\s*$/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: a focus reveal sets only visibility`);
+      continue;
+    }
     if (!/outline\s*:\s*2px solid var\(--accent-brass\)/.test(b.body) || !/outline-offset\s*:\s*2px/.test(b.body)) {
       fail(`${file}:${b.line} ${b.selector}: focus must be outline: 2px solid var(--accent-brass) with outline-offset: 2px`);
     }
     if (/box-shadow\s*:[^;]*--ring/.test(b.body)) fail(`${file}:${b.line} ${b.selector}: focus uses the --ring glow; use the brass outline`);
   }
 }
-for (const sel of FOCUS_REQUIRED) {
-  const want = `${sel}:focus-visible`;
+for (const want of FOCUS_REQUIRED) {
   if (!styleBlocks.some((b) => selectorList(b).includes(want))) fail(`style.css has no ${want} rule`);
 }
 
@@ -257,10 +264,10 @@ if (!/@media \(max-width: 1279px\) \{\s*\.app-header\.in-room \.logo-title,\s*\.
   fail("in a room below 1280px the logo should drop to its icon");
 }
 
-// Sideways scrollers keep the studio's scrollbar. In Chromium/WebView2 a scrollbar-width or
-// scrollbar-color on an element switches ::-webkit-scrollbar off and brings back the default
-// grey bar (the line chips under the takes had it), so those two only appear in the
-// Firefox-only @supports not selector(::-webkit-scrollbar) block.
+// Scrollers keep the studio's scrollbar, sideways and up-and-down. In Chromium/WebView2 a
+// scrollbar-width or scrollbar-color on an element switches ::-webkit-scrollbar off and brings
+// back the default grey bar (the line chips under the takes had it, and the lobby's casting
+// card), so those two only appear in the Firefox-only @supports not selector(::-webkit-scrollbar) block.
 const FIREFOX_ONLY = /@supports\s+not\s+selector\(::-webkit-scrollbar\)\s*\{/g;
 function firefoxOnlySelectors(css) {
   const text = stripComments(css);
@@ -280,12 +287,12 @@ function firefoxOnlySelectors(css) {
 if (!/::-webkit-scrollbar\s*\{[^}]*height\s*:\s*8px/.test(stripComments(styleCss))) fail("style.css lost its shared ::-webkit-scrollbar rule");
 const firefoxOnly = firefoxOnlySelectors(styleCss);
 for (const b of cssBlocks(firefoxOnly.outside)) {
-  if (!/overflow(-x)?\s*:\s*(auto|scroll)/.test(b.body)) continue;
+  if (!/overflow(-[xy])?\s*:\s*(auto|scroll)/.test(b.body)) continue;
   if (/scrollbar-(width|color)\s*:/.test(b.body)) {
-    fail(`style.css:${b.line} ${b.selector}: a sideways scroller sets scrollbar-width/color outside the Firefox-only block; Chromium then draws the default bar`);
+    fail(`style.css:${b.line} ${b.selector}: a scroller sets scrollbar-width/color outside the Firefox-only block; Chromium then draws the default bar`);
   }
 }
-for (const sel of [".timeline-chips-box", ".cast-activity-list"]) {
+for (const sel of [".timeline-chips-box", ".cast-activity-list", ".panel-casting"]) {
   if (!firefoxOnly.out.has(sel)) fail(`${sel} needs the studio scrollbar colours in the Firefox-only @supports block`);
 }
 
@@ -303,4 +310,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`PASS: ${checkedSizes} font sizes at or above ${FLOOR_PX}px (${EXEMPT.length} exempt), no text meta on --foreground-dim`);
-console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled, sideways scrollers on the studio scrollbar`);
+console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled, scrollers on the studio scrollbar`);

@@ -171,6 +171,18 @@ async function openFromMenu(env) {
     check(!isShown(modal), "the close button didn't close About");
     check(w.document.activeElement === help, `after the sheet, focus went to ${w.document.activeElement && w.document.activeElement.id}`);
     console.log("PASS: the ? sheet's footer opens About, and focus goes back to the ? button");
+
+    // The join card and You left with no DubMate of your own hide the logo menu and ?:
+    // neither the ? key nor About open there (showView sets no-home-chrome).
+    w.document.body.classList.add("no-home-chrome");
+    w.document.body.focus();
+    w.dispatchEvent(new w.KeyboardEvent("keydown", { key: "?", bubbles: true }));
+    check(!isShown(sheet), "the ? key opened the sheet on a page with no home controls");
+    env.app.openAbout();
+    await tick();
+    check(!isShown(modal), "About opened on a page with no home controls");
+    w.document.body.classList.remove("no-home-chrome");
+    console.log("PASS: without the home controls neither ? nor About opens");
     if (env.errors.length) fail(`console errors: ${env.errors.join(" | ")}`);
   }
 

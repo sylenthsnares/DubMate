@@ -68,6 +68,15 @@
   --radius-xl: 16px;
   --radius-full: 9999px;
 
+  /* Spacing scale (layout only). 8 inside a group, 12 between groups and for every
+     card's inner gutter, 16 between the columns and around the page, 24 between
+     page-level regions. Button, chip and badge insides keep their own padding. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
   /* Typography Stacks */
   --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-serif: 'Newsreader', Georgia, serif;
@@ -151,13 +160,15 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3e3328;
 }
-/* Firefox draws no ::-webkit-scrollbar, so the sideways strips (the line chips, the cast)
-   get the same thin bar and colours there. Only there: in Chromium/WebView2 a
+/* Firefox draws no ::-webkit-scrollbar, so the strips (the line chips, the cast) and the
+   lobby's casting card get the same thin bar and colours there. Only there: in Chromium/WebView2 a
    scrollbar-width or scrollbar-color on an element switches the rules above off and
    brings back the default grey bar. */
 @supports not selector(::-webkit-scrollbar) {
   .timeline-chips-box,
-  .cast-activity-list {
+  .cast-activity-list,
+  .panel-casting,
+  .takes-list {
     scrollbar-width: thin;
     scrollbar-color: var(--panel-raised) var(--background-darker);
   }
@@ -327,7 +338,7 @@ button.mode-dropdown-item {
 
 .mode-dropdown-divider {
   height: 1px;
-  margin: 2px 4px;
+  margin: 2px var(--space-1);
   background: var(--border);
 }
 
@@ -523,6 +534,19 @@ button.mode-dropdown-item {
 .room-badge:hover {
   border-color: var(--primary);
   background: var(--secondary);
+}
+/* In the lobby the pill only shows the code, as plain text: the title row's Copy invite
+   link copies, and says when the code isn't live yet. */
+.room-badge.is-code-only,
+.room-badge.is-code-only:hover,
+.room-badge.is-code-only.room-badge-unpublished {
+  cursor: default;
+  border: 1px solid transparent;
+  background: transparent;
+  opacity: 1;
+}
+.room-badge.is-code-only svg {
+  display: none;
 }
 
 /* Connection pill. Amber while it is connecting or trying to get the room back;
@@ -1089,6 +1113,30 @@ button.mode-dropdown-item {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--ring);
 }
+.form-input::placeholder {
+  color: var(--foreground-muted);
+}
+.form-input[aria-invalid="true"] {
+  border-color: var(--accent-red-bright);
+}
+
+/* An inline error under a field or button (ui_common.js setFieldError). */
+.field-error {
+  margin-top: var(--space-1);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-red-soft);
+}
+.field-error[hidden] {
+  display: none;
+}
+
+/* A line of help under a control. */
+.form-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
 
 .code-input {
   font-family: var(--font-mono);
@@ -1099,29 +1147,71 @@ button.mode-dropdown-item {
   text-align: center;
 }
 
-/* Color Palette Swatches */
-.color-palette {
+/* The person colour picker (identity.js): 28px swatches, each in a 40px tall hit area
+   as wide as its column (32 to 40px). The negative margin lines the first and last
+   swatch up with the card's content edge. */
+.id-picker {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.id-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(32px, 40px));
+  justify-content: space-between;
+  margin-inline: calc((28px - 40px) / 2);
+}
+.id-swatch {
+  position: relative;
+  height: 40px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  cursor: pointer;
 }
-
-.color-option {
+.id-swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.id-swatch-dot {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid transparent;
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3), var(--shadow-sm);
-  transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--primary-foreground);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  transition: transform var(--duration-fast) var(--ease-out);
 }
-.color-option:hover {
+.id-swatch:hover .id-swatch-dot {
   transform: scale(1.1);
 }
-.color-option.selected {
-  border-color: var(--white);
-  transform: scale(1.15);
-  box-shadow: 0 0 10px rgba(217, 119, 6, 0.5);
+.id-swatch input:checked + .id-swatch-dot {
+  box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--foreground);
+}
+/* Someone in the room holds it: their initial, a dark inner ring, not choosable. */
+.id-swatch:has(input:disabled) {
+  cursor: not-allowed;
+}
+.id-swatch:has(input:disabled):hover .id-swatch-dot {
+  transform: none;
+}
+.id-swatch input:disabled + .id-swatch-dot {
+  box-shadow: inset 0 0 0 2px rgba(18, 16, 14, 0.55);
+  /* Dimmed, so it doesn't read as the chosen hue (which also carries an initial). */
+  opacity: 0.45;
 }
 
 .card-divider {
@@ -1194,7 +1284,8 @@ button.mode-dropdown-item {
 .btn:focus-visible,
 .btn-big-record:focus-visible,
 .pack-card:focus-visible,
-.color-option:focus-visible,
+.id-swatch input:focus-visible + .id-swatch-dot,
+.cast-select:focus-visible,
 .chip-item:focus-visible,
 .actor-hud-char:focus-visible {
   outline: 2px solid var(--accent-brass);
@@ -1372,9 +1463,9 @@ button.mode-dropdown-item {
 
 .hero-title-accent {
   color: var(--primary);
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 50%, var(--accent-brass) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+}
+.hero-banner[hidden] {
+  display: none;
 }
 
 .hero-subtitle {
@@ -1387,13 +1478,51 @@ button.mode-dropdown-item {
 
 .landing-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 24px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
 }
 
-.panel-actor-setup {
-  padding: 20px;
+/* "You": name, colour and a friend's room. Stays in view while the scenes scroll. */
+.landing-you {
+  position: sticky;
+  top: calc(50px + var(--space-4));
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.landing-you .card-divider {
+  margin: 0;
+}
+.landing-you > .field-error {
+  margin-top: calc(-1 * var(--space-3));
+}
+.you-identity {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.you-identity .avatar {
+  margin-bottom: calc((40px - 44px) / 2);
+}
+.you-name-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A "Room code or invite link" field with its Join button (lobby.js initCodeForm). */
+.code-form-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.code-form-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+.code-form-row .btn {
+  height: 40px;
+  flex-shrink: 0;
 }
 
 /* Continue where you left off (landing, own computer only) */
@@ -1464,11 +1593,6 @@ button.mode-dropdown-item {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--accent-brass);
-}
-
-/* Pack Instant Search & Filter Bar */
-.pack-search-container {
-  margin-top: 14px;
 }
 
 .search-input-wrapper {
@@ -1563,10 +1687,140 @@ button.mode-dropdown-item {
   font-weight: 600;
 }
 
-/* Drag and Drop Pack Overlay */
+/* The scenes: a toolbar, the cards, and the chosen scene in a bar that stays at the
+   bottom of the window while the cards scroll (overflow: clip keeps it sticky). */
 .panel-pack-selector {
-  padding: 20px;
   position: relative;
+  overflow: clip;
+}
+.scenes-head {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.scenes-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+}
+.scenes-head .search-input-wrapper {
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 420px;
+  margin-left: auto;
+}
+.btn-icon {
+  width: 32px;
+  padding: 0;
+}
+
+/* The ⋯ menu: Import, Packs folder, Rescan (packs.js initSceneMenu). */
+.scene-menu {
+  position: relative;
+}
+.scene-menu-pop {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--popover);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+.scene-menu-pop[hidden] {
+  display: none;
+}
+.scene-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.scene-menu-item:hover {
+  background: var(--secondary);
+}
+.scene-menu-item:focus-visible {
+  background: var(--secondary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.scene-menu-item:disabled {
+  color: var(--foreground-dim);
+  cursor: not-allowed;
+}
+.scene-menu-item svg {
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+}
+
+.scene-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card-header);
+  border-top: 1px solid var(--border);
+}
+.scene-bar-thumb {
+  width: 64px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-wood);
+  background: var(--input);
+  color: var(--foreground-dim);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scene-bar-thumb:empty {
+  display: none;
+}
+.scene-bar-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scene-bar-text {
+  min-width: 0;
+}
+.scene-bar-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scene-bar-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.scene-bar .btn {
+  margin-left: auto;
+  min-width: 220px;
+  flex-shrink: 0;
 }
 
 .pack-dropzone {
@@ -1614,8 +1868,8 @@ button.mode-dropdown-item {
 .pack-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
 .pack-card {
@@ -1633,7 +1887,6 @@ button.mode-dropdown-item {
 .pack-card:hover {
   border-color: var(--border-wood);
   background: var(--card);
-  transform: translateY(-2px);
 }
 .pack-card.selected {
   border-color: var(--primary);
@@ -1868,21 +2121,18 @@ button.mode-dropdown-item {
 /* 2. CASTING BOARD & LOBBY                                      */
 /* ------------------------------------------------------------- */
 
-.lobby-header-card {
-  padding: 20px 24px;
-  margin-bottom: 24px;
+/* Title row, no card: the scene, its one meta line, who's here, the invite and the next step. */
+.lobby-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+  margin-bottom: var(--space-5);
 }
-
-.lobby-badge-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+.lobby-title-group {
+  min-width: 0;
 }
 
 .badge-studio {
@@ -1899,33 +2149,73 @@ button.mode-dropdown-item {
 .lobby-pack-title {
   font-size: 20px;
   font-weight: 800;
+  line-height: 1.25;
   color: var(--foreground);
-  margin-bottom: 4px;
+  overflow-wrap: anywhere;
 }
 
-.lobby-desc {
+.lobby-meta {
+  margin-top: var(--space-1);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--foreground-muted);
 }
 
 .lobby-action-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
+.lobby-action-group [hidden] {
+  display: none;
+}
+.lobby-presence:empty {
+  display: none;
+}
+.lobby-here-count {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+/* A friend's line where the host has Start recording. */
+.lobby-waiting {
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
 
+/* The casting card and the rail. Below 1100px the rail drops under the card. */
 .lobby-layout {
   display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 39vw, 560px);
+  gap: var(--space-5);
   align-items: start;
 }
 
 .panel-casting {
-  max-height: 480px;
+  /* The card grows with its rows and scrolls inside itself only when the window is too short. */
+  max-height: calc(100vh - 170px);
   overflow-y: auto;
-  scrollbar-width: thin;
+}
+
+.casting-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--card-header);
+}
+.casting-head [hidden] {
+  display: none;
+}
+.casting-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
 }
 
 .casting-table {
@@ -1938,7 +2228,7 @@ button.mode-dropdown-item {
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
   background: var(--card-header);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1948,19 +2238,48 @@ button.mode-dropdown-item {
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
+.casting-table th.casting-col-lines,
+.casting-table td.casting-col-lines {
+  text-align: right;
+  white-space: nowrap;
+}
 
 .casting-table td {
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
+  height: 52px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
 }
 .casting-table tr:hover td {
   background: rgba(244, 237, 228, 0.02);
 }
+/* The row the scene preview shows: a tint, no coloured side stripe. */
+.casting-table tr.is-selected td {
+  background: var(--secondary);
+}
+
+/* The character's name pins the preview to its row. */
+.cast-char {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.cast-char:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
 
 .cast-select {
   height: 34px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   background: var(--input);
   border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
@@ -1970,45 +2289,53 @@ button.mode-dropdown-item {
   outline: none;
   cursor: pointer;
   width: 100%;
+  max-width: 280px;
   min-width: 0;
 }
 .cast-select:focus {
   border-color: var(--primary);
 }
 
-.actor-color-dot {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.actor-color-dot.unassigned {
-  box-shadow: inset 0 0 0 1px var(--foreground-dim);
-}
-
-/* Casting rows: the character, its line count, and who voices it. */
-.char-badge-cell {
+/* Voiced by: the person's avatar (an empty ring for the original voice), then their name or the select. */
+.cast-assign-cell {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
+  min-height: 34px;
 }
-.char-badge {
+.cast-voice-body {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.avatar.avatar-empty {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--foreground-dim);
+}
+.avatar.is-offline {
+  opacity: 0.45;
+}
+.cast-actor-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
+  overflow-wrap: anywhere;
 }
-.your-role-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(204, 164, 88, 0.12);
-  color: var(--accent-brass);
-  border: 1px solid rgba(204, 164, 88, 0.3);
-  border-radius: var(--radius-sm);
+.cast-actor-name.unassigned {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+/* "I'll voice X" sits at the end of the cell; Give back right after "You". */
+.cast-claim {
+  margin-left: auto;
   white-space: nowrap;
 }
+.cast-give-back {
+  white-space: nowrap;
+}
+
 .char-line-count {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -2016,160 +2343,184 @@ button.mode-dropdown-item {
   color: var(--foreground-muted);
   white-space: nowrap;
 }
-.cast-assign-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-}
-.cast-actor-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-.cast-actor-name.unassigned {
-  font-weight: 500;
+
+.casting-note {
+  padding: var(--space-3) var(--space-4);
+  font-size: 12px;
   color: var(--foreground-muted);
 }
-.casting-table tr.assigned-to-me td {
-  background: rgba(204, 164, 88, 0.05);
-}
-
-/* Guests see who runs the room instead of its controls. */
-.lobby-action-group [hidden] {
+.casting-note[hidden] {
   display: none;
 }
-.lobby-waiting {
-  font-size: 13px;
-  color: var(--foreground-muted);
-  max-width: 280px;
-}
 
-.lobby-sidebar {
+/* The rail: the scene preview, then the mic card. */
+.lobby-rail {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-}
-
-.lobby-noise-box {
-  padding: 12px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  transition: border-color var(--duration-fast);
-}
-.lobby-noise-box:hover {
-  border-color: var(--border-wood);
-}
-.lobby-noise-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-.lobby-noise-title-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.lobby-noise-icon {
-  font-size: 14px;
-}
-.lobby-noise-title {
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--foreground);
-}
-.lobby-noise-desc {
-  font-size: 12px;
-  color: var(--foreground-muted);
-  line-height: 1.4;
-  margin: 0;
-}
-
-.lobby-cast-list {
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.lobby-user-item {
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 12px 5px 5px;
-}
-.lobby-user-who {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
-.lobby-user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.user-you-tag,
-.tag-host {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-wood);
-  background: var(--secondary);
-  color: var(--foreground-muted);
-}
-.tag-host {
-  border-color: rgba(217, 119, 6, 0.35);
-  background: rgba(217, 119, 6, 0.12);
-  color: var(--primary-hover);
-}
-.cast-status-pill {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-.cast-status-pill.online {
-  color: var(--foreground);
-}
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.dot-online {
-  background: var(--accent-green-bright);
-}
-.dot-offline {
-  box-shadow: inset 0 0 0 1px var(--foreground-dim);
-}
 
-.badge-online {
+.scene-preview-poster {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  /* Shorter on short windows, so the mic card under it stays in reach. */
+  max-height: 34vh;
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+}
+.scene-preview-poster video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.scene-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+.scene-preview-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--accent-teal);
-  border-radius: var(--radius-sm);
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent-brass);
 }
+.scene-preview-text {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--foreground);
+  overflow-wrap: break-word;
+}
+.scene-preview-text:empty {
+  display: none;
+}
+.scene-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.scene-preview-actions [hidden] {
+  display: none;
+}
+.scene-preview-time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground-muted);
+}
+.scene-preview-get {
+  margin-left: auto;
+}
+
+/* Check your mic: one step at a time, then one line. */
+.mic-card {
+  padding: var(--space-4);
+}
+.mic-card-steps,
+.mic-card-step,
+.mic-card-devices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.mic-card [hidden] {
+  display: none;
+}
+.mic-card-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.mic-card-lede {
+  margin-top: calc(-1 * var(--space-2));
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+.mic-card-note {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+.mic-card-devices .form-label {
+  margin-bottom: calc(-1 * var(--space-2));
+}
+.mic-card-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.mic-card-error {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--accent-red-soft);
+}
+.mic-card-hint,
+.mic-card-sync-copy {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+.mic-card-hint.is-error {
+  color: var(--accent-red-soft);
+}
+.mic-card-skip,
+.mic-card-done .btn-link-sm {
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.mic-card-done .btn-link-sm {
+  padding: 2px 4px;
+  margin-left: -4px;
+  color: var(--foreground);
+}
+.mic-card-done {
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+
+/* Short windows (1280x720): a shorter poster, so the mic card's buttons stay in view. */
+@media (max-height: 760px) {
+  .scene-preview-poster {
+    max-height: 22vh;
+  }
+}
+
+/* Below 1100px the rail goes under the casting card, the preview and the mic card side
+   by side, and the page scrolls instead of the card. */
+@media (max-width: 1099px) {
+  .lobby-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .panel-casting {
+    max-height: none;
+  }
+  .lobby-rail {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+  }
+}
+
 
 /* ------------------------------------------------------------- */
 /* 3. RECORDING BOOTH VIEW (IN-FRAME ZERO-SCROLL STUDIO DAW)     */
 /* ------------------------------------------------------------- */
 
 .app-container:has(#view-booth.active) {
-  padding: 10px 16px 10px;
-  height: calc(100vh - 50px - var(--hud-height, 34px));
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  /* The header only: the booth has no cast strip (its bar says who's here). */
+  height: calc(100vh - 50px);
   min-height: 0;
   max-height: 100vh;
   display: flex;
@@ -2189,19 +2540,27 @@ button.mode-dropdown-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
-  margin-bottom: 10px;
-  min-height: 38px;
-  flex-wrap: wrap;
-  gap: 8px;
+  padding: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-3);
+  min-height: 44px;
+  gap: var(--space-3);
   flex-shrink: 0;
+  /* The who's-here popover hangs below the bar, over the picture */
+  overflow: visible;
+  z-index: 5;
 }
 
+/* Line 1 of 4, the line chips, My lines. The chips scroll sideways, so a long scene
+   never pushes Mark ready or Start premiere out of the bar. */
 .stage-info-group {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 1 1 0;
+  min-width: 0;
+}
+.stage-info-group > :not(.timeline-chips-box) {
+  flex-shrink: 0;
 }
 
 .line-progress-badge {
@@ -2229,7 +2588,142 @@ button.mode-dropdown-item {
 .stage-action-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+/* The who's-here slot takes no room until the presence stack fills it */
+.booth-presence:empty {
+  display: none;
+}
+
+/* WHO'S HERE (presence.js): one avatar per person online, the stack button and its
+   popover. Shared by the booth bar and the lobby title row. */
+.avatar {
+  width: var(--avatar-size, 28px);
+  height: var(--avatar-size, 28px);
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: var(--font-sans);
+  font-size: max(11px, calc(var(--avatar-size, 28px) * 0.43));
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+
+.presence {
+  position: relative;
+  display: flex;
+}
+
+.presence-stack {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.presence-stack:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+/* Overlapping discs, each ringed in the bar's walnut so the edges read */
+.presence-stack .avatar {
+  box-shadow: 0 0 0 2px var(--card), inset 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+.presence-stack .avatar + .avatar {
+  margin-left: calc(-1 * var(--space-2));
+}
+.presence-stack .presence-more {
+  background: var(--secondary);
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.presence-pop {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 60;
+  width: 280px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-3);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  animation: presence-pop-in var(--duration-fast) var(--ease-out);
+}
+.presence-pop[hidden] {
+  display: none;
+}
+@keyframes presence-pop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+.presence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.presence-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.presence-row + .presence-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.presence-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.presence-name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.presence-meta {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Green: done (the Signal Lamp Rule) */
+.presence-ready {
+  align-self: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--radius-full);
+  background: rgba(22, 163, 74, 0.18);
+  color: var(--accent-green-light);
+  border: 1px solid var(--accent-teal-glow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presence-pop {
+    animation: none;
+  }
 }
 
 /* Redesigned Mark Ready Toggle Button */
@@ -2283,7 +2777,7 @@ button.mode-dropdown-item {
 .booth-layout {
   display: grid;
   grid-template-columns: 1fr 340px;
-  gap: 12px;
+  gap: var(--space-4);
   align-items: stretch;
   flex: 1 1 0;
   min-height: 0;
@@ -2293,7 +2787,7 @@ button.mode-dropdown-item {
 @media (min-width: 1550px) {
   .booth-layout {
     grid-template-columns: 1fr 360px;
-    gap: 14px;
+    gap: var(--space-4);
   }
 }
 
@@ -2307,10 +2801,9 @@ button.mode-dropdown-item {
 .stage-main-col {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   min-height: 0;
   height: 100%;
-  padding-right: 2px;
   overflow: hidden;
 }
 
@@ -2427,10 +2920,15 @@ body.resizing .video-container {
   letter-spacing: 1px;
 }
 
-/* Subtitle Prompter Card & Vertical Splitter Resizer (Dark Brown Theme with Gold Outline Glow) */
+/* The prompter: one row. The character on the left, the line centred on the video's axis
+   (wrapping inside at most 70% of the card), the line's length on the right. */
 .caption-card {
   position: relative;
-  padding: 6px 14px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) fit-content(70%) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background-color: var(--panel-deep);
   background-image: radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.08) 0%, transparent 75%);
   border: 1.5px solid rgba(204, 164, 88, 0.45);
@@ -2446,11 +2944,15 @@ body.resizing .video-container {
 }
 
 .prompter-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 8px;
-  margin: -6px -14px 2px;
   cursor: ns-resize;
   user-select: none;
   touch-action: none;
@@ -2481,18 +2983,23 @@ body.resizing .resize-grip-pill {
 }
 
 .caption-char {
+  justify-self: start;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   letter-spacing: 1.2px;
-  margin-bottom: 2px;
   text-transform: uppercase;
 }
 
 .caption-text {
+  min-width: 0;
+  overflow-wrap: break-word;
   font-family: var(--font-serif);
-  font-size: 15px;
+  font-size: 22px;
   font-weight: 500;
   line-height: 1.3;
   color: #fffaf2;
@@ -2500,8 +3007,12 @@ body.resizing .resize-grip-pill {
 }
 
 /* Dual Waveform Panel & Track Sync Controls (Dark Brown Theme with Gold Outline Glow) */
+.caption-time {
+  justify-self: end;
+}
+
 .waveform-panel {
-  padding: 6px 12px 8px;
+  padding: var(--space-2) var(--space-3);
   background-color: #14100c;
   background-image: radial-gradient(ellipse at 50% 0%, rgba(204, 164, 88, 0.06) 0%, transparent 60%);
   border: 1.5px solid rgba(204, 164, 88, 0.45);
@@ -2513,13 +3024,13 @@ body.resizing .resize-grip-pill {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 .legend-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .legend-dot {
@@ -2568,9 +3079,25 @@ body.resizing .resize-grip-pill {
 .nudge-preset-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
   flex-wrap: wrap;
+}
+/* No take yet: nothing to move. The row is inert (booth.js) and dimmed. */
+.nudge-preset-bar.is-idle-empty {
+  opacity: 0.45;
+}
+
+/* Recording focus: counting in or recording, all but the record button, the picture, the
+   line and the waveform is inert (booth.js setRecordState) and dimmed. The waveform is
+   inert too, so it can't be dragged, but shows the live trace undimmed. */
+body.is-taking [inert]:not(.waveform-canvas-box) {
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+/* Nothing to explain mid-take, and the record button's own tip would cover "● RECORD" */
+body.is-taking .dm-tip {
+  visibility: hidden;
 }
 
 .nudge-label {
@@ -2648,28 +3175,29 @@ body.resizing .resize-grip-pill {
   white-space: nowrap;
 }
 
-/* Timeline Strip Chips (Dark Brown Theme with Gold Outline Glow) */
-.timeline-chips-wrapper {
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-
+/* The line chips, in the booth bar after "Line 1 of 4". The strip scrolls, so it clips:
+   its padding leaves room for a chip's focus ring and the active chip's glow, and the
+   matching negative margin keeps the chips where they were. */
 .timeline-chips-box {
-  padding: 6px 8px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: var(--space-2);
+  margin: calc(-1 * var(--space-2));
   overflow-x: auto;
-  background-color: var(--panel-deep);
-  border: 1px solid rgba(204, 164, 88, 0.35);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 0 14px rgba(204, 164, 88, 0.15), 0 4px 12px rgba(0, 0, 0, 0.6);
+  overflow-y: hidden;
+}
+/* A thin bar, so a scrolling strip still fits the booth bar's height */
+.timeline-chips-box::-webkit-scrollbar {
+  height: 4px;
 }
 
 .chip-item {
   flex-shrink: 0;
   min-width: 38px;
-  height: 32px;
+  height: 28px;
   padding: 0 10px;
   background: var(--input);
   border: 1px solid var(--border-wood);
@@ -2690,7 +3218,6 @@ body.resizing .resize-grip-pill {
   background: var(--secondary);
   border-color: var(--primary);
   color: var(--foreground);
-  transform: translateY(-1px);
 }
 .chip-item.active {
   background: var(--secondary);
@@ -2735,7 +3262,7 @@ body.resizing .resize-grip-pill {
 .booth-controls {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: var(--space-3);
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -2748,14 +3275,14 @@ body.resizing .resize-grip-pill {
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .booth-column-scroll > * {
   flex-shrink: 0;
 }
 
 .booth-controls .panel-header-sm {
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
@@ -2766,22 +3293,22 @@ body.resizing .resize-grip-pill {
 
 /* Row 1: the record deck */
 .record-deck-body {
-  padding: 12px 14px 14px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .record-deck-main {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-3);
 }
 
 .record-track-tag {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
@@ -2901,10 +3428,11 @@ body.resizing .resize-grip-pill {
   color: var(--foreground-muted);
 }
 
-/* "▶ Original | ▶ Take 3": one segmented transport */
+/* "▶ Original | ▶ Take 3": one segmented transport. Each half keeps one line however
+   long the take number gets ("▶ Take 25"). */
 .transport-seg {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   background: var(--input);
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-md);
@@ -2918,6 +3446,9 @@ body.resizing .resize-grip-pill {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -2945,28 +3476,50 @@ body.resizing .resize-grip-pill {
   outline-offset: 2px;
 }
 
-/* The mic-sync advice, under the transport */
+/* The mic-sync advice under the transport: one unboxed line on the deck's content edge */
 .mic-sync-hint {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  padding: 8px 10px;
-  background: var(--input);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-md);
+  gap: var(--space-2);
+  padding: 0;
+  background: none;
+  border: 0;
 }
 .mic-sync-hint-text {
-  flex: 1 1 100%;
+  flex: 1 1 0;
+  min-width: 0;
   font-size: 12px;
   color: var(--foreground);
 }
+.mic-sync-hint .btn {
+  flex-shrink: 0;
+}
 .mic-sync-hint-close {
-  margin-left: auto;
   font-size: 14px;
 }
 
 /* Row 2: Takes. One row per take, newest first; the green row is in the dub. */
+.takes-card {
+  /* One row with its border; the list's height is counted in rows */
+  --take-row-h: 38px;
+}
+/* With three rows or more, the card gives way first when the column runs short: it
+   shrinks down to two rows (the list scrolls) before Voice and Monitor scroll out of
+   view. 58px is the card's border, header and body padding. */
+.takes-card.is-long {
+  flex-shrink: 1;
+  min-height: calc(58px + 2 * var(--take-row-h) + var(--space-1));
+  display: flex;
+  flex-direction: column;
+}
+.takes-card.is-long > .takes-card-header {
+  flex: none;
+}
+.takes-card.is-long .takes-card-body,
+.takes-card.is-long .takes-list {
+  flex: 0 1 auto;
+  min-height: 0;
+}
 .takes-card-header {
   display: flex;
   align-items: center;
@@ -2995,22 +3548,35 @@ body.resizing .resize-grip-pill {
   background: var(--input);
 }
 .takes-card-body {
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .takes-empty,
 .takes-hint {
   margin: 0;
-  padding: 2px 4px;
+  padding: 0;
   font-size: 12px;
   color: var(--foreground-muted);
 }
 .takes-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
+  /* Many takes scroll inside the card: about five and a half rows show (the half row says
+     there's more), so Voice and Monitor stay in view under it. */
+  max-height: calc(5.5 * var(--take-row-h) + 7 * var(--space-1));
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* The scrollbar sits in the card's right gutter, always reserved, so the rows are as
+     wide with 25 takes as with one and nothing in them moves when it appears. The 4px
+     padding all round keeps the focus rings (2px, offset 2px) inside the scroll box,
+     and the margins put the rows back on the card's content edge. */
+  scrollbar-gutter: stable;
+  padding: var(--space-1);
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-3)) calc(-1 * var(--space-1)) calc(-1 * var(--space-1));
+  scroll-padding-block: var(--space-1);
 }
 .takes-list:empty {
   display: none;
@@ -3019,8 +3585,9 @@ body.resizing .resize-grip-pill {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 4px;
-  padding: 0 4px 0 0;
+  /* ▶ and ⋯ sit side by side (each is a 24px target); ▶ keeps 4px from the pick area */
+  gap: 0;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
 }
@@ -3038,8 +3605,11 @@ body.resizing .resize-grip-pill {
   align-self: stretch;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 6px 0 10px;
+  gap: var(--space-1);
+  /* 2px on the right, with the ring's 2px offset, keeps "Use this take" off the focus
+     ring; the row gives up its own right padding for it (⋯ has room inside its 24px),
+     so the best take's bold sync word still fits */
+  padding: 0 2px 0 var(--space-2);
   border-radius: var(--radius-md);
   font-size: 12px;
   color: var(--foreground-muted);
@@ -3066,8 +3636,11 @@ body.resizing .resize-grip-pill {
   background: radial-gradient(circle, var(--accent-green-bright) 0 3.5px, transparent 4px);
 }
 .take-name {
+  /* As wide as "Take 99", so the duration starts at the same x on every row */
+  min-width: 3.7em;
   font-size: 13px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--foreground);
   white-space: nowrap;
 }
@@ -3076,34 +3649,65 @@ body.resizing .resize-grip-pill {
   font-size: 11px;
   white-space: nowrap;
 }
-.take-by {
+.take-sync {
+  margin-left: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.take-sync {
-  margin-left: auto;
-  white-space: nowrap;
+/* A take by someone else on a line you share: their avatar takes the duration's room. */
+.take-row:has(.take-more) .take-pick:has(.avatar) .take-dur {
+  display: none;
 }
 /* The best-timed take's sync, lightly lifted */
 .take-sync.best {
   color: var(--accent-brass);
   font-weight: 700;
 }
+/* One fixed slot after the sync: "In the dub" on the picked row, "Use this take" on your
+   other rows while the pointer is on the part a click uses (not ▶ or ⋯) or it has keyboard
+   focus. Its width never changes, so ▶ sits at the same x on every row. 72px fits the
+   12px cue with "Loose sync" whole beside it; a font that renders wider is clipped
+   rather than spilling over the sync word. */
+.take-slot {
+  flex: 0 0 auto;
+  width: 72px;
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+  overflow: hidden;
+}
 .take-in-dub {
   font-weight: 700;
   color: var(--accent-green-light);
-  white-space: nowrap;
 }
-.take-use {
+.take-use-cue {
+  visibility: hidden;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.take-pick:hover .take-use-cue,
+.take-pick:focus-visible .take-use-cue {
+  visibility: visible;
+}
+.take-play {
   flex-shrink: 0;
+  min-width: 24px;
+  margin-left: var(--space-1);
+  padding-left: 4px;
+  padding-right: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.take-play[aria-pressed="true"] {
+  color: var(--primary);
 }
 .take-more {
   flex-shrink: 0;
-  min-width: 28px;
-  padding-left: 6px;
-  padding-right: 6px;
+  min-width: 24px;
+  padding-left: 4px;
+  padding-right: 4px;
   font-size: 16px;
   font-weight: 700;
   line-height: 1;
@@ -3162,7 +3766,7 @@ body.resizing .resize-grip-pill {
 /* A take saving, or waiting to upload: a dashed row above the takes */
 .take-row.is-pending {
   min-height: 36px;
-  padding-left: 10px;
+  padding: 0 var(--space-1) 0 var(--space-2);
   gap: 8px;
   font-size: 12px;
   color: var(--foreground-muted);
@@ -3188,25 +3792,27 @@ body.resizing .resize-grip-pill {
 }
 .take-row.is-deleted {
   min-height: 36px;
-  padding-left: 10px;
-  gap: 6px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  gap: var(--space-2);
   font-size: 12px;
   color: var(--foreground-muted);
   border-style: dashed;
   border-color: var(--border-wood);
 }
 
-/* Monitor: one row for the backing level, one for the two switches */
+/* Monitor: no frame. One row for the backing level, one for the two switches, on the
+   same content line as the cards above (the clear border stands in for their frame). */
 .monitor-strip {
-  padding: 10px 14px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid transparent;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .monitor-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .monitor-label {
   min-width: 56px;
@@ -3280,10 +3886,10 @@ body.resizing .resize-grip-pill {
 }
 /* Voice card: preset chips, then For and Level */
 .voice-main {
-  padding: 10px 12px 12px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   position: relative;
 }
 
@@ -3513,7 +4119,7 @@ svg {
 /* Row 3: line navigation, pinned */
 .booth-nav-group {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .booth-nav-group .btn {
   height: 36px;
@@ -3532,8 +4138,8 @@ svg {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--card);
   border: 1.5px solid rgba(204, 164, 88, 0.42);
   border-radius: var(--radius-md);
@@ -4359,28 +4965,138 @@ svg {
   .toast.is-leaving { transform: none; }
 }
 
-/* Join Room Actor Name & Mic Setup Modal */
-.join-modal-card {
-  max-width: 440px;
-  background: #1c1814;
-  border: 1px solid var(--border-wood);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(217, 119, 6, 0.2);
-}
+/* ------------------------------------------------------------- */
+/* JOIN CARD AND YOU LEFT: one centred column on the room's page  */
+/* ------------------------------------------------------------- */
 
-.join-modal-avatar-preview {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+.room-column {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--space-5) 0;
+}
+
+.join-card {
+  width: min(480px, 100%);
+}
+.join-poster {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  /* Shorter on short windows, so Join stays in view without scrolling. */
+  max-height: 30vh;
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+}
+.join-poster:empty {
+  display: none;
+}
+.join-poster img,
+.join-poster video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.join-body {
+  padding: var(--space-4);
+}
+.join-form,
+.join-missing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.join-form[hidden],
+.join-missing[hidden],
+.join-finding[hidden] {
+  display: none;
+}
+.join-finding {
+  padding: var(--space-5) 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+.join-title {
   font-family: var(--font-sans);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 800;
-  color: var(--white);
-  box-shadow: 0 0 14px rgba(0, 0, 0, 0.5);
-  flex-shrink: 0;
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.join-meta {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+.join-here {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.join-here:empty {
+  display: none;
+}
+.join-here-label {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.join-here-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.join-form .btn-primary {
+  width: 100%;
+}
+.join-hint {
+  text-align: center;
+}
+
+.left-card {
+  width: min(460px, 100%);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Less glow than a working panel, so Rejoin is the brightest thing on screen. */
+  box-shadow: 0 8px 28px -4px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(204, 164, 88, 0.35);
+}
+.left-card .card-divider {
+  margin: 0;
+}
+.left-title {
+  font-family: var(--font-sans);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--foreground);
+}
+.left-rejoin {
+  width: 100%;
+}
+.left-rejoin[hidden] {
+  display: none;
+}
+
+/* On a host's page with no DubMate of your own (join card, You left): no Audio, no ?,
+   and the logo is a plain wordmark (app.js showView also makes it inert). */
+body.no-home-chrome #btn-audio-settings,
+body.no-home-chrome #btn-shortcuts,
+body.no-home-chrome .logo-chevron {
+  display: none;
+}
+body.no-home-chrome .logo-with-dropdown {
+  cursor: default;
 }
 
 /* ------------------------------------------------------------- */
@@ -4388,8 +5104,7 @@ svg {
 /* ------------------------------------------------------------- */
 
 @media (max-width: 900px) {
-  .landing-grid,
-  .lobby-layout {
+  .landing-grid {
     grid-template-columns: 1fr;
   }
 
@@ -4422,16 +5137,15 @@ svg {
     height: 64px;
   }
   .record-deck-body {
-    padding: 8px 12px 10px;
-    gap: 8px;
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
   }
   .booth-controls,
   .booth-column-scroll {
-    gap: 8px;
+    gap: var(--space-2);
   }
   .monitor-strip {
-    padding: 8px 12px;
-    gap: 6px;
+    gap: var(--space-2);
   }
 }
 
@@ -5712,14 +6426,14 @@ svg {
 /* The studio's sheet ends with a way to About DubMate. */
 .shortcut-sheet-footer {
   display: flex;
-  margin-top: 16px;
-  padding-top: 12px;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
 
 /* The ghost button's label lines up with the sheet's left edge (btn-sm pads 12px). */
 .shortcut-sheet-footer .btn-ghost {
-  margin-left: -12px;
+  margin-left: calc(-1 * var(--space-3));
 }
 
 /* ------------------------------------------------------------- */
@@ -5731,13 +6445,13 @@ svg {
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   text-align: left;
-  padding: 28px 28px 24px;
+  padding: 28px 28px var(--space-5);
 }
 
 .about-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   /* Clear of the close button. */
   padding-right: 40px;
 }
@@ -5760,7 +6474,7 @@ svg {
 }
 
 .about-licence {
-  margin: 16px 0 0;
+  margin: var(--space-4) 0 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--foreground);
@@ -5769,18 +6483,18 @@ svg {
 .about-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .about-section {
   margin-top: 20px;
-  padding-top: 16px;
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
 
 .about-section-title {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
   font-size: 14px;
   font-weight: 700;
   color: var(--foreground);
@@ -5794,7 +6508,7 @@ svg {
 }
 
 .about-text.about-meta {
-  margin: 12px 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--foreground-muted);
 }
 
@@ -5812,7 +6526,7 @@ svg {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  column-gap: 12px;
+  column-gap: var(--space-3);
   row-gap: 2px;
 }
 
@@ -5934,7 +6648,7 @@ svg {
 .voice-presets {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
   position: relative;
   z-index: 3;
 }
@@ -5998,7 +6712,7 @@ span.voice-chip {
 .voice-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   min-height: 32px;
 }
 .voice-row-label {
@@ -6006,6 +6720,18 @@ span.voice-chip {
   font-size: 12px;
   font-weight: 600;
   color: var(--foreground-muted);
+}
+.voice-for-row {
+  flex-wrap: wrap;
+}
+/* Its own line under For, from the column's left edge (it never fits beside For) */
+.voice-summary {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.booth-controls.rack-open .voice-summary {
+  display: none;
 }
 .voice-scope-select {
   width: auto;
@@ -6021,8 +6747,8 @@ span.voice-chip {
 .voice-scope-ask {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-md);
   background: var(--input);
@@ -6035,7 +6761,7 @@ span.voice-chip {
 .voice-scope-ask-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .voice-scope-status {
   margin: 0;
@@ -6049,9 +6775,12 @@ span.voice-chip {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
 }
-.voice-level-take .btn-auto-match {
+.voice-fx-level .voice-fx-head {
+  cursor: default;
+}
+.voice-fx-level .btn-auto-match {
   margin-left: auto;
 }
 .voice-level-matched {
@@ -6067,8 +6796,8 @@ span.voice-chip {
   color: var(--foreground-muted);
 }
 
-/* All effects: the column's page, on the plain card surface. An effect that's on shows its
-   dials; one that's off is a single row: switch, name, "off". */
+/* All effects: the column's page, on the plain card surface. Level comes first; an effect
+   that's on shows its dials, one that's off is a single row: switch, name, "off". */
 .voice-rack {
   display: none;
   flex-direction: column;
@@ -6081,8 +6810,8 @@ span.voice-chip {
 .voice-fx {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
 .voice-fx:last-child {
@@ -6091,7 +6820,7 @@ span.voice-chip {
 .voice-fx-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
@@ -6113,7 +6842,7 @@ span.voice-chip {
 .voice-fx-dials {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 8px;
+  gap: var(--space-2);
 }
 .voice-rack .dsp-channel-readout {
   padding: 1px 4px;
@@ -6149,13 +6878,13 @@ span.voice-chip {
 .booth-controls.rack-open .record-deck-body {
   flex-direction: row;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
 }
 .booth-controls.rack-open .record-deck-main {
   flex: 1;
   min-width: 0;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .booth-controls.rack-open .btn-big-record {
   width: 40px;
@@ -6207,6 +6936,9 @@ span.voice-chip {
   }
   .reel-pulse-ring {
     opacity: 0.4;
+  }
+  body.is-taking [inert] {
+    transition: none;
   }
   .modal-progress-fill.indeterminate,
   .save-menu-bar::after {

@@ -312,6 +312,18 @@ for (const hostname of ["127.0.0.1", "localhost"]) {
     types[0] === "join" && types.includes("assign_role") && socket.pendingMessages.length === 0, JSON.stringify(types));
 }
 
+// --- Cast evenly is one message -------------------------------------------------
+{
+  timers.clear();
+  const socket = new RoomSocket();
+  socket.connect("ABC123", "user1", "Tani", "#f08a6c");
+  FakeWebSocket.last.open();
+  socket.castEvenly();
+  const last = FakeWebSocket.last.sent[FakeWebSocket.last.sent.length - 1];
+  check("castEvenly sends cast_evenly", last && last.type === "cast_evenly", JSON.stringify(last));
+  socket.disconnect();
+}
+
 // --- Retry now while a retry is waiting replaces it -----------------------------
 {
   timers.clear();
