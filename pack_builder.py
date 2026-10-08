@@ -14,6 +14,7 @@ import json
 import time
 import datetime
 import shutil
+import tempfile
 import hashlib
 import threading
 import importlib.util
@@ -1494,8 +1495,10 @@ def assemble_pack(
     folder_name: Optional[str] = None,
 ) -> str:
     """
-    Assembles a complete, compliant DubMate scene pack inside `Packs/<pack_name>`, or
-    `Packs/<folder_name>` to rebuild an earlier pack under a new title.
+    Assembles a complete, compliant DubMate scene pack. A new pack goes in a free
+    `Packs/<pack_name>` folder ('<pack_name> 2'... when taken: it never replaces another
+    pack). folder_name rebuilds the pack in `Packs/<folder_name>` (Build again, also under
+    a new title), keeping that pack until the new build is complete. Returns its folder.
     Generates:
     - `dub_video.mp4`
     - `_backing_track.wav`
@@ -1507,23 +1510,110 @@ def assemble_pack(
     - `icon.png` (if provided)
     """
     safe_title = pack_name.strip() or "Custom Dub Scene"
-    folder_name = folder_name or pack_loader.safe_folder_name(safe_title, "Custom_Pack")
-    
     target_base = pack_loader.PACKS_DIRS[0]
     os.makedirs(target_base, exist_ok=True)
-    pack_dir = os.path.join(target_base, folder_name)
-    os.makedirs(pack_dir, exist_ok=True)
+    if folder_name:
+        folder_name = os.path.basename(folder_name)
 
-    # Rebuilding under an existing pack name must not leave the previous build's line
-    # slices or icon behind: load_pack would pick stale slices up as extra lines.
-    for existing in os.listdir(pack_dir):
-        existing_path = os.path.join(pack_dir, existing)
-        if not os.path.isfile(existing_path):
+    # The pack is written into a hidden staging folder next to its place (the scan skips
+    # dot folders) and only then put in place: a build that fails midway leaves the pack
+    # that was there untouched, and nothing of the old build's slices or icon remains.
+    pack_dir = staging = None
+    try:
+        staging = tempfile.mkdtemp(prefix=".building-", dir=target_base)
+        os.chmod(staging, 0o755)  # mkdtemp makes it private (0700); a pack folder isn't
+        _write_pack_files(staging, safe_title, video_source_path, backing_source_path,
+                          line_slices, cover_image_path, authors, subtitle)
+        if folder_name:
+            pack_dir = os.path.join(target_base, folder_name)
+            _replace_pack_folder(staging, pack_dir)
+        else:
+            pack_dir = _move_to_free_folder(staging, target_base,
+                                            pack_loader.safe_folder_name(safe_title, "Custom_Pack"))
+        staging = None
+    finally:
+        if staging:
+            shutil.rmtree(staging, ignore_errors=True)
+    return pack_dir
+
+
+PACK_IN_USE_MESSAGE = "The pack is in use, so it wasn't replaced. Close it in DubMate, then build again."
+
+
+def _rename_with_retry(src: str, dst: str, attempts: int = 10) -> None:
+    """os.rename, retried for a moment: on Windows an antivirus scan or a file being
+    served briefly holds a folder, and renaming it fails until that ends."""
+    for i in range(attempts):
+        try:
+            os.rename(src, dst)
+            return
+        except FileExistsError:
+            raise
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.2)
+
+
+def _move_to_free_folder(staging: str, target_base: str, base_name: str) -> str:
+    """Moves a new pack into Packs/<base_name>, or '<base_name> 2', '<base_name> 3'...
+    when that name is taken, so a new pack never replaces a different one. The pack id is
+    the folder name, so it is not shared with a pack in another packs folder either."""
+    taken = set()
+    for base in pack_loader.PACKS_DIRS:
+        try:
+            taken.update(name.lower() for name in os.listdir(base))
+        except OSError:
+            pass
+    for n in range(1, 1000):
+        name = base_name if n == 1 else f"{base_name} {n}"
+        if name.lower() in taken:
             continue
-        low = existing.lower()
-        is_stale_slice = low.endswith(pack_loader.AUDIO_EXTS) and pack_loader.timestamp_from_filename(existing) is not None
-        if is_stale_slice or low.startswith("icon."):
-            os.remove(existing_path)
+        dest = os.path.join(target_base, name)
+        try:
+            # Fails if the name was taken meanwhile (on Linux, unless that folder is empty).
+            _rename_with_retry(staging, dest)
+            return dest
+        except OSError:
+            if os.path.exists(dest):
+                continue
+            raise
+    raise RuntimeError("Couldn't find a free folder name for the pack. Give it another title.")
+
+
+def _replace_pack_folder(staging: str, pack_dir: str) -> None:
+    """Swaps a rebuilt pack in for the one at pack_dir, keeping the old one until the new
+    one is in place. If the old pack can't be moved (open files on Windows), it stays as
+    it was and PACK_IN_USE_MESSAGE is raised."""
+    if not os.path.exists(pack_dir):
+        _rename_with_retry(staging, pack_dir)
+        return
+    parent = os.path.dirname(pack_dir)
+    old = tempfile.mkdtemp(prefix=".replaced-", dir=parent)
+    os.rmdir(old)  # only its unique name is wanted
+    try:
+        _rename_with_retry(pack_dir, old)
+    except PermissionError:
+        raise RuntimeError(PACK_IN_USE_MESSAGE)
+    try:
+        _rename_with_retry(staging, pack_dir)
+    except OSError:
+        _rename_with_retry(old, pack_dir)  # put the old pack back
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def _write_pack_files(
+    pack_dir: str,
+    safe_title: str,
+    video_source_path: str,
+    backing_source_path: str,
+    line_slices: List[Dict[str, Any]],
+    cover_image_path: Optional[str],
+    authors: Optional[List[str]],
+    subtitle: Optional[str],
+) -> None:
+    """Writes every file of a pack into pack_dir (see assemble_pack)."""
 
     # 1. Copy / Transcode Video to dub_video.mp4
     target_video = os.path.join(pack_dir, "dub_video.mp4")
@@ -1597,5 +1687,3 @@ def assemble_pack(
 
     with open(os.path.join(pack_dir, "dub_subs.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(dub_subs_lines) + "\n")
-
-    return pack_dir

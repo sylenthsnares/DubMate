@@ -864,18 +864,31 @@ async def builder_compile_pack(session_id: str, payload: Dict[str, Any]):
     progress.update("assembling", 0.90, "Adding the pack to your library", stage="assembling")
     # Build again replaces the pack this session built, in its folder, even when the
     # title changed (the pack keeps its id and takes the new title).
+    # Only while it is in the packs folder new packs go to: after the packs folder
+    # changes, the same folder name there may be a different pack.
     built = session.get("pack_folder")
-    pack_folder = await asyncio.to_thread(
-        pack_builder.assemble_pack,
-        pack_name=pack_name,
-        video_source_path=video_path,
-        backing_source_path=backing_path,
-        line_slices=sliced_lines,
-        cover_image_path=cover_path,
-        authors=authors,
-        subtitle=subtitle,
-        folder_name=os.path.basename(built) if built and os.path.isdir(built) else None,
-    )
+    same_place = bool(built) and os.path.isdir(built) and (
+        os.path.normcase(os.path.abspath(os.path.dirname(built)))
+        == os.path.normcase(os.path.abspath(pack_loader.PACKS_DIRS[0])))
+    try:
+        pack_folder = await asyncio.to_thread(
+            pack_builder.assemble_pack,
+            pack_name=pack_name,
+            video_source_path=video_path,
+            backing_source_path=backing_path,
+            line_slices=sliced_lines,
+            cover_image_path=cover_path,
+            authors=authors,
+            subtitle=subtitle,
+            folder_name=os.path.basename(built) if same_place else None,
+        )
+    except Exception as assemble_err:
+        # A pack built earlier is still there, unchanged (assemble_pack stages the build).
+        print(f"[PackBuilder] Assembling the pack failed in session {session_id}: {assemble_err!r}")
+        message = (str(assemble_err) if isinstance(assemble_err, RuntimeError)
+                   else "The pack couldn't be added to your library. Try again.")
+        progress.update("error", 0.0, message, error=message)
+        raise HTTPException(status_code=500, detail=message)
     session["pack_folder"] = pack_folder
 
     # Step 3: Refresh server pack registry

@@ -658,7 +658,7 @@ NOTE This is a test subtitle file
                 shutil.rmtree(pack_folder, ignore_errors=True)
 
     def test_13_rebuild_same_pack_name_drops_stale_slices(self):
-        """Rebuilding a pack under the same name must not keep the previous build's line slices or icon."""
+        """Rebuilding a pack in its folder (Build again) must not keep the previous build's line slices or icon."""
         src_wav = os.path.join(self.tmp_dir, "rebuild_audio.wav")
         create_dummy_wav(src_wav, duration_sec=6.0)
         video_dummy = os.path.join(self.tmp_dir, "rebuild_video.mp4")
@@ -700,6 +700,7 @@ NOTE This is a test subtitle file
                 video_source_path=video_dummy,
                 backing_source_path=src_wav,
                 line_slices=second_slices,
+                folder_name=os.path.basename(pack_folder),
             )
             self.assertEqual(os.path.normpath(second_folder), os.path.normpath(pack_folder))
             second = pack_loader.load_pack(second_folder)
@@ -1862,6 +1863,166 @@ class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
             for folder in folders:
                 shutil.rmtree(folder, ignore_errors=True)
 
+    # --- Build again and data safety: a build never harms a pack that isn't its own ---
+
+    def _packs_dir(self):
+        """Points the packs folder at a temp folder for this test; returns it."""
+        from unittest import mock
+        packs = os.path.join(self.tmp_dir, "Packs")
+        os.makedirs(packs, exist_ok=True)
+        p = mock.patch.object(pack_loader, "PACKS_DIRS", [packs])
+        p.start()
+        self.addCleanup(p.stop)
+        return packs
+
+    def _other_pack(self, packs, name):
+        """A different pack already in the library, with a file no build would write."""
+        folder = os.path.join(packs, name)
+        os.makedirs(folder)
+        files = {"pack.json": '{"title": "Theirs"}', "theirs.txt": "keep me",
+                 "dub_video.mp4": "their video", "01.00.wav": "their line"}
+        for fname, body in files.items():
+            with open(os.path.join(folder, fname), "w", encoding="utf-8") as f:
+                f.write(body)
+        return folder, files
+
+    def _assert_untouched(self, folder, files):
+        self.assertEqual(sorted(os.listdir(folder)), sorted(files))
+        for fname, body in files.items():
+            with open(os.path.join(folder, fname), encoding="utf-8") as f:
+                self.assertEqual(f.read(), body, fname)
+
+    def _assemble_args(self, title):
+        src = os.path.join(self.tmp_dir, "src")
+        os.makedirs(src, exist_ok=True)
+        wav = os.path.join(src, "line.wav")
+        if not os.path.isfile(wav):
+            create_dummy_wav(wav, duration_sec=1.0)
+        line = {"filename": "00.50.wav", "file_path": wav, "start": 0.5, "end": 1.0,
+                "character": "Levi", "caption": "Mine"}
+        return dict(pack_name=title, video_source_path=os.path.join(src, "missing.mp4"),
+                    backing_source_path=wav, line_slices=[line])
+
+    def _compile_session(self, sid, **extra):
+        session = self._session(sid, **extra)
+        vocals = os.path.join(session["folder"], "vocals.wav")
+        create_dummy_wav(vocals, duration_sec=3.0)
+        session.update(vocals_path=vocals, full_audio_path=vocals, backing_path=vocals)
+        return session
+
+    def _no_leftovers(self, packs):
+        self.assertEqual([n for n in os.listdir(packs) if n.startswith(".")], [], "no staging folders stay behind")
+
+    def _files(self, folder):
+        out = {}
+        for name in os.listdir(folder):
+            with open(os.path.join(folder, name), "rb") as f:
+                out[name] = f.read()
+        return out
+
+    LINES = [{"start": 0.5, "end": 1.5, "text": "Mine", "character": "Levi"}]
+
+    def test_38_new_pack_never_replaces_a_pack_with_the_same_name(self):
+        """A first build whose title matches another pack's folder gets its own folder; the other pack is untouched."""
+        packs = self._packs_dir()
+        theirs, files = self._other_pack(packs, "Levi vs Beast Titan")
+        folder = pack_builder.assemble_pack(**self._assemble_args("Levi vs Beast Titan"))
+        self.assertEqual(os.path.basename(folder), "Levi vs Beast Titan 2")
+        self._assert_untouched(theirs, files)
+        with open(os.path.join(folder, "pack.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["title"], "Levi vs Beast Titan")
+        # Names differing only by case are one folder on Windows: never shared either.
+        folder3 = pack_builder.assemble_pack(**self._assemble_args("levi vs beast titan"))
+        self.assertEqual(os.path.basename(folder3), "levi vs beast titan 3")
+        self._assert_untouched(theirs, files)
+        self._no_leftovers(packs)
+
+    def test_39_build_again_with_another_packs_title_keeps_both(self):
+        """Build again renamed to another pack's title rebuilds this session's pack (same id); the other pack is untouched."""
+        packs = self._packs_dir()
+        theirs, files = self._other_pack(packs, "Their Pack")
+        sid = "t39"
+        self._compile_session(sid)
+        client = TestClient(app)
+        first = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "My Pack", "segments": self.LINES})
+        self.assertEqual(first.status_code, 200)
+        again = client.post(f"/api/builder/{sid}/compile", json={"pack_name": "Their Pack", "segments": self.LINES})
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["pack_id"], first.json()["pack_id"], "the pack keeps its id")
+        self.assertEqual(sorted(os.listdir(packs)), ["My Pack", "Their Pack"])
+        self._assert_untouched(theirs, files)
+        with open(os.path.join(packs, "My Pack", "pack.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["title"], "Their Pack")
+
+    def test_40_build_failing_midway_keeps_the_built_pack(self):
+        """A rebuild that fails while writing, or can't move the old pack (open files on Windows), leaves the pack as it was."""
+        from unittest import mock
+        packs = self._packs_dir()
+        folder = pack_builder.assemble_pack(**self._assemble_args("Kept Pack"))
+        before = self._files(folder)
+
+        def still_same():
+            self.assertEqual(self._files(folder), before)
+            self._no_leftovers(packs)
+
+        args = dict(self._assemble_args("Kept Pack, renamed"), folder_name="Kept Pack")
+        with mock.patch.object(pack_loader, "write_caption_files", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                pack_builder.assemble_pack(**args)
+        still_same()
+
+        real_rename = os.rename
+
+        def locked(src, dst):
+            if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(folder)):
+                raise PermissionError(32, "The process cannot access the file")
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", locked), mock.patch.object(pack_builder.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                pack_builder.assemble_pack(**args)
+        self.assertEqual(str(ctx.exception), pack_builder.PACK_IN_USE_MESSAGE)
+        still_same()
+
+        # The new build can't be moved in after the old one moved aside: the old one goes back.
+        def stuck(src, dst):
+            if os.path.basename(src).startswith(".building-"):
+                raise PermissionError(5, "Access is denied")
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", stuck), mock.patch.object(pack_builder.time, "sleep"):
+            with self.assertRaises(PermissionError):
+                pack_builder.assemble_pack(**args)
+        still_same()
+
+        # Through the API the failure reaches the Build step as an error, and the pack stays.
+        sid = "t40"
+        session = self._compile_session(sid, pack_folder=folder)
+        with mock.patch.object(pack_loader, "write_caption_files", side_effect=OSError("disk full")):
+            res = TestClient(app).post(f"/api/builder/{sid}/compile", json={"pack_name": "Kept Pack", "segments": self.LINES})
+        self.assertEqual(res.status_code, 500)
+        self.assertEqual(res.json()["detail"], "The pack couldn't be added to your library. Try again.")
+        self.assertEqual(session["progress"].status, "error")
+        self.assertEqual(session["pack_folder"], folder)
+        still_same()
+
+    def test_41_build_again_after_the_packs_folder_changed_makes_a_new_pack(self):
+        """After the packs folder changes, Build again doesn't reuse the folder name there (it may be another pack)."""
+        from unittest import mock
+        old_packs = os.path.join(self.tmp_dir, "OldPacks")
+        os.makedirs(old_packs)
+        with mock.patch.object(pack_loader, "PACKS_DIRS", [old_packs]):
+            mine = pack_builder.assemble_pack(**self._assemble_args("Same Name"))
+        packs = self._packs_dir()
+        theirs, files = self._other_pack(packs, "Same Name")
+        sid = "t41"
+        self._compile_session(sid, pack_folder=mine)
+        res = TestClient(app).post(f"/api/builder/{sid}/compile", json={"pack_name": "Mine Again", "segments": self.LINES})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["pack_id"], "Mine Again")
+        self._assert_untouched(theirs, files)
+        self.assertTrue(os.path.isdir(mine), "the pack in the old packs folder stays")
+
+
 if __name__ == "__main__":
     unittest.main()
-
