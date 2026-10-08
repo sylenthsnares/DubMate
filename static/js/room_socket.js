@@ -11,8 +11,10 @@ const PING_TIMEOUT_MS = PING_INTERVAL_MS * 2.5; // 50s of total silence => assum
 // reconnect storms against the server during an outage.
 const RECONNECT_BASE_DELAY_MS = 2000;
 const RECONNECT_MAX_DELAY_MS = 30000;
-// Five tries span 30 to 60 seconds of backoff. After that the room is treated as
-// unreachable until the user asks to try again.
+// Five tries span 30 to 60 seconds of backoff. After that a room on someone else's
+// engine is treated as unreachable until the user asks to try again. A page served
+// by this machine's own engine keeps trying (every 15 to 30 seconds): that engine
+// comes back after a restart, however long it takes (see isOwnEngine()).
 const MAX_RECONNECT_ATTEMPTS = 5;
 
 export class RoomSocket {
@@ -117,7 +119,7 @@ export class RoomSocket {
         this.reconnectTimeout = null;
       }
       if (this.roomId && this.userId) {
-        if (this.roomGone || this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        if (this.roomGone || (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS && !this.isOwnEngine())) {
           // Give up: the queue is kept for retryNow(), and sends now report failure.
           this._setConnectionState('failed', { attempt: this.reconnectAttempts });
           console.warn('[Socket] Giving up on the room until asked to try again.');
@@ -152,6 +154,16 @@ export class RoomSocket {
     const delay = Math.round(cap / 2 + Math.random() * (cap / 2));
     this.reconnectAttempts += 1;
     return delay;
+  }
+
+  /**
+   * True when this page comes from the engine on this machine (the host's own page).
+   * That engine restarts on its own, for example after Pack Builder is installed or
+   * removed, and can take longer than five tries to come back.
+   */
+  isOwnEngine() {
+    const host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
   }
 
   /** Tries the room again straight away, with a fresh set of attempts. */

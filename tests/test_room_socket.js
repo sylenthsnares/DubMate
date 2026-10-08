@@ -74,13 +74,14 @@ function fireTimers() {
   due.forEach((fn) => fn());
 }
 
-function loadRoomSocket() {
+// A guest's page on someone else's engine by default; loopback is the host's own page.
+function loadRoomSocket(hostname = "room.example.com") {
   // The module is an ES module; strip the export keyword so it can run in a
   // plain VM context without a bundler.
   const source = fs.readFileSync(SRC, "utf8").replace(/^export\s+class/m, "class");
   const sandbox = {
     WebSocket: FakeWebSocket,
-    window: { location: { protocol: "http:", host: "127.0.0.1:8000" }, __dubmate_app_version: "1.1.0" },
+    window: { location: { protocol: "http:", host: `${hostname}:8000`, hostname }, __dubmate_app_version: "1.1.0" },
     console: { log() {}, warn() {}, error() {} },
     setInterval: () => 0,
     clearInterval: () => {},
@@ -227,6 +228,39 @@ console.log("\n  [+] RoomSocket: giving up, retrying, and the overflowing queue"
   check("a send once it has given up is reported as lost",
     returned === false && failures.length === 1 && socket.pendingMessages.length === 0,
     `returned=${returned} failures=${failures.length} queued=${socket.pendingMessages.length}`);
+}
+
+// --- The host's own page keeps trying: its engine comes back after a restart ----
+for (const hostname of ["127.0.0.1", "localhost"]) {
+  timers.clear();
+  const OwnRoomSocket = loadRoomSocket(hostname);
+  const socket = new OwnRoomSocket();
+  const failures = [];
+  socket.on("send_failed", (e) => failures.push(e.payload.messageType));
+  socket.connect("ABC123", "user1", "Tani", "#7c5cff");
+  FakeWebSocket.last.open();
+  FakeWebSocket.last.drop();
+  for (let i = 0; i < 20; i++) { fireTimers(); FakeWebSocket.last.drop(); }
+  check(`on ${hostname} it is still reconnecting after 20 failed retries`,
+    socket.connectionState === "reconnecting" && timers.size === 1, `${socket.connectionState} timers=${timers.size}`);
+  const delay = socket._nextReconnectDelay();
+  check(`on ${hostname} the wait stays within the 30 second cap`, delay >= 15000 && delay <= 30000, delay);
+  socket.send("set_user_status", { is_ready: true });
+  check(`on ${hostname} changes keep waiting in the queue`, failures.length === 0 && socket.pendingMessages.length === 1,
+    `failures=${failures.length} queued=${socket.pendingMessages.length}`);
+  fireTimers();
+  FakeWebSocket.last.open();
+  check(`on ${hostname} the engine coming back sends what waited`,
+    socket.connectionState === "open" && FakeWebSocket.last.sent.some((m) => m.type === "set_user_status"), socket.connectionState);
+
+  // "Room not found" still ends it: the engine is back, but the room is not.
+  timers.clear();
+  const gone = new OwnRoomSocket();
+  gone.connect("GONE01", "user1", "Tani", "#7c5cff");
+  FakeWebSocket.last.open();
+  FakeWebSocket.last.receive({ type: "error", message: "Room not found" });
+  FakeWebSocket.last.drop();
+  check(`on ${hostname} a room that is gone still gives up`, gone.connectionState === "failed" && timers.size === 0, gone.connectionState);
 }
 
 // --- "Room not found" gives up at once ----------------------------------------

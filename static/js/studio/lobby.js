@@ -481,6 +481,8 @@ export class LobbyMethods {
 
   broadcastMyStatus(location = 'booth') {
     if (!this.socket || !this.roomState) return;
+    // Given up on the room: not lost, just late. app.js says it again once it is back.
+    if (this.socket.connectionState === 'failed') return;
     this.socket.send('set_user_status', {
       current_line: this.currentLineIndex,
       location: location,

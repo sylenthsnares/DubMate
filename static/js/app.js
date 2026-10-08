@@ -19,6 +19,8 @@ import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
 // What the connection pill says. Casting and ready changes wait in the socket's
 // queue; takes and voice changes go over HTTP and don't, hence the careful tip.
+// Once it has given up, new changes are refused (send_failed), except where you
+// are and whether you're ready, which are sent again whenever it gets back.
 const CONNECTION_COPY = {
   lost: 'Lost the room. Reconnecting…',
   connecting: 'Connecting…',
@@ -32,7 +34,7 @@ const CONNECTION_COPY = {
   failedShort: "Can't reach the room.",
   staleShort: 'DubMate was updated.',
   lostTip: "Casting and ready changes are sent when it's back. Wait for it before you record.",
-  failedTip: 'Changes you made since it dropped are sent if Try again reconnects.',
+  failedTip: "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved.",
 };
 
 class DubMateApp {
@@ -875,7 +877,17 @@ class DubMateApp {
     this.initScreeningEvents();
 
     this.socket.on('connection_state', (data) => {
+      const wasLost = !!this._connectionLost;
       this.renderConnectionState(data.payload || {});
+      // The engine's join forgets where you were and whether you were ready, and while
+      // it had given up those changes weren't sent. Say them again once it is back,
+      // after the join and the queued changes (both go out right after this event).
+      if (data.payload?.state === 'open' && wasLost) {
+        setTimeout(() => {
+          if (this.socket.connectionState !== 'open') return;
+          if (['lobby', 'booth', 'screening'].includes(this.currentView)) this.broadcastMyStatus(this.currentView);
+        }, 0);
+      }
     });
 
     // The offline queue had to drop a change. The pill says so while the room is
@@ -1594,14 +1606,17 @@ class DubMateApp {
 
     if (state === 'failed' || state === 'disconnected') {
       this._connectionLost = 'failed';
-      const line = state === 'failed' ? CONNECTION_COPY.failed : CONNECTION_COPY.disconnected;
+      // 'disconnected' means the room was left on purpose: there is nothing to try again.
+      const canRetry = state === 'failed';
+      const line = canRetry ? CONNECTION_COPY.failed : CONNECTION_COPY.disconnected;
       banner.classList.add('is-failed');
-      banner.setAttribute('data-tip', CONNECTION_COPY.failedTip);
+      if (canRetry) banner.setAttribute('data-tip', CONNECTION_COPY.failedTip);
+      else banner.removeAttribute('data-tip');
       text.innerText = line;
-      this.setConnectionShortForm(state === 'failed' ? CONNECTION_COPY.failedShort : '', `${line} ${CONNECTION_COPY.failedTip}`, { long: true });
+      this.setConnectionShortForm(canRetry ? CONNECTION_COPY.failedShort : '', `${line} ${CONNECTION_COPY.failedTip}`, { long: true });
       if (action) {
         action.textContent = 'Try again';
-        action.hidden = false;
+        action.hidden = !canRetry;
       }
       if (leave) leave.hidden = false;
       if (wasLost !== 'failed') announce(line);

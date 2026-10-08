@@ -25,7 +25,7 @@ const LOST = "Lost the room. Reconnecting…";
 const FAILED = "Can't reach the room. The host may have closed it.";
 const OVERFLOW = "Some changes from the last minute didn't reach the room.";
 const LOST_TIP = "Casting and ready changes are sent when it's back. Wait for it before you record.";
-const FAILED_TIP = "Changes you made since it dropped are sent if Try again reconnects.";
+const FAILED_TIP = "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved.";
 const STALE = "DubMate was updated. Reload this page to keep going.";
 
 function fail(msg, ...rest) {
@@ -178,6 +178,45 @@ async function boot() {
     "once back, the same line stays as an error toast", toasts);
   setState("reconnecting", { retryInMs: 2000, attempt: 1 });
   check(text.innerText === LOST, "the next outage starts without the overflow line", text.innerText);
+  setState("open");
+
+  // Where you are and whether you're ready: held while it has given up (no "not saved"
+  // toast), and said again once it is back, after the join, because the join forgets them.
+  {
+    const sent = [];
+    const realSend = app.socket.send;
+    app.socket.send = (type, payload) => { sent.push({ type, payload }); return true; };
+    app.roomState = { room_id: "R1", users: {} };
+    app.currentView = "booth";
+    app.isReadyForScreening = true;
+    setState("reconnecting", { retryInMs: 2000, attempt: 1 });
+    setState("failed", { attempt: 5 });
+    app.broadcastMyStatus("booth");
+    check(sent.length === 0, "a status change while it has given up is held, not sent", sent);
+    setState("open");
+    check(sent.length === 0, "nothing is said in the same tick as the reconnect (the join goes first)", sent);
+    await tick(10);
+    const status = sent.find((m) => m.type === "set_user_status");
+    check(status && status.payload.location === "booth" && status.payload.is_ready === true,
+      "once back, where you are and whether you're ready are sent again", sent);
+    sent.length = 0;
+    setState("reconnecting", { retryInMs: 2000, attempt: 1 });
+    setState("open");
+    await tick(10);
+    check(sent.filter((m) => m.type === "set_user_status").length === 1, "a plain reconnect says them again too", sent);
+    sent.length = 0;
+    setState("open");
+    await tick(10);
+    check(sent.length === 0, "an open with no outage before it sends nothing", sent);
+    app.socket.send = realSend;
+    app.roomState = null;
+  }
+
+  // 'disconnected' (the room was left on purpose) offers nothing to try again.
+  setState("disconnected");
+  await tick(20);
+  check(banner.classList.contains("is-failed") && !shown(action) && shown(leave) && !banner.hasAttribute("data-tip"),
+    "disconnected shows no Try again and no Try again tip");
   setState("open");
 
   // The stale-tab notice: Reload, no Leave.
