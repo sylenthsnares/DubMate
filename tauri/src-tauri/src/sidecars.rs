@@ -147,37 +147,42 @@ pub(crate) fn kill_sidecars(app: &tauri::AppHandle) {
     };
 
     for (pid, image) in targets {
-        #[cfg(target_os = "windows")]
-        {
-            // Match on PID *and* image name. If the sidecar already exited and
-            // Windows recycled its PID, the filter simply matches nothing rather
-            // than terminating an unrelated process. /T also takes down children.
-            let mut args = vec![
-                "/F".to_string(),
-                "/T".to_string(),
-                "/FI".to_string(),
-                format!("PID eq {}", pid),
-            ];
-            if let Some(name) = image.as_deref() {
-                args.push("/FI".to_string());
-                args.push(format!("IMAGENAME eq {}", name));
-            }
-            let _ = std::process::Command::new("taskkill").args(&args).output();
+        kill_process(pid, image.as_deref());
+    }
+}
+
+/// Terminates `pid`, with its children, if it is still the executable named `image`.
+pub(crate) fn kill_process(pid: u32, image: Option<&str>) {
+    #[cfg(target_os = "windows")]
+    {
+        // Match on PID *and* image name. If the process already exited and
+        // Windows recycled its PID, the filter simply matches nothing rather
+        // than terminating an unrelated process. /T also takes down children.
+        let mut args = vec![
+            "/F".to_string(),
+            "/T".to_string(),
+            "/FI".to_string(),
+            format!("PID eq {}", pid),
+        ];
+        if let Some(name) = image {
+            args.push("/FI".to_string());
+            args.push(format!("IMAGENAME eq {}", name));
         }
-        #[cfg(not(target_os = "windows"))]
-        {
-            // Confirm the PID still belongs to the expected executable before signalling.
-            let matches = match image.as_deref() {
-                Some(name) => std::fs::read_to_string(format!("/proc/{}/comm", pid))
-                    .map(|c| c.trim() == name.trim_end_matches(".exe"))
-                    .unwrap_or(true),
-                None => true,
-            };
-            if matches {
-                let _ = std::process::Command::new("kill")
-                    .args(["-9", &pid.to_string()])
-                    .output();
-            }
+        let _ = std::process::Command::new("taskkill").args(&args).output();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Confirm the PID still belongs to the expected executable before signalling.
+        let matches = match image {
+            Some(name) => std::fs::read_to_string(format!("/proc/{}/comm", pid))
+                .map(|c| c.trim() == name.trim_end_matches(".exe"))
+                .unwrap_or(true),
+            None => true,
+        };
+        if matches {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output();
         }
     }
 }
@@ -717,6 +722,36 @@ mod engine_failure_tests {
         assert_eq!(value["title"], "DubMate didn't start");
         assert_eq!(value["detail"], "x");
         assert!(value["message"].is_string());
+    }
+
+    #[test]
+    fn kill_process_stops_a_running_program_only_by_its_name() {
+        // Something harmless that runs for half a minute on its own.
+        let (program, args, image): (&str, &[&str], &str) = if cfg!(windows) {
+            ("ping", &["-n", "30", "127.0.0.1"], "PING.EXE")
+        } else {
+            ("sleep", &["30"], "sleep")
+        };
+        let mut child = std::process::Command::new(program)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("could not start the test program");
+
+        // Another program's name leaves it running.
+        kill_process(child.id(), Some("not-this-one.exe"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(child.try_wait().unwrap().is_none(), "a different name must not be killed");
+
+        kill_process(child.id(), Some(image));
+        let started = std::time::Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            if started.elapsed() > std::time::Duration::from_secs(10) {
+                let _ = child.kill();
+                panic!("kill_process did not stop it");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 
     #[test]

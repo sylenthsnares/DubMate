@@ -9,7 +9,7 @@ use crate::paths::{
     find_python_exe, get_app_install_dir, install_root_dir, AI_COMPLETE_MARKER, AI_PACKAGES_DIR,
     PACKBUILDER_OPTIN_MARKER,
 };
-use crate::sidecars::{hide_console, kill_sidecars, start_sidecars};
+use crate::sidecars::{hide_console, kill_process, kill_sidecars, start_sidecars};
 use crate::updater::EtaEstimator;
 
 /// A human-readable snapshot of the Pack Builder install, sent to the launcher in
@@ -93,6 +93,22 @@ impl PackBuilderInstall {
 }
 
 static INSTALL: Mutex<PackBuilderInstall> = Mutex::new(PackBuilderInstall::IDLE);
+
+/// The running pip's PID and executable name, so closing DubMate can stop it. Left
+/// running, it would race the pip that the next launch starts on the same folder.
+static PIP_PROCESS: Mutex<Option<(u32, String)>> = Mutex::new(None);
+
+fn pip_process() -> MutexGuard<'static, Option<(u32, String)>> {
+    PIP_PROCESS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Stops a background install when DubMate closes. The half-done folder has no
+/// completion marker, so the engine ignores it and the next launch picks the install up.
+pub(crate) fn stop_packbuilder_install() {
+    if let Some((pid, image)) = pip_process().take() {
+        kill_process(pid, Some(&image));
+    }
+}
 
 fn install_state() -> MutexGuard<'static, PackBuilderInstall> {
     INSTALL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -652,6 +668,10 @@ fn run_pip_install(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to launch pip from {}: {}", py.display(), e))?;
+    *pip_process() = Some((
+        child.id(),
+        py.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+    ));
 
     // One parser shared by both streams, behind a mutex: pip interleaves them and the
     // progress estimate has to see every line to stay accurate.
@@ -680,9 +700,9 @@ fn run_pip_install(
         }
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("pip did not complete: {}", e))?;
+    let status = child.wait();
+    *pip_process() = None;
+    let status = status.map_err(|e| format!("pip did not complete: {}", e))?;
 
     if !status.success() {
         let tail = errors[errors.len().saturating_sub(8)..].join("\n");

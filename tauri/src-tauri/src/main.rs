@@ -88,6 +88,7 @@ fn main() {
             // Kill child sidecar processes cleanly when the window is closed
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 kill_sidecars(window.app_handle());
+                packbuilder::stop_packbuilder_install();
             }
         })
         .run(tauri::generate_context!())
