@@ -343,6 +343,8 @@ export class AudioSetupMethods {
     }
     // The denied and first-run steps say it in their own words.
     if (this.audioSetupSubtitle) this.audioSetupSubtitle.style.display = step === 'devices' ? '' : 'none';
+    // Someone else's engine: the devices step says where the takes go (a desktop member never sees the intro).
+    if (this.audioGuestPrivacy) this.audioGuestPrivacy.hidden = step !== 'devices' || this.isEngineLocal();
     if (step === 'intro') this.renderAudioIntro();
   }
 
@@ -350,8 +352,8 @@ export class AudioSetupMethods {
   renderAudioIntro() {
     if (this.audioIntroPrivacy) {
       this.audioIntroPrivacy.textContent = this.isEngineLocal()
-        ? 'Audio stays on this computer.'
-        : "Your takes are saved on the host's computer.";
+        ? 'Your takes are saved on this computer.'
+        : "Your takes are sent to the host's computer, and the host can export and share them.";
     }
     if (this.audioIntroAsker) {
       this.audioIntroAsker.textContent = window.__TAURI__ ? 'Your computer may ask' : 'Your browser will ask';

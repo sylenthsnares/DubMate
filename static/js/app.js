@@ -17,6 +17,7 @@ import { SessionMethods } from './studio/sessions.js';
 import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
 import { UpdateNoticeMethods } from './studio/update_notice.js';
+import { AboutMethods } from './studio/about.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
@@ -300,6 +301,7 @@ class DubMateApp {
     this.audioSetupTitle = document.getElementById('audio-setup-title');
     this.audioSetupSubtitle = document.getElementById('audio-setup-subtitle');
     this.audioIntroPrivacy = document.getElementById('audio-intro-privacy');
+    this.audioGuestPrivacy = document.getElementById('audio-guest-privacy');
     this.audioIntroAsker = document.getElementById('audio-intro-asker');
     this.audioStepIntro = document.getElementById('audio-setup-step-intro');
     this.audioStepDenied = document.getElementById('audio-setup-step-denied');
@@ -548,7 +550,9 @@ class DubMateApp {
       opener: document.getElementById('btn-shortcuts'),
       isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
       getView: () => this.currentView,
+      onAbout: (returnFocus) => this.openAbout(returnFocus),
     });
+    this.initAbout();
     this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
@@ -1854,6 +1858,7 @@ class DubMateApp {
           closeMenu();
         }
       },
+      onAboutClick: (opener) => this.openAbout(opener),
     });
   }
 
@@ -1881,7 +1886,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods, AboutMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

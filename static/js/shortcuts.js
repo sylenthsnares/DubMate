@@ -121,8 +121,10 @@ function buildSheet(doc) {
  * Builds the shortcut sheet once and opens it on "?" (outside text fields, and
  * not while isBlocked() or another dialog is open) or on a click on opener.
  * getView() names the current screen; the list is reordered for it on each open.
+ * onAbout(returnFocus), on the studio only, adds an "About DubMate" footer that
+ * closes the sheet and opens About, which hands focus back to the sheet's opener.
  */
-export function initShortcutSheet({ opener = null, isBlocked = () => false, getView = () => null } = {}) {
+export function initShortcutSheet({ opener = null, isBlocked = () => false, getView = () => null, onAbout = null } = {}) {
   const doc = document;
   if (doc.getElementById('shortcut-sheet')) return;
   const page = doc.body.classList.contains('builder-body') ? 'builder' : 'studio';
@@ -131,13 +133,29 @@ export function initShortcutSheet({ opener = null, isBlocked = () => false, getV
   const render = () => { body.innerHTML = groupsHtml(page, getView()); };
   render();
   let close = null;
+  let returnTo = null;
 
   const open = (returnFocus) => {
     if (isDialogOpen()) return;
     render();
+    returnTo = returnFocus;
     close = openDialog(overlay, { returnFocus });
   };
   overlay.querySelector('.shortcut-sheet-close').addEventListener('click', () => close && close());
+  if (page === 'studio' && onAbout) {
+    const footer = doc.createElement('div');
+    footer.className = 'shortcut-sheet-footer';
+    const about = doc.createElement('button');
+    about.type = 'button';
+    about.className = 'btn btn-ghost btn-sm';
+    about.textContent = 'About DubMate';
+    about.addEventListener('click', () => {
+      if (close) close();
+      onAbout(returnTo);
+    });
+    footer.append(about);
+    overlay.querySelector('.shortcut-sheet-card').append(footer);
+  }
   if (opener) opener.addEventListener('click', () => open(opener));
 
   window.addEventListener('keydown', (e) => {
