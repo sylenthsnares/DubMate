@@ -85,6 +85,7 @@ fn main() {
             external::open_mic_settings,
             external::open_studio_in_browser,
             external::open_download_page,
+            external::open_dubmate_page,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed
