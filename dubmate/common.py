@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 dubmate/common.py
-Shared request-safety helpers, version, cache constants, range streaming and the
-configured exports folder.
+Shared request-safety helpers, the static folder, version, cache constants, range
+streaming and the configured exports folder.
 
 Paths are anchored on pack_loader.BASE_DIR (the folder holding app.py), never on
 this file's location.
@@ -27,6 +27,26 @@ IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/
 AUDIO_MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav"}
 
 
+def find_static_dir() -> str:
+    """Finds the static assets folder across dev, bundled desktop, and installed directory structures."""
+    base_dir = pack_loader.BASE_DIR
+    candidates = [
+        os.path.join(base_dir, "static"),
+        os.path.join(base_dir, "static", "static"),
+        base_dir,
+        os.path.join(base_dir, "resources", "static"),
+        os.path.join(os.path.dirname(base_dir), "static"),
+        os.path.join(os.path.dirname(base_dir), "static", "static"),
+        os.path.join(os.path.dirname(base_dir), "resources", "static"),
+        os.path.join(os.getcwd(), "static"),
+        os.path.join(os.getcwd(), "resources", "static"),
+    ]
+    for c in candidates:
+        if os.path.isdir(c) and os.path.isfile(os.path.join(c, "index.html")):
+            return os.path.abspath(c)
+    return os.path.join(base_dir, "static")
+
+
 def read_version() -> str:
     version_path = os.path.join(pack_loader.BASE_DIR, "VERSION")
     try:
@@ -46,20 +66,6 @@ def sanitize_identifier(value: str, max_len: int = 64) -> str:
     '../../x' escapes its directory even when glued behind a filename prefix.
     """
     return _UNSAFE_ID_RE.sub("_", (value or "").strip())[:max_len]
-
-
-_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-
-
-def sanitize_color(value: Any, fallback: str = "#7c5cff") -> str:
-    """
-    Constrains an actor colour to a hex literal. It is broadcast to every client
-    and interpolated into a style attribute, so an arbitrary string here is an
-    injection vector even though the frontend also escapes it.
-    """
-    if isinstance(value, str) and _HEX_COLOR_RE.match(value.strip()):
-        return value.strip()
-    return fallback
 
 
 def require_safe_identifier(value: str, field: str = "identifier") -> str:
