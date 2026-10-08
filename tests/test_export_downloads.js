@@ -2,16 +2,19 @@
  * test_export_downloads.js
  *
  * Covers the export/download feedback fixes:
- *   - the premiere's Save (its main part and its menu's video rows), the export
- *     modal's two anchors and the pack ZIP anchor must fetch a blob, never navigate
+ *   - the premiere's Save (its main part and its menu's video rows), a remote host's
+ *     two Download anchors in the export modal and the pack ZIP anchor must fetch a
+ *     blob, never navigate
  *     (a JSON error body used to replace the whole studio);
  *   - every download shows it is under way (the row reads Preparing…) and says
  *     when it finished;
  *   - a failed download must produce a toast, not a page;
- *   - a successful render must name the folder it was written to;
+ *   - a successful render must name the folder it was written to (the done modal's
+ *     facts line);
  *   - on the engine's own computer (loopback origin) nothing saves a second copy:
  *     the render is already in the export folder (bug B4), so Save shows it in its
- *     folder; the separate tracks and editing project rows say "saved · Show in
+ *     folder (so does the done modal, which offers Make 9:16 version instead of
+ *     Download); the separate tracks and editing project rows say "saved · Show in
  *     folder" instead (P23), and the pack ZIP opens its Share.
  *
  * Navigation detection note: jsdom cannot have `location.assign` patched (it is an
@@ -438,16 +441,28 @@ try {
     pass("the pack ZIP link downloads via fetch, toasts, and does not select the card behind it");
 
     // --- Test 5: a finished render says where it was written ---------------
-    const savedPathEl = doc.getElementById("export-saved-path");
-    if (!savedPathEl) fail("#export-saved-path missing from the export modal");
+    // The done modal's subtitle carries the facts: format, length and, on the engine's
+    // computer, the folder (its last segment; the full path in title).
+    const facts = doc.getElementById("export-modal-status-text");
+    if (doc.getElementById("export-saved-path")) fail("the separate Saved to line is still in the export modal");
+    const ready169 = {
+      aspect_ratio: "16:9",
+      duration: 38.5,
+      export_video_url: "/api/rooms/TEST12/export/video",
+      download_url_16_9: "/api/rooms/TEST12/export/download?aspect_ratio=16:9",
+      download_url_9_16: "/api/rooms/TEST12/export/download?aspect_ratio=9:16",
+    };
 
-    // A remote member must not be shown the host's disk path as "Saved to".
+    // A remote host must not be shown the host's disk path.
     app.exportsDirCache = undefined;
-    await app.showExportSavedPath();
-    if (savedPathEl.classList.contains("is-visible")) {
-      fail("a remote member was told the render is saved to the host's folder", savedPathEl.innerText);
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    if (facts.textContent !== "16:9 · 0:39" || facts.hasAttribute("title")) {
+      fail("a remote host was told the render is saved to the host's folder", facts.textContent);
     }
-    pass("a remote member is not shown the host's Render & Export folder");
+    app.closeExportModal();
+    pass("a remote host sees the format and length, not the host's Render & Export folder");
 
     // From here on the page is on the engine's own computer (the real loopback
     // origin this jsdom runs at).
@@ -455,42 +470,37 @@ try {
     if (app.isEngineLocal() !== true) fail("http://localhost:8000 was not detected as a local engine");
 
     app.exportsDirCache = undefined;
-    app.handleExportSuccess({
-      aspect_ratio: "16:9",
-      export_video_url: "/api/rooms/TEST12/export/video",
-      download_url_16_9: "/api/rooms/TEST12/export/download?aspect_ratio=16:9",
-      download_url_9_16: "/api/rooms/TEST12/export/download?aspect_ratio=9:16",
-    });
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
     await settle();
-
-    if (!savedPathEl.classList.contains("is-visible")) {
-      fail("the export modal never revealed where the render was saved");
+    if (facts.textContent !== "16:9 · 0:39 · in DubMate Renders") {
+      fail("the done modal does not name the configured exports_dir", facts.textContent);
     }
-    if (!String(savedPathEl.innerText || "").includes(EXPORTS_DIR)) {
-      fail("the saved-path line does not show the configured exports_dir", savedPathEl.innerText);
-    }
-    if (savedPathEl.getAttribute("title") !== EXPORTS_DIR) {
-      fail("the full path is not available in the title attribute", savedPathEl.getAttribute("title"));
+    if (facts.getAttribute("title") !== EXPORTS_DIR) {
+      fail("the full path is not available in the title attribute", facts.getAttribute("title"));
     }
     pass("a finished render names the configured Render & Export folder, full path in title");
 
-    // Starting another render must not leave the previous path under the bar.
+    // Starting another render must not leave the previous folder under the bar.
     app.openExportModal();
-    if (savedPathEl.classList.contains("is-visible")) {
-      fail("a new render kept the previous 'Saved to ...' line visible");
+    if (/DubMate Renders/.test(facts.textContent) || facts.hasAttribute("title")) {
+      fail("a new render kept the previous folder visible", facts.textContent);
     }
     app.closeExportModal();
-    pass("a new render hides the previous saved-path line");
+    pass("a new render hides the previous folder");
 
     // --- Test 6: no folder reported -> say nothing rather than guess -------
     configHasExportsDir = false;
     app.exportsDirCache = undefined;
-    await app.showExportSavedPath();
-    if (savedPathEl.classList.contains("is-visible")) {
-      fail("a backend without exports_dir still showed a fabricated save path");
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    if (facts.textContent !== "16:9 · 0:39" || facts.hasAttribute("title")) {
+      fail("a backend without exports_dir still showed a fabricated folder", facts.textContent);
     }
+    app.closeExportModal();
     configHasExportsDir = true;
-    pass("no exports_dir from the backend means no invented path");
+    pass("no exports_dir from the backend means no invented folder");
 
     // --- Test 7: the settings copy explains the two locations --------------
     const exportsRow = doc.getElementById("audio-exports-row");
@@ -523,57 +533,55 @@ try {
       }
       if (!calls.includes("POST /api/rooms/TEST12/export/reveal")) fail(`#${id} did not show the video in its folder`, calls);
     }
-    // The modal's anchors name the folder the render is already in.
+    // The done modal shows the video in its folder too; it has no Download here.
+    app.exportsDirCache = undefined;
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
     for (const id of ["btn-modal-download-169", "btn-modal-download-916"]) {
-      const anchor = doc.getElementById(id);
-      const savesBefore = savedFiles.length;
-      const fetchesBefore = fetchLog.length;
-      toasts.length = 0;
-      app.exportsDirCache = undefined;
-      savedPathEl.classList.remove("is-visible");
-
-      clickUi(anchor);
-      await settle();
-
-      const requested = fetchLog.slice(fetchesBefore);
-      if (requested.some(u => u.includes("/export/download"))) {
-        fail(`#${id} pulled the render through the browser on the host's own computer`, requested);
-      }
-      if (savedFiles.length !== savesBefore) {
-        fail(`#${id} saved a second copy of the render on the host's own computer`);
-      }
-      if (!toasts.some(t => t.includes(EXPORTS_DIR))) {
-        fail(`#${id} did not say which folder the render is already in`, toasts);
-      }
-      if (!savedPathEl.classList.contains("is-visible")) {
-        fail(`#${id} did not reveal the saved-path line`);
-      }
+      if (!doc.getElementById(id).hidden) fail(`#${id} shows on the engine's own computer`);
     }
+    {
+      const savesBefore = savedFiles.length;
+      const methodsBefore = methodLog.length;
+      clickUi(doc.getElementById("btn-modal-reveal"));
+      await settle();
+      const calls = methodLog.slice(methodsBefore);
+      if (calls.some(c => c.includes("/export/download")) || savedFiles.length !== savesBefore) {
+        fail("Show in folder pulled the render through the browser on the host's own computer", calls);
+      }
+      if (!calls.includes("POST /api/rooms/TEST12/export/reveal")) fail("Show in folder did not show the video in its folder", calls);
+    }
+    app.closeExportModal();
     if (objectUrls.created !== createdBeforeHost) {
       fail("the host path still created a blob URL for a download");
     }
-    pass("on the engine's own computer, Save shows the video in its folder and saves no copy");
+    pass("on the engine's own computer, Save and the done modal show the video in its folder and save no copy");
 
-    // An aspect that was never rendered is rendered into the export folder, once,
-    // through the normal render route -- still no browser copy.
-    exportStatusReady = false;
+    // A format that was never rendered is rendered into the export folder, once,
+    // through the normal render route (Make 9:16 version) -- still no browser copy.
+    app.roomState.exports = { "16:9": "ready", "9:16": "idle" };
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    const make916 = doc.getElementById("btn-modal-make-916");
+    if (make916.hidden) fail("the done modal has no Make 9:16 version while 9:16 isn't saved");
     const savesBeforeRender = savedFiles.length;
     const methodsBefore = methodLog.length;
-    clickUi(doc.getElementById("btn-modal-download-916"));
+    clickUi(make916);
     await settle();
-    exportStatusReady = true;
     const calls = methodLog.slice(methodsBefore);
-    if (!calls.some(c => c.startsWith("POST /api/rooms/TEST12/export?aspect_ratio=9:16"))) {
-      fail("an unrendered aspect was not rendered into the export folder", calls);
+    if (calls.filter(c => c.startsWith("POST /api/rooms/TEST12/export?aspect_ratio=9:16")).length !== 1) {
+      fail("an unrendered format was not rendered into the export folder once", calls);
     }
     if (calls.some(c => c.includes("/export/download")) || savedFiles.length !== savesBeforeRender) {
-      fail("rendering a missing aspect on the host also saved a browser copy", calls);
+      fail("rendering a missing format on the host also saved a browser copy", calls);
     }
-    if (!savedPathEl.classList.contains("is-visible")) {
-      fail("rendering a missing aspect did not end on the 'Saved to' line");
+    if (!/^9:16 · 0:39 · in DubMate Renders$/.test(facts.textContent) || !make916.hidden) {
+      fail("making 9:16 did not end on its done state", facts.textContent);
     }
     app.closeExportModal();
-    pass("an unrendered aspect on the host renders once into the export folder, no browser copy");
+    pass("an unrendered format on the host renders once into the export folder, no browser copy");
 
     // --- Test 9 (P23): ZIPs are written to the export folder by the server,
     // so on the engine's computer they are not saved a second time either.
@@ -649,13 +657,15 @@ try {
       fail("no object URL was ever created; the blob path did not run");
     }
 
-    // A render the engine refuses says why (older takes are being refreshed).
+    // A render the engine refuses says why (older takes are being refreshed), in the
+    // modal and not again in a toast.
     const REFRESHING = "Older takes are being refreshed. Try again in a moment.";
     exportRefusal = { detail: REFRESHING };
     toasts.length = 0;
     await app.exportFinalVideo("16:9");
     exportRefusal = null;
-    if (!toasts.includes(REFRESHING)) fail("a refused render did not say why", toasts);
+    if (facts.textContent !== REFRESHING) fail("a refused render did not say why", facts.textContent);
+    if (toasts.length) fail("a refused render also toasted", toasts);
     app.closeExportModal();
     pass("a render refused during a refresh shows the engine's reason");
 

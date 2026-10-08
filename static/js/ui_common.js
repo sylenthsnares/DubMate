@@ -297,9 +297,10 @@ const FOCUSABLE = 'a[href], summary, button:not([disabled]), input:not([disabled
 /**
  * Shows a modal overlay: focuses its first control, keeps Tab / Shift+Tab inside,
  * closes on Escape or a click on the backdrop (the overlay itself), and gives
- * focus back to returnFocus. Returns close().
+ * focus back to returnFocus. While canClose() is false, Escape and the backdrop do
+ * nothing (the export modal while it saves). Returns close().
  */
-export function openDialog(overlay, { returnFocus = document.activeElement } = {}) {
+export function openDialog(overlay, { returnFocus = document.activeElement, canClose = () => true } = {}) {
   const doc = overlay.ownerDocument;
   const focusables = () => Array.from(overlay.querySelectorAll(FOCUSABLE)).filter((el) => !el.closest('[hidden]'));
   let isOpen = true;
@@ -308,7 +309,7 @@ export function openDialog(overlay, { returnFocus = document.activeElement } = {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      close();
+      if (canClose()) close();
       return;
     }
     if (e.key !== 'Tab') return;
@@ -329,7 +330,7 @@ export function openDialog(overlay, { returnFocus = document.activeElement } = {
     }
   };
   const onClick = (e) => {
-    if (e.target === overlay) close();
+    if (e.target === overlay && canClose()) close();
   };
 
   function close() {

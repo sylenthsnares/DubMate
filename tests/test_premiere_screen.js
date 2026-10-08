@@ -144,7 +144,7 @@ async function boot(url, calls) {
   if (norm($("screening-source-label")) !== "Live mix") fail(`source: ${norm($("screening-source-label"))}`);
   if ($("screening-source-label").getAttribute("data-tip") !== "What everyone hears now. Save makes the video from this mix.") fail("Live mix has no tooltip");
   // Nobody opened a modal for the premiere's own render.
-  if ($("modal-export-rendering").style.display === "flex") fail("the premiere's background render opened the modal");
+  if (isShown($("modal-export-rendering"))) fail("the premiere's background render opened the modal");
 
   deliver("export_ready", readyPayload("16:9"), { exports: { "16:9": "ready", "9:16": "idle" }, has_export: true });
   if (label() !== "Saved" || main.hasAttribute("aria-busy") || main.getAttribute("aria-disabled") === "true") fail(`ready: "${label()}"`);
@@ -168,7 +168,7 @@ async function boot(url, calls) {
 
   deliver("export_started", { aspect_ratio: "16:9" }, { exports: { "16:9": "processing", "9:16": "idle" } });
   if (label() !== "Saving…") fail(`export_started: "${label()}"`);
-  if ($("modal-export-rendering").style.display === "flex") fail("export_started opened the modal for a host who didn't press Save");
+  if (isShown($("modal-export-rendering"))) fail("export_started opened the modal for a host who didn't press Save");
   deliver("export_started", { aspect_ratio: "16:9", restarted: true }, { exports: { "16:9": "processing", "9:16": "idle" } });
   if (label() !== "Saving…") fail(`restarted: "${label()}"`);
   console.log("PASS: Save reads Saving…, Saved and Mix changed · Save again from the room's state; no modal for a render nobody here started");
@@ -221,7 +221,7 @@ async function boot(url, calls) {
   if (params.get("aspect_ratio") !== "9:16" || params.get("user_id") !== "u1" || params.get("balance") !== "50" || !params.has("presence")) fail(`9:16 request: ${post.url}`);
   if (rowState("save-menu-video-916") !== "Making…" || !row("save-menu-video-916").querySelector(".save-menu-bar")) fail(`9:16 row while making: ${rowState("save-menu-video-916")}`);
   if (label() !== "Saved") fail(`the main label changed for 9:16: "${label()}"`);
-  if ($("modal-export-rendering").style.display === "flex") fail("9:16 on demand opened the modal");
+  if (isShown($("modal-export-rendering"))) fail("9:16 on demand opened the modal");
   if (menu.hidden) fail("the menu closed while 9:16 was being made");
   deliver("export_ready", readyPayload("9:16"), { exports: { "16:9": "ready", "9:16": "ready" }, has_export: true });
   if (rowState("save-menu-video-916") !== "saved · Show in folder") fail(`9:16 row when ready: ${rowState("save-menu-video-916")}`);
@@ -310,7 +310,7 @@ async function boot(url, calls) {
   if (sent.some((m) => m.type === "set_mix_balance" || m.type === "set_dialogue_presence")) fail(`a member sent the mix: ${JSON.stringify(sent)}`);
 
   deliver("export_started", { aspect_ratio: "16:9" }, { exports: { "16:9": "processing", "9:16": "idle" } });
-  if ($("modal-export-rendering").style.display === "flex") fail("a member got the export modal");
+  if (isShown($("modal-export-rendering"))) fail("a member got the export modal");
   deliver("export_failed", { aspect_ratio: "16:9", error: "timed out" }, { exports: { "16:9": "failed", "9:16": "idle" } });
   if (!/^The video didn't save: /.test(norm($("screening-status-desc"))) || isShown($("screening-save-error"))) fail(`member failure: ${norm($("screening-status-desc"))}`);
   deliver("export_ready", readyPayload("16:9"), { exports: { "16:9": "ready", "9:16": "idle" }, has_export: true });

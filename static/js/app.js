@@ -426,25 +426,37 @@ class DubMateApp {
     this.masterDialoguePresence = 0.0;
     this.screeningSyncRafId = null;
 
-    // Master Export Modal Elements
+    // The export modal (export.js): rendering, timeout, failed and done
     this.modalExportRendering = document.getElementById('modal-export-rendering');
+    this.exportModalReel = document.getElementById('export-modal-reel');
+    this.exportModalIconDone = document.getElementById('export-modal-icon-done');
+    this.exportModalIconFailed = document.getElementById('export-modal-icon-failed');
+    this.exportModalBadges = document.getElementById('export-modal-badges');
     this.exportModalBadge = document.getElementById('export-modal-badge');
     this.exportModalTitle = document.getElementById('export-modal-title');
     this.exportModalStatusText = document.getElementById('export-modal-status-text');
-    this.exportModalProgressBar = document.getElementById('export-modal-progress-bar');
+    this.exportModalSteps = document.getElementById('export-modal-steps');
+    this.exportModalProgress = document.getElementById('export-modal-progress');
     this.modalStepDsp = document.getElementById('modal-step-dsp');
     this.modalStepMux = document.getElementById('modal-step-mux');
-    this.modalStepReady = document.getElementById('modal-step-ready');
     this.connectorDspMux = document.getElementById('connector-dsp-mux');
-    this.connectorMuxReady = document.getElementById('connector-mux-ready');
     this.exportModalReassurance = document.getElementById('export-modal-reassurance');
     this.exportModalActions = document.getElementById('export-modal-actions');
+    this.exportModalFailedActions = document.getElementById('export-modal-failed-actions');
+    this.exportModalTimeoutActions = document.getElementById('export-modal-timeout-actions');
     this.btnModalCloseView = document.getElementById('btn-modal-close-view');
     this.btnModalCloseX = document.getElementById('btn-modal-close-x');
-    this.btnModalDismiss = document.getElementById('btn-modal-dismiss');
+    this.btnModalReveal = document.getElementById('btn-modal-reveal');
+    this.btnModalMake916 = document.getElementById('btn-modal-make-916');
     this.btnModalDownload169 = document.getElementById('btn-modal-download-169');
     this.btnModalDownload916 = document.getElementById('btn-modal-download-916');
-    this.exportSavedPath = document.getElementById('export-saved-path');
+    this.btnModalRetry = document.getElementById('btn-modal-retry');
+    this.btnModalCloseFailed = document.getElementById('btn-modal-close-failed');
+    this.btnModalKeepWorking = document.getElementById('btn-modal-keep-working');
+    // openDialog's close() while the export modal is open.
+    this.closeExportDialog = null;
+    // A remote host's Download for a format not saved yet: downloaded once it is made.
+    this.exportDownloadAfter = null;
 
     // Import Loading Overlay
     this.modalImportLoading = document.getElementById('modal-import-loading');
@@ -853,17 +865,13 @@ class DubMateApp {
     // The list the user sees is SHORTCUT_GROUPS in shortcuts.js; keep the two in step.
     // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
     window.addEventListener('keydown', (e) => {
-      // The shortcut sheet (or another openDialog window) handles its own keys.
+      // The shortcut sheet, the export modal (or another openDialog window) handles its own keys.
       if (isDialogOpen()) return;
 
-      // Escape key closes modals if they are open and not actively rendering
+      // Escape closes Audio settings and the booth's inline questions
       if (e.key === 'Escape') {
         if (this.isAudioSettingsOpen()) {
           this.closeAudioSettings();
-          return;
-        }
-        if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
-          this.closeExportModal();
           return;
         }
         // The inline questions (For's wider scope, Done with lines left) answer Esc as Cancel.
@@ -1196,8 +1204,7 @@ class DubMateApp {
       this.setExportState(aspect, 'failed');
       // "The video didn't save: {reason}" sits next to its own Try again button.
       this.exportFailures[aspect] = this.friendlyError(err, 'Something went wrong.').replace(/\s*Try again\.?$/, '');
-      const modalOpen = this.modalExportRendering && this.modalExportRendering.style.display !== 'none';
-      if (modalOpen && this.exportModalAspect === aspect) {
+      if (this.isExportModalOpen() && this.exportModalAspect === aspect) {
         // The initiator's poll would report the same failure a tick later; stop it so
         // the failure is shown once.
         if (this.exportPollInterval) {

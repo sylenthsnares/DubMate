@@ -206,6 +206,12 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
 13. **Save is 252px wide,** above the 208px minimum, because "Mix changed · Save again" needs it. A narrower button grew with that label and moved the row.
 14. **Downloads started from the Save menu don't toast when they start.** The row reads "Preparing…" instead. A browser download still toasts when it finishes, and a failure still toasts its reason.
 15. **When the mix changes while the saved video plays, playback carries on** with the live mix, from the same spot.
+16. **The failed modal hides the step strip and the bar too,** not only the reel. A stopped bar would read as progress.
+17. **A failed or refused Save marks that format failed,** so Save shows "The video didn't save: {reason}" with Try again after the modal closes. The modal's reason drops a trailing "Try again." because a Try again button sits under it.
+18. **The timeout state has no close X** ("Keep working" is the only action); Esc still closes it. A video that lands after "Keep working" doesn't reopen the modal; Save reads "Saved".
+19. **A remote host's "Download 9:16" for a format that isn't saved** makes it in the modal and downloads it as soon as it is ready.
+20. **While saving, focus sits on the modal's title** (there is nothing to press). Done moves it to "Watch the dub", failed to "Try again", timeout to "Keep working".
+21. **Under reduced motion the indeterminate bars stand still at full width** (the modal's and the Save menu's "Making…"), so a parked bar never reads as a percentage.
 
 ## Hands-on checks (the owner, with a friend on a tunnel)
 
