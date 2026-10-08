@@ -14,7 +14,7 @@ import traceback
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import audio_processor
-from dubmate import common, rooms, rooms_api
+from dubmate import identity, rooms, rooms_api
 
 router = APIRouter()
 
@@ -26,6 +26,21 @@ def _is_host(room, user_id: str) -> bool:
 
 async def _refuse(websocket: WebSocket, message: str) -> None:
     await websocket.send_json({"type": "error", "payload": {"message": message}})
+
+
+def _guest_cast_refusal(room, user_id: str, character, user_ids) -> str:
+    """Why a member who isn't the host can't make this casting change, or "" when they
+    can: claiming a character nobody voices (user_ids == [themselves]) or giving back
+    one only they voice (user_ids == []). Repeating either is harmless."""
+    current = room.role_assignments.get(character) if isinstance(character, str) else None
+    if current is None:
+        return "That character isn't in this scene."
+    if user_ids in ([user_id], []) and current in ([], [user_id]):
+        return ""
+    if user_ids in ([user_id], []) and user_id not in current:
+        holder = room.users.get(current[0], {}).get("name") or "Someone"
+        return f"{holder} is voicing {character} now."
+    return f"Only the host can change who voices {character}."
 
 
 async def _wait_for_cleanup_refresh(room) -> None:
@@ -68,8 +83,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 continue
 
             if msg_type == "join":
-                name = payload.get("name", "Actor").strip() or "Actor"
-                color = common.sanitize_color(payload.get("color"), "#25d3a4")
+                name = identity.clean_name(payload.get("name")) or "Actor"
+                wanted = payload.get("color")
+                color = identity.pick_color(room, wanted, user_id)
+                first_join = user_id not in room.users
 
                 # Auto-promote user to host if previous host is dummy "host" or offline
                 active_host = room.users.get(room.host_id)
@@ -87,17 +104,36 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 for uid, u in room.users.items():
                     u["is_host"] = (uid == room.host_id)
 
-                await room.broadcast("user_joined", {"user_id": user_id})
+                # A newcomer to a room still casting voices the free character with the most lines.
+                cast = room.free_character_with_most_lines() if first_join and room.status == "lobby" else None
+                if cast:
+                    room.role_assignments[cast] = [user_id]
+
+                await room.broadcast("user_joined", {
+                    "user_id": user_id,
+                    "color": color,
+                    "wanted_color": identity.normalize_color(wanted),
+                    "cast": cast,
+                })
 
             elif msg_type == "assign_role":
-                if not _is_host(room, user_id):
-                    await _refuse(websocket, "Only the host can assign roles.")
-                    continue
                 character = payload.get("character")
                 assigned_user_ids = payload.get("user_ids", [])
+                if not _is_host(room, user_id):
+                    refusal = _guest_cast_refusal(room, user_id, character, assigned_user_ids)
+                    if refusal:
+                        await _refuse(websocket, refusal)
+                        continue
                 if character in room.role_assignments:
                     room.role_assignments[character] = assigned_user_ids
                     await room.broadcast("role_assigned", {"character": character, "user_ids": assigned_user_ids})
+
+            elif msg_type == "cast_evenly":
+                if not _is_host(room, user_id):
+                    await _refuse(websocket, "Only the host can recast everyone.")
+                    continue
+                room.cast_evenly()
+                await room.broadcast("cast_evenly", {"triggered_by": user_id})
 
             elif msg_type == "set_status":
                 # Moves everyone; a member's own place is set_user_status.

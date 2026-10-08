@@ -317,6 +317,11 @@ export class RoomSocket {
     this.send('assign_role', { character, user_ids: userIds });
   }
 
+  /** Host only: deals every character out, most lines first, to whoever has the fewest. */
+  castEvenly() {
+    this.send('cast_evenly', {});
+  }
+
   setStatus(status) {
     this.send('set_status', { status });
   }

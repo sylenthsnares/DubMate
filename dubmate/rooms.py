@@ -54,9 +54,10 @@ class Room:
         }
         # Role assignments: character_name -> list of assigned user_ids
         self.role_assignments: Dict[str, List[str]] = {char: [] for char in pack.characters}
-        # By default assign the first character to host
-        if pack.characters:
-            self.role_assignments[pack.characters[0]] = [host_id]
+        # The creator voices the character with the most lines.
+        first = self.free_character_with_most_lines()
+        if first:
+            self.role_assignments[first] = [host_id]
 
         # Takes by stable line ID: {"picked": take_id or None, "next_number": int,
         # "takes": [take, ...] oldest first}. Entries for lines not in the current pack
@@ -99,6 +100,36 @@ class Room:
         # queued or mid-thread, can bring the folder back.
         self.deleted: bool = False
         self._save_lock = threading.Lock()
+
+    def line_counts(self) -> Dict[str, int]:
+        """Lines per character in the pack."""
+        counts: Dict[str, int] = {}
+        for line in self.pack.lines:
+            char = line.get("character")
+            counts[char] = counts.get(char, 0) + 1
+        return counts
+
+    def free_character_with_most_lines(self) -> Optional[str]:
+        """The character nobody voices yet with the most lines (ties: pack order), or
+        None when every character with lines is taken."""
+        counts = self.line_counts()
+        free = [c for c in self.pack.characters
+                if c in self.role_assignments and not self.role_assignments[c] and counts.get(c, 0) > 0]
+        return max(free, key=lambda c: counts.get(c, 0)) if free else None
+
+    def cast_evenly(self) -> None:
+        """Deals every character, most lines first, to the person online with the fewest
+        lines so far (ties: the host first, then join order)."""
+        online = [uid for uid, u in self.users.items() if isinstance(u, dict) and u.get("is_online")]
+        if not online:
+            return
+        people = sorted(online, key=lambda uid: uid != self.host_id)
+        counts = self.line_counts()
+        load = {uid: 0 for uid in people}
+        for char in sorted(self.role_assignments, key=lambda c: -counts.get(c, 0)):
+            uid = min(people, key=lambda u: load[u])
+            self.role_assignments[char] = [uid]
+            load[uid] += counts.get(char, 0)
 
     def line_entry(self, line_id: str) -> Optional[Dict[str, Any]]:
         """The line's take history, or None if it has no takes."""
@@ -593,8 +624,8 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         users = data.get("users", {})
         host_user = users.get(host_id, {})
         host_name = host_user.get("name", "Host")
-        host_color = common.sanitize_color(host_user.get("color"), "#8a6eff")
-        room = Room(room_id, pack, host_id, host_name, host_color)
+        # Stored colours stay as they are (older ones included) until that person joins again.
+        room = Room(room_id, pack, host_id, host_name, host_user.get("color", ""))
         room.users = data.get("users", room.users)
         for user in room.users.values():
             if isinstance(user, dict):

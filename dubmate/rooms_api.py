@@ -24,15 +24,15 @@ from fastapi.responses import FileResponse, JSONResponse
 
 import audio_processor
 import pack_loader
-from dubmate import common, packs_cache, rooms, room_registry, vocal_chain
+from dubmate import common, identity, packs_cache, rooms, room_registry, vocal_chain
 
 router = APIRouter()
 
 @router.post("/api/rooms")
 async def create_room(payload: Dict[str, Any], request: Request):
     pack_id = payload.get("pack_id")
-    host_name = payload.get("host_name", "Host").strip() or "Host"
-    host_color = common.sanitize_color(payload.get("host_color"), "#7c5cff")
+    host_name = identity.clean_name(payload.get("host_name")) or "Host"
+    host_color = identity.pick_color(None, payload.get("host_color"), "")
     app_version = common.read_version()
 
     pack = packs_cache.pack_or_404(pack_id, "Selected pack not found")
@@ -287,6 +287,7 @@ async def upload_take(
     chain: Optional[str] = Form(None),
 ):
     common.require_safe_identifier(user_id, "user_id")
+    user_name = identity.clean_name(user_name) or "Actor"
     room = rooms.room_or_404(room_id)
 
     line = room.find_line(line_id)
