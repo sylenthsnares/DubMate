@@ -276,16 +276,17 @@ def take_wav_path(room_id: str, line_id: str, take_id: str) -> str:
 def migrate_legacy_take_files(
     room_id: str, line_index: int, line_id: str, take_id: str, noise_reduction: bool
 ) -> Dict[str, Any]:
-    """Moves an old-layout take (take_line_<i>*.wav in the room folder) to takes/<line_id>/<take_id>*.wav.
-    Files already moved are left alone, so a rerun is harmless. If the active file is missing, it is
-    rebuilt from the cleaned file for the current settings (noise reduction on) or from the raw file,
-    in which case noise reduction is reported off so state matches what plays.
+    """Copies an old-layout take (take_line_<i>*.wav in the room folder) to takes/<line_id>/<take_id>*.wav.
+    The originals are never removed, so DubMate 1.1.3 (with room_state.v1-backup.json) can still
+    open the room. Each copy goes to a temp name in the take folder and is then renamed into
+    place, so a copy cut short never looks finished. Copies already in place are left alone, so
+    a rerun is harmless. If the active file is missing, it is rebuilt from the cleaned file for
+    the current settings (noise reduction on) or from the raw file, in which case noise
+    reduction is reported off so state matches what plays.
 
-    All or nothing: if any move or copy fails (a file held open by another program on Windows),
-    the files this call moved go back to their old names, any copy it made is removed, and the
-    error is raised, so the take can be migrated on a later start. A file that can't be moved
-    back stays at its new name, where a later run finds it.
-    Returns {"has_audio", "has_raw", "noise_reduction"}."""
+    All or nothing: if any copy fails (a file held open by another program on Windows, a full
+    disk), the copies this call made are removed and the error is raised, so the take can be
+    migrated on a later start. Returns {"has_audio", "has_raw", "noise_reduction"}."""
     room_dir = get_room_cache_dir(room_id)
     dest_dir = take_dir(room_id, line_id)
     old_stem = f"take_line_{int(line_index)}"
@@ -293,8 +294,15 @@ def migrate_legacy_take_files(
     active = os.path.join(dest_dir, f"{new_stem}.wav")
     raw = os.path.join(dest_dir, f"{new_stem}_raw.wav")
     nr = bool(noise_reduction)
-    moved: List[Tuple[str, str]] = []
-    copied: Optional[str] = None
+    made: List[str] = []
+
+    def copy_into(src: str, dest: str) -> None:
+        tmp = dest + ".part"
+        made.append(tmp)
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+        made.append(dest)
+
     try:
         for name in sorted(os.listdir(room_dir)):
             if not name.endswith(".wav"):
@@ -306,29 +314,20 @@ def migrate_legacy_take_files(
                 suffix = base[len(old_stem):]
             else:
                 continue
-            src = os.path.join(room_dir, name)
             dest = os.path.join(dest_dir, new_stem + suffix + ".wav")
             if not os.path.exists(dest):
-                os.replace(src, dest)
-                moved.append((src, dest))
+                copy_into(os.path.join(room_dir, name), dest)
 
         if not os.path.isfile(active):
             denoised = denoised_take_path(dest_dir, new_stem)
             if nr and os.path.isfile(denoised):
-                copied = active
-                shutil.copy2(denoised, active)
+                copy_into(denoised, active)
             elif os.path.isfile(raw):
-                copied = active
-                shutil.copy2(raw, active)
+                copy_into(raw, active)
                 nr = False
     except Exception:
-        if copied:
-            _remove_quietly(copied)
-        for src, dest in reversed(moved):
-            try:
-                os.replace(dest, src)
-            except OSError as ex:
-                print(f"[DubMate] Could not move {dest} back to {src} ({ex}); it is kept at the new name.")
+        for path in reversed(made):
+            _remove_quietly(path)
         raise
     return {"has_audio": os.path.isfile(active), "has_raw": os.path.isfile(raw), "noise_reduction": nr}
 

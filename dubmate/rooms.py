@@ -28,6 +28,12 @@ from dubmate import common, packs_cache, vocal_chain
 # room_state.json layout. Version 1 (no state_version) kept one take per line index.
 # Voice chains ("voice" and take "chain") are additive, so they stay version 2.
 STATE_VERSION = 2
+# A version 1 room_state.json is copied here, byte for byte, before its first save in the
+# new layout, so DubMate 1.1.3 can still open the room. Written once, never overwritten.
+V1_BACKUP_NAME = "room_state.v1-backup.json"
+# How much later than a v1 take's recorded_at a pack file may be dated and still count as
+# unchanged since the take (file system time resolution and clock rounding).
+V1_PACK_MTIME_SLACK_S = 2.0
 # Room state sent to the studio (to_state_dict). 3: the booth edits voice chains, so a
 # tab from before that stops applying state and asks for a reload (takes.js TAKE_STATE_VERSION).
 CLIENT_STATE_VERSION = 3
@@ -65,8 +71,15 @@ class Room:
         # are kept but never shown or mixed.
         self.takes: Dict[str, Dict[str, Any]] = {}
         # Version 1 takes (keyed by line index, files in the old layout) whose files could
-        # not be moved yet. Saved as they are and retried on the next start.
+        # not be copied yet. Saved as they are and retried on the next start.
         self.pending_v1_takes: Dict[str, Any] = {}
+        # Version 1 takes that can't be matched to a line for sure (the pack changed after
+        # they were recorded): {old line index: old entry}. Their files stay where they are.
+        # Saved in room_state.json, never sent to the studio.
+        self.unplaced_v1_takes: Dict[str, Any] = {}
+        # The version 1 room_state.json as read, until its backup is written. While set,
+        # nothing is saved without the backup (_sync_save_to_disk).
+        self.v1_state_bytes: Optional[bytes] = None
         # The room's voice chains: "session" is every line's sound, "characters" one
         # character's; a take's own "chain" beats both (vocal_chain.resolve_chain).
         self.voice: Dict[str, Any] = {"session": None, "characters": {}}
@@ -319,7 +332,30 @@ class Room:
         with self._save_lock:
             if self.deleted:
                 return
+            if self.v1_state_bytes is not None:
+                if not self._write_v1_backup():
+                    return
+                self.v1_state_bytes = None
             self._write_state_file()
+
+    def _write_v1_backup(self) -> bool:
+        """Writes the room's version 1 room_state.json to V1_BACKUP_NAME unless a backup is
+        already there. False (and logged) when it can't, so the caller doesn't save."""
+        backup = os.path.join(audio_processor.get_room_cache_dir(self.room_id), V1_BACKUP_NAME)
+        if os.path.exists(backup):
+            return True
+        tmp = backup + ".tmp"
+        try:
+            with open(tmp, "wb") as f:
+                f.write(self.v1_state_bytes)
+            os.replace(tmp, backup)
+            return True
+        except OSError as ex:
+            audio_processor._remove_quietly(tmp)
+            print(f"[RoomPersistence] Could not back up room {self.room_id}'s old room_state.json ({ex}). "
+                  f"The room isn't saved in the new layout until the backup is written; "
+                  f"it's tried again on the next save and the next start.")
+            return False
 
     def _write_state_file(self):
         try:
@@ -344,6 +380,8 @@ class Room:
             }
             if self.pending_v1_takes:
                 data["pending_v1_takes"] = self.pending_v1_takes
+            if self.unplaced_v1_takes:
+                data["unplaced_v1_takes"] = self.unplaced_v1_takes
             tmp_file = state_file + ".tmp"
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -453,7 +491,7 @@ def _count_recorded(pack: Optional[pack_loader.PackInfo], takes: Dict[str, Any],
 
 
 def _summary_from_room(room: Room) -> Dict[str, Any]:
-    has_takes = bool(room.takes or room.pending_v1_takes)
+    has_takes = bool(room.takes or room.pending_v1_takes or room.unplaced_v1_takes)
     return {
         "room_id": room.room_id.upper(),
         "pack_id": room.pack.pack_id,
@@ -500,6 +538,7 @@ def _summary_from_folder(room_id: str, folder: str) -> Dict[str, Any]:
     pack = packs_cache.PACKS_CACHE.get(pack_id) if isinstance(pack_id, str) else None
     raw_takes = data.get("takes") if isinstance(data.get("takes"), dict) else {}
     pending = data.get("pending_v1_takes") if isinstance(data.get("pending_v1_takes"), dict) else {}
+    unplaced = data.get("unplaced_v1_takes") if isinstance(data.get("unplaced_v1_takes"), dict) else {}
     if data.get("state_version") == STATE_VERSION:
         takes, v1_takes = raw_takes, pending
     else:
@@ -514,7 +553,8 @@ def _summary_from_folder(room_id: str, folder: str) -> Dict[str, Any]:
         total_lines=len(pack.lines) if pack else 0,
         last_active_at=float(last_active) if isinstance(last_active, (int, float)) else file_mtime,
         status=data.get("status", "lobby"),
-        listed=(created_here if isinstance(created_here, bool) else True) and bool(takes or v1_takes),
+        # Kept-aside takes count too, so pruning never deletes them unseen.
+        listed=(created_here if isinstance(created_here, bool) else True) and bool(takes or v1_takes or unplaced),
     )
     return summary
 
@@ -627,15 +667,17 @@ def load_room_folder(room_id: str) -> Optional[Room]:
     missing or its room_state.json can't be read. Fields older builds didn't save fall
     back: last_active_at to the state file's time (read before any migration save),
     creator_id to host_id, created_here to True, the presence level to 0. Every user is
-    marked offline, since nobody is connected yet."""
+    marked offline, since nobody is connected yet. A version 1 room is backed up
+    (V1_BACKUP_NAME) before its first save in the new layout."""
     room_folder = os.path.join(audio_processor.CACHE_DIR, "rooms", room_id)
     state_file = os.path.join(room_folder, "room_state.json")
     if not os.path.isfile(state_file):
         return None
     try:
         file_mtime = os.path.getmtime(state_file)
-        with open(state_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(state_file, "rb") as f:
+            state_bytes = f.read()  # read before anything writes: the backup is these bytes
+        data = json.loads(state_bytes.decode("utf-8"))
         version = data.get("state_version")
         if version not in (None, 1, STATE_VERSION):
             # A newer DubMate wrote this room. Reading it as an older layout would
@@ -679,8 +721,11 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         if version == STATE_VERSION:
             room.takes = raw_takes
             v1_takes = data.get("pending_v1_takes") or {}
+            unplaced = data.get("unplaced_v1_takes")
+            room.unplaced_v1_takes = unplaced if isinstance(unplaced, dict) else {}
         else:
             v1_takes = raw_takes
+            room.v1_state_bytes = state_bytes
         changed = False
         if isinstance(v1_takes, dict) and v1_takes:
             _migrate_v1_takes(room, v1_takes)
@@ -748,16 +793,44 @@ def _migrate_legacy_sound(room: Room) -> None:
                 _legacy_take_chain(take)
 
 
+def _pack_unchanged_since(pack: pack_loader.PackInfo, index: int, recorded_at: Any) -> bool:
+    """True when the pack can't have changed at or before line `index` since recorded_at:
+    the line files at indexes 0..index and the pack folder itself are all dated no later
+    than recorded_at + V1_PACK_MTIME_SLACK_S. An inserted or rebuilt line file is newer, and
+    removing one makes the folder newer. A missing file or an unusable time gives False.
+    Loading a pack writes nothing into its folder (peaks and web videos go to the cache)
+    except a missing _captions.json or _TIMESTAMPS.txt, which 1.1.3 already wrote when it
+    first loaded the pack, before any take. So the folder's time only moves when the pack
+    itself is edited, and then every v1 take of the room is kept aside."""
+    if isinstance(recorded_at, bool) or not isinstance(recorded_at, (int, float)) or recorded_at != recorded_at:
+        return False
+    limit = recorded_at + V1_PACK_MTIME_SLACK_S
+    try:
+        if os.path.getmtime(pack.folder) > limit:
+            return False
+        for line in pack.lines[:index + 1]:
+            if os.path.getmtime(os.path.join(pack.folder, line["filename"])) > limit:
+                return False
+    except (OSError, KeyError, TypeError):
+        return False
+    return True
+
+
 def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
     """Moves a version 1 room (one take per line index, take_line_<i>*.wav in the room folder)
-    to takes by line ID: each take becomes take1 of the line now at its index. A take for an
-    index outside the current pack keeps its files where they are.
+    to takes by line ID: each take becomes take1 of the line now at its index, its files
+    copied to takes/<line_id>/. The take_line_* originals are kept, for DubMate 1.1.3.
 
-    Each take moves all or nothing. One whose files can't be moved (held open by another
-    program) keeps its old files and goes to room.pending_v1_takes, which is saved with the
-    room and retried on the next start; the rest of the room loads and works meanwhile. If
-    the line got new takes in the meantime, the old take is added after them and the pick is
-    left alone. Safe to rerun after a crash: files already moved are found in their new place."""
+    v1 state names a line only by its index, so a take is placed only when the pack provably
+    didn't change since it was recorded (_pack_unchanged_since). Otherwise, and for an index
+    outside the current pack, the take goes to room.unplaced_v1_takes with its files
+    untouched: never onto a line it might not belong to.
+
+    Each take is copied all or nothing. One whose files can't be copied (held open by another
+    program) goes to room.pending_v1_takes, which is saved with the room and retried on the
+    next start; the rest of the room loads and works meanwhile. If the line got new takes in
+    the meantime, the old take is added after them and the pick is left alone. Safe to rerun
+    after a crash: copies already made are found in their new place."""
     lines = room.pack.lines
     now_ms = int(time.time() * 1000)
     pending: Dict[str, Any] = {}
@@ -767,8 +840,13 @@ def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
         except (TypeError, ValueError):
             print(f"[DubMate] Room {room.room_id}: skipped a take with an unreadable line number {key!r}.")
             continue
-        if not 0 <= index < len(lines) or not isinstance(old, dict):
-            print(f"[DubMate] Room {room.room_id}: take for line {index + 1} is not in this scene; its files stay in the room folder.")
+        if not isinstance(old, dict):
+            print(f"[DubMate] Room {room.room_id}: skipped an unreadable take for line {index + 1}.")
+            continue
+        if not 0 <= index < len(lines) or not _pack_unchanged_since(room.pack, index, old.get("recorded_at")):
+            print(f"[DubMate] Room {room.room_id}: take for old line {index + 1} kept aside: the scene changed "
+                  f"after it was recorded. Its files stay in the room folder.")
+            room.unplaced_v1_takes[str(key)] = old
             continue
         line_id = lines[index]["line_id"]
         if room.find_take(line_id, "take1"):
@@ -778,7 +856,7 @@ def _migrate_v1_takes(room: Room, raw_takes: Dict[str, Any]) -> None:
                 room.room_id, index, line_id, "take1", bool(old.get("noise_reduction", False))
             )
         except Exception as ex:
-            print(f"[DubMate] Room {room.room_id}: could not move the take for line {index + 1} to the new "
+            print(f"[DubMate] Room {room.room_id}: could not copy the take for line {index + 1} to the new "
                   f"layout ({type(ex).__name__}: {ex}). Its files are unchanged and it will be retried on the "
                   f"next start; until then the line plays without it.")
             pending[key] = old

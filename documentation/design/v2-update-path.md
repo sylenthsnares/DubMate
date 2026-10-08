@@ -84,6 +84,9 @@ In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_proces
   
   A take that fails either check, or has no usable `recorded_at`, is **unplaced**. Its old entry goes to `room.unplaced_v1_takes` (`{old_index: entry}`, saved in `room_state.json`), and its files stay where they are, untouched. It is logged: `take for old line N kept aside: the scene changed after it was recorded`. This PR adds no UI to place them. The backup and the files keep that possible.
 - The engineer confirms that nothing in 2.0 writes into a pack folder on load, or the folder-mtime check would misfire. Covers and caches go to `data/`.
+  - Confirmed (G3): loading a pack writes only a missing `_captions.json` or `_TIMESTAMPS.txt`, and 1.1.3 already wrote both the first time it loaded the pack, before any take. A pack loaded by 1.1.3 and then by 2.0 keeps its folder and file times (checked on the real 1.1.3 code).
+  - Adding or removing any line file moves the folder's time, so in practice any edit of the pack after recording keeps all of that room's v1 takes aside, not only the ones after the edit. The line-file rule still guards against a file replaced in place.
+  - Files kept aside are `take_line_<i>*.wav`; the room's `unplaced_v1_takes` names them by old index. A kept-aside take counts as a take for the Continue list, so session pruning keeps the room.
 - `pending_v1_takes` (a copy that failed, retried next start) keeps working as today.
 
 ### 5. CHANGELOG `[Unreleased]`
