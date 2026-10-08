@@ -221,7 +221,10 @@ export class PackBuilderApp {
   initEvents() {
     this.initModeDropdown();
     initTooltips();
-    initShortcutSheet({ opener: document.getElementById('btn-shortcuts') });
+    initShortcutSheet({
+      opener: document.getElementById('btn-shortcuts'),
+      getView: () => (this.currentStep === 'editor' ? 'editor' : null),
+    });
 
     // 0. Mode Tabs (File vs YouTube URL)
     if (this.tabBtnFile && this.tabBtnUrl) {

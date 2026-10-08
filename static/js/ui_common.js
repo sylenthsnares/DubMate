@@ -25,23 +25,56 @@ export function escapeHtml(value) {
   }[c]));
 }
 
-export function showToast(message) {
+/** A count with its word: "1 line", "2 lines", "0 lines". */
+export function plural(n, word) {
+  return `${n} ${n === 1 ? word : `${word}s`}`;
+}
+
+/**
+ * Reads text out to screen readers through the hidden #sr-announcer live region.
+ * The region is emptied first and filled on the next tick, so the same words said
+ * twice in a row are read twice.
+ */
+export function announce(text) {
+  const region = document.getElementById('sr-announcer');
+  if (!region) return;
+  region.textContent = '';
+  setTimeout(() => { region.textContent = text; }, 0);
+}
+
+const MAX_TOASTS = 3;
+
+/**
+ * Shows a short message at the bottom of the window; at most 3 at once, the oldest goes.
+ * tone 'error' is for something the user has to know went wrong: it is announced at once
+ * and stays until its Close button is pressed. The entrance motion lives in style.css.
+ */
+export function showToast(message, { tone } = {}) {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
-  toast.innerText = message;
-  toast.style.opacity = '0';
-  toast.style.transform = 'translateY(-6px)';
-  toast.style.transition = 'opacity 160ms var(--ease-out), transform 160ms var(--ease-out)';
+  if (tone === 'error') {
+    toast.classList.add('toast-error');
+    toast.setAttribute('role', 'alert');
+    const text = document.createElement('span');
+    text.className = 'toast-message';
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'btn btn-ghost btn-xs toast-close';
+    close.textContent = 'Close';
+    close.addEventListener('click', () => toast.remove());
+    toast.append(text, close);
+  } else {
+    toast.innerText = message;
+  }
   container.appendChild(toast);
-  requestAnimationFrame(() => {
-    toast.style.opacity = '1';
-    toast.style.transform = 'translateY(0)';
-  });
+  const shown = container.querySelectorAll('.toast');
+  for (let i = 0; i < shown.length - MAX_TOASTS; i++) shown[i].remove();
+  if (tone === 'error') return;
   setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-6px)';
+    toast.classList.add('is-leaving');
     setTimeout(() => toast.remove(), 180);
   }, 3200);
 }
@@ -252,7 +285,7 @@ export function isDialogOpen() {
   return openDialogCount > 0;
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), '
+const FOCUSABLE = 'a[href], summary, button:not([disabled]), input:not([disabled]), select:not([disabled]), '
   + 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**

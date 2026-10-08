@@ -27,7 +27,7 @@
   gap: 7px;
   font-size: 11.5px;
   font-weight: 700;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   transition: all 180ms ease;
   user-select: none;
 }
@@ -50,7 +50,7 @@
   align-items: center;
   justify-content: center;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .builder-step.active .step-num {
@@ -83,7 +83,7 @@
   padding: 4px 10px;
   border-radius: var(--radius-full);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--foreground-muted);
 }
 
@@ -310,7 +310,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   align-items: center;
   justify-content: center;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--foreground-muted);
   flex-shrink: 0;
@@ -457,6 +457,13 @@ body:has(#view-step-editor.active) .builder-main-container {
   animation: pulse-halo 2s infinite ease-in-out;
 }
 
+/* Reduced motion: the radar glow stays, still. */
+@media (prefers-reduced-motion: reduce) {
+  .radar-pulse {
+    animation: none;
+  }
+}
+
 .radar-center {
   width: 54px;
   height: 54px;
@@ -507,7 +514,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 .builder-progress-meta {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
   color: var(--foreground-muted);
 }
@@ -560,7 +567,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .stage-desc {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--foreground-muted);
 }
 
@@ -682,7 +689,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .hud-label {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 900;
   color: var(--accent-brass);
   letter-spacing: 0.5px;
@@ -699,7 +706,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent-brass);
   background: rgba(204, 164, 88, 0.08);
@@ -736,7 +743,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 }
 
 .btn-mark-pill {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 4px 7px;
   display: inline-flex;
@@ -777,7 +784,7 @@ body:has(#view-step-editor.active) .builder-main-container {
   border: 1px solid rgba(168, 85, 247, 0.35);
   color: #e9d5ff;
   font-weight: 700;
-  font-size: 10.5px;
+  font-size: 11px;
   padding: 4px 8px;
   display: inline-flex;
   align-items: center;
@@ -804,7 +811,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .zoom-title {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   margin-right: 2px;
@@ -812,7 +819,7 @@ body:has(#view-step-editor.active) .builder-main-container {
 
 .zoom-label {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--foreground-muted);
   min-width: 26px;
@@ -922,7 +929,7 @@ body.resizing-timeline * {
 
 .daw-channel-badge {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent-green-bright);
   background: rgba(34, 197, 94, 0.12);
@@ -940,8 +947,8 @@ body.resizing-timeline * {
 }
 
 .timeline-hint {
-  font-size: 10.5px;
-  color: var(--foreground-dim);
+  font-size: 12px;
+  color: var(--foreground-muted);
 }
 
 /* Multi-Channel DAW Body Container */
@@ -989,7 +996,7 @@ body.resizing-timeline * {
 .channel-id-badge {
   font-family: var(--font-mono);
   font-weight: 900;
-  font-size: 10px;
+  font-size: 11px;
   background: linear-gradient(135deg, var(--primary) 0%, #92400e 100%);
   color: var(--white);
   padding: 2px 5px;
@@ -1327,7 +1334,7 @@ body.resizing-timeline * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 11px;
   transition: all 120ms ease;
 }
 
@@ -1371,7 +1378,7 @@ body.resizing-timeline * {
 }
 
 .chip-count-badge {
-  font-size: 9.5px;
+  font-size: 11px;
   font-family: var(--font-mono);
   background: rgba(204, 164, 88, 0.15);
   color: var(--accent-brass);
@@ -1392,7 +1399,7 @@ body.resizing-timeline * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 11px;
   margin-left: 2px;
   transition: all 120ms ease;
 }
@@ -1477,9 +1484,9 @@ body.resizing-timeline * {
 }
 
 .cue-nonverbal-badge {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   border: 1px solid currentColor;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
@@ -1517,7 +1524,7 @@ body.resizing-timeline * {
 .btn-delete-cue {
   background: transparent;
   border: none;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   cursor: pointer;
   font-size: 12px;
   padding: 4px 6px;
@@ -1605,7 +1612,7 @@ body.resizing-timeline * {
 }
 
 .stat-lbl {
-  font-size: 10px;
+  font-size: 11px;
   font-family: var(--font-mono);
   color: var(--foreground-muted);
 }

@@ -3,7 +3,7 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-import { showToast, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
+import { showToast, announce, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
 import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
@@ -16,6 +16,26 @@ import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
 import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
+
+// What the connection pill says. Casting and ready changes wait in the socket's
+// queue; takes and voice changes go over HTTP and don't, hence the careful tip.
+// Once it has given up, new changes are refused (send_failed), except where you
+// are and whether you're ready, which are sent again whenever it gets back.
+const CONNECTION_COPY = {
+  lost: 'Lost the room. Reconnecting…',
+  connecting: 'Connecting…',
+  failed: "Can't reach the room. The host may have closed it.",
+  disconnected: "Disconnected. You're no longer in the room.",
+  overflow: "Some changes from the last minute didn't reach the room.",
+  back: 'Back online',
+  stale: 'DubMate was updated. Reload this page to keep going.',
+  // Narrow windows show these instead, with the sentence in a tooltip.
+  lostShort: 'Reconnecting…',
+  failedShort: "Can't reach the room.",
+  staleShort: 'DubMate was updated.',
+  lostTip: "Casting and ready changes are sent when it's back. Wait for it before you record.",
+  failedTip: "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved.",
+};
 
 class DubMateApp {
   constructor() {
@@ -191,6 +211,9 @@ class DubMateApp {
     this.lobbyCastList = document.getElementById('lobby-cast-list');
     this.castOnlineCount = document.getElementById('cast-online-count');
     this.btnStartSession = document.getElementById('btn-start-session');
+    this.btnBackToBooth = document.getElementById('btn-back-to-booth');
+    this.btnBackToPremiere = document.getElementById('btn-back-to-premiere');
+    this.lobbyWaiting = document.getElementById('lobby-waiting');
     this.btnCopyInvite = document.getElementById('btn-copy-invite');
     this.btnGetScene = document.getElementById('btn-get-scene');
 
@@ -455,17 +478,13 @@ class DubMateApp {
     initShortcutSheet({
       opener: document.getElementById('btn-shortcuts'),
       isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
+      getView: () => this.currentView,
     });
     this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
       btnLeaveRoom.addEventListener('click', () => this.confirmLeaveRoom());
-    }
-
-    const btnLeaveRoomLobby = document.getElementById('btn-leave-room-lobby');
-    if (btnLeaveRoomLobby) {
-      btnLeaveRoomLobby.addEventListener('click', () => this.confirmLeaveRoom());
     }
 
     this.inputUserName.addEventListener('input', (e) => {
@@ -633,11 +652,28 @@ class DubMateApp {
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
     this.btnStartSession.addEventListener('click', () => {
-      // The host moves everyone; a member just goes to the booth themselves.
+      // Only the host sees Start (renderLobbyState) and moves everyone. The check stays
+      // for a stale render: a member would only open their own booth, never set_status.
       if (this.isHost({ allowDummy: true })) this.socket.setStatus('recording');
       this.showView('booth');
       this.loadBoothLine(this.findFirstAssignedLine());
     });
+
+    // A guest who stepped back to the lobby while recording is on: this only moves them.
+    if (this.btnBackToBooth) {
+      this.btnBackToBooth.addEventListener('click', () => {
+        this.showView('booth');
+        this.loadBoothLine(this.findFirstAssignedLine());
+      });
+    }
+    // The same while the premiere is on: back to it, as the Premiere step does.
+    if (this.btnBackToPremiere) {
+      this.btnBackToPremiere.addEventListener('click', () => {
+        this.showView('screening');
+        this.setupScreeningView();
+        this.broadcastMyStatus('screening');
+      });
+    }
 
     // Studio Breadcrumbs Navigation
     if (this.navStepLobby) {
@@ -865,15 +901,71 @@ class DubMateApp {
     this.initScreeningEvents();
 
     this.socket.on('connection_state', (data) => {
+      const wasLost = !!this._connectionLost;
       this.renderConnectionState(data.payload || {});
+      // The engine's join forgets where you were and whether you were ready, and while
+      // it had given up those changes weren't sent. Say them again once it is back,
+      // after the join and the queued changes (both go out right after this event).
+      if (data.payload?.state === 'open' && wasLost) {
+        setTimeout(() => {
+          if (this.socket.connectionState !== 'open') return;
+          if (['lobby', 'booth', 'screening'].includes(this.currentView)) this.broadcastMyStatus(this.currentView);
+        }, 0);
+      }
     });
+
+    // The offline queue had to drop a change. The pill says so while the room is
+    // away; once it is back, the same line stays as a toast until closed.
+    this.socket.on('queue_overflow', (data) => {
+      if (data?.payload?.recovered) {
+        this._connectionOverflowed = false;
+        this.showToast(CONNECTION_COPY.overflow, { tone: 'error' });
+        return;
+      }
+      this._connectionOverflowed = true;
+      this.renderConnectionState({ state: this.socket.connectionState });
+    });
+
+    document.getElementById('btn-connection-action')?.addEventListener('click', () => {
+      if (this.isStaleTab) window.location.reload();
+      else this.socket.retryNow();
+    });
+    document.getElementById('btn-connection-leave')?.addEventListener('click', () => this.confirmLeaveRoom());
 
     // A message that could not be sent is a change the user thinks they made and
     // nobody else will ever see. Say so rather than dropping it in silence.
     this.socket.on('send_failed', () => {
       if (this._sendFailureToastAt && Date.now() - this._sendFailureToastAt < 5000) return;
       this._sendFailureToastAt = Date.now();
-      this.showToast("You're offline. That change wasn't saved.");
+      this.showToast("You're offline. That change wasn't saved.", { tone: 'error' });
+    });
+
+    // The room refused something this page asked for (a guest's casting change, or a
+    // guest starting recording from an old page). Say why, then show the room as it
+    // really is, since this page may already have drawn the change. The connect-time
+    // "Room not found" has no payload and is room_socket.js's to handle.
+    this.socket.on('error', async (data) => {
+      const message = data?.payload?.message;
+      if (!message) return;
+      this.showToast(message, { tone: 'error' });
+      const roomId = this.roomState?.room_id;
+      if (!roomId) return;
+      try {
+        const res = await fetch(`/api/rooms/${roomId}`);
+        if (!res.ok) return;
+        if (!this.applyIncomingState({ state: await res.json() })) return;
+      } catch (e) {
+        return;
+      }
+      if (this.currentView === 'lobby') {
+        this.renderLobbyState();
+      }
+      if (this.currentView === 'booth') {
+        this.renderTimelineChips();
+        this.renderTakeHistory();
+      }
+      this.renderCastActivityHUD();
+      this.updateScreeningControls();
     });
 
     // Socket events
@@ -898,12 +990,24 @@ class DubMateApp {
     });
 
     this.socket.on('user_status_updated', (data) => {
+      const before = this.roomState?.users;
       if (!this.applyIncomingState(data)) return;
       if (this.roomState && data.payload?.user) {
         this.roomState.users[data.payload.user_id] = data.payload.user;
+        this.announceCastChange(data.type, before, data.payload.user);
         this.renderCastActivityHUD();
       }
     });
+
+    // Joins and leaves are read out once each (the cast strip itself is not a live region).
+    // user_connected covers someone coming back: their join then finds them online already.
+    for (const type of ['user_joined', 'user_connected', 'user_disconnected']) {
+      this.socket.on(type, (data) => {
+        const before = this.roomState?.users;
+        if (!this.applyIncomingState(data)) return;
+        this.announceCastChange(type, before, this.roomState.users?.[data.payload?.user_id]);
+      });
+    }
 
     this.socket.on('take_recorded', async (data) => {
       if (!this.applyIncomingState(data)) return;
@@ -926,10 +1030,9 @@ class DubMateApp {
       this.renderTimelineChips();
       this.renderCastActivityHUD();
 
-      const userName = data.payload?.user_name || take?.user_name || 'Cast member';
-      if (data.payload?.user_id === this.user.id) {
-        this.showToast("Take saved");
-      } else {
+      // Your own take was already announced when its upload finished (booth.js).
+      if (data.payload?.user_id !== this.user.id) {
+        const userName = data.payload?.user_name || take?.user_name || 'Cast member';
         this.showToast(`${userName} recorded line ${(lineIdx !== undefined ? lineIdx + 1 : '')}`);
       }
     });
@@ -972,6 +1075,9 @@ class DubMateApp {
     this.socket.on('status_changed', (data) => {
       if (!this.applyIncomingState(data)) return;
       const newStatus = data.payload?.status || data.status;
+      // The lobby's waiting line and Back buttons follow the room's status, even while
+      // this page is on another screen.
+      this.renderLobbyState();
       if (newStatus === 'recording' && this.currentView === 'lobby') {
         this.showView('booth');
         this.loadBoothLine(this.findFirstAssignedLine());
@@ -1050,6 +1156,23 @@ class DubMateApp {
   }
 
   /**
+   * Reads out a change to someone else in the room, once: "{name} joined", "{name} left",
+   * "{name} is ready". before is the users map from before the message was merged; with
+   * none (this page's own first state) nothing is read.
+   */
+  announceCastChange(type, before, user) {
+    if (!before || !user || user.id === this.user?.id) return;
+    const was = before[user.id];
+    if (type === 'user_joined' || type === 'user_connected') {
+      if (user.is_online && !was?.is_online) announce(`${user.name} joined`);
+    } else if (type === 'user_disconnected') {
+      if (was?.is_online && !user.is_online) announce(`${user.name} left`);
+    } else if (type === 'user_status_updated') {
+      if (user.is_ready && !was?.is_ready) announce(`${user.name} is ready`);
+    }
+  }
+
+  /**
    * Merges a socket message's room state into this.roomState. Local take peaks
    * are kept when the incoming take carries none, and the local line is always
    * kept. Safe to call more than once for the same message.
@@ -1106,8 +1229,18 @@ class DubMateApp {
     if (!banner || !text) return;
     clearTimeout(this._connectionBannerTimer);
     banner.classList.remove('is-recovered');
+    banner.classList.add('is-failed');
+    banner.removeAttribute('data-tip');
     banner.style.display = 'flex';
-    text.innerText = 'DubMate was updated. Reload this page to keep going.';
+    text.innerText = CONNECTION_COPY.stale;
+    this.setConnectionShortForm(CONNECTION_COPY.staleShort, CONNECTION_COPY.stale, { long: true });
+    const action = document.getElementById('btn-connection-action');
+    const leave = document.getElementById('btn-connection-leave');
+    if (action) {
+      action.textContent = 'Reload';
+      action.hidden = false;
+    }
+    if (leave) leave.hidden = true;
   }
 
   initVideoPrompterSplitter() {
@@ -1292,9 +1425,14 @@ class DubMateApp {
       this.renderTimelineChips();
     }
 
-    // Toggle HUD & Breadcrumbs visibility
+    // Toggle HUD & Breadcrumbs visibility. In a room the header compacts on narrow
+    // windows so its Leave button stays in view (style.css .app-header.in-room).
+    const inRoom = viewName !== 'landing' && !!this.roomState;
+    document.querySelector('.app-header')?.classList.toggle('in-room', inRoom);
     if (this.castActivityBar) {
       this.castActivityBar.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';
+      // The strip shows progress and ready counts everywhere but the lobby.
+      if (this.roomState) this.renderCastActivityHUD();
     }
     if (this.studioBreadcrumbs) {
       this.studioBreadcrumbs.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';
@@ -1359,6 +1497,8 @@ class DubMateApp {
       connectionBanner.style.display = 'none';
       connectionBanner.classList.remove('is-recovered');
     }
+    this._connectionLost = '';
+    this._connectionOverflowed = false;
     const wasHost = this.isHost();
     this.resetRoomSession();
     this.selectedPackId = null;
@@ -1453,7 +1593,7 @@ class DubMateApp {
     return isTechnical ? fallback : raw;
   }
 
-  showToast(message) { showToast(message); }
+  showToast(message, options) { showToast(message, options); }
 
   /**
    * Shows the connection banner while the room is not live.
@@ -1461,18 +1601,32 @@ class DubMateApp {
    * The socket already tracked this state and already reconnected with backoff --
    * it just never told anyone. To the user a dropped connection was a room that
    * had quietly stopped working.
+   *
+   * Amber while it is trying (with Retry now), red once it has given up (Try again,
+   * Leave room). Screen readers hear only the real changes: lost, back, gave up.
+   * this._connectionLost is '' while healthy, 'lost' while retrying, 'failed' after.
    */
-  renderConnectionState({ state, retryInMs } = {}) {
+  renderConnectionState({ state } = {}) {
     if (this.isStaleTab) return; // the reload notice stays up
     const banner = document.getElementById('connection-banner');
     const text = document.getElementById('connection-banner-text');
     if (!banner || !text) return;
+    const action = document.getElementById('btn-connection-action');
+    const leave = document.getElementById('btn-connection-leave');
+    const wasLost = this._connectionLost || '';
 
     if (state === 'open') {
-      // Only announce recovery if the user actually saw a problem.
+      this._connectionLost = '';
+      banner.classList.remove('is-failed');
+      banner.removeAttribute('data-tip');
+      this.setConnectionShortForm('');
+      if (action) action.hidden = true;
+      if (leave) leave.hidden = true;
+      if (wasLost) announce(CONNECTION_COPY.back);
+      // Only show recovery if the user actually saw a problem.
       if (banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
         banner.classList.add('is-recovered');
-        text.innerText = 'Back online';
+        text.innerText = CONNECTION_COPY.back;
         clearTimeout(this._connectionBannerTimer);
         this._connectionBannerTimer = setTimeout(() => {
           banner.style.display = 'none';
@@ -1488,14 +1642,62 @@ class DubMateApp {
     clearTimeout(this._connectionBannerTimer);
     banner.classList.remove('is-recovered');
     banner.style.display = 'flex';
-    if (state === 'reconnecting') {
-      const seconds = Math.max(1, Math.round((retryInMs || 2000) / 1000));
-      text.innerText = `Reconnecting in ${seconds}s. Changes aren't saved until then.`;
-    } else if (state === 'connecting') {
-      text.innerText = 'Connecting…';
-    } else {
-      text.innerText = "Disconnected. You're no longer in the room.";
+
+    if (state === 'failed' || state === 'disconnected') {
+      this._connectionLost = 'failed';
+      // 'disconnected' means the room was left on purpose: there is nothing to try again.
+      const canRetry = state === 'failed';
+      const line = canRetry ? CONNECTION_COPY.failed : CONNECTION_COPY.disconnected;
+      banner.classList.add('is-failed');
+      if (canRetry) banner.setAttribute('data-tip', CONNECTION_COPY.failedTip);
+      else banner.removeAttribute('data-tip');
+      text.innerText = line;
+      this.setConnectionShortForm(canRetry ? CONNECTION_COPY.failedShort : '', `${line} ${CONNECTION_COPY.failedTip}`, { long: true });
+      if (action) {
+        action.textContent = 'Try again';
+        action.hidden = !canRetry;
+      }
+      if (leave) leave.hidden = false;
+      if (wasLost !== 'failed') announce(line);
+      return;
     }
+
+    // 'reconnecting', or 'connecting' (the first handshake, or a retry mid-outage).
+    banner.classList.remove('is-failed');
+    if (leave) leave.hidden = true;
+    if (state === 'connecting' && !wasLost) {
+      banner.removeAttribute('data-tip');
+      text.innerText = CONNECTION_COPY.connecting;
+      this.setConnectionShortForm('');
+      if (action) action.hidden = true;
+      return;
+    }
+    this._connectionLost = 'lost';
+    const line = this._connectionOverflowed ? CONNECTION_COPY.overflow : CONNECTION_COPY.lost;
+    banner.setAttribute('data-tip', CONNECTION_COPY.lostTip);
+    text.innerText = line;
+    this.setConnectionShortForm(CONNECTION_COPY.lostShort, `${line} ${CONNECTION_COPY.lostTip}`, { long: this._connectionOverflowed });
+    if (action) {
+      action.textContent = 'Retry now';
+      action.hidden = false;
+    }
+    if (!wasLost) announce(CONNECTION_COPY.lost);
+  }
+
+  /**
+   * The pill's narrow-window wording ('' for none), with the full sentence in its tooltip.
+   * style.css swaps it in below 1280px, or below 1440px for a long sentence (long: true),
+   * which would otherwise push the header's own buttons out of the window.
+   */
+  setConnectionShortForm(shortText, tip = '', { long = false } = {}) {
+    const banner = document.getElementById('connection-banner');
+    const short = banner?.querySelector('.connection-banner-short');
+    if (!short) return;
+    banner.classList.toggle('has-short', !!shortText);
+    banner.classList.toggle('is-long', !!shortText && long);
+    short.textContent = shortText;
+    if (shortText && tip) short.setAttribute('data-tip', tip);
+    else short.removeAttribute('data-tip');
   }
 
   initModeDropdown() {

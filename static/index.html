@@ -123,10 +123,15 @@
     </div>
 
     <!-- Connection state. Hidden while healthy; a dropped socket used to be
-         completely invisible, so the room looked fine while nothing was sent. -->
-    <div id="connection-banner" class="connection-banner" role="status" aria-live="polite" style="display: none;">
-      <span class="connection-dot"></span>
+         completely invisible, so the room looked fine while nothing was sent.
+         Not a live region: real changes are read out once through #sr-announcer.
+         Below 1280px the reconnecting sentence gives way to the short form. -->
+    <div id="connection-banner" class="connection-banner" style="display: none;">
+      <span class="connection-dot" aria-hidden="true"></span>
       <span id="connection-banner-text">Reconnecting…</span>
+      <span class="connection-banner-short"></span>
+      <button type="button" id="btn-connection-action" class="btn btn-ghost btn-xs" hidden>Retry now</button>
+      <button type="button" id="btn-connection-leave" class="btn btn-ghost btn-xs" hidden>Leave room</button>
     </div>
 
     <div class="header-status">
@@ -178,7 +183,7 @@
 
   <!-- Live Cast Activity HUD Ribbon -->
   <div id="cast-activity-bar" class="cast-activity-bar" style="display: none;" role="region"
-    aria-label="Cast" aria-live="polite">
+    aria-label="Cast">
     <div class="cast-activity-header">
       <span class="cast-hud-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -458,22 +463,12 @@
       <div class="lobby-header-card glass-card">
         <div class="lobby-title-group">
           <div class="lobby-badge-row">
-            <span class="badge-studio">LOBBY</span>
             <span id="lobby-line-count" class="char-tag">0 lines</span>
           </div>
           <h2 id="lobby-pack-title" class="lobby-pack-title">Scene Title</h2>
           <p class="lobby-desc">Give each character an actor. One actor can voice several characters.</p>
         </div>
         <div class="lobby-action-group">
-          <button id="btn-leave-room-lobby" class="btn btn-ghost">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" x2="9" y1="12" y2="12" />
-            </svg>
-            <span>Leave room</span>
-          </button>
           <button id="btn-copy-invite" class="btn btn-secondary" data-tip="Copies the room code, or a direct link if the code isn't ready yet">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
@@ -493,6 +488,13 @@
           </button>
           <button id="btn-start-session" class="btn btn-primary btn-lg">
             <span>Start recording ›</span>
+          </button>
+          <p id="lobby-waiting" class="lobby-waiting" role="status" hidden></p>
+          <button id="btn-back-to-booth" class="btn btn-primary btn-lg" type="button" hidden>
+            <span>Back to the booth ›</span>
+          </button>
+          <button id="btn-back-to-premiere" class="btn btn-primary btn-lg" type="button" hidden>
+            <span>Back to the premiere ›</span>
           </button>
         </div>
       </div>
@@ -900,7 +902,7 @@
                   <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                     <span id="val-gain" class="dsp-channel-readout">0 dB</span>
                     <span id="badge-gain-match" class="badge-calibrated uncalibrated"
-                      style="font-size: 8.5px; padding: 1px 4px; display: none;">Match</span>
+                      style="font-size: 11px; padding: 1px 4px; display: none;">Match</span>
                   </div>
                 </div>
                 <div class="voice-meter" aria-hidden="true">
@@ -1320,11 +1322,11 @@
             <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (default)</span>
           </div>
           <div class="stem-slider-row" style="margin-top: 4px;">
-            <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">-6dB</span>
+            <span style="font-size: 11px; font-family: var(--font-mono); color: var(--foreground-muted);">-6dB</span>
             <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5" value="0"
               aria-label="Dialogue level (dB)" aria-valuemin="-6" aria-valuemax="8"
               aria-valuenow="0" aria-valuetext="0.0 dB, default">
-            <span style="font-size: 10px; font-family: var(--font-mono); color: var(--foreground-dim);">+8dB</span>
+            <span style="font-size: 11px; font-family: var(--font-mono); color: var(--foreground-muted);">+8dB</span>
           </div>
           <div class="presence-preset-pills" style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
             <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">Default</button>
@@ -1397,7 +1399,9 @@
   </main>
 
   <!-- Toast Notification Container -->
-  <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+  <div id="toast-container" aria-live="polite"></div>
+  <!-- Joins, leaves and "is ready", read out once each (ui_common.js announce) -->
+  <div id="sr-announcer" class="sr-only" aria-live="polite"></div>
 
   <!-- Master Dub Video Export Rendering Modal Overlay -->
   <div id="modal-export-rendering" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true"
@@ -1893,7 +1897,7 @@
             <p style="margin: 0;">Remove Pack Builder? DubMate restarts, so anyone in your room is disconnected.</p>
             <div class="modal-actions" style="margin-top: 10px; justify-content: flex-end; gap: 8px;">
               <button id="btn-cancel-remove-packbuilder" class="btn btn-ghost btn-sm" type="button">Cancel</button>
-              <button id="btn-confirm-remove-packbuilder" class="btn btn-primary btn-sm" type="button">Remove</button>
+              <button id="btn-confirm-remove-packbuilder" class="btn btn-danger btn-sm" type="button">Remove</button>
             </div>
           </div>
           <div id="packbuilder-remove-feedback" class="audio-inline-feedback is-error" role="alert"

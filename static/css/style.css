@@ -204,7 +204,8 @@ body::after {
   background: var(--secondary);
 }
 .logo:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 /* Mode Switcher Dropdown */
@@ -232,7 +233,8 @@ body::after {
 }
 
 .logo-with-dropdown:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .logo-chevron {
@@ -337,7 +339,7 @@ body::after {
 
 .mode-active-pill {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -348,7 +350,7 @@ body::after {
 }
 
 .mode-item-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--foreground-muted);
   line-height: 1.35;
 }
@@ -375,7 +377,7 @@ body::after {
 
 .logo-badge {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.8px;
   padding: 1px 6px;
@@ -424,7 +426,7 @@ body::after {
 
 .crumb-arrow {
   color: var(--foreground-dim);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .badge-live-dot {
@@ -477,40 +479,114 @@ body::after {
   background: var(--secondary);
 }
 
-/* Connection loss banner. Deliberately loud: while it is up, anything the user
-   records or assigns will not reach the other people in the room. */
+/* Connection pill. Amber while it is connecting or trying to get the room back;
+   red only once it has given up (red means recording elsewhere, so it is kept
+   for the state that needs the user); green for "Back online". */
 .connection-banner {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 3px 4px 3px 12px;
+  min-height: 30px;
   margin-right: 10px;
   border-radius: var(--radius-md);
-  background: rgba(220, 38, 38, 0.12);
-  border: 1px solid var(--accent-red-glow);
-  color: var(--accent-red-soft);
-  font-size: 11px;
+  background: rgba(217, 119, 6, 0.1);
+  border: 1px solid var(--accent-amber-glow);
+  color: var(--primary-hover);
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
+.connection-banner.is-failed {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: var(--accent-red-glow);
+  color: var(--accent-red-soft);
+}
 .connection-banner.is-recovered {
   background: rgba(22, 163, 74, 0.12);
-  border-color: rgba(22, 163, 74, 0.4);
-  color: #86efac;
+  border-color: var(--accent-teal-glow);
+  color: var(--accent-green-light);
+}
+.connection-banner [hidden] {
+  display: none;
+}
+/* Pad the right side when there is no button to sit against it. */
+.connection-banner:not(:has(.btn:not([hidden]))) {
+  padding-right: 12px;
+}
+.connection-banner .btn {
+  color: inherit;
+}
+.connection-banner-short {
+  display: none;
 }
 .connection-dot {
+  flex-shrink: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: currentColor;
-  animation: connection-pulse 1.4s ease-in-out infinite;
+  animation: connection-pulse 2.4s ease-in-out infinite;
 }
+.connection-banner.is-failed .connection-dot,
 .connection-banner.is-recovered .connection-dot {
   animation: none;
 }
 @keyframes connection-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
+  50% { opacity: 0.45; }
+}
+/* Narrow windows: the short form ("Reconnecting…"), the full sentence in its tooltip.
+   Long sentences (gave up, dropped changes, reload) swap earlier so the header's
+   own Leave stays in the window. */
+@media (max-width: 1279px) {
+  .connection-banner.has-short #connection-banner-text {
+    display: none;
+  }
+  .connection-banner.has-short .connection-banner-short {
+    display: inline;
+  }
+}
+@media (max-width: 1439px) {
+  .connection-banner.has-short.is-long #connection-banner-text {
+    display: none;
+  }
+  .connection-banner.has-short.is-long .connection-banner-short {
+    display: inline;
+  }
+}
+
+/* The header's Leave is the way out of a room on every screen, so it must stay in
+   the window down to the 960px desktop minimum, with or without the pill. The
+   sides keep their size; only the pill's sentence gives way (with an ellipsis). */
+.header-left,
+.header-status {
+  flex-shrink: 0;
+}
+.connection-banner {
+  min-width: 0;
+}
+.connection-banner #connection-banner-text,
+.connection-banner .connection-banner-short {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.connection-banner .btn {
+  flex-shrink: 0;
+}
+/* While the pill asks for attention, the invite code and your name step aside:
+   neither helps while the room is out of reach. "Back online" leaves them be. */
+.app-header:has(> .connection-banner:not([style*="none"]):not(.is-recovered)) #header-room-badge,
+.app-header:has(> .connection-banner:not([style*="none"]):not(.is-recovered)) #header-user-pill {
+  display: none !important; /* app.js shows both with an inline display */
+}
+/* In a room below 1280px the logo keeps its icon (and still opens the switcher). */
+@media (max-width: 1279px) {
+  .app-header.in-room .logo-title,
+  .app-header.in-room .logo-badge {
+    display: none;
+  }
 }
 
 /* The code exists locally but is not resolvable by guests yet -- usually the
@@ -522,7 +598,7 @@ body::after {
 }
 
 .room-label {
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent-brass);
   letter-spacing: 0.5px;
@@ -549,7 +625,7 @@ body::after {
   background: var(--primary);
   color: var(--primary-foreground);
   font-family: var(--font-sans);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -591,7 +667,7 @@ body::after {
 
 .cast-hud-title {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent-brass);
   letter-spacing: 0.5px;
@@ -602,7 +678,7 @@ body::after {
 
 .premiere-status-summary {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 1px 6px;
   background: var(--input);
@@ -628,7 +704,7 @@ body::after {
   background: var(--card);
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-full);
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: nowrap;
   flex-shrink: 0;
   transition: all var(--duration-fast) var(--ease-out);
@@ -646,7 +722,7 @@ body::after {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -666,7 +742,7 @@ body::after {
 
 .actor-hud-char {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 600;
   padding: 1px 5px;
   background: var(--input);
@@ -680,7 +756,7 @@ body::after {
 
 .actor-hud-progress {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 1px 5px;
   background: rgba(217, 119, 6, 0.12);
@@ -690,7 +766,7 @@ body::after {
 
 .actor-hud-status-badge {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 1px 5px;
   border-radius: var(--radius-full);
@@ -711,6 +787,19 @@ body::after {
   background: rgba(217, 119, 6, 0.15);
   color: var(--primary);
   border: 1px solid rgba(217, 119, 6, 0.3);
+}
+
+/* Read by screen readers, never shown (the #sr-announcer live region). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ------------------------------------------------------------- */
@@ -960,8 +1049,16 @@ body::after {
 .btn:active {
   transform: scale(0.97);
 }
-.btn:focus-visible {
-  box-shadow: 0 0 0 2px var(--ring);
+/* One keyboard focus style for every control (decision 1 of ui-u1-floors):
+   a solid brass outline, 7.7:1 on cards. --ring stays for input glows only. */
+.btn:focus-visible,
+.btn-big-record:focus-visible,
+.pack-card:focus-visible,
+.color-option:focus-visible,
+.chip-item:focus-visible,
+.actor-hud-char:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .btn-primary {
@@ -1017,6 +1114,38 @@ body::after {
   color: #fff8eb;
   border-color: var(--accent-brass);
   box-shadow: 0 0 16px var(--accent-amber-glow);
+}
+
+/* Destructive confirms (Remove Pack Builder). Red, a little brighter on hover,
+   with a light red focus ring so it reads against the red fill's own glow. */
+.btn-danger {
+  background: var(--accent-red);
+  color: var(--white);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow-sm), 0 1px 0 rgba(255, 255, 255, 0.15) inset;
+}
+.btn-danger:hover {
+  background: var(--accent-red-bright);
+  box-shadow: var(--shadow-glow-red);
+}
+.btn-danger:focus-visible {
+  outline-color: var(--accent-red-soft);
+}
+
+/* Disabled looks disabled: muted surface, dim text, no glow, no press. The
+   :hover forms outrank every .btn-variant:hover rule. */
+.btn:disabled,
+.btn:disabled:hover,
+.btn:disabled:active,
+.btn[aria-disabled="true"],
+.btn[aria-disabled="true"]:hover,
+.btn[aria-disabled="true"]:active {
+  background: var(--muted);
+  color: var(--foreground-dim);
+  border-color: var(--border);
+  box-shadow: none;
+  transform: none;
+  cursor: not-allowed;
 }
 
 .btn-xs {
@@ -1206,7 +1335,7 @@ body::after {
 }
 
 .search-input::placeholder {
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
 }
 
 .search-input:focus {
@@ -1249,7 +1378,7 @@ body::after {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   background: var(--secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1419,7 +1548,7 @@ body::after {
 
 .badge-format {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
@@ -1439,7 +1568,7 @@ body::after {
 
 .badge-author {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   padding: 1px 6px;
   background: var(--card);
@@ -1454,9 +1583,9 @@ body::after {
 
 .pack-line-badge {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
 }
 
 .pack-card-characters {
@@ -1486,7 +1615,7 @@ body::after {
   align-items: center;
   gap: 3px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 1px 6px;
   background: rgba(255, 255, 255, 0.05);
@@ -1588,7 +1717,7 @@ body::after {
 
 .badge-studio {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
   background: rgba(204, 164, 88, 0.12);
@@ -1670,7 +1799,8 @@ body::after {
   font-size: 12px;
   outline: none;
   cursor: pointer;
-  max-width: 220px;
+  width: 100%;
+  min-width: 0;
 }
 .cast-select:focus {
   border-color: var(--primary);
@@ -1678,10 +1808,71 @@ body::after {
 
 .actor-color-dot {
   display: inline-block;
+  flex-shrink: 0;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-right: 6px;
+}
+.actor-color-dot.unassigned {
+  box-shadow: inset 0 0 0 1px var(--foreground-dim);
+}
+
+/* Casting rows: the character, its line count, and who voices it. */
+.char-badge-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.char-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.your-role-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  background: rgba(204, 164, 88, 0.12);
+  color: var(--accent-brass);
+  border: 1px solid rgba(204, 164, 88, 0.3);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.char-line-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.cast-assign-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+.cast-actor-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.cast-actor-name.unassigned {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+.casting-table tr.assigned-to-me td {
+  background: rgba(204, 164, 88, 0.05);
+}
+
+/* Guests see who runs the room instead of its controls. */
+.lobby-action-group [hidden] {
+  display: none;
+}
+.lobby-waiting {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  max-width: 280px;
 }
 
 .lobby-sidebar {
@@ -1721,7 +1912,7 @@ body::after {
   color: var(--foreground);
 }
 .lobby-noise-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--foreground-muted);
   line-height: 1.4;
   margin: 0;
@@ -1732,6 +1923,64 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.lobby-user-item {
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 12px 5px 5px;
+}
+.lobby-user-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.lobby-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-you-tag,
+.tag-host {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-wood);
+  background: var(--secondary);
+  color: var(--foreground-muted);
+}
+.tag-host {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.12);
+  color: var(--primary-hover);
+}
+.cast-status-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.cast-status-pill.online {
+  color: var(--foreground);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-online {
+  background: var(--accent-green-bright);
+}
+.dot-offline {
+  box-shadow: inset 0 0 0 1px var(--foreground-dim);
 }
 
 .badge-online {
@@ -1787,7 +2036,7 @@ body::after {
 
 .line-progress-badge {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--foreground);
   background: var(--input);
@@ -1798,7 +2047,7 @@ body::after {
 
 .time-badge {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent-brass);
   background: var(--input);
@@ -1970,7 +2219,7 @@ body.resizing .video-container {
 
 .overlay-status-text {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--primary);
   letter-spacing: 1px;
@@ -2011,7 +2260,8 @@ body.resizing .video-container {
   background: rgba(217, 119, 6, 0.12);
 }
 .prompter-resize-handle:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
 }
 
 .resize-grip-pill {
@@ -2030,7 +2280,7 @@ body.resizing .resize-grip-pill {
 
 .caption-char {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   letter-spacing: 1.2px;
@@ -2086,7 +2336,7 @@ body.resizing .resize-grip-pill {
 
 .legend-text {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--foreground);
   letter-spacing: 0.3px;
@@ -2094,7 +2344,7 @@ body.resizing .resize-grip-pill {
 
 .legend-offset-pill {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 800;
   padding: 1px 6px;
   background: var(--input);
@@ -2135,13 +2385,13 @@ body.resizing .resize-grip-pill {
   align-items: center;
   gap: 4px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent-brass);
 }
 .shortcut-hint {
-  color: var(--foreground-dim);
-  font-size: 9.5px;
+  color: var(--foreground-muted);
+  font-size: 12px;
 }
 
 .nudge-buttons {
@@ -2158,7 +2408,7 @@ body.resizing .resize-grip-pill {
   border-radius: var(--radius-sm);
   color: var(--foreground);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   transition: all var(--duration-fast);
@@ -2194,7 +2444,7 @@ body.resizing .resize-grip-pill {
 
 /* "Lined up automatically": a quiet note by the readout, not a badge */
 .timing-caption {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--foreground-muted);
   white-space: nowrap;
 }
@@ -2257,7 +2507,7 @@ body.resizing .resize-grip-pill {
 }
 .chip-item.done::after {
   content: '✓';
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent-teal);
   font-weight: 900;
 }
@@ -2279,7 +2529,7 @@ body.resizing .resize-grip-pill {
 
 .booth-controls .panel-header-sm {
   padding: 8px 12px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   background: var(--card-header);
@@ -2300,7 +2550,7 @@ body.resizing .resize-grip-pill {
 
 .lamp-indicator-gold {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   background: rgba(204, 164, 88, 0.15);
@@ -2402,7 +2652,7 @@ body.resizing .resize-grip-pill {
 
 .rocker-symbol {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 900;
   line-height: 1;
   letter-spacing: 0.5px;
@@ -2445,7 +2695,7 @@ body.resizing .resize-grip-pill {
 
 .rocker-status-tag {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   background: #0f0c09;
@@ -2471,7 +2721,7 @@ body.resizing .resize-grip-pill {
   border: 1px solid #8c6a28;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   color: var(--foreground);
@@ -2524,7 +2774,7 @@ body.resizing .resize-grip-pill {
   align-items: center;
   gap: 6px;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--foreground-ivory);
   letter-spacing: 0.8px;
@@ -2540,7 +2790,7 @@ body.resizing .resize-grip-pill {
 
 .record-mode-badge {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   background: rgba(204, 164, 88, 0.12);
@@ -2614,7 +2864,7 @@ body.resizing .resize-grip-pill {
 
 .record-status-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   color: var(--accent-brass);
   text-align: center;
@@ -2678,7 +2928,7 @@ body.resizing .resize-grip-pill {
 }
 .take-history-timing {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--foreground-muted);
   white-space: nowrap;
 }
@@ -2795,7 +3045,7 @@ body.resizing .resize-grip-pill {
   opacity: 0.9;
   font-weight: 700;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   cursor: pointer;
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.3);
@@ -2857,7 +3107,7 @@ body.resizing .resize-grip-pill {
 
 .dsp-channel-title {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--foreground-ivory); /* VOX vintage ivory screen-print */
   letter-spacing: 0.8px;
@@ -2867,7 +3117,7 @@ body.resizing .resize-grip-pill {
 
 .dsp-channel-readout {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass); /* VOX vintage gold */
   background: #0f0c09;
@@ -2958,7 +3208,8 @@ svg {
   touch-action: none;
 }
 .analog-dial-wrapper:focus-visible .dial-housing {
-  box-shadow: 0 0 0 2px var(--primary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
   border-radius: 50%;
 }
 .analog-dial-wrapper.dial-active {
@@ -3136,7 +3387,7 @@ svg {
   box-shadow: 0 0 5px var(--accent-amber-glow);
 }
 .switch-checkbox:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
 
@@ -3188,7 +3439,7 @@ svg {
   background: rgba(12, 10, 9, 0.88);
 }
 .btn-video-expand:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
 
@@ -3231,7 +3482,7 @@ svg {
 
 .badge-host {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
   background: rgba(217, 119, 6, 0.15);
@@ -3242,7 +3493,7 @@ svg {
 
 .badge-master {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
   background: rgba(22, 163, 74, 0.15);
@@ -3329,7 +3580,7 @@ svg {
 
 .stem-val-badge {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
   background: var(--input);
@@ -3346,7 +3597,7 @@ svg {
 
 .stem-tag {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--foreground-muted);
   white-space: nowrap;
@@ -3362,8 +3613,8 @@ svg {
   display: flex;
   justify-content: space-between;
   font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--foreground-dim);
+  font-size: 11px;
+  color: var(--foreground-muted);
   margin-top: 4px;
 }
 
@@ -3411,28 +3662,33 @@ svg {
   justify-content: center;
   gap: 20px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-dim);
+  font-size: 12px;
+  color: var(--foreground-muted);
 }
 .step-item.active {
   color: var(--primary);
   font-weight: 700;
 }
 
-/* Toast Notifications (Top-Left below DubMate Header Logo) */
+/* Toasts: bottom centre, newest at the bottom, at most 3 (ui_common.js showToast).
+   The container lets clicks through; only the toasts themselves take them. */
 #toast-container {
   position: fixed;
-  top: 68px;
-  left: 24px;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
   z-index: 1200;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   pointer-events: none;
 }
 
 .toast {
+  max-width: 100%;
   padding: 10px 16px;
   background: var(--secondary);
   border: 1px solid var(--border-wood);
@@ -3441,9 +3697,38 @@ svg {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.4;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
   backdrop-filter: blur(8px);
+  animation: toast-in 180ms var(--ease-out);
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.toast.is-leaving {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* Something went wrong: stays until closed. */
+.toast-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-left: 3px solid var(--accent-red);
+}
+.toast-error .toast-close {
+  flex-shrink: 0;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+@keyframes toast-fade-in {
+  from { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation-name: toast-fade-in; }
+  .toast.is-leaving { transform: none; }
 }
 
 /* Join Room Actor Name & Mic Setup Modal */
@@ -3766,7 +4051,7 @@ svg {
   border-radius: 50%;
   background: var(--secondary);
   border: 1px solid var(--border-wood);
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
@@ -3784,8 +4069,8 @@ svg {
 }
 
 .modal-step-item .step-sub {
-  font-size: 10px;
-  color: var(--foreground-dim);
+  font-size: 12px;
+  color: var(--foreground-muted);
   font-family: var(--font-mono);
 }
 
@@ -3873,7 +4158,7 @@ svg {
   justify-content: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   line-height: 1.4;
   padding: 8px 12px;
   background: rgba(0, 0, 0, 0.2);
@@ -3889,7 +4174,7 @@ svg {
   font-size: 12px;
   line-height: 1.45;
   text-align: center;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   overflow-wrap: anywhere;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -3987,7 +4272,7 @@ svg {
 
 .btn-auto-match {
   padding: 1px 5px !important;
-  font-size: 9px !important;
+  font-size: 11px !important;
   font-family: var(--font-mono);
   font-weight: 700;
   color: var(--accent-brass) !important;
@@ -4007,7 +4292,7 @@ svg {
 
 .btn-presence-preset {
   padding: 3px 9px !important;
-  font-size: 10px !important;
+  font-size: 11px !important;
   font-family: var(--font-mono);
   font-weight: 600;
   border-radius: 9999px !important;
@@ -4179,7 +4464,7 @@ svg {
 
 .audio-recovery-head {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -4206,9 +4491,9 @@ svg {
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid var(--border-subtle);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
 }
 
 /* --- Step 3: Device pickers --- */
@@ -4248,7 +4533,7 @@ svg {
 
 .audio-device-note {
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--accent-brass);
 }
@@ -4279,9 +4564,9 @@ svg {
 
 .audio-unsupported-desc {
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
 }
 
 .audio-unsupported-desc code {
@@ -4312,7 +4597,7 @@ svg {
   align-items: center;
   gap: 7px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
   color: var(--foreground-muted);
@@ -4428,8 +4713,8 @@ svg {
   top: 0;
   transform: translateX(-50%);
   font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--foreground-dim);
+  font-size: 11px;
+  color: var(--foreground-muted);
   white-space: nowrap;
 }
 
@@ -4452,8 +4737,8 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10.5px;
-  color: var(--foreground-dim);
+  font-size: 12px;
+  color: var(--foreground-muted);
 }
 
 .zone-swatch {
@@ -4469,7 +4754,7 @@ svg {
 
 .level-meter-hint {
   margin-top: 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--foreground-muted);
 }
@@ -4644,18 +4929,35 @@ svg {
 }
 
 .shortcut-sheet-card {
-  max-width: 560px;
+  max-width: 440px;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
   text-align: left;
   padding: 28px 28px 24px;
 }
 
-.shortcut-sheet-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+/* One grid for every row, so the labels line up from group to group. The
+   sections, lists and rows step aside (display: contents) for it. */
+.shortcut-sheet-groups,
+.shortcut-more-groups {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 8px;
+  align-items: center;
   margin-top: 14px;
+}
+
+.shortcut-group,
+.shortcut-list,
+.shortcut-row {
+  display: contents;
+}
+
+.shortcut-group-title,
+.shortcut-note,
+.shortcut-more {
+  grid-column: 1 / -1;
 }
 
 .shortcut-group-title {
@@ -4664,21 +4966,18 @@ svg {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--foreground-muted);
-  margin: 0 0 8px;
+  margin: 14px 0 2px;
 }
 
-.shortcut-list {
+.shortcut-sheet-groups > .shortcut-group:first-child > .shortcut-group-title,
+.shortcut-more-groups > .shortcut-group:first-child > .shortcut-group-title {
+  margin-top: 0;
+}
+
+.shortcut-note {
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.shortcut-row {
-  display: grid;
-  grid-template-columns: minmax(0, 200px) 1fr;
-  align-items: center;
-  gap: 12px;
+  font-size: 14px;
+  color: var(--foreground-muted);
 }
 
 .shortcut-keys {
@@ -4686,12 +4985,21 @@ svg {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
+  /* Long "A or B" combos wrap between combos rather than squeeze the labels. */
+  max-width: 150px;
   margin: 0;
+}
+
+.shortcut-combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .shortcut-label {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--foreground);
 }
 
@@ -4699,22 +5007,52 @@ svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 22px;
-  min-width: 22px;
-  padding: 0 6px;
+  box-sizing: border-box;
+  height: 25px;
+  min-width: 25px;
+  padding: 0 7px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--foreground);
   background: var(--secondary);
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
+  border: 1px solid var(--border-wood);
+  border-bottom: 2px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
 .shortcut-plus,
 .shortcut-or {
   font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+/* "On other screens": closed by default, and quieter than this screen's keys. */
+.shortcut-more {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.shortcut-more-title {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  border-radius: var(--radius-sm);
+}
+
+.shortcut-more-title:hover {
+  color: var(--foreground);
+}
+
+.shortcut-more-title:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+.shortcut-more .shortcut-label,
+.shortcut-more .shortcut-keys kbd {
   color: var(--foreground-muted);
 }
 
@@ -4761,9 +5099,9 @@ svg {
 
 .voice-effects-note {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
-  color: var(--foreground-dim);
+  color: var(--foreground-muted);
   text-align: center;
 }
 
@@ -4783,7 +5121,7 @@ svg {
 
 .voice-chip {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.4px;
   padding: 4px 10px;
@@ -4798,7 +5136,7 @@ svg {
   border-color: var(--accent-brass);
 }
 .voice-chip:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
 .voice-chip.is-active {
@@ -4883,4 +5221,21 @@ span.voice-chip {
 /* Under reduced motion the dot stays still (the media query below also stops it). */
 .voice-status-dot.is-still {
   animation: none;
+}
+
+/* Reduced motion: the looping pulses stop. What they signal stays visible
+   through colour, ring and text (the red record button, the halo, the Finish
+   glow, the connection dot, the export reel and its ring). */
+@media (prefers-reduced-motion: reduce) {
+  .record-halo-ring,
+  .btn-big-record.recording,
+  .btn-finished-pulse,
+  .connection-dot,
+  .reel-core,
+  .reel-pulse-ring {
+    animation: none;
+  }
+  .reel-pulse-ring {
+    opacity: 0.4;
+  }
 }

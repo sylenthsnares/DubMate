@@ -4,29 +4,32 @@
 
 import { escapeHtml, openDialog, isDialogOpen } from './ui_common.js';
 
-// page: 'studio', 'builder' or 'any'. Each key combo is a list of keys pressed together.
+// page: 'studio', 'builder' or 'any'. view: the screen the keys work on ('any' for
+// everywhere); the sheet lists that screen's group first. Each key combo is a list
+// of keys pressed together.
 export const SHORTCUT_GROUPS = [
   {
-    id: 'scenes', title: 'Scenes', page: 'studio', items: [
+    id: 'scenes', title: 'Choose a scene', page: 'studio', view: 'landing', items: [
       { id: 'scenes-search', keys: [['/']], label: 'Search scenes' },
       { id: 'scenes-clear', keys: [['Esc']], label: 'Clear the search' },
     ],
   },
   {
-    id: 'recording', title: 'Recording', page: 'studio', items: [
+    id: 'recording', title: 'Booth', page: 'studio', view: 'booth', items: [
       { id: 'rec-toggle', keys: [['Space']], label: 'Record, or stop recording' },
-      { id: 'rec-nudge', keys: [['['], [']']], label: 'Nudge the timing by 25 ms' },
-      { id: 'rec-nudge-big', keys: [['Shift', '['], ['Shift', ']']], label: 'Nudge the timing by 100 ms' },
+      { id: 'rec-nudge', keys: [['[']], label: 'Move my take 25 ms earlier' },
+      { id: 'rec-nudge-later', keys: [[']']], label: 'Move my take 25 ms later' },
+      { id: 'rec-nudge-big', keys: [['Shift', '['], ['Shift', ']']], label: 'Same, by 100 ms' },
     ],
   },
   {
-    id: 'watching', title: 'Watching together', page: 'studio', items: [
+    id: 'watching', title: 'Premiere', page: 'studio', view: 'screening', items: [
       { id: 'watch-play', keys: [['Space']], label: 'Play or pause' },
       { id: 'watch-replay', keys: [['R']], label: 'Replay from the start' },
     ],
   },
   {
-    id: 'builder', title: 'Pack Builder', page: 'builder', items: [
+    id: 'builder', title: 'In the editor', page: 'builder', view: 'editor', items: [
       { id: 'builder-play', keys: [['Space']], label: 'Play or pause' },
       { id: 'builder-in', keys: [['I'], ['[']], label: 'Start the line here' },
       { id: 'builder-out', keys: [['O'], [']']], label: 'End the line here' },
@@ -37,7 +40,7 @@ export const SHORTCUT_GROUPS = [
     ],
   },
   {
-    id: 'everywhere', title: 'Everywhere', page: 'any', items: [
+    id: 'everywhere', title: 'Everywhere', page: 'any', view: 'any', items: [
       { id: 'help', keys: [['?']], label: 'Show this list' },
       { id: 'close', keys: [['Esc']], label: 'Close windows and menus' },
     ],
@@ -45,11 +48,45 @@ export const SHORTCUT_GROUPS = [
 ];
 
 function comboHtml(combo) {
-  return combo.map((k) => `<kbd>${escapeHtml(k)}</kbd>`).join('<span class="shortcut-plus">+</span>');
+  const keys = combo.map((k) => `<kbd>${escapeHtml(k)}</kbd>`).join('<span class="shortcut-plus">+</span>');
+  return `<span class="shortcut-combo">${keys}</span>`;
 }
 
-function buildSheet(doc, page) {
+function groupHtml(g) {
+  return `
+        <section class="shortcut-group" aria-labelledby="shortcut-group-${g.id}">
+          <h3 id="shortcut-group-${g.id}" class="shortcut-group-title">${escapeHtml(g.title)}</h3>
+          <dl class="shortcut-list">
+            ${g.items.map((item) => `
+            <div class="shortcut-row" data-shortcut="${item.id}">
+              <dt class="shortcut-keys">${item.keys.map(comboHtml).join('<span class="shortcut-or">or</span>')}</dt>
+              <dd class="shortcut-label">${escapeHtml(item.label)}</dd>
+            </div>`).join('')}
+          </dl>
+        </section>`;
+}
+
+const EDITOR_NOTE = 'These work once your video is in the editor.';
+
+/** This screen's keys, then Everywhere, then the other screens in a closed <details>. */
+function groupsHtml(page, view) {
   const groups = SHORTCUT_GROUPS.filter((g) => g.page === 'any' || g.page === page);
+  const current = groups.find((g) => g.view === view && g.view !== 'any');
+  const everywhere = groups.filter((g) => g.view === 'any');
+  const others = groups.filter((g) => g !== current && g.view !== 'any');
+  // Pack Builder has one group; before the editor step, say when its keys start working.
+  const note = page === 'builder' && !current
+    ? `<p class="shortcut-note">${escapeHtml(EDITOR_NOTE)}</p>` : '';
+  const head = current ? groupHtml(current) : note;
+  const more = others.length ? `
+        <details class="shortcut-more">
+          <summary class="shortcut-more-title">On other screens</summary>
+          <div class="shortcut-more-groups">${others.map(groupHtml).join('')}</div>
+        </details>` : '';
+  return head + everywhere.map(groupHtml).join('') + more;
+}
+
+function buildSheet(doc) {
   const overlay = doc.createElement('div');
   overlay.id = 'shortcut-sheet';
   overlay.className = 'studio-modal-overlay shortcut-sheet-overlay';
@@ -61,19 +98,7 @@ function buildSheet(doc, page) {
     <div class="studio-modal-card shortcut-sheet-card">
       <button type="button" class="modal-close-btn shortcut-sheet-close" aria-label="Close">✕</button>
       <h2 id="shortcut-sheet-title" class="modal-title">Keyboard shortcuts</h2>
-      <div class="shortcut-sheet-groups">
-        ${groups.map((g) => `
-        <section class="shortcut-group" aria-labelledby="shortcut-group-${g.id}">
-          <h3 id="shortcut-group-${g.id}" class="shortcut-group-title">${escapeHtml(g.title)}</h3>
-          <dl class="shortcut-list">
-            ${g.items.map((item) => `
-            <div class="shortcut-row" data-shortcut="${item.id}">
-              <dt class="shortcut-keys">${item.keys.map(comboHtml).join('<span class="shortcut-or">or</span>')}</dt>
-              <dd class="shortcut-label">${escapeHtml(item.label)}</dd>
-            </div>`).join('')}
-          </dl>
-        </section>`).join('')}
-      </div>
+      <div class="shortcut-sheet-groups"></div>
     </div>`;
   doc.body.appendChild(overlay);
   return overlay;
@@ -82,16 +107,21 @@ function buildSheet(doc, page) {
 /**
  * Builds the shortcut sheet once and opens it on "?" (outside text fields, and
  * not while isBlocked() or another dialog is open) or on a click on opener.
+ * getView() names the current screen; the list is reordered for it on each open.
  */
-export function initShortcutSheet({ opener = null, isBlocked = () => false } = {}) {
+export function initShortcutSheet({ opener = null, isBlocked = () => false, getView = () => null } = {}) {
   const doc = document;
   if (doc.getElementById('shortcut-sheet')) return;
   const page = doc.body.classList.contains('builder-body') ? 'builder' : 'studio';
-  const overlay = buildSheet(doc, page);
+  const overlay = buildSheet(doc);
+  const body = overlay.querySelector('.shortcut-sheet-groups');
+  const render = () => { body.innerHTML = groupsHtml(page, getView()); };
+  render();
   let close = null;
 
   const open = (returnFocus) => {
     if (isDialogOpen()) return;
+    render();
     close = openDialog(overlay, { returnFocus });
   };
   overlay.querySelector('.shortcut-sheet-close').addEventListener('click', () => close && close());
