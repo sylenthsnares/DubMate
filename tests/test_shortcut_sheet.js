@@ -130,7 +130,8 @@ const NAMED = {
 /** The KeyboardEvent a US keyboard sends for a combo from SHORTCUT_GROUPS. */
 function eventInit(combo) {
   const shiftKey = combo.includes("Shift");
-  const name = combo.filter((k) => k !== "Shift");
+  const ctrlKey = combo.includes("Ctrl");
+  const name = combo.filter((k) => k !== "Shift" && k !== "Ctrl");
   if (name.length !== 1) fail(`unexpected combo ${JSON.stringify(combo)}`);
   const k = name[0];
   let init;
@@ -141,6 +142,7 @@ function eventInit(combo) {
     init.shiftKey = true;
     if (SHIFTED[init.key]) init.key = SHIFTED[init.key];
   }
+  if (ctrlKey) init.ctrlKey = true;
   return init;
 }
 
@@ -292,6 +294,29 @@ const VERIFY = {
     env.app.selectedSegmentIndex = 0;
     const calls = builderCalls(env, combo, "deleteSegment");
     return calls.length === 1 && calls[0][0] === 0;
+  },
+  "builder-undo": (env, combo) => {
+    const app = env.app;
+    app.currentStep = "editor";
+    // deleteSegment is a spy by now (builder-delete): take the undo step by hand.
+    app.segments = [{ start: 1, end: 2, text: "Hi", character: "A" }, { start: 3, end: 4, text: "Bye", character: "A" }];
+    app.pushUndo();
+    app.segments = app.segments.slice(0, 1);
+    blur(env);
+    press(env, eventInit(combo));
+    return app.segments.length === 2 && app.segments[1].text === "Bye";
+  },
+  "builder-line-move": (env, combo, i) => {
+    const app = env.app;
+    app.currentStep = "editor";
+    app.segments = [0, 1, 2].map((n) => ({ start: n * 2, end: n * 2 + 1, text: `Line ${n}`, character: "A" }));
+    app.selectedSegmentIndex = 1;
+    app.renderSegmentsList();
+    const row = (n) => env.doc.getElementById(`cue-card-${n}`);
+    row(1).focus();
+    press(env, eventInit(combo));
+    const to = i === 0 ? 0 : 2;
+    return app.selectedSegmentIndex === to && env.doc.activeElement === row(to);
   },
   help: (env, combo) => {
     if (env.page === "studio") showView(env, "landing");

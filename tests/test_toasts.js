@@ -5,6 +5,8 @@
  * is announced at once (role=alert), has a Close button and stays until it is pressed;
  * at most 3 toasts show, the oldest goes first. #toast-container reads each toast on
  * its own (no aria-atomic), in the studio and in Pack Builder.
+ * An action toast ("Line 4 deleted · Undo") has a real button, stays for its own
+ * duration, and waits while it is hovered or focused.
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -35,7 +37,9 @@ function boot() {
   // A clock the test moves by hand, so "after 3.2 s" doesn't take 3.2 s.
   let now = 0;
   let timers = [];
-  w.setTimeout = (fn, ms = 0) => { timers.push({ at: now + ms, fn }); return timers.length; };
+  let ids = 0;
+  w.setTimeout = (fn, ms = 0) => { timers.push({ id: ++ids, at: now + ms, fn }); return ids; };
+  w.clearTimeout = (id) => { timers = timers.filter((t) => t.id !== id); };
   w.requestAnimationFrame = (fn) => w.setTimeout(fn, 16);
   const advance = (ms) => {
     const until = now + ms;
@@ -107,6 +111,44 @@ for (const [name, page] of [["the studio", html], ["Pack Builder", builderHtml]]
   check(left.length === 3, "a 4th toast keeps it at 3");
   check(!left.some((el) => el.classList.contains("toast-error")), "the oldest toast is the one that goes");
   check(left.map(t.text).join("|") === "Two|Three|Four", "the newest three stay, in order");
+}
+
+// An action toast: a real button that runs the action and closes the toast; its own
+// duration; paused while hovered or focused.
+{
+  const t = boot();
+  let undone = 0;
+  t.showToast("Line 4 deleted", { action: { label: "Undo", onClick: () => { undone++; } }, duration: 6000 });
+  const [toast] = t.toasts();
+  const msg = toast.querySelector(".toast-message");
+  const btn = toast.querySelector("button.toast-action");
+  check(msg && msg.textContent === "Line 4 deleted", "an action toast shows its message");
+  check(btn && btn.type === "button" && btn.textContent === "Undo", "an action toast has a real Undo button");
+  check(!toast.hasAttribute("role"), "an action toast is not an alert");
+  t.advance(5900);
+  check(t.toasts().length === 1, "an action toast stays for its duration (6 s)");
+  t.advance(400);
+  check(t.toasts().length === 0, "an action toast goes after its duration");
+
+  t.showToast("Line 2 deleted", { action: { label: "Undo", onClick: () => { undone++; } }, duration: 6000 });
+  const [hovered] = t.toasts();
+  hovered.dispatchEvent(new t.w.Event("pointerenter"));
+  t.advance(20000);
+  check(t.toasts().length === 1, "a hovered toast waits");
+  hovered.dispatchEvent(new t.w.Event("pointerleave"));
+  t.advance(5900);
+  check(t.toasts().length === 1, "after the pointer leaves it stays its full duration again");
+  t.advance(400);
+  check(t.toasts().length === 0, "then it goes");
+
+  t.showToast("Line 3 deleted", { action: { label: "Undo", onClick: () => { undone++; } }, duration: 6000 });
+  const [focused] = t.toasts();
+  const undo = focused.querySelector("button.toast-action");
+  undo.focus();
+  t.advance(20000);
+  check(t.toasts().length === 1, "a toast with focus on its button waits");
+  undo.click();
+  check(undone === 1 && t.toasts().length === 0, "the button runs its action once and closes the toast");
 }
 
 console.log("All toast checks passed.");

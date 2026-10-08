@@ -57,8 +57,8 @@
         </div>
       </div>
 
-      <!-- Step Wizard Indicator -->
-      <nav class="builder-stepper" aria-label="Pack Builder steps">
+      <!-- Step Wizard Indicator: steps already reached become buttons (pack_builder.js renderStepper) -->
+      <nav class="builder-stepper" id="builder-stepper" aria-label="Pack Builder steps">
         <div class="builder-step active" id="step-nav-upload" data-step="upload">
           <span class="step-num">1</span>
           <span class="step-label">Video</span>
@@ -88,13 +88,13 @@
     </div>
 
     <div class="header-status">
-      <div id="device-pill" class="builder-device-pill" tabindex="0" data-tip="Shows whether a graphics card can speed up processing.">
-        <span class="device-dot"></span>
-        <span id="device-label" class="device-text">Processing speed</span>
+      <div id="device-pill" class="builder-device-pill" tabindex="0" hidden>
+        <span class="device-dot" aria-hidden="true"></span>
+        <span id="device-label" class="device-text"></span>
       </div>
       <button id="btn-shortcuts" class="btn btn-ghost btn-sm btn-shortcuts" type="button"
         aria-label="Keyboard shortcuts" data-tip="Keyboard shortcuts (?)" aria-haspopup="dialog">?</button>
-      <a href="/" class="btn btn-ghost btn-sm" aria-label="Exit Pack Builder">
+      <a href="/" id="btn-exit-builder" class="btn btn-ghost btn-sm" aria-label="Exit Pack Builder">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
         <span>Exit</span>
       </a>
@@ -108,7 +108,8 @@
     <section id="view-step-upload" class="builder-view active" aria-label="Add a video">
       <div class="builder-hero">
         <h1 class="hero-title">Make a scene pack <span class="hero-title-accent">from a video</span></h1>
-        <p class="hero-subtitle">Add a clip. DubMate separates the voices from the background and writes out each line for you to check.</p>
+        <p class="hero-subtitle" id="builder-hero-sub">Add a clip. DubMate separates the voices from the background and writes out each line for you to check.</p>
+        <p class="session-ended-notice" id="session-ended-notice" role="status" hidden>That session has ended. Add the video again.</p>
       </div>
 
       <div class="builder-upload-grid">
@@ -134,11 +135,11 @@
               </div>
               <h3 class="dropzone-title">Drop a video here</h3>
               <p class="dropzone-subtitle">MP4, MKV, WebM, MOV or AVI, up to 500 MB</p>
-              <div class="dropzone-btn-wrap">
-                <button type="button" class="btn btn-primary btn-md" id="btn-browse-video" style="pointer-events: none;">
+              <div class="dropzone-btn-wrap" aria-hidden="true">
+                <span class="btn btn-primary btn-md" id="btn-browse-video">
                   <span>Browse</span>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                </button>
+                </span>
               </div>
             </div>
             <input type="file" id="input-video-file" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/x-msvideo,.mp4,.mkv,.webm,.mov,.avi" style="display: none;">
@@ -151,9 +152,20 @@
                 <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/></svg>
               </div>
               <h3 class="dropzone-title">Import from a link</h3>
-              <p class="dropzone-subtitle">Paste a YouTube video or Shorts link.</p>
-              
-              <div class="url-input-group">
+              <p class="dropzone-subtitle" id="url-importer-sub">Paste a YouTube video or Shorts link.</p>
+
+              <!-- Without the Pack Builder tools there is nothing to import with: say how to add them. -->
+              <div id="url-import-missing" class="url-import-missing" hidden>
+                <p class="url-import-missing-text">Importing from a link needs the Pack Builder tools.</p>
+                <p id="url-import-missing-desktop" class="field-hint" hidden>Run the DubMate installer again and tick Pack Builder.</p>
+                <details id="url-import-missing-source" class="url-import-missing-details" hidden>
+                  <summary>Show details</summary>
+                  <p class="field-hint">In the DubMate folder, run:</p>
+                  <code class="url-import-missing-cmd">pip install -r requirements_builder.txt</code>
+                </details>
+              </div>
+
+              <div class="url-input-group" id="url-input-group">
                 <input type="url" id="input-youtube-url" class="form-input url-text-input" placeholder="https://www.youtube.com/watch?v=" aria-label="Video link" autocomplete="off">
                 <button type="button" id="btn-fetch-url" class="btn btn-primary btn-md btn-fetch-url" data-tip="Downloads at up to 1080p.">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
@@ -213,6 +225,14 @@
             </div>
             <button id="btn-change-video" class="btn btn-ghost btn-sm" aria-label="Change video">Change</button>
           </div>
+          <!-- On a processed session, Change asks first: its lines would go. -->
+          <div id="change-confirm" class="inline-confirm" role="group" aria-labelledby="change-confirm-text" hidden>
+            <p id="change-confirm-text" class="inline-confirm-text"></p>
+            <div class="inline-confirm-actions">
+              <button type="button" id="btn-change-confirm" class="btn btn-danger btn-sm">Change video</button>
+              <button type="button" id="btn-change-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+            </div>
+          </div>
         </div>
 
         <!-- Optional Subtitle & Pack Settings Sidebar -->
@@ -246,11 +266,23 @@
 
           <!-- Optional SRT/VTT Subtitle Import -->
           <div class="form-group">
-            <label class="form-label">Subtitles (optional)</label>
+            <label class="form-label" id="sub-label" for="input-sub-file">Subtitles (optional)</label>
+            <p class="field-hint" id="sub-hint" hidden>Automatic transcription isn't installed. Add a subtitle file, or write the lines yourself after processing.</p>
             <div class="sub-dropzone" id="sub-dropzone" role="button" tabindex="0" data-tip="Lines and timings come from the file instead of being detected.">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-              <span id="sub-filename-label">Drop an SRT or VTT file</span>
+              <span>Drop an SRT or VTT file</span>
             </div>
+            <div class="file-chip" id="sub-chip" hidden>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+              <span class="file-chip-text">
+                <span class="file-chip-name" id="sub-chip-name"></span>
+                <span class="file-chip-summary" id="sub-chip-summary"></span>
+              </span>
+              <button type="button" class="file-chip-remove" id="btn-remove-sub" aria-label="Remove subtitles" data-tip="Remove subtitles">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <p class="field-error" id="sub-error" role="alert" hidden></p>
             <input type="file" id="input-sub-file" accept=".srt,.vtt,.txt" style="display: none;">
           </div>
 
@@ -259,17 +291,36 @@
             <label class="form-label">Cover image (optional)</label>
             <div class="cover-dropzone" id="cover-dropzone" role="button" tabindex="0">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-              <span id="cover-filename-label">Choose a PNG, JPG or WebP</span>
+              <span>Choose a PNG, JPG or WebP</span>
+            </div>
+            <div class="file-chip" id="cover-chip" hidden>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+              <span class="file-chip-text">
+                <span class="file-chip-name" id="cover-chip-name"></span>
+                <span class="file-chip-summary" id="cover-chip-summary"></span>
+              </span>
+              <button type="button" class="file-chip-remove" id="btn-remove-cover" aria-label="Remove cover image" data-tip="Remove cover image">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
             </div>
             <input type="file" id="input-cover-file" accept=".png,.jpg,.jpeg,.webp" style="display: none;">
           </div>
 
           <div style="margin-top: 20px;">
             <button id="btn-start-process" class="btn btn-primary btn-lg" style="width: 100%;" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-              <span>Process video</span>
+              <svg id="icon-start-process" width="14" height="14" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+              <span id="label-start-process">Process video</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
+            <!-- On a processed session the primary goes back to the lines; processing again asks first. -->
+            <button type="button" id="btn-reprocess" class="btn btn-secondary btn-md btn-reprocess" hidden data-tip="Writes out the lines again, from your subtitles or the audio">Process again</button>
+            <div id="reprocess-confirm" class="inline-confirm" role="group" aria-labelledby="reprocess-confirm-text" hidden>
+              <p id="reprocess-confirm-text" class="inline-confirm-text"></p>
+              <div class="inline-confirm-actions">
+                <button type="button" id="btn-reprocess-confirm" class="btn btn-danger btn-sm">Process again</button>
+                <button type="button" id="btn-reprocess-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -277,66 +328,75 @@
 
     <!-- STEP 2: PROCESSING (Demucs + Whisper Progress Screen) -->
     <section id="view-step-process" class="builder-view" aria-label="Processing">
-      <div class="builder-process-card glass-card">
-        <div class="process-radar">
+      <!-- Written only by renderProcessState() in pack_builder.js. -->
+      <div class="builder-process-card glass-card" id="process-card">
+        <div class="process-radar" id="process-radar">
           <div class="radar-pulse"></div>
           <div class="radar-center">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <svg class="radar-icon-live" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <svg class="radar-icon-alert" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           </div>
         </div>
 
-        <h2 id="process-headline" class="process-title">Processing your video</h2>
+        <h2 id="process-headline" class="process-title">Starting</h2>
         <p id="process-subtext" class="process-subtitle">Keep this page open until it finishes.</p>
 
         <!-- Progress Bar -->
-        <div class="builder-progress-container">
+        <div class="builder-progress-container" id="process-progress">
           <div class="builder-progress-track">
-            <div id="builder-progress-fill" class="builder-progress-fill" style="width: 15%;"></div>
+            <div id="builder-progress-fill" class="builder-progress-fill" style="width: 0%;"></div>
           </div>
           <div class="builder-progress-meta">
-            <span id="process-stage-text">Starting</span>
-            <span id="process-percent-text">15%</span>
+            <span id="process-stage-text" class="process-caption">Starting</span>
+            <span id="process-percent-text" class="process-percent">0%</span>
           </div>
         </div>
 
-        <!-- Pipeline Stages List -->
+        <!-- Pipeline Stages List: rows start pending; the icon (number, tick or alert) is set by the app. -->
         <div class="pipeline-stages">
-          <div id="stage-extract" class="pipeline-item active">
-            <div class="stage-icon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          <div id="stage-upload" class="pipeline-item" data-stage="upload" hidden>
+            <div class="stage-icon" aria-hidden="true"></div>
+            <div class="stage-info">
+              <span class="stage-title">Upload the video</span>
+              <span class="stage-desc" data-desc=""></span>
             </div>
+          </div>
+          <div id="stage-extract" class="pipeline-item" data-stage="audio_extraction">
+            <div class="stage-icon" aria-hidden="true"></div>
             <div class="stage-info">
               <span class="stage-title">Read the audio</span>
-              <span class="stage-desc"></span>
+              <span class="stage-desc" data-desc=""></span>
             </div>
           </div>
-          <div id="stage-stems" class="pipeline-item">
-            <div class="stage-icon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            </div>
+          <div id="stage-stems" class="pipeline-item" data-stage="stem_separation">
+            <div class="stage-icon" aria-hidden="true"></div>
             <div class="stage-info">
               <span class="stage-title">Separate the voices</span>
-              <span class="stage-desc">Splits dialogue from music and effects</span>
+              <span class="stage-desc" data-desc="Splits dialogue from music and effects">Splits dialogue from music and effects</span>
             </div>
           </div>
-          <div id="stage-whisper" class="pipeline-item">
-            <div class="stage-icon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </div>
+          <div id="stage-whisper" class="pipeline-item" data-stage="transcription">
+            <div class="stage-icon" aria-hidden="true"></div>
             <div class="stage-info">
               <span class="stage-title">Write out the lines</span>
-              <span class="stage-desc">Finds each line and when it is spoken</span>
+              <span class="stage-desc" data-desc="Finds each line and when it is spoken">Finds each line and when it is spoken</span>
             </div>
           </div>
-          <div id="stage-speakers" class="pipeline-item">
-            <div class="stage-icon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            </div>
+          <div id="stage-speakers" class="pipeline-item" data-stage="speakers">
+            <div class="stage-icon" aria-hidden="true"></div>
             <div class="stage-info">
               <span class="stage-title">Detect who speaks</span>
-              <span class="stage-desc">Gives each voice its own character</span>
+              <span class="stage-desc" data-desc="Gives each voice its own character">Gives each voice its own character</span>
             </div>
           </div>
+        </div>
+
+        <!-- Cancel while it runs; a way forward when it fails. The app orders them, primary first. -->
+        <div class="process-actions" id="process-actions">
+          <button type="button" id="btn-process-retry" class="btn btn-primary" hidden>Try again</button>
+          <button type="button" id="btn-process-write" class="btn btn-secondary" hidden data-tip="Opens the editor with no lines, so you can add them yourself">Write the lines myself</button>
+          <button type="button" id="btn-process-back" class="btn btn-secondary" hidden data-tip="Your video and options are kept">Back to video</button>
+          <button type="button" id="btn-process-cancel" class="btn btn-secondary" hidden data-tip="Stops processing. Your video and options are kept.">Cancel</button>
         </div>
       </div>
     </section>
@@ -364,7 +424,7 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/></svg>
                     <span>-1s</span>
                   </button>
-                  <button id="btn-play-pause" class="btn btn-primary btn-sm btn-builder-play" data-tip="Play or pause (Space)">
+                  <button id="btn-play-pause" class="btn btn-secondary btn-sm btn-builder-play" data-tip="Play or pause (Space)">
                     <svg id="icon-play" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     <svg id="icon-pause" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/></svg>
                     <span id="label-play-btn">Play</span>
@@ -393,22 +453,22 @@
               <!-- Tier 2: ADR Cue Points & AI Actions (Spacious, Uncrowded Bar) -->
               <div class="deck-tier-bottom">
                 <div class="cue-inout-group">
-                  <button id="btn-mark-in" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Start the selected line at the playhead (I or [)">
+                  <button id="btn-mark-in" class="btn btn-secondary btn-sm btn-mark-pill" aria-disabled="true" data-tip="Select a line first">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16"/><path d="M4 4h10l4 6-4 6H4"/></svg>
                     <span>Start</span>
                   </button>
-                  <button id="btn-mark-out" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="End the selected line at the playhead (O or ])">
+                  <button id="btn-mark-out" class="btn btn-secondary btn-sm btn-mark-pill" aria-disabled="true" data-tip="Select a line first">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v16"/><path d="M20 4H10L6 10l4 6h10"/></svg>
                     <span>End</span>
                   </button>
                 </div>
 
                 <div class="cue-add-ai-group">
-                  <button id="btn-add-line-at-playhead" class="btn btn-primary btn-sm btn-cue-add-highlight" data-tip="Add a line at the playhead (N)">
+                  <button id="btn-add-line-at-playhead" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Add a line at the playhead (N)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                     <span>Add line</span>
                   </button>
-                  <button id="btn-transcribe-line" class="btn btn-secondary btn-sm btn-whisper-ai-deck" data-tip="Fill in the selected line's text from the audio">
+                  <button id="btn-transcribe-line" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Fill in the selected line's text from the audio">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                     <span>Transcribe</span>
                   </button>
@@ -427,10 +487,8 @@
           <!-- Right: Segment List & Character Management Sidebar -->
           <div class="editor-right-sidebar glass-card">
             <div class="sidebar-header">
-              <div>
-                <h3 class="panel-title">Lines</h3>
-                <span id="label-cue-count" class="badge-accent" style="margin-top: 4px; display: inline-block;">0 lines</span>
-              </div>
+              <h3 class="panel-title">Lines</h3>
+              <span id="label-cue-count" class="badge-accent">0 lines</span>
               <button id="btn-proceed-to-compile" class="btn btn-primary btn-sm">
                 <span>Continue</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
@@ -450,10 +508,8 @@
 
             <p id="editor-notice" class="editor-notice" role="status" hidden></p>
 
-            <!-- Chronological Dialogue Segment Cards List -->
-            <div class="segments-list-container" id="segments-list-container">
-              <!-- Dynamically populated line cards -->
-            </div>
+            <!-- The lines in time order, one compact row each (pack_builder.js renderSegmentsList) -->
+            <div class="segments-list-container" id="segments-list-container" role="list" aria-label="Lines"></div>
           </div>
         </div>
 
@@ -566,24 +622,26 @@
 
           <!-- Success Box -->
           <div id="compile-success-box" class="compile-success-box" style="display: none;">
-            <div class="success-icon">
+            <div class="success-icon" aria-hidden="true">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polyline points="16 9 10 15 7 12"/></svg>
             </div>
             <h3 class="success-title">Pack ready</h3>
-            <p class="success-desc">It is now in your scene list.</p>
+            <p class="success-desc">It's in your scene list.</p>
             <div class="success-actions">
-              <a id="btn-download-pack-zip" class="btn btn-primary btn-md" download href="#">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                <span>Download .zip</span>
-              </a>
-              <button id="btn-playtest-now" class="btn btn-secondary btn-md" data-tip="Open a room with this pack">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                <span>Try it</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+              <button type="button" id="btn-playtest-now" class="btn btn-primary btn-md" data-tip="Opens a room with this pack">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                <span>Record it now</span>
               </button>
-              <a href="/" class="btn btn-secondary btn-md">
-                <span>Go to Studio</span>
-              </a>
+            </div>
+            <a id="btn-download-pack-zip" class="success-zip-link" download href="#">Save a copy (.zip)</a>
+          </div>
+
+          <!-- After a build, a change to the lines or the details: build again, or record what was built. -->
+          <div id="compile-stale-box" class="compile-stale-box" hidden>
+            <p class="compile-stale-text">You changed the pack after building it.</p>
+            <div class="success-actions">
+              <button type="button" id="btn-build-again" class="btn btn-primary btn-md" data-tip="Replaces the pack you built with this version">Build again</button>
+              <button type="button" id="btn-stale-record" class="btn btn-secondary btn-md" data-tip="Opens a room with the pack as you last built it">Record it now</button>
             </div>
           </div>
         </div>
@@ -591,6 +649,19 @@
     </section>
 
   </main>
+
+  <!-- Exit while the lines aren't in a pack yet (pack_builder.js openLeaveDialog) -->
+  <div id="modal-leave-builder" class="studio-modal-overlay" role="dialog" aria-modal="true"
+    aria-labelledby="leave-builder-title" aria-describedby="leave-builder-text" hidden>
+    <div class="studio-modal-card builder-leave-card">
+      <h3 id="leave-builder-title" class="modal-title">Leave Pack Builder?</h3>
+      <p id="leave-builder-text" class="modal-status-text">Your lines aren't in a pack yet.</p>
+      <div class="modal-actions">
+        <button type="button" id="btn-leave-stay" class="btn btn-primary btn-md">Stay</button>
+        <button type="button" id="btn-leave-confirm" class="btn btn-secondary btn-md">Leave</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
