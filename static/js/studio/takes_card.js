@@ -63,6 +63,12 @@ export class TakesCardMethods {
     const active = document.activeElement;
     const hadFocus = !!active && this.takesList.contains(active);
     const focusedId = hadFocus ? active.closest('.take-row')?.dataset.takeId : null;
+    // Many takes scroll inside the list. A redraw of the same line keeps where you
+    // scrolled to; a new line, or a new take in the dub, brings that take into view.
+    const sameLine = !!line && this.takesListView?.lineId === line.line_id;
+    const reveal = !sameLine || this.takesListView?.pickedId !== inDub?.take_id;
+    const scrollTop = sameLine ? this.takesList.scrollTop : 0;
+    this.takesListView = line ? { lineId: line.line_id, pickedId: inDub?.take_id } : null;
     this.closeTakeMenu();
     this.takesList.innerHTML = '';
 
@@ -96,6 +102,11 @@ export class TakesCardMethods {
     this.renderTakePlayButtons();
     this.renderTakeDependents();
 
+    // Three rows or more: the card may shrink to two rows when the column runs short.
+    this.takesList.closest('.takes-card')?.classList.toggle('is-long', this.takesList.children.length >= 3);
+    this.takesList.scrollTop = scrollTop;
+    if (reveal) this.revealTakeRow(this.takesList.querySelector('.take-row.picked'));
+
     const radios = [...this.takesList.querySelectorAll('[role="radio"]')];
     const row = focusedId ? [...this.takesList.children].find((r) => r.dataset.takeId === focusedId) : null;
     const stop = row?.querySelector('[role="radio"]')
@@ -103,6 +114,18 @@ export class TakesCardMethods {
     if (stop) stop.tabIndex = 0;
     // A focused row that's gone (its delete went out) hands focus to the card's tab stop.
     if (hadFocus) (row?.querySelector('[role="radio"], .take-undo') || stop)?.focus();
+  }
+
+  /** Scrolls the list (only the list, not the column or the page) the least it takes to
+   *  show this row whole. */
+  revealTakeRow(row) {
+    const list = this.takesList;
+    if (!row || !list || list.scrollHeight <= list.clientHeight) return;
+    const box = list.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    const pad = parseFloat(getComputedStyle(list).paddingTop) || 0;
+    if (r.top < box.top + pad) list.scrollTop -= box.top + pad - r.top;
+    else if (r.bottom > box.bottom - pad) list.scrollTop += r.bottom - (box.bottom - pad);
   }
 
   /** "◉ Take 3 · 0.8 s · (M) · Tight sync · In the dub | ▶ | ⋯". The slot after the sync

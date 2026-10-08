@@ -166,7 +166,8 @@ body {
    brings back the default grey bar. */
 @supports not selector(::-webkit-scrollbar) {
   .timeline-chips-box,
-  .cast-activity-list {
+  .cast-activity-list,
+  .takes-list {
     scrollbar-width: thin;
     scrollbar-color: var(--panel-raised) var(--background-darker);
   }
@@ -3057,10 +3058,11 @@ body.is-taking .dm-tip {
   color: var(--foreground-muted);
 }
 
-/* "▶ Original | ▶ Take 3": one segmented transport */
+/* "▶ Original | ▶ Take 3": one segmented transport. Each half keeps one line however
+   long the take number gets ("▶ Take 25"). */
 .transport-seg {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   background: var(--input);
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-md);
@@ -3074,6 +3076,9 @@ body.is-taking .dm-tip {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -3124,6 +3129,27 @@ body.is-taking .dm-tip {
 }
 
 /* Row 2: Takes. One row per take, newest first; the green row is in the dub. */
+.takes-card {
+  /* One row with its border; the list's height is counted in rows */
+  --take-row-h: 38px;
+}
+/* With three rows or more, the card gives way first when the column runs short: it
+   shrinks down to two rows (the list scrolls) before Voice and Monitor scroll out of
+   view. 58px is the card's border, header and body padding. */
+.takes-card.is-long {
+  flex-shrink: 1;
+  min-height: calc(58px + 2 * var(--take-row-h) + var(--space-1));
+  display: flex;
+  flex-direction: column;
+}
+.takes-card.is-long > .takes-card-header {
+  flex: none;
+}
+.takes-card.is-long .takes-card-body,
+.takes-card.is-long .takes-list {
+  flex: 0 1 auto;
+  min-height: 0;
+}
 .takes-card-header {
   display: flex;
   align-items: center;
@@ -3168,6 +3194,19 @@ body.is-taking .dm-tip {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  /* Many takes scroll inside the card: about five and a half rows show (the half row says
+     there's more), so Voice and Monitor stay in view under it. */
+  max-height: calc(5.5 * var(--take-row-h) + 7 * var(--space-1));
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* The scrollbar sits in the card's right gutter, always reserved, so the rows are as
+     wide with 25 takes as with one and nothing in them moves when it appears. The 4px
+     padding all round keeps the focus rings (2px, offset 2px) inside the scroll box,
+     and the margins put the rows back on the card's content edge. */
+  scrollbar-gutter: stable;
+  padding: var(--space-1);
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-3)) calc(-1 * var(--space-1)) calc(-1 * var(--space-1));
+  scroll-padding-block: var(--space-1);
 }
 .takes-list:empty {
   display: none;
@@ -3176,7 +3215,8 @@ body.is-taking .dm-tip {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 4px;
+  /* ▶ and ⋯ sit side by side (each is a 24px target); ▶ keeps 4px from the pick area */
+  gap: 0;
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -3226,8 +3266,11 @@ body.is-taking .dm-tip {
   background: radial-gradient(circle, var(--accent-green-bright) 0 3.5px, transparent 4px);
 }
 .take-name {
+  /* As wide as "Take 99", so the duration starts at the same x on every row */
+  min-width: 3.7em;
   font-size: 13px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--foreground);
   white-space: nowrap;
 }
@@ -3260,7 +3303,6 @@ body.is-taking .dm-tip {
 .take-slot {
   flex: 0 0 auto;
   width: 72px;
-  margin-left: var(--space-1);
   display: flex;
   justify-content: flex-end;
   white-space: nowrap;
@@ -3282,6 +3324,7 @@ body.is-taking .dm-tip {
 .take-play {
   flex-shrink: 0;
   min-width: 24px;
+  margin-left: var(--space-1);
   padding-left: 4px;
   padding-right: 4px;
   font-size: 12px;
