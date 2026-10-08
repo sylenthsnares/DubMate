@@ -2023,6 +2023,101 @@ class TestBuilderCapabilitiesAndRuns(unittest.TestCase):
         self._assert_untouched(theirs, files)
         self.assertTrue(os.path.isdir(mine), "the pack in the old packs folder stays")
 
+    def _swap_dirs(self):
+        """A pack folder and a staged rebuild of it, for _replace_pack_folder."""
+        packs = self._packs_dir()
+        pack_dir, old_files = self._other_pack(packs, "Swap Pack")
+        staging = os.path.join(packs, ".building-test")
+        os.makedirs(staging)
+        with open(os.path.join(staging, "pack.json"), "w", encoding="utf-8") as f:
+            f.write('{"title": "New"}')
+        return packs, pack_dir, old_files, staging
+
+    def test_42_pack_left_aside_by_a_crash_comes_back(self):
+        """A crash between moving the old pack aside and moving the new one in: the next start, and the next build, put the old pack back."""
+        from unittest import mock
+        from dubmate import packs_cache
+        packs = self._packs_dir()
+        folder = pack_builder.assemble_pack(**self._assemble_args("Crash Pack"))
+        before = self._files(folder)
+        args = dict(self._assemble_args("Crash Pack"), folder_name="Crash Pack")
+        real_rename = os.rename
+
+        class Crash(BaseException):
+            pass
+
+        def dies_after_moving_aside(src, dst):
+            if os.path.basename(dst).startswith(".replaced-"):
+                return real_rename(src, dst)
+            raise Crash()  # the process is gone: nothing else gets renamed
+
+        def crash():
+            with mock.patch.object(pack_builder.os, "rename", dies_after_moving_aside):
+                with self.assertRaises(Crash):
+                    pack_builder.assemble_pack(**args)
+            self.assertFalse(os.path.exists(folder))
+            set_aside = [n for n in os.listdir(packs) if n.startswith(".replaced-") and n != os.path.basename(aside)]
+            self.assertEqual(len(set_aside), 1)
+
+        # A pack set aside by another build whose new pack is in place is left alone.
+        other = os.path.join(packs, "Other Pack")
+        os.makedirs(other)
+        aside = os.path.join(packs, ".replaced-0a1b2c3d-Other Pack")
+        os.makedirs(aside)
+
+        crash()
+        saved_cache = packs_cache.PACKS_CACHE
+        self.addCleanup(setattr, packs_cache, "PACKS_CACHE", saved_cache)
+        packs_cache.refresh_packs()  # engine start
+        self.assertEqual(self._files(folder), before)
+        self.assertTrue(os.path.isdir(aside), "a set-aside pack whose folder exists is kept")
+        self.assertTrue(os.path.isdir(other))
+
+        crash()
+        folder_again = pack_builder.assemble_pack(**args)  # the next build puts it back first
+        self.assertEqual(folder_again, folder)
+        self.assertEqual([n for n in os.listdir(packs) if n.startswith(".")], [os.path.basename(aside)])
+
+    def test_43_failed_rollback_says_where_the_old_pack_is(self):
+        """If the new pack can't go in and the old one can't go back, the error names where the old pack is, and nothing is deleted."""
+        from unittest import mock
+        packs, pack_dir, old_files, staging = self._swap_dirs()
+        real_rename = os.rename
+
+        def stuck(src, dst):
+            name = os.path.basename(src)
+            if name.startswith(".building-") or name.startswith(".replaced-"):
+                raise PermissionError(5, "Access is denied")
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", stuck), mock.patch.object(pack_builder.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                pack_builder._replace_pack_folder(staging, pack_dir)
+        aside = [n for n in os.listdir(packs) if n.startswith(".replaced-")]
+        self.assertEqual(len(aside), 1)
+        aside = os.path.join(packs, aside[0])
+        self.assertIn(f"The old pack is safe in {aside}", str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, PermissionError)
+        self._assert_untouched(aside, old_files)
+        self.assertEqual(os.listdir(staging), ["pack.json"])
+
+    def test_44_interrupt_while_swapping_puts_the_old_pack_back(self):
+        """Ctrl+C while the new pack is moved in: the old pack goes back in place."""
+        from unittest import mock
+        packs, pack_dir, old_files, staging = self._swap_dirs()
+        real_rename = os.rename
+
+        def interrupted(src, dst):
+            if os.path.basename(src).startswith(".building-"):
+                raise KeyboardInterrupt()
+            return real_rename(src, dst)
+
+        with mock.patch.object(pack_builder.os, "rename", interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                pack_builder._replace_pack_folder(staging, pack_dir)
+        self._assert_untouched(pack_dir, old_files)
+        self.assertEqual([n for n in os.listdir(packs) if n.startswith(".replaced-")], [])
+
 
 if __name__ == "__main__":
     unittest.main()

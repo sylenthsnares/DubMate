@@ -1524,18 +1524,24 @@ def assemble_pack(
         os.chmod(staging, 0o755)  # mkdtemp makes it private (0700); a pack folder isn't
         _write_pack_files(staging, safe_title, video_source_path, backing_source_path,
                           line_slices, cover_image_path, authors, subtitle)
-        if folder_name:
-            pack_dir = os.path.join(target_base, folder_name)
-            _replace_pack_folder(staging, pack_dir)
-        else:
-            pack_dir = _move_to_free_folder(staging, target_base,
-                                            pack_loader.safe_folder_name(safe_title, "Custom_Pack"))
+        with _SWAP_LOCK:
+            pack_loader.restore_replaced_packs()  # a pack a crashed rebuild left aside
+            if folder_name:
+                pack_dir = os.path.join(target_base, folder_name)
+                _replace_pack_folder(staging, pack_dir)
+            else:
+                pack_dir = _move_to_free_folder(staging, target_base,
+                                                pack_loader.safe_folder_name(safe_title, "Custom_Pack"))
         staging = None
     finally:
         if staging:
             shutil.rmtree(staging, ignore_errors=True)
     return pack_dir
 
+
+# One build at a time moves packs in or out, so restoring a pack set aside by a crash
+# never takes the place of another build's pack mid-swap.
+_SWAP_LOCK = threading.Lock()
 
 PACK_IN_USE_MESSAGE = "The pack is in use, so it wasn't replaced. Close it in DubMate, then build again."
 
@@ -1584,21 +1590,25 @@ def _move_to_free_folder(staging: str, target_base: str, base_name: str) -> str:
 def _replace_pack_folder(staging: str, pack_dir: str) -> None:
     """Swaps a rebuilt pack in for the one at pack_dir, keeping the old one until the new
     one is in place. If the old pack can't be moved (open files on Windows), it stays as
-    it was and PACK_IN_USE_MESSAGE is raised."""
+    it was and PACK_IN_USE_MESSAGE is raised. The old pack waits in
+    '.replaced-<8 hex>-<folder name>' (see pack_loader.restore_replaced_packs)."""
     if not os.path.exists(pack_dir):
         _rename_with_retry(staging, pack_dir)
         return
     parent = os.path.dirname(pack_dir)
-    old = tempfile.mkdtemp(prefix=".replaced-", dir=parent)
-    os.rmdir(old)  # only its unique name is wanted
+    old = os.path.join(parent, f"{pack_loader.REPLACED_PACK_PREFIX}{os.urandom(4).hex()}-{os.path.basename(pack_dir)}")
     try:
         _rename_with_retry(pack_dir, old)
     except PermissionError:
         raise RuntimeError(PACK_IN_USE_MESSAGE)
     try:
         _rename_with_retry(staging, pack_dir)
-    except OSError:
-        _rename_with_retry(old, pack_dir)  # put the old pack back
+    except BaseException as ex:  # Ctrl+C too: the old pack goes back
+        try:
+            _rename_with_retry(old, pack_dir)
+        except Exception:
+            raise RuntimeError("The new pack couldn't be put in place, and the old one couldn't be "
+                               f"put back. The old pack is safe in {old}.") from ex
         raise
     shutil.rmtree(old, ignore_errors=True)
 
