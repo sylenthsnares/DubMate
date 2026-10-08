@@ -1688,25 +1688,22 @@
           <p id="audio-input-note" class="audio-device-note" style="display: none;"></p>
         </div>
 
-        <!-- Live dBFS Input Level Meter -->
+        <!-- Live input meter: peak, on the shared level target (studio/level_target.js).
+             Its numbers live in the track's tooltip and aria-valuetext. -->
         <div class="level-meter-panel">
           <div class="level-meter-head">
             <span class="level-meter-title">
               <span class="level-meter-lamp" id="level-meter-lamp" aria-hidden="true"></span>
               INPUT LEVEL
             </span>
-            <span class="level-meter-readouts">
-              <span class="level-meter-readout" id="level-meter-rms" data-tip="Current level">-∞ dB</span>
-              <span class="level-meter-readout level-meter-readout-peak" id="level-meter-peak-readout"
-                data-tip="Loudest recent peak">PK -∞</span>
-            </span>
           </div>
 
-          <div class="level-meter-track" id="level-meter-track" role="meter" aria-label="Microphone level"
-            aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-valuetext="-infinity dBFS">
-            <div class="level-meter-mask" id="level-meter-mask" style="width: 100%;"></div>
-            <div class="level-meter-gridline" style="left: 80%;" aria-hidden="true"></div>
-            <div class="level-meter-gridline" style="left: 95%;" aria-hidden="true"></div>
+          <div class="level-meter-track is-quiet" id="level-meter-track" role="meter" tabindex="0"
+            aria-label="Microphone level" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60"
+            aria-valuetext="No sound" data-tip="No sound">
+            <div class="level-meter-fill" id="level-meter-fill" style="width: 0%;"></div>
+            <div class="level-meter-gridline" style="left: 83.33%;" aria-hidden="true"></div>
+            <div class="level-meter-gridline" style="left: 90%;" aria-hidden="true"></div>
             <div class="level-meter-peak-tick" id="level-meter-peak-tick" style="left: 0%; display: none;"
               aria-hidden="true"></div>
           </div>
@@ -1715,18 +1712,18 @@
             <span style="left: 0%;">-60</span>
             <span style="left: 33.33%;">-40</span>
             <span style="left: 66.67%;">-20</span>
-            <span style="left: 80%;">-12</span>
+            <span style="left: 83.33%;">-10</span>
             <span style="left: 90%;">-6</span>
             <span style="left: 100%;">0</span>
           </div>
 
           <div class="level-meter-legend">
-            <span class="level-zone-key"><i class="zone-swatch zone-green"></i>Quiet</span>
-            <span class="level-zone-key"><i class="zone-swatch zone-amber"></i>Good</span>
-            <span class="level-zone-key"><i class="zone-swatch zone-red"></i>Too loud</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-quiet"></i>Too quiet</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-good"></i>Good</span>
+            <span class="level-zone-key"><i class="zone-swatch zone-loud"></i>Too loud</span>
           </div>
 
-          <p class="level-meter-hint" id="level-meter-hint">Say your loudest line. Aim for the amber zone.</p>
+          <p class="level-meter-hint status-text is-pending" id="level-meter-hint">Say your loudest line. Aim for the green band.</p>
         </div>
 
         <div class="audio-device-row" id="audio-output-row">

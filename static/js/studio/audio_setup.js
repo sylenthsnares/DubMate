@@ -3,6 +3,7 @@
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { AudioEngine } from '../audio_engine.js';
 import { escapeHtml } from '../ui_common.js';
+import { levelHint, levelZone } from './level_target.js';
 
 // --- Audio Device Setup persistence keys & meter constants ---
 const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
@@ -12,12 +13,24 @@ const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
 // Device labels a member brought from their own DubMate (join handoff), waiting for labelled devices.
 const AUDIO_HANDOFF_KEY = 'dubmate_audio_handoff';
 
-// Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale).
+// Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale). It shows peak.
 const METER_FLOOR_DB = -60;
-const METER_AMBER_DB = -12; // Hot but usable
-const METER_RED_DB = -3;    // Near clipping
 const METER_PEAK_HOLD_MS = 1100;
 const METER_PEAK_DECAY_DB_PER_FRAME = 0.45;
+// The hint judges the loudest peak of this long, then goes back to neutral by itself.
+const METER_HINT_WINDOW_MS = 2500;
+// The meter's numbers (tooltip, screen readers) change at most 4 times a second.
+const METER_READOUT_INTERVAL_MS = 250;
+const METER_FALLBACK_HINT = "Your saved microphone isn't connected. Showing the system default.";
+
+const STATUS_STATES = ['pending', 'done', 'attention', 'error'];
+
+/** Puts a .status-text line in one state: 'pending' | 'done' | 'attention' | 'error'. */
+export function setStatusState(el, state) {
+  if (!el) return;
+  el.classList.add('status-text');
+  STATUS_STATES.forEach((s) => el.classList.toggle(`is-${s}`, s === state));
+}
 
 // localStorage/sessionStorage throw in some locked-down webviews and in
 // private-mode Safari, so every access goes through these guards.
@@ -59,10 +72,10 @@ export function micErrorMessage(err) {
   }
 }
 
-function formatDbFS(db) {
-  if (typeof db !== 'number' || !isFinite(db)) return '-∞';
-  if (db <= METER_FLOOR_DB) return '-∞';
-  return (db > 0 ? '+' : '') + db.toFixed(1);
+// The meter's numbers, for its tooltip and screen readers.
+function meterReadout(db) {
+  if (typeof db !== 'number' || !isFinite(db) || db <= METER_FLOOR_DB) return 'No sound';
+  return `Peak ${Math.round(db)} dB`;
 }
 
 // "2.1 GB" or "340 MB"; empty when the size is unknown.
@@ -94,6 +107,13 @@ export class AudioSetupMethods {
       meterToken: 0,
       peakDb: -Infinity,
       peakHoldUntil: 0,
+      // The bar's level: the peak with a fast attack and a slow fall.
+      barDb: -Infinity,
+      // Recent peaks {t, db} for the hint, and when the meter's numbers last changed.
+      levelWindow: [],
+      readoutAt: -Infinity,
+      // A mic error or fallback line holds the hint until the meter's stream reopens.
+      hintLocked: false,
       // Guards against two overlapping openAudioSettings() calls landing their
       // post-await UI updates out of order.
       openToken: 0,
@@ -625,6 +645,7 @@ export class AudioSetupMethods {
     if (this.levelMeterLamp) this.levelMeterLamp.classList.add('is-live');
     this.audioSetup.peakDb = -Infinity;
     this.audioSetup.peakHoldUntil = 0;
+    this.audioSetup.barDb = -Infinity;
 
     const tick = () => {
       // Hard stop: the loop must not outlive the visible panel.
@@ -655,14 +676,19 @@ export class AudioSetupMethods {
         return false;
       }
       console.warn('[DubMate] Input meter could not open the microphone:', err?.name, err?.message, err);
-      this.setMeterHint(micErrorMessage(err), true);
+      this.setMeterHint(micErrorMessage(err), 'error');
+      this.audioSetup.hintLocked = true;
       return false;
     }
     if (token !== this.audioSetup.meterToken || !info) return false;
+    this.audioSetup.levelWindow = [];
     if (info.didFallBack) {
-      this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
+      this.setMeterHint(METER_FALLBACK_HINT, 'attention');
+      this.audioSetup.hintLocked = true;
     } else {
-      this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
+      const hint = levelHint(-Infinity);
+      this.setMeterHint(hint.text, hint.tone);
+      this.audioSetup.hintLocked = false;
     }
     return true;
   }
@@ -695,31 +721,45 @@ export class AudioSetupMethods {
   }
 
   resetInputMeterUI() {
-    if (this.levelMeterMask) this.levelMeterMask.style.width = '100%';
+    if (this.levelMeterFill) this.levelMeterFill.style.width = '0%';
     if (this.levelMeterPeakTick) {
       this.levelMeterPeakTick.style.display = 'none';
       this.levelMeterPeakTick.classList.remove('is-clipping');
     }
-    if (this.levelMeterRms) this.levelMeterRms.innerText = '-∞ dB';
-    if (this.levelMeterPeakReadout) {
-      this.levelMeterPeakReadout.innerText = 'PK -∞';
-      this.levelMeterPeakReadout.classList.remove('is-clipping');
-    }
     if (this.levelMeterLamp) this.levelMeterLamp.classList.remove('is-live', 'is-clipping');
-    if (this.levelMeterTrack) {
-      this.levelMeterTrack.setAttribute('aria-valuenow', String(METER_FLOOR_DB));
-      this.levelMeterTrack.setAttribute('aria-valuetext', '-infinity dBFS');
-    }
+    this.setMeterZone('quiet');
+    this.setMeterReadout(-Infinity);
     if (this.audioSetup) {
       this.audioSetup.peakDb = -Infinity;
       this.audioSetup.peakHoldUntil = 0;
+      this.audioSetup.barDb = -Infinity;
+      this.audioSetup.readoutAt = -Infinity;
     }
   }
 
-  setMeterHint(message, isError) {
+  /** tone: 'neutral' | 'attention' | 'done' | 'error', as levelHint gives it. */
+  setMeterHint(message, tone) {
     if (!this.levelMeterHint) return;
-    this.levelMeterHint.className = isError ? 'level-meter-hint is-error' : 'level-meter-hint';
-    this.levelMeterHint.innerText = message;
+    const state = tone === 'neutral' ? 'pending' : tone;
+    if (this.levelMeterHint.textContent === message && this.levelMeterHint.classList.contains(`is-${state}`)) return;
+    setStatusState(this.levelMeterHint, state);
+    this.levelMeterHint.textContent = message;
+  }
+
+  setMeterZone(zone) {
+    if (!this.levelMeterTrack) return;
+    ['quiet', 'good', 'loud'].forEach((z) => this.levelMeterTrack.classList.toggle(`is-${z}`, z === zone));
+  }
+
+  // The numbers sit in the meter's tooltip and aria-valuetext, not on its face.
+  setMeterReadout(db) {
+    if (!this.levelMeterTrack) return;
+    const text = meterReadout(db);
+    if (this.levelMeterTrack.getAttribute('data-tip') === text) return;
+    const shown = Math.max(METER_FLOOR_DB, Math.min(0, isFinite(db) ? db : METER_FLOOR_DB));
+    this.levelMeterTrack.setAttribute('aria-valuenow', shown.toFixed(1));
+    this.levelMeterTrack.setAttribute('aria-valuetext', text);
+    this.levelMeterTrack.setAttribute('data-tip', text);
   }
 
   renderInputMeterFrame() {
@@ -731,24 +771,26 @@ export class AudioSetupMethods {
     }
 
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const rmsDb = level.rmsDb;
+    const meter = this.audioSetup;
     const peakDb = level.peakDb;
 
-    // Peak hold, then a slow ballistic decay (classic PPM behaviour).
-    if (!(this.audioSetup.peakDb > peakDb)) {
-      this.audioSetup.peakDb = peakDb;
-      this.audioSetup.peakHoldUntil = now + METER_PEAK_HOLD_MS;
-    } else if (now > this.audioSetup.peakHoldUntil) {
-      this.audioSetup.peakDb = Math.max(peakDb, this.audioSetup.peakDb - METER_PEAK_DECAY_DB_PER_FRAME);
+    // The bar is the peak with a fast attack and a slow fall.
+    const falling = meter.barDb - METER_PEAK_DECAY_DB_PER_FRAME;
+    meter.barDb = falling > peakDb ? falling : peakDb;
+    // The tick holds the peak, then falls the same way (classic PPM behaviour).
+    if (!(meter.peakDb > peakDb)) {
+      meter.peakDb = peakDb;
+      meter.peakHoldUntil = now + METER_PEAK_HOLD_MS;
+    } else if (now > meter.peakHoldUntil) {
+      meter.peakDb = Math.max(peakDb, meter.peakDb - METER_PEAK_DECAY_DB_PER_FRAME);
     }
 
-    const rmsPct = AudioEngine.dbToMeterPercent(rmsDb, METER_FLOOR_DB);
-    const peakPct = AudioEngine.dbToMeterPercent(this.audioSetup.peakDb, METER_FLOOR_DB);
-    const isClipping = this.audioSetup.peakDb >= METER_RED_DB;
-
-    if (this.levelMeterMask) {
-      this.levelMeterMask.style.width = `${(100 - rmsPct).toFixed(1)}%`;
+    const zone = levelZone(meter.barDb);
+    const peakPct = AudioEngine.dbToMeterPercent(meter.peakDb, METER_FLOOR_DB);
+    if (this.levelMeterFill) {
+      this.levelMeterFill.style.width = `${AudioEngine.dbToMeterPercent(meter.barDb, METER_FLOOR_DB).toFixed(1)}%`;
     }
+    this.setMeterZone(zone);
     if (this.levelMeterPeakTick) {
       if (peakPct > 0.1) {
         this.levelMeterPeakTick.style.display = 'block';
@@ -756,29 +798,23 @@ export class AudioSetupMethods {
       } else {
         this.levelMeterPeakTick.style.display = 'none';
       }
-      this.levelMeterPeakTick.classList.toggle('is-clipping', isClipping);
-    }
-    if (this.levelMeterRms) {
-      this.levelMeterRms.innerText = `${formatDbFS(rmsDb)} dB`;
-    }
-    if (this.levelMeterPeakReadout) {
-      this.levelMeterPeakReadout.innerText = `PK ${formatDbFS(this.audioSetup.peakDb)}`;
-      this.levelMeterPeakReadout.classList.toggle('is-clipping', isClipping);
+      this.levelMeterPeakTick.classList.toggle('is-clipping', levelZone(meter.peakDb) === 'loud');
     }
     if (this.levelMeterLamp) {
-      this.levelMeterLamp.classList.toggle('is-clipping', isClipping);
-      this.levelMeterLamp.classList.toggle('is-live', !isClipping);
+      this.levelMeterLamp.classList.toggle('is-clipping', zone === 'loud');
+      this.levelMeterLamp.classList.toggle('is-live', zone !== 'loud');
     }
-    if (this.levelMeterTrack) {
-      const shown = Math.max(METER_FLOOR_DB, Math.min(0, isFinite(rmsDb) ? rmsDb : METER_FLOOR_DB));
-      this.levelMeterTrack.setAttribute('aria-valuenow', shown.toFixed(1));
-      this.levelMeterTrack.setAttribute('aria-valuetext', `${formatDbFS(rmsDb)} dBFS`);
+    if (now - meter.readoutAt >= METER_READOUT_INTERVAL_MS) {
+      meter.readoutAt = now;
+      this.setMeterReadout(meter.peakDb);
     }
 
-    if (isClipping) {
-      this.setMeterHint('Too loud. Move back from the mic or turn down its input level.', true);
-    } else if (this.audioSetup.peakDb > METER_AMBER_DB) {
-      this.setMeterHint('Good level.', false);
+    // The hint follows the loudest peak of the last 2.5 s, unless a mic error or fallback line holds it.
+    meter.levelWindow.push({ t: now, db: peakDb });
+    while (meter.levelWindow[0].t < now - METER_HINT_WINDOW_MS) meter.levelWindow.shift();
+    if (!meter.hintLocked) {
+      const hint = levelHint(Math.max(...meter.levelWindow.map((p) => p.db)));
+      this.setMeterHint(hint.text, hint.tone);
     }
   }
 

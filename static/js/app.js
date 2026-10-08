@@ -305,11 +305,9 @@ class DubMateApp {
     this.audioOutputUnsupported = document.getElementById('audio-output-unsupported');
     this.btnRefreshAudioDevices = document.getElementById('btn-refresh-audio-devices');
     this.btnAudioSettingsDone = document.getElementById('btn-audio-settings-done');
-    this.levelMeterMask = document.getElementById('level-meter-mask');
+    this.levelMeterFill = document.getElementById('level-meter-fill');
     this.levelMeterPeakTick = document.getElementById('level-meter-peak-tick');
     this.levelMeterTrack = document.getElementById('level-meter-track');
-    this.levelMeterRms = document.getElementById('level-meter-rms');
-    this.levelMeterPeakReadout = document.getElementById('level-meter-peak-readout');
     this.levelMeterLamp = document.getElementById('level-meter-lamp');
     this.levelMeterHint = document.getElementById('level-meter-hint');
     this.audioExportsRow = document.getElementById('audio-exports-row');

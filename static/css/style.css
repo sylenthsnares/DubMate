@@ -1158,6 +1158,36 @@ body::after {
   cursor: not-allowed;
 }
 
+/* Status lines: muted for "not yet", green with a check for done, amber when it
+   needs attention, red for errors. Audio settings' rows, notes and mic pill. */
+.status-text {
+  font-size: 12px;
+  font-weight: 500;
+}
+.status-text.is-pending {
+  color: var(--foreground-muted);
+}
+.status-text.is-done {
+  color: var(--accent-green-light);
+}
+.status-text.is-done::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.status-text.is-attention {
+  color: var(--primary-hover);
+}
+.status-text.is-error {
+  color: var(--accent-red-soft);
+}
+
 .btn-xs {
   min-height: 24px;
   padding: 0 8px;
@@ -4554,58 +4584,45 @@ svg {
   box-shadow: 0 0 10px var(--accent-red-glow);
 }
 
-.level-meter-readouts {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.level-meter-readout {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--foreground);
-  min-width: 74px;
-  text-align: right;
-}
-
-.level-meter-readout-peak {
-  min-width: 62px;
-  color: var(--accent-brass);
-}
-
-.level-meter-readout-peak.is-clipping {
-  color: var(--accent-red-soft);
-}
-
 .level-meter-track {
   position: relative;
   height: 18px;
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--input-border);
-  /* Static zone gradient: green up to -12 dBFS (80%), amber to -3 (95%), red above */
-  background-image: linear-gradient(90deg,
-      var(--accent-green-deep) 0%,
-      var(--accent-teal) 62%,
-      var(--accent-green-bright) 78%,
-      var(--primary) 80.5%,
-      var(--primary-hover) 93%,
-      var(--accent-red) 95%,
-      var(--accent-red-bright) 100%);
+  /* The target band behind the bar (studio/level_target.js): too quiet below -10 dB
+     (83.33%), good from -10 to -6 dB (90%), too loud above. */
+  background: var(--input) linear-gradient(90deg,
+      rgba(115, 104, 94, 0.14) 0%,
+      rgba(115, 104, 94, 0.14) 83.33%,
+      rgba(34, 197, 94, 0.26) 83.33%,
+      rgba(34, 197, 94, 0.26) 90%,
+      rgba(220, 38, 38, 0.26) 90%,
+      rgba(220, 38, 38, 0.26) 100%);
 }
 
-/* Right-hand shutter hiding the gradient above the current level; its width is
-   100 - level%. Cheaper than repainting a gradient on every animation frame. */
-.level-meter-mask {
+.level-meter-track:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+/* The bar, in the colour of the zone it reaches. */
+.level-meter-fill {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
-  width: 100%;
-  background: linear-gradient(180deg, #16120f 0%, #0d0b09 100%);
-  box-shadow: inset 1px 0 3px rgba(0, 0, 0, 0.8);
-  transition: width 60ms linear;
+  width: 0;
+  background: var(--accent-brass);
+  transition: width 60ms linear, background-color var(--duration-fast) var(--ease-out);
+}
+
+.level-meter-track.is-good .level-meter-fill {
+  background: var(--accent-green-bright);
+}
+
+.level-meter-track.is-loud .level-meter-fill {
+  background: var(--accent-red);
 }
 
 .level-meter-gridline {
@@ -4680,19 +4697,15 @@ svg {
   display: inline-block;
 }
 
-.zone-green { background: var(--accent-green-bright); }
-.zone-amber { background: var(--accent-amber); }
-.zone-red { background: var(--accent-red); }
+.zone-quiet { background: var(--foreground-dim); }
+.zone-good { background: var(--accent-green-bright); }
+.zone-loud { background: var(--accent-red); }
 
+/* Coloured by the status-text classes. */
 .level-meter-hint {
   margin-top: 8px;
-  font-size: 12px;
   line-height: 1.45;
   color: var(--foreground-muted);
-}
-
-.level-meter-hint.is-error {
-  color: var(--accent-red-soft);
 }
 
 /* --- Export folder path field --- */
