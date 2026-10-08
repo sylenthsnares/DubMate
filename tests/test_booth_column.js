@@ -312,6 +312,40 @@ async function show(env, state, index = 0) {
     console.log("PASS: the stage bar reads 'Line 1 of 3 · 0.9 s', one timing readout, Reset to auto at auto only");
   }
 
+  // 4b. One booth bar: the line chips sit after "Line 1 of 3", the line length is in the
+  // prompter, and "‹ Lobby" and the chip strip's own card are gone.
+  {
+    const bar = doc.querySelector("#view-booth .stage-top-bar");
+    const info = bar.querySelector(".stage-info-group");
+    const chips = $(env, "timeline-chips");
+    if (!chips || chips.parentElement !== info) fail("the line chips aren't in the booth bar's info group");
+    const indicator = $(env, "booth-line-indicator");
+    if (!(indicator.compareDocumentPosition(chips) & w.Node.DOCUMENT_POSITION_FOLLOWING)) fail("the chips don't follow 'Line 1 of 3'");
+    if (doc.querySelector(".timeline-chips-wrapper")) fail("the chip strip's card is still there");
+    if ($(env, "btn-back-lobby")) fail("‹ Lobby is still in the booth bar");
+    const presence = $(env, "booth-presence");
+    if (!presence || presence.parentElement !== bar.querySelector(".stage-action-group")
+      || presence.parentElement.firstElementChild !== presence) fail("no who's-here slot at the start of the action group");
+    const caption = $(env, "stage-caption-card");
+    if ($(env, "booth-time-badge").parentElement !== caption) fail("the line length isn't in the prompter");
+    const cells = [...caption.children].filter((c) => c.id !== "prompter-resize-handle").map((c) => c.id);
+    if (cells.join(",") !== "stage-caption-char,stage-caption-text,booth-time-badge") fail(`prompter cells: ${cells}`);
+    console.log("PASS: one booth bar holds the line chips; the line length sits in the prompter; ‹ Lobby is gone");
+  }
+
+  // 4c. "My lines" keeps the line you're on, even when it isn't yours.
+  {
+    const nums = () => [...$(env, "timeline-chips").children].map((c) => text(c.querySelector(".chip-num")));
+    app.filterMyLinesOnly = true;
+    await show(env, room(), 2);
+    if (nums().join(",") !== "1,2,3") fail(`My lines on Ben's line 3: ${nums()}`);
+    const current = $(env, "timeline-chips").querySelector("[aria-current]");
+    if (!current || text(current.querySelector(".chip-num")) !== "3") fail("the current chip isn't line 3");
+    await show(env, room(), 0);
+    if (nums().join(",") !== "1,2") fail(`My lines on your line 1: ${nums()}`);
+    console.log("PASS: My lines keeps the current line's chip when the line isn't yours");
+  }
+
   // 5. Level: "✓ Matched" comes from the take's real gain and auto gain, not the 0.5-step dial.
   {
     const matchBadge = $(env, "badge-gain-match");

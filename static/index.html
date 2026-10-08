@@ -584,11 +584,11 @@
       <!-- Stage Navigation Bar -->
       <div class="stage-top-bar glass-card">
         <div class="stage-info-group">
-          <button id="btn-back-lobby" class="btn btn-ghost btn-sm" aria-label="Back to lobby">‹ Lobby</button>
           <div class="line-progress-badge">
             <span id="booth-line-indicator" class="booth-line-text" tabindex="0">Line 1 of 1</span>
           </div>
-          <span id="booth-time-badge" class="time-badge">0.0 s</span>
+          <!-- The scene's lines, one chip each; scrolls sideways when there are many -->
+          <div class="timeline-chips-box" id="timeline-chips" role="region" aria-label="Lines"></div>
           <button id="btn-toggle-filter-lines" class="btn btn-secondary btn-sm"
             data-tip="Switch between your lines and all lines">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -600,6 +600,8 @@
         </div>
 
         <div class="stage-action-group">
+          <!-- Who's here: filled by the shared presence stack -->
+          <div id="booth-presence" class="booth-presence"></div>
           <button id="btn-toggle-ready" class="btn btn-secondary btn-sm btn-ready-toggle"
             data-tip="Tells the host you're done recording">
             <svg class="btn-ready-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -630,7 +632,7 @@
       </div>
 
       <div class="booth-layout">
-        <!-- Left / Center: Cinema Video Monitor, Subtitle Prompter, Dual Waveform Sync & Scene Timeline -->
+        <!-- Left / Center: Cinema Video Monitor, Subtitle Prompter, Dual Waveform Sync -->
         <div class="stage-main-col">
 
           <!-- Cinema Video Monitor (Full Width in Main Stage) -->
@@ -663,6 +665,7 @@
             </div>
             <div id="stage-caption-char" class="caption-char">CHARACTER</div>
             <div id="stage-caption-text" class="caption-text">“Dialogue subtitle line text appears here”</div>
+            <span id="booth-time-badge" class="time-badge caption-time">0.0 s</span>
           </div>
 
           <!-- Dual Waveform Visualizer & Track Sync Canvas (ADR Dual Stacked Alignment Engine) -->
@@ -709,14 +712,6 @@
               <button id="btn-original-speed" class="btn btn-ghost btn-xs" style="display: none;"
                 data-tip="Play this take at the speed you recorded it">Original speed</button>
               <span class="timing-drag-hint" hidden>Drag or press [ ] to adjust timing</span>
-            </div>
-          </div>
-
-          <!-- Timeline Strip Chips (Scene Line Navigation Pills) -->
-          <div class="timeline-chips-wrapper">
-            <div class="timeline-chips-box glass-card" id="timeline-chips" role="region"
-              aria-label="Lines">
-              <!-- Timeline line pills rendered dynamically -->
             </div>
           </div>
         </div>

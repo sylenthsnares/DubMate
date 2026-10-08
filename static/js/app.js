@@ -361,7 +361,6 @@ class DubMateApp {
     this.boothDoneAsk = document.getElementById('booth-done-ask');
     this.boothDoneAskText = document.getElementById('booth-done-ask-text');
     this.btnJumpScreening = document.getElementById('btn-jump-screening');
-    this.btnBackLobby = document.getElementById('btn-back-lobby');
 
     // Screening elements
     this.screeningVideo = document.getElementById('screening-video');
@@ -717,12 +716,6 @@ class DubMateApp {
         this.broadcastMyStatus('screening');
       });
     }
-
-    this.btnBackLobby.addEventListener('click', () => {
-      this.cancelCurrentCountdown();
-      this.showView('lobby');
-      this.broadcastMyStatus('lobby');
-    });
 
     this.btnJumpScreening.addEventListener('click', () => {
       this.cancelCurrentCountdown();
@@ -1479,7 +1472,8 @@ class DubMateApp {
     const inRoom = viewName !== 'landing' && !!this.roomState;
     document.querySelector('.app-header')?.classList.toggle('in-room', inRoom);
     if (this.castActivityBar) {
-      this.castActivityBar.style.display = (viewName === 'landing' || !this.roomState) ? 'none' : 'flex';
+      // The booth bar says who's here, so the booth has no cast strip.
+      this.castActivityBar.style.display = (viewName === 'landing' || viewName === 'booth' || !this.roomState) ? 'none' : 'flex';
       // The strip shows progress and ready counts everywhere but the lobby.
       if (this.roomState) this.renderCastActivityHUD();
     }

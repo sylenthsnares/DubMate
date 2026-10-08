@@ -190,7 +190,7 @@ function beforeUnloadBlocked(env) {
     if (!/saving a take/.test(chip(env, 0).getAttribute("aria-label"))) fail(`chip 1 name: ${chip(env, 0).getAttribute("aria-label")}`);
     if (!presets(env).length || presets(env).some((b) => !b.disabled)) fail("line 1's Voice controls aren't locked while it saves");
     if (!beforeUnloadBlocked(env)) fail("leaving the page isn't guarded while a take saves");
-    for (const id of ["btn-next-line", "btn-prev-line", "btn-play-orig", "btn-back-lobby"]) {
+    for (const id of ["btn-next-line", "btn-prev-line", "btn-play-orig", "nav-step-lobby"]) {
       if ($(env, id).disabled && id !== "btn-prev-line") fail(`#${id} is locked while the take saves`);
     }
     if ($(env, "timeline-chips").classList.contains("ui-interaction-locked")) fail("the line chips are locked");

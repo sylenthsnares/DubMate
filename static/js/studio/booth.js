@@ -453,8 +453,9 @@ export class BoothMethods {
 
     this.roomState.pack.lines.forEach((l, idx) => {
       const isMyLine = myAssignedChars.includes(l.character);
-      if (this.filterMyLinesOnly && !isMyLine && myAssignedChars.length > 0) {
-        return; // Filter out other characters' lines when in "My Lines Only" mode
+      // "My lines" hides other people's lines, except the one you're on.
+      if (this.filterMyLinesOnly && !isMyLine && myAssignedChars.length > 0 && idx !== this.currentLineIndex) {
+        return;
       }
 
       const chip = document.createElement('button');

@@ -4,7 +4,8 @@
  * The cast strip and the hidden live region (UI pass U1, step 6):
  *  - the strip is not a live region; one hidden #sr-announcer is,
  *  - in the lobby the strip shows who is here and their roles, without progress or ready counts,
- *  - in the booth the progress and the ready summary show as before,
+ *  - at the premiere the progress and the ready summary show as before,
+ *  - in the booth the strip is hidden (2.0 layout pass: the booth bar says who's here),
  *  - several characters read "2 roles", with the names in a tooltip that opens on keyboard focus,
  *  - joins, leaves and "is ready" by others are read out once each; a repeated status is not.
  */
@@ -103,19 +104,27 @@ const hiddenEl = (el) => !el || el.hidden;
     check(/\.sr-only\s*\{[^}]*clip:/.test(css), "style.css hides .sr-only");
   }
 
-  // Lobby vs booth, and the roles summary.
+  // Lobby, booth and premiere, and the roles summary.
   {
     const { doc, app } = await boot();
     app.roomState = room(app);
 
-    app.currentView = "booth";
+    // The premiere keeps the strip with progress and ready counts (until the who's-here
+    // stack replaces it there too).
+    app.currentView = "screening";
     app.renderCastActivityHUD();
     const summary = doc.getElementById("premiere-status-summary");
-    check(!hiddenEl(summary) && summary.textContent === "0/2 ready", "in the booth the ready summary shows", summary.textContent);
-    check(text(chipFor(doc, "Mika").querySelector(".actor-hud-progress")) === "0/1 (0%)", "in the booth the progress shows as before");
-    check(text(chipFor(doc, "Tani").querySelector(".actor-hud-status-badge")) === "Line 1", "in the booth the location badge shows");
+    check(!hiddenEl(summary) && summary.textContent === "0/2 ready", "at the premiere the ready summary shows", summary.textContent);
+    check(text(chipFor(doc, "Mika").querySelector(".actor-hud-progress")) === "0/1 (0%)", "at the premiere the progress shows as before");
+    check(text(chipFor(doc, "Tani").querySelector(".actor-hud-status-badge")) === "Line 1", "at the premiere the location badge shows");
+
+    // The booth hides the strip: its bar says who's here (2.0 layout pass).
+    const bar = doc.getElementById("cast-activity-bar");
+    app.showView("booth");
+    check(bar.style.display === "none", "in the booth the cast strip is hidden", bar.style.display);
 
     app.showView("lobby");
+    check(bar.style.display === "flex", "in the lobby the cast strip shows", bar.style.display);
     check(hiddenEl(summary), "in the lobby the ready summary is hidden");
     check(doc.querySelectorAll(".actor-hud-progress").length === 0, "in the lobby no progress shows");
     check(!/\d+\/\d+/.test(doc.getElementById("cast-activity-list").textContent), "in the lobby the strip has no counts");
@@ -136,10 +145,10 @@ const hiddenEl = (el) => !el || el.hidden;
     app.renderCastActivityHUD();
     check(doc.activeElement === roles, "an unchanged update keeps keyboard focus on the roles summary");
 
-    // Back in the booth the progress returns.
-    app.currentView = "booth";
+    // Back at the premiere the progress returns.
+    app.currentView = "screening";
     app.renderCastActivityHUD();
-    check(!hiddenEl(summary) && doc.querySelectorAll(".actor-hud-progress").length === 2, "back in the booth the progress and ready summary return");
+    check(!hiddenEl(summary) && doc.querySelectorAll(".actor-hud-progress").length === 2, "back at the premiere the progress and ready summary return");
   }
 
   // Announcements: once each, others only, real changes only.
