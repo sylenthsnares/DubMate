@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import pack_loader
 import audio_processor
-from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api
+from dubmate import common, data_home, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -291,6 +291,26 @@ async def update_config(payload: Dict[str, Any], request: Request):
         "pack_count": count if count is not None else len(config["packs"]),
         **config,
     }
+
+
+LICENCE_FILES = ("LICENSE", "THIRD_PARTY_NOTICES.md")
+
+
+def _about_paths() -> Dict[str, Any]:
+    """Blocking (it checks folders on disk), so the route runs it in a worker thread."""
+    return {
+        **data_home.locations(),
+        "install_dir": pack_loader.get_install_root(),
+        "licence_files": [p for p in (os.path.join(BASE_DIR, name) for name in LICENCE_FILES) if os.path.isfile(p)],
+    }
+
+
+@app.get("/api/about/paths")
+async def about_paths(request: Request):
+    """Where DubMate keeps this computer's rooms, videos, Pack Builder and settings, for
+    the About panel. Host's computer only: these are the host's folders."""
+    common.require_own_computer(request)
+    return {"status": "ok", **(await asyncio.to_thread(_about_paths))}
 
 
 # Scene pack routes live in dubmate/packs_api.py; registered here so they keep

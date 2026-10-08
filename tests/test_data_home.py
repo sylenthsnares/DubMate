@@ -6,7 +6,8 @@ per-user folder instead of the install folder, so no install, reinstall or unins
 touches them (documentation/design/v2-installer.md, sections 1, 2 and 4).
 
 Covers dubmate/data_home.py (where the folder is, the existence rule, the one-time
-move), pack_loader.get_cache_dir() and pack_builder.ensure_ai_packages_on_path(). Every path test builds Windows-style and macOS-style install
+move), pack_loader.get_cache_dir(), pack_builder.ensure_ai_packages_on_path() and
+GET /api/about/paths. Every path test builds Windows-style and macOS-style install
 trees in a temp dir, so it runs the same on Linux CI.
 """
 
@@ -447,6 +448,50 @@ class TestEngineUsesTheDataHome(MigrationCase):
             pack_builder.ensure_ai_packages_on_path()
         self.assertEqual(sys.path[0], new_ai)
         self.assertIn(old_ai, sys.path)
+
+
+ABOUT_KEYS = {"status", "root", "data_dir", "rooms_dir", "exports_dir", "ai_packages_dir",
+              "ai_packages_installed", "config_file", "packs_dirs", "install_dir", "packaged",
+              "left_behind", "licence_files"}
+
+
+class TestAboutPaths(unittest.TestCase):
+    """GET /api/about/paths: real folders for the About panel, on the host's computer only."""
+
+    @classmethod
+    def setUpClass(cls):
+        from starlette.testclient import TestClient
+        import app
+        cls.app = app.app
+        cls.TestClient = TestClient
+
+    def test_own_computer_gets_the_contract(self):
+        import pack_loader
+        res = self.TestClient(self.app, base_url="http://127.0.0.1:8000").get("/api/about/paths")
+        self.assertEqual(res.status_code, 200, res.text)
+        data = res.json()
+        self.assertEqual(set(data), ABOUT_KEYS)
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["data_dir"], pack_loader.CACHE_DIR)
+        self.assertEqual(data["rooms_dir"], os.path.join(pack_loader.CACHE_DIR, "rooms"))
+        self.assertEqual(data["install_dir"], pack_loader.get_install_root())
+        self.assertFalse(data["packaged"])
+        self.assertIsInstance(data["packs_dirs"], list)
+        self.assertIsInstance(data["left_behind"], list)
+        self.assertIsInstance(data["ai_packages_installed"], bool)
+        self.assertIn(os.path.join(_ROOT, "LICENSE"), data["licence_files"])
+        for path in data["licence_files"]:
+            self.assertTrue(os.path.isfile(path), path)
+
+    def test_lan_and_tunnel_callers_are_refused(self):
+        lan = self.TestClient(self.app, base_url="http://192.168.1.5:8000")
+        self.assertEqual(lan.get("/api/about/paths").status_code, 403)
+        local = self.TestClient(self.app, base_url="http://127.0.0.1:8000")
+        for header in ({"Cf-Ray": "abc123-LHR"}, {"Cf-Connecting-Ip": "1.2.3.4"},
+                       {"Origin": "https://evil.example"}):
+            res = local.get("/api/about/paths", headers=header)
+            self.assertEqual(res.status_code, 403, header)
+            self.assertNotIn("data_dir", res.text)
 
 
 if __name__ == "__main__":
