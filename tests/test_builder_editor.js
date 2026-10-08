@@ -87,15 +87,21 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
 
   // Media stubs: jsdom implements no playback. play() returns a promise the
   // test controls per element, pause() fires 'pause' like a browser does.
-  const media = { calls: [], audioPlay: () => Promise.resolve() };
+  // readyState and seeking are plain fields the test sets (a ready element by default).
+  // Every currentTime write by the app is a seek, so media.writes counts them, while
+  // media.clock() moves an element's clock the way playback would, without a write.
+  const media = { calls: [], writes: [], audioPlay: () => Promise.resolve() };
   const proto = w.HTMLMediaElement.prototype;
   Object.defineProperty(proto, "paused", { configurable: true, get() { return this._paused !== false; } });
+  Object.defineProperty(proto, "readyState", { configurable: true, get() { return this._readyState ?? 4; }, set(v) { this._readyState = v; } });
+  Object.defineProperty(proto, "seeking", { configurable: true, get() { return !!this._seeking; }, set(v) { this._seeking = v; } });
   let times = new WeakMap();
   Object.defineProperty(proto, "currentTime", {
     configurable: true,
     get() { return times.get(this) || 0; },
-    set(v) { times.set(this, v); },
+    set(v) { media.writes.push([this.id, v]); times.set(this, v); },
   });
+  media.clock = (el, v) => times.set(el, v);
   proto.load = function () {};
   proto.play = function () {
     media.calls.push(`play:${this.id}`);
@@ -731,6 +737,113 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     w.dispatchEvent(new w.Event("resize"));
     check(list.getAttribute("tabindex") === "0" && has("has-more-end"), "a window resize updates the Cast row");
     await tick(100);
+    w.close();
+  }
+
+  // (l) the video leads and the voice waits: no replayed start while the video seeks.
+  {
+    const ed = await bootEditor();
+    const { w, doc, video, audio, media } = ed;
+    const voiceWrites = () => media.writes.filter(([id]) => id === "editor-stem-audio").length;
+    const voicePlays = () => media.calls.filter((c) => c === "play:editor-stem-audio").length;
+    const label = () => { const el = doc.getElementById("label-play-btn"); return typeof el.innerText === "string" ? el.innerText : el.textContent; };
+    // n animation frames; a playing element's clock moves 20 ms per frame unless held still.
+    const frames = async (n, { videoMoves = true } = {}) => {
+      for (let i = 0; i < n; i++) {
+        if (!audio.paused) media.clock(audio, audio.currentTime + 0.02);
+        if (videoMoves && !video.paused) media.clock(video, video.currentTime + 0.02);
+        await tick(17);
+      }
+    };
+
+    // Play while the video is still seeking: the voice is played in the click, then waits.
+    media.clock(video, 12);
+    media.clock(audio, 12);
+    video.readyState = 1;
+    media.writes.length = 0;
+    media.calls.length = 0;
+    ed.play();
+    check(media.calls.includes("play:editor-video") && media.calls.includes("play:editor-stem-audio"),
+      "Play calls play() on the video and the voice inside the click");
+    check(label() === "Pause", "the Play button shows Pause as soon as it is clicked");
+    await frames(30, { videoMoves: false });
+    check(voiceWrites() === 0, "while the video isn't ready, the voice is never sent back to its start");
+    check(audio.paused, "while the video isn't ready, the voice waits");
+
+    // The video starts: the voice resumes once, from the video's time.
+    media.clock(audio, 12.08);
+    video.readyState = 4;
+    media.calls.length = 0;
+    video.dispatchEvent(new w.Event("playing"));
+    check(!audio.paused && voicePlays() === 1, "when the video starts playing, the voice resumes once");
+    check(audio.currentTime === 12 && voiceWrites() === 1, "the voice resumes from the video's time");
+    await frames(20);
+    video.dispatchEvent(new w.Event("playing"));
+    check(voicePlays() === 1 && voiceWrites() === 1, "a voice that is already following isn't restarted or re-seeked");
+
+    // Real drift is still corrected, once, and not again for the next 750 ms.
+    media.clock(audio, video.currentTime + 0.5);
+    await frames(2);
+    check(voiceWrites() === 2 && Math.abs(audio.currentTime - video.currentTime) < 0.05, "a voice 0.5 s off is brought back to the video");
+    media.clock(audio, video.currentTime + 0.5);
+    await frames(10);
+    check(voiceWrites() === 2, "a second correction waits at least 750 ms");
+
+    // A seek while playing: the voice waits until the video has seeked.
+    media.clock(video, 20);
+    video.seeking = true;
+    video.readyState = 1;
+    video.dispatchEvent(new w.Event("seeking"));
+    check(audio.paused && audio.currentTime === 20, "a seek while playing moves the voice and holds it");
+    await frames(10, { videoMoves: false });
+    check(audio.paused && voiceWrites() === 3, "the voice stays put while the video seeks");
+    video.seeking = false;
+    video.readyState = 4;
+    video.dispatchEvent(new w.Event("seeked"));
+    check(!audio.paused, "the voice resumes when the seek is done");
+
+    // Play when the voice is already where the video is: no seek at all.
+    ed.play();
+    check(video.paused && audio.paused && label() === "Play", "Pause stops both and shows Play");
+    media.clock(video, 5);
+    media.clock(audio, 5.01);
+    media.writes.length = 0;
+    ed.play();
+    check(!video.paused && !audio.paused && voiceWrites() === 0, "Play with the voice already in place doesn't seek it");
+    ed.play();
+    w.close();
+  }
+
+  // (m) a line's Play stops at the line's end by the video's clock, even when the video starts late.
+  {
+    const ed = await bootEditor({ segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] });
+    const { w, doc, video, audio, media } = ed;
+    const preview = () => doc.querySelector("#cue-card-0 .btn-preview-cue").click();
+    const frames = async (n, step) => {
+      for (let i = 0; i < n; i++) {
+        if (!video.paused) media.clock(video, video.currentTime + step);
+        if (!audio.paused) media.clock(audio, audio.currentTime + step);
+        await tick(17);
+      }
+    };
+    video.readyState = 1;
+    preview();
+    check(video.currentTime === 1 && !video.paused, "a line's Play seeks to the line and plays");
+    await frames(60, 0); // about 1 s with the video stuck
+    check(!video.paused, "a video that starts late keeps playing");
+    video.readyState = 4;
+    video.dispatchEvent(new w.Event("playing"));
+    await frames(40, 0.05);
+    check(video.paused && audio.paused, "a line's Play stops at the line's end even when the video started late");
+    check(video.currentTime >= 2 && video.currentTime < 2.2, "it stops right at the end, not later");
+
+    // A manual seek during a line's Play cancels the stop.
+    preview();
+    await frames(3, 0.05);
+    ed.app.seekTo(0.2);
+    await frames(40, 0.05);
+    check(!video.paused, "seeking during a line's Play cancels its stop");
+    ed.play();
     w.close();
   }
 

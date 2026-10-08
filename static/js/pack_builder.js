@@ -47,6 +47,9 @@ export class PackBuilderApp {
     // True while 'full' was forced (fallback or no voice track) rather than chosen.
     this.audioTrackForced = false;
     this.editorSessionId = null;
+    this.voiceHeld = false; // the voice waits while the video seeks or buffers
+    this.lastVoiceCorrection = -Infinity;
+    this.stopAt = null; // a line's Play pauses when the video reaches this time
 
     // Drag & Pan States
     this.isDragging = false;
@@ -304,13 +307,18 @@ export class PackBuilderApp {
 
     // 5. Video player controls
     this.btnPlayPause.addEventListener('click', () => this.togglePlayPause());
-    this.editorVideo.addEventListener('play', () => this.onVideoPlayState(true));
+    // The button shows Pause from the click (playMedia); these set the final state.
     this.editorVideo.addEventListener('pause', () => this.onVideoPlayState(false));
     this.editorVideo.addEventListener('ended', () => this.onVideoPlayState(false));
-    // The video is the clock; the voice track follows it.
+    // The video is the clock; the voice track follows it, and waits while the video
+    // seeks or buffers, so it never replays its first moments.
     this.editorVideo.addEventListener('seeking', () => {
-      this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+      this.alignVoice(0.01);
+      this.holdVoice();
     });
+    this.editorVideo.addEventListener('waiting', () => this.holdVoice());
+    this.editorVideo.addEventListener('playing', () => this.followVideo());
+    this.editorVideo.addEventListener('seeked', () => this.followVideo());
     this.editorVideo.addEventListener('ratechange', () => {
       this.editorStemAudio.playbackRate = this.editorVideo.playbackRate;
     });
@@ -1749,23 +1757,60 @@ export class PackBuilderApp {
   }
 
   // Both elements start in the same call stack so the user's click still counts
-  // as the gesture that allows playback.
+  // as the gesture that allows playback. If the video isn't ready yet, the voice is
+  // still played here, then held until the video's 'playing' event.
   playMedia() {
-    if (this.activeAudioTrack === 'vocals') {
+    this.stopAt = null;
+    this.onVideoPlayState(true);
+    const vocals = this.activeAudioTrack === 'vocals';
+    if (vocals) {
       this.editorVideo.muted = true;
-      this.editorStemAudio.currentTime = this.editorVideo.currentTime;
+      this.voiceHeld = false;
+      this.alignVoice(0.03);
       this.playStemAudio();
     } else {
       this.editorVideo.muted = false;
       this.editorStemAudio.pause();
     }
     const played = this.editorVideo.play();
-    if (played && played.catch) played.catch(() => {});
+    if (played && played.catch) played.catch(() => this.onVideoPlayState(!this.editorVideo.paused));
+    if (vocals && !this.isVideoReady()) this.holdVoice();
   }
 
   pauseMedia() {
+    this.stopAt = null;
     this.editorVideo.pause();
     this.editorStemAudio.pause();
+  }
+
+  /** The video can play on from where it is: enough data, and not mid-seek. */
+  isVideoReady() {
+    return this.editorVideo.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && !this.editorVideo.seeking;
+  }
+
+  /** Moves the voice to the video's time, only if it is more than `tolerance` seconds off. */
+  alignVoice(tolerance) {
+    const t = this.editorVideo.currentTime;
+    if (Math.abs(this.editorStemAudio.currentTime - t) > tolerance) this.editorStemAudio.currentTime = t;
+  }
+
+  /** The voice waits while the video seeks or buffers. */
+  holdVoice() {
+    this.voiceHeld = true;
+    this.editorStemAudio.pause();
+  }
+
+  /** Once the video is moving, a waiting voice joins it at the video's time. */
+  followVideo() {
+    if (this.activeAudioTrack !== 'vocals' || this.editorVideo.paused) return;
+    if (!this.isVideoReady()) {
+      this.holdVoice();
+      return;
+    }
+    if (!this.voiceHeld && !this.editorStemAudio.paused) return;
+    this.voiceHeld = false;
+    this.alignVoice(0.03);
+    this.playStemAudio();
   }
 
   playStemAudio() {
@@ -1784,10 +1829,7 @@ export class PackBuilderApp {
     this.updateAudioTrackToggle();
     if (track === 'vocals') {
       this.editorVideo.muted = true;
-      if (!this.editorVideo.paused) {
-        this.editorStemAudio.currentTime = this.editorVideo.currentTime;
-        this.playStemAudio();
-      }
+      this.followVideo();
     } else {
       this.editorVideo.muted = false;
       this.editorStemAudio.pause();
@@ -1820,11 +1862,21 @@ export class PackBuilderApp {
     this.showToast("Voices-only playback isn't available, so you're hearing the full audio.");
   }
 
+  // Corrects real drift only: never while either element seeks or the video waits for
+  // data (its clock is stopped then), and at most once every 750 ms.
   syncStemAudio() {
-    if (this.activeAudioTrack !== 'vocals' || this.editorVideo.paused) return;
+    if (this.activeAudioTrack !== 'vocals' || this.editorVideo.paused || !this.isVideoReady()) return;
     const audio = this.editorStemAudio;
-    if (Math.abs(audio.currentTime - this.editorVideo.currentTime) > 0.1) {
+    if (this.voiceHeld) {
+      this.followVideo(); // in case the video's 'playing' event was missed
+      return;
+    }
+    if (audio.seeking) return;
+    const now = performance.now();
+    if (now - this.lastVoiceCorrection < 750) return;
+    if (Math.abs(audio.currentTime - this.editorVideo.currentTime) > 0.15) {
       audio.currentTime = this.editorVideo.currentTime;
+      this.lastVoiceCorrection = now;
     }
   }
 
@@ -1837,6 +1889,7 @@ export class PackBuilderApp {
   }
 
   seekTo(seconds) {
+    this.stopAt = null; // a seek cancels a line's Play stop
     const clamped = Math.max(0, Math.min(this.duration, seconds));
     this.editorVideo.currentTime = clamped;
     this.updatePlayheadPosition();
@@ -1847,7 +1900,12 @@ export class PackBuilderApp {
   }
 
   startPlaybackLoop() {
+    cancelAnimationFrame(this.animationFrameId); // opening another session doesn't add a second loop
     const loop = () => {
+      // A line's Play stops at the line's end by the video's clock, however late the video started.
+      if (this.stopAt != null && !this.editorVideo.paused && this.editorVideo.currentTime >= this.stopAt) {
+        this.pauseMedia();
+      }
       this.updatePlayheadPosition();
       this.syncStemAudio();
       this.animationFrameId = requestAnimationFrame(loop);
@@ -1967,12 +2025,7 @@ export class PackBuilderApp {
     if (!seg) return;
     this.seekTo(seg.start);
     this.playMedia();
-    const playDuration = (seg.end - seg.start) * 1000;
-    setTimeout(() => {
-      if (!this.editorVideo.paused && this.editorVideo.currentTime >= seg.end - 0.1) {
-        this.pauseMedia();
-      }
-    }, playDuration);
+    this.stopAt = seg.end; // the playback loop pauses here
   }
 
   async syncSegmentsToServer() {
