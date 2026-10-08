@@ -229,6 +229,57 @@ class TestHonestLauncherRust(unittest.TestCase):
         self.assertNotIn("allow-apply-update", studio["permissions"])
 
 
+class TestLauncherLook(unittest.TestCase):
+    """UI pass U5b (39): the launcher is the studio's front door, in the studio's
+    colours and fonts, even before the engine or the internet is up."""
+
+    LAUNCHER_DIR = os.path.join(BASE_DIR, "tauri", "src")
+
+    def _launcher_html(self):
+        with open(os.path.join(self.LAUNCHER_DIR, "index.html"), encoding="utf-8") as f:
+            return f.read()
+
+    @staticmethod
+    def _tokens(css):
+        import re
+        root = css[css.index(":root {"):]
+        root = root[:root.index("}")]
+        return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", root))
+
+    def test_tokens_are_the_studios_by_name(self):
+        with open(STYLE_CSS, encoding="utf-8") as f:
+            studio = self._tokens(f.read())
+        launcher = self._tokens(self._launcher_html())
+        for name in ("--background", "--card", "--border", "--border-wood", "--foreground",
+                     "--foreground-muted", "--foreground-dim", "--primary", "--primary-hover",
+                     "--accent-brass", "--accent-red-soft"):
+            self.assertEqual(launcher.get(name), studio[name], name)
+
+    def test_window_is_the_studios_colour(self):
+        with open(os.path.join(BASE_DIR, "tauri", "src-tauri", "tauri.conf.json"), encoding="utf-8") as f:
+            conf = json.load(f)
+        self.assertEqual(conf["app"]["windows"][0]["backgroundColor"], "#12100e")
+
+    def test_fonts_are_bundled_with_their_licences(self):
+        html = self._launcher_html()
+        fonts = os.path.join(self.LAUNCHER_DIR, "fonts")
+        for woff2 in ("PlusJakartaSans-latin.woff2", "JetBrainsMono-latin.woff2"):
+            with open(os.path.join(fonts, woff2), "rb") as f:
+                self.assertEqual(f.read(4), b"wOF2", woff2)
+            self.assertIn(f'url("fonts/{woff2}")', html)
+        for licence in ("OFL-PlusJakartaSans.txt", "OFL-JetBrainsMono.txt"):
+            with open(os.path.join(fonts, licence), encoding="utf-8") as f:
+                self.assertIn("SIL Open Font License", f.read(), licence)
+        # Nothing comes from the internet.
+        self.assertNotIn("fonts.googleapis.com", html)
+        self.assertNotIn("fonts.gstatic.com", html)
+
+    def test_no_emoji_and_reduced_motion(self):
+        html = self._launcher_html()
+        self.assertNotIn("⚠", html)
+        self.assertIn("prefers-reduced-motion", html)
+
+
 class TestEnginePortIsDynamic(unittest.TestCase):
     """The engine port must not be hardcoded: a busy 8000 used to be fatal."""
 

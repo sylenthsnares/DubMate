@@ -5,16 +5,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DubMate</title>
   <style>
+    /* Bundled so the launcher looks like the studio before the engine or the
+       internet is up. Latin subsets, SIL Open Font License (fonts/OFL-*.txt). */
+    @font-face {
+      font-family: "Plus Jakarta Sans";
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+      src: url("fonts/PlusJakartaSans-latin.woff2") format("woff2");
+    }
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 500 700;
+      font-display: swap;
+      src: url("fonts/JetBrainsMono-latin.woff2") format("woff2");
+    }
+    /* The studio's tokens, by the same names (static/css/style.css). */
     :root {
-      --bg: #0d0d10;
-      --card: #141419;
-      --border: #272732;
+      --background: #12100e;
+      --card: #1a1714;
+      --secondary: #25201a;
+      --border: #2d251e;
+      --border-wood: #443428;
+      --foreground: #f4ede4;
+      --foreground-muted: #a89f95;
+      --foreground-dim: #73685e;
       --primary: #d97706;
-      --text: #f4f4f6;
-      --text-muted: #8b8b9e;
-      --danger: #dc2626;
-      --danger-bg: rgba(220, 38, 38, 0.12);
-      --danger-border: rgba(220, 38, 38, 0.35);
+      --primary-hover: #f59e0b;
+      --primary-foreground: #12100e;
+      --accent-brass: #cca458;
+      --accent-red-soft: #fca5a5;
+      --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+      --danger-bg: rgba(252, 165, 165, 0.08);
+      --danger-border: rgba(252, 165, 165, 0.35);
     }
     * {
       box-sizing: border-box;
@@ -22,9 +47,9 @@
       padding: 0;
     }
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -40,14 +65,29 @@
       align-items: center;
       gap: 14px;
     }
+    /* The studio's wordmark (.logo-icon and .logo-title in style.css). */
     .logo {
-      font-size: 22px;
-      font-weight: 800;
-      letter-spacing: 1.5px;
-      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
-    .logo span {
+    .logo-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--secondary);
+      border: 1px solid var(--border-wood);
       color: var(--primary);
+    }
+    .logo-title {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: var(--foreground);
     }
     .spinner {
       width: 32px;
@@ -61,15 +101,14 @@
       to { transform: rotate(360deg); }
     }
     .status {
-      font-size: 13px;
-      color: var(--text);
-      font-family: monospace;
+      font-size: 15px;
+      color: var(--foreground);
       font-weight: 600;
     }
     .detail {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-family: monospace;
+      font-size: 12px;
+      color: var(--foreground-muted);
+      font-family: var(--font-mono);
       max-width: 400px;
       word-break: break-word;
     }
@@ -88,18 +127,19 @@
       border-color: var(--danger-border);
     }
     .error-icon {
-      font-size: 32px;
-      margin: 12px 0 6px 0;
+      display: block;
+      margin: 12px auto 6px auto;
+      color: var(--accent-red-soft);
     }
     .error-title {
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 700;
-      color: #fff;
+      color: var(--foreground);
       margin-bottom: 8px;
     }
     .error-msg {
       font-size: 12px;
-      color: #fca5a5;
+      color: var(--accent-red-soft);
       background: var(--danger-bg);
       border: 1px solid var(--danger-border);
       border-radius: 6px;
@@ -107,7 +147,7 @@
       margin: 12px 0 20px 0;
       line-height: 1.4;
       word-break: break-word;
-      font-family: monospace;
+      font-family: var(--font-mono);
       text-align: left;
       max-height: 120px;
       overflow-y: auto;
@@ -135,25 +175,30 @@
     .btn:active {
       transform: translateY(1px);
     }
+    .btn:focus-visible {
+      outline: 2px solid var(--accent-brass);
+      outline-offset: 2px;
+    }
+    /* Espresso on amber: white was 3.19:1. */
     .btn-primary {
       background: var(--primary);
-      color: #fff;
+      color: var(--primary-foreground);
     }
     .btn-primary:hover {
-      background: #b45309;
+      background: var(--primary-hover);
     }
     .btn-secondary {
-      background: #272732;
-      color: #f4f4f6;
-      border: 1px solid #3b3b4a;
+      background: var(--secondary);
+      color: var(--foreground);
+      border: 1px solid var(--border-wood);
     }
     .btn-secondary:hover {
-      background: #323240;
+      background: #302922; /* --secondary-hover */
     }
     .progress-bar {
       width: 100%;
       height: 8px;
-      background: #272732;
+      background: var(--secondary);
       border-radius: 4px;
       overflow: hidden;
       margin: 20px 0 10px 0;
@@ -161,7 +206,7 @@
     .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #d97706, #f59e0b);
+      background: linear-gradient(90deg, var(--primary), var(--primary-hover));
       transition: width 0.35s ease;
       position: relative;
       overflow: hidden;
@@ -182,12 +227,17 @@
     @keyframes sheen {
       to { transform: translateX(100%); }
     }
+    /* The state stays readable through the text and the bar. */
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation: none; }
+      .progress-fill::after { animation: none; display: none; }
+    }
     .progress-meta {
       display: flex;
       justify-content: space-between;
       font-size: 12px;
-      color: var(--text-muted);
-      font-family: monospace;
+      color: var(--foreground-muted);
+      font-family: var(--font-mono);
     }
 
     /* --- Pack Builder install ------------------------------------------- */
@@ -202,28 +252,26 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 10px;
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-      font-weight: 700;
-      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--foreground-muted);
       transition: color 0.3s ease;
     }
     .stage-dot {
       width: 7px;
       height: 7px;
       border-radius: 50%;
-      background: #3b3b4a;
+      background: var(--border-wood);
       transition: background 0.3s ease, box-shadow 0.3s ease;
     }
     .stage-sep {
       width: 14px;
       height: 1px;
-      background: #3b3b4a;
+      background: var(--border-wood);
     }
-    .stage.is-done { color: #6b6b80; }
+    .stage.is-done { color: var(--foreground-muted); }
     .stage.is-done .stage-dot { background: var(--primary); }
-    .stage.is-active { color: var(--text); }
+    .stage.is-active { color: var(--foreground); }
     .stage.is-active .stage-dot {
       background: var(--primary);
       box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.25);
@@ -231,7 +279,7 @@
     .progress-headline {
       font-size: 13px;
       font-weight: 600;
-      color: var(--text);
+      color: var(--foreground);
       margin-top: 14px;
       min-height: 18px;
     }
@@ -241,26 +289,24 @@
     }
     .tech-details summary {
       cursor: pointer;
-      font-size: 10px;
-      color: #5f5f74;
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-      font-weight: 700;
+      font-size: 12px;
+      color: var(--foreground-muted);
+      font-weight: 600;
       list-style: none;
       text-align: center;
       transition: color 0.15s ease;
     }
     .tech-details summary::-webkit-details-marker { display: none; }
-    .tech-details summary:hover { color: var(--text-muted); }
+    .tech-details summary:hover { color: var(--foreground-muted); }
     .error-details {
       margin: -8px 0 16px 0;
     }
     .tech-log {
       margin-top: 8px;
-      font-family: monospace;
-      font-size: 10px;
-      color: var(--text-muted);
-      background: #0b0b0e;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--foreground-muted);
+      background: var(--background);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 8px 10px;
@@ -274,15 +320,16 @@
 </head>
 <body>
   <div id="splash" class="splash">
-    <div class="logo">DUBMATE</div>
+    <div class="logo"><span class="logo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></span><span class="logo-title">DUBMATE</span></div>
     <div class="spinner"></div>
     <div id="status-text" class="status">Starting DubMate</div>
     <div id="detail-text" class="detail"></div>
   </div>
 
   <div id="updater-box" class="updater-box">
-    <div class="logo">DUBMATE <span id="updater-title">UPDATE</span></div>
-    <p id="updater-msg" style="font-size: 13px; color: #a1a1aa; margin-top: 8px;">Updating DubMate</p>
+    <div class="logo"><span class="logo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></span><span class="logo-title">DUBMATE</span></div>
+    <h1 id="updater-title" class="error-title">Updating DubMate</h1>
+    <p id="updater-msg" style="font-size: 14px; color: var(--foreground-muted); margin-top: 8px;">Updating DubMate</p>
 
     <div id="builder-stages" class="stages" style="display: none;">
       <div class="stage" data-stage="preparing"><span class="stage-dot"></span>Prepare</div>
@@ -311,8 +358,8 @@
   </div>
 
   <div id="error-box" class="error-box">
-    <div class="logo">DUBMATE</div>
-    <div class="error-icon">⚠️</div>
+    <div class="logo"><span class="logo-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></span><span class="logo-title">DUBMATE</span></div>
+    <svg class="error-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
     <h3 id="error-title" class="error-title">DubMate didn't start</h3>
     <p id="error-msg" class="error-msg">Click Try again, or open DubMate in your browser.</p>
     <details id="error-details" class="tech-details error-details" style="display: none;">
