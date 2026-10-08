@@ -94,6 +94,8 @@ jobs:
             VERSION \
             requirements.txt \
             requirements_builder.txt \
+            LICENSE \
+            THIRD_PARTY_NOTICES.md \
             -x '*__pycache__*'
 
       - name: Extract release notes for this version
