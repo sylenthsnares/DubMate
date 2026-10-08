@@ -309,6 +309,26 @@ The label is in the body font. The green dot and the inline `borderColor` writes
   - the deck has exactly one `.btn-primary` (Continue).
 - Dev measurement: rerun `dm_pw/pbfix_perf.js` and the screenshot script (below). Select, drag and editor open must stay within PR #23's medians plus 20%. At least 10 rows must be fully visible at 1440x900 with one selected.
 
+**Group C, measured.** `dm_pw/pbfix_perf.js`, 40 lines at 1440x900, median of 5 fresh pages, small fixture. The machine ran 2 to 3 times slower than for PR #23's table that day, so "before" is this branch just before group C, on the same engine and the same afternoon.
+
+| Metric (ms) | PR #23 | before C | after C |
+|---|---:|---:|---:|
+| Select a line: click handler | 1.2 | 2.7 | 1.4 |
+| Select a line: click to next frame | 10.0 | 22.3 | 17.6 |
+| Keystroke: `input` handler | 0.1 | 0.2 | 0.3 |
+| Text commit: `change` handler | 0.6 | 1.4 | 1.6 |
+| Drag: `pointermove` handler, median / max | 0.0 / 0.1 | 0.0 / 0.4 | 0.0 / 0.2 |
+| Drop: `pointerup` handler | 13.7 | 37.4 | 20.2 |
+| Editor open: first blocks / waveform | 39 / 69 | 124 / 288 | 63 / 105 |
+| Long tasks during select and drag | 0 | 0 | 0 |
+
+- Fully visible lines with one selected: 11 at 1440x900, 6 at 1280x720, 5 at 960x680 (before: 2, 1 and 1). Rows are 39px.
+- What it took to keep selection cheap: a selected row changes layout (its text grows, its actions show), where a card's selection only repainted.
+  - The list stacks rows in block flow. In a flex column, any change in one row measured all 40 again (3.4 ms against 1.3 ms).
+  - The selected text grows with CSS `field-sizing: content`. Engines without it (Safari today) measure the textarea instead.
+  - The selected row scrolls into view in the next frame, so the click doesn't wait for a layout.
+  - Tabindex and focus change before the classes: a focused row's tabindex set after them made the browser recalculate styles at once (about 2 ms).
+
 **D. Never lose work, and Pack ready** (40g, 40i, CHANGELOG).
 
 - Files:
@@ -381,6 +401,12 @@ Every group runs `python tests/run_all_tests.py`.
 16. **Processing copy:** messages use the body font; mono is only for percentages and file sizes. The error title names the failed stage.
 17. **Characters without lines** aren't kept across a reload; only lines are stored.
 18. **Failures before the engine runs** (built in group B): a failed subtitle import marks the "Write out the lines" row, since the lines come from the subtitles. A refused `/process` (for example an ended session) marks the first engine row under the headline "Processing didn't start". The upload row reads "Upload the video" and its headline "Uploading the video". In the error state the sub-line and the bar hide, so the message shows only in the red row. On windows under 780px tall the processing card tightens so Cancel stays on screen at 1280x720 and 960x680.
+19. **The Lines column's details** (built in group C):
+    - Before any selection the first row takes Tab, so the list is reachable from the keyboard.
+    - Rows at rest show the character as a name; the select's field shows on hover and on the selected row.
+    - Below 1180px wide the select narrows to 112px, and the selected row puts its actions and times under the text, so the text keeps its width.
+    - With no lines the column is a note, not an empty list (`role="list"` comes off).
+    - Start and End, the buttons and their keys, act only on the selected line, and update its row in place. Transcribe's toast says the same "Select a line first".
 
 ## Hands-on checks for the owner
 
