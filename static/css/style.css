@@ -2587,6 +2587,17 @@ body.resizing .resize-grip-pill {
   opacity: 0.45;
 }
 
+/* Recording focus: counting in or recording, all but the record button, the picture, the
+   line and the waveform is inert (booth.js setRecordState) and dimmed. The waveform shows
+   the live trace undimmed, but can't be dragged. */
+body.is-taking [inert]:not(.waveform-canvas-box) {
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+body.is-taking #view-booth .waveform-canvas-box {
+  pointer-events: none;
+}
+
 .nudge-label {
   display: flex;
   align-items: center;
@@ -5545,5 +5556,8 @@ span.voice-chip {
   }
   .reel-pulse-ring {
     opacity: 0.4;
+  }
+  body.is-taking [inert] {
+    transition: none;
   }
 }
