@@ -6,7 +6,7 @@ This revision follows a claim audit of the first draft. It lists all 13 unstyled
 
 **Owner decisions that bind this PR** (plan section 6): `style.css` is the source of truth for the look. DESIGN.md is rewritten from it, and the 8 and 9px mono sizes go. Every surface is an Operate surface, so this is refinement. The palette, fonts, wood and brass, and layouts all stay the same.
 
-**What the bug-fix PR does instead.** The owner's routing (plan section 6) puts every host-only server guard (`set_status`, `set_dialogue_presence`, `POST /export`, `/export/stems`, `/export/project_zip`) and clap noise rejection (step 9c) in the bug-fix PR `fix/first-test-findings`. U1 does none of them and doesn't touch `dubmate/room_ws.py` or `dubmate/rooms_api.py`. U1 hides "Start recording" from guests on screen; the server refusal for a guest's `set_status` comes with that PR.
+**What the bug-fix PR does instead.** The owner's routing (plan section 6) puts every host-only server guard (`set_status`, `set_dialogue_presence`, `POST /export`, `/export/stems`, `/export/project_zip`) and clap noise rejection (step 9c) in the bug-fix PR `fix/first-test-findings`. U1 does none of them and doesn't touch `dubmate/room_ws.py` or `dubmate/rooms_api.py`. U1 hides "Start recording" from guests on screen; the server refusal for a guest's `set_status` came with that PR (#19, now merged into this branch).
 
 U1 still keeps away from the takes button, the Audio settings mic-sync and room-check logic, and the join handoff. Those surfaces only change here through shared classes.
 
@@ -46,7 +46,7 @@ Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new 
 ## Data shapes, on-disk layout, API and WebSocket
 
 - **No on-disk change.** No config, room state, take, pack or localStorage key is added or changed.
-- **No server change, no new route and no new socket message type.** Today `assign_role` is the one sender of a refusal; the bug-fix PR's `set_status` guard will be a second.
+- **No server change, no new route and no new socket message type.** `assign_role` was the one sender of a refusal; the bug-fix PR (#19) added `set_status`, `set_dialogue_presence` and `set_mix_balance` ("Only the host can move the room." / "Only the host can change the mix."). They all reach the same handler, so each refusal is one error toast.
 - **The client starts handling two shapes the server already sends:**
   - **Refused message:** `{"type": "error", "payload": {"message": …}}`. The handler toasts the message with the error tone, then reads `GET /api/rooms/{room_id}`, which returns the state object on its own (`rooms_api.py:79-82`). It wraps the result as `{ state }` for `applyIncomingState` and re-renders, the same way the `'*'` handler does after a broadcast.
   - **Connect-time error:** `{"type": "error", "message": "Room not found"}`, with a top-level `message` and no `payload`. The server sends it only when the room id isn't in `ROOMS`, then closes. It gets no toast and no GET. `room_socket.js` marks the room as gone, so `onclose` goes straight to `'failed'` instead of retrying. It matches on the missing `payload`, not on the text.
@@ -61,7 +61,7 @@ Copy follows PRODUCT.md: plain, outcome-first, no implementation names. The new 
     - Each group gets a `view` field (`landing`, `lobby`, `booth`, `screening`, `editor`, `any`) **alongside** the existing `page` field, which `test_shortcut_sheet.js` filters on.
     - `initShortcutSheet` takes `getView()`, and the sheet's content is rebuilt each time it opens.
 - **Who counts as host on the client.** Casting dropdowns and "Start recording" use `isHost({ allowDummy: true })`, which matches the server's `host_id == "host"` rule.
-- **Mixed versions:** an old page still shows guests "Start recording". Until the bug-fix PR's `set_status` guard lands, pressing it there moves the room as it does today.
+- **Mixed versions:** an old page still shows guests "Start recording". Since the bug-fix PR (#19), the server refuses the `set_status` it sends; the guest gets the refusal toast and only their own view moves to the booth.
 
 ## Migration of existing data
 
