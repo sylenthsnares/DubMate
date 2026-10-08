@@ -152,6 +152,15 @@ pub(crate) fn kill_sidecars(app: &tauri::AppHandle) {
     }
 }
 
+/// Stops the one-time move if it is running; only when the window closes. An update or a
+/// restart waits for it instead (start_sidecars holds its lock throughout).
+pub(crate) fn stop_file_move(app: &tauri::AppHandle) {
+    let target = app.state::<SharedState>().0.lock().unwrap().move_pid.take();
+    if let Some((pid, image)) = target {
+        kill_process(pid, image.as_deref());
+    }
+}
+
 /// Terminates `pid`, with its children, if it is still the executable named `image`.
 pub(crate) fn kill_process(pid: u32, image: Option<&str>) {
     #[cfg(target_os = "windows")]
@@ -276,27 +285,52 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
 /// What a 1.x install kept in its install folder (rooms, takes, Pack Builder) moves to the
 /// DubMate data folder once, before the engine opens any of it. Across drives that copies
 /// gigabytes, so there is no time limit. Whatever fails stays where it was and keeps
-/// working (`resolve_user_item` falls back to it), so the outcome only goes to the log.
+/// working (`resolve_user_item` falls back to it); the log says why and the splash says
+/// the files stayed (`files-not-moved`).
 async fn move_legacy_files(app: &tauri::AppHandle, py_exe: &Path, app_dir: &Path) {
     if !legacy_items_present(app) {
         return;
     }
+    let set_move = |moving: bool, failed: bool| {
+        let state = app.state::<SharedState>();
+        state.0.lock().unwrap().file_move = crate::state::FileMove { moving, failed };
+    };
+    set_move(true, false);
     let _ = app.emit("startup-progress", "Moving your DubMate files to their new folder");
     // Tells the splash not to count this against the engine's start.
     let _ = app.emit("moving-files", true);
     let mut cmd = python_command(app, py_exe, app_dir);
-    cmd.args(["-u", "-m", "dubmate.data_home", "--migrate", "--copy", "--packbuilder"]);
-    match tauri::async_runtime::spawn_blocking(move || cmd.output()).await {
-        Ok(Ok(out)) => {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                println!("[Python] {}", line);
+    cmd.args(["-u", "-m", "dubmate.data_home", "--migrate", "--copy", "--packbuilder"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut failed = true;
+    match cmd.spawn() {
+        Ok(child) => {
+            // Closing the window stops the copy too (stop_file_move). A stopped copy leaves
+            // the source whole; the next start clears it and copies again.
+            let image = py_exe.file_name().map(|n| n.to_string_lossy().to_string());
+            app.state::<SharedState>().0.lock().unwrap().move_pid = Some((child.id(), image));
+            match tauri::async_runtime::spawn_blocking(move || child.wait_with_output()).await {
+                Ok(Ok(out)) => {
+                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                        println!("[Python] {}", line);
+                    }
+                    for line in String::from_utf8_lossy(&out.stderr).lines() {
+                        eprintln!("[Python ERR] {}", line);
+                    }
+                    // Exit code 1: something stayed in the old folder (dubmate/data_home.py).
+                    failed = !out.status.success();
+                }
+                Ok(Err(e)) => eprintln!("[DubMate] The move to the data folder stopped: {}", e),
+                Err(e) => eprintln!("[DubMate] The move to the data folder stopped: {}", e),
             }
-            for line in String::from_utf8_lossy(&out.stderr).lines() {
-                eprintln!("[Python ERR] {}", line);
-            }
+            app.state::<SharedState>().0.lock().unwrap().move_pid = None;
         }
-        Ok(Err(e)) => eprintln!("[DubMate] Could not run the move to the data folder: {}", e),
-        Err(e) => eprintln!("[DubMate] The move to the data folder stopped: {}", e),
+        Err(e) => eprintln!("[DubMate] Could not run the move to the data folder: {}", e),
+    }
+    set_move(false, failed);
+    if failed {
+        let _ = app.emit("files-not-moved", ());
     }
     let _ = app.emit("moving-files", false);
 }

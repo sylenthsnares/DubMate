@@ -155,7 +155,9 @@ jobs:
       # installers are on it. The tag is created at this commit on publish.
       # A manual rebuild of an already published version (is_new false) stays
       # published, as before: making it a draft would hide the live release
-      # for the length of the build, or for good if an installer job failed.
+      # for the length of the build, or for good if an installer job failed. It
+      # keeps GitHub's own choice of latest ("legacy": newest by date and version)
+      # instead of losing it until the publish job runs.
       - name: Create the draft GitHub Release
         id: release
         if: (steps.check.outputs.is_new == 'true' || github.event_name == 'workflow_dispatch') && !inputs.build_only
@@ -166,7 +168,7 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: app-bundle-v${{ steps.ver.outputs.VERSION }}.zip
           draft: ${{ steps.check.outputs.is_new == 'true' }}
-          make_latest: false
+          make_latest: ${{ steps.check.outputs.is_new == 'true' && 'false' || 'legacy' }}
           target_commitish: ${{ github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 

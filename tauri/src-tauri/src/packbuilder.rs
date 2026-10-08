@@ -779,7 +779,19 @@ fn prepare_install(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf)
     let app_dir = get_app_install_dir(app);
     let target = resolve_user_item(app, AI_PACKAGES_DIR);
     // Creates the data folder on a first install.
-    crate::updater::ensure_writable(target.parent().unwrap_or(&target))?;
+    let folder = target.parent().unwrap_or(&target);
+    crate::updater::probe_writable(folder).map_err(|e| {
+        format!(
+            "DubMate can't write to its data folder:
+{}
+
+{}
+
+Check that your account can write to it and that the drive has free space.",
+            folder.display(),
+            e
+        )
+    })?;
 
     let requirements = app_dir.join("requirements_builder.txt");
     if !requirements.is_file() {

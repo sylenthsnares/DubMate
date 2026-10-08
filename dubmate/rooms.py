@@ -719,6 +719,12 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         raw_takes = data.get("takes") or {}
         room.status = data.get("status", "lobby")
         room.exported_video_path = data.get("exported_video_path")
+        if room.exported_video_path and not os.path.exists(room.exported_video_path):
+            # Saved before 2.0 moved the data folder out of the install folder: the dub
+            # moved with it, under the same name.
+            moved = room.export_out_path("16:9")
+            if os.path.isfile(moved):
+                room.exported_video_path = moved
         last_active = data.get("last_active_at")
         room.last_active_at = float(last_active) if isinstance(last_active, (int, float)) else file_mtime
         room.creator_id = data.get("creator_id") or host_id

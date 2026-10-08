@@ -85,8 +85,11 @@ def get_cache_dir() -> str:
 
 # A 1.x desktop app that took the 2.0 update in-app has a 1.x launcher, which never runs
 # the launcher's move. Rename (never copy) the old install folder's data here, before
-# anything opens it; Pack Builder stays where the old launcher looks for it.
-if data_home.is_packaged(BASE_DIR):
+# anything opens it; Pack Builder stays where the old launcher looks for it. Only in the
+# engine itself (app.py): a helper process such as speaker detection imports this too,
+# and must never move the folder out from under the running engine.
+_RUNNING_SCRIPT = getattr(sys.modules.get("__main__"), "__file__", None) or ""
+if data_home.is_packaged(BASE_DIR) and os.path.basename(_RUNNING_SCRIPT).lower() == "app.py":
     try:
         data_home.migrate(allow_copy=False, include_packbuilder=False, base_dir=BASE_DIR)
     except Exception as _ex:  # never stop the engine starting

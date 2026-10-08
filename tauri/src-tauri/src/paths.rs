@@ -390,12 +390,37 @@ fn first_existing(places: &[PathBuf]) -> PathBuf {
         .clone()
 }
 
-/// True when something is still where 1.x kept it and nothing has replaced it yet, i.e.
-/// when the one-time move has work to do.
+/// What the move left undone, written by `migrate` in dubmate/data_home.py (MOVE_STATUS):
+/// `{item: {"status": "kept"}}` for an item DubMate keeps where it is on purpose (a chosen
+/// cache folder, or a chosen folder inside the old one), `{item: {"status": "failed",
+/// "tries": n}}` after a failed copy.
+const MOVE_STATUS_FILE: &str = ".move-status.json";
+/// Failed copies before the launcher stops trying (MOVE_TRIES in data_home.py). Each one
+/// can copy gigabytes before it fails.
+const MOVE_TRIES: u64 = 2;
+
+/// True when the move shouldn't run for `name` again: it is kept on purpose, or it has
+/// failed `MOVE_TRIES` times. The engine still uses the old place (the existence rule).
+fn move_given_up(new_root: &Path, name: &str) -> bool {
+    let Ok(raw) = std::fs::read_to_string(new_root.join(MOVE_STATUS_FILE)) else {
+        return false;
+    };
+    let Ok(status) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    match status[name]["status"].as_str() {
+        Some("kept") => true,
+        Some("failed") => status[name]["tries"].as_u64().unwrap_or(0) >= MOVE_TRIES,
+        _ => false,
+    }
+}
+
+/// True when something is still where 1.x kept it, nothing has replaced it yet and the
+/// move hasn't given up on it, i.e. when the one-time move has work to do.
 fn has_items_to_move(new_root: &Path, exe_dir: &Path, app_dir: &Path) -> bool {
     USER_ITEMS.iter().any(|name| {
         let places = item_places(name, new_root, exe_dir, app_dir);
-        first_existing(&places) != places[0]
+        first_existing(&places) != places[0] && !move_given_up(new_root, name)
     })
 }
 
@@ -564,6 +589,37 @@ mod tests {
             std::fs::rename(exe_dir.join(name), root.join(name)).unwrap();
         }
         assert!(!has_items_to_move(&root, &exe_dir, &app_dir), "nothing left to move");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn data_kept_on_purpose_or_failing_twice_is_not_moved_on_every_start() {
+        let base = scratch("status");
+        let inst = base.join("DubMate Studio");
+        let (exe_dir, app_dir) = (inst.clone(), inst.join("resources"));
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::create_dir_all(inst.join(DATA_DIR).join("rooms")).unwrap();
+        let root = base.join("Local").join("DubMate");
+        std::fs::create_dir_all(&root).unwrap();
+        let status = |json: &str| std::fs::write(root.join(MOVE_STATUS_FILE), json).unwrap();
+
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir));
+        // The export folder the user chose is inside the old data folder: it stays.
+        status(r#"{"data": {"status": "kept"}}"#);
+        assert!(!has_items_to_move(&root, &exe_dir, &app_dir), "kept: never again");
+        // The data folder still is where the engine looks.
+        assert_eq!(first_existing(&item_places(DATA_DIR, &root, &exe_dir, &app_dir)), inst.join(DATA_DIR));
+
+        status(r#"{"data": {"status": "failed", "tries": 1}}"#);
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir), "one failed copy: try once more");
+        status(r#"{"data": {"status": "failed", "tries": 2}}"#);
+        assert!(!has_items_to_move(&root, &exe_dir, &app_dir), "failed twice: stop");
+
+        // Another item's status doesn't hold this one back, and a broken file is ignored.
+        status(r#"{"ai-packages": {"status": "kept"}}"#);
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir));
+        status("not json");
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir));
         let _ = std::fs::remove_dir_all(&base);
     }
 

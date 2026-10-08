@@ -31,7 +31,12 @@ import sys
 APP_FOLDER = "DubMate"
 ITEMS = ("data", "ai-packages", "packbuilder.optin")
 PACK_BUILDER_ITEMS = ("ai-packages", "packbuilder.optin")
-INSTALL_COMPLETE = ".install-complete"
+# What the launcher's move left undone, so it doesn't redo it on every start:
+# {item: {"status": "kept"}} when DubMate keeps the item where it is on purpose,
+# {item: {"status": "failed", "tries": n}} after a failed copy. The launcher
+# (paths.rs) skips a kept item, and a failed one once it has failed MOVE_TRIES times.
+MOVE_STATUS = ".move-status.json"
+MOVE_TRIES = 2
 
 # The folder holding app.py: <install root>/resources in the desktop app, the repo otherwise.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,6 +168,45 @@ def _keep_data_reason(old: str, env, home):
     return None
 
 
+def _read_status(root: str) -> dict:
+    try:
+        with open(os.path.join(root, MOVE_STATUS), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_status(root: str, status: dict, log) -> None:
+    path = os.path.join(root, MOVE_STATUS)
+    try:
+        if not status:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        os.makedirs(root, exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(status, f)
+        os.replace(path + ".tmp", path)
+    except OSError as ex:
+        log(f"Could not save what is left to move in {path}: {ex.strerror or ex}")
+
+
+def _gb(size: int) -> str:
+    return f"{size / 1024 ** 3:.1f} GB"
+
+
+def _check_free_space(old: str, new: str) -> None:
+    """Fails before copying when the new drive can't hold the copy."""
+    needed = sum(_sizes(old).values())
+    try:
+        free = shutil.disk_usage(os.path.dirname(new)).free
+    except OSError:
+        return  # unknown: let the copy try
+    if free < needed + 100 * 1024 ** 2:
+        raise OSError(f"there isn't enough free space ({_gb(needed)} needed, {_gb(free)} free)")
+
+
 def _is_cross_drive(ex: OSError) -> bool:
     return getattr(ex, "winerror", None) == 17 or ex.errno == errno.EXDEV
 
@@ -202,6 +246,7 @@ def _move(item, old, new, allow_copy, log) -> dict:
             if not allow_copy:
                 raise OSError("it's on another drive") from ex
             _remove(partial)  # only ever our own copy from an earlier attempt
+            _check_free_space(old, new)
             if os.path.isdir(old):
                 shutil.copytree(old, partial, copy_function=shutil.copy2)
             else:
@@ -243,10 +288,14 @@ def migrate(allow_copy: bool, include_packbuilder: bool, log=_log, *, base_dir: 
     if not is_packaged(base_dir):
         return []
     root = root or user_data_root(env=env, home=home)
+    status = _read_status(root)
+    before = json.dumps(status, sort_keys=True)
     results = []
     for item in ITEMS:
         if item in PACK_BUILDER_ITEMS and not include_packbuilder:
             continue
+        last = status.pop(item, None)
+        last = last if isinstance(last, dict) else {}
         old = _legacy(item, base_dir, home)
         if old is None:
             continue
@@ -257,37 +306,41 @@ def migrate(allow_copy: bool, include_packbuilder: bool, log=_log, *, base_dir: 
                 if reason:
                     log(f"Could not move {item} to {new}: {reason}. DubMate keeps using {old}.")
                 results.append({"item": item, "status": "kept", "from": old, "to": new})
+                status[item] = {"status": "kept"}
                 continue
         if _has_content(new):
             log(f"Old {item} folder left at {old}; DubMate uses {new}")
             results.append({"item": item, "status": "left", "from": old, "to": new})
             continue
-        results.append(_move(item, old, new, allow_copy, log))
+        result = _move(item, old, new, allow_copy, log)
+        results.append(result)
+        if result["status"] == "failed":
+            # Only the launcher's copy counts as a try; the engine's rename-only check doesn't.
+            tries = last.get("tries", 0) if last.get("status") == "failed" else 0
+            if allow_copy:
+                tries += 1
+            if tries:
+                status[item] = {"status": "failed", "tries": tries}
+    if json.dumps(status, sort_keys=True) != before:
+        _write_status(root, status, log)
     return results
 
 
-def locations() -> dict:
-    """Where this computer's DubMate data lives, for the About panel."""
-    import pack_loader  # lazy: pack_loader imports this module
+def left_behind(in_use, *, base_dir: str = BASE_DIR, root=None, env=None, home=None) -> list:
+    """Old 1.x folders still on disk that DubMate no longer uses (a copy whose source
+    couldn't be removed, or an old folder beside a newer one), for About. `in_use`: the
+    folders DubMate uses now."""
+    if not is_packaged(base_dir):
+        return []
+    def key(p):
+        return os.path.normcase(os.path.normpath(p))
 
-    ai_dir = resolve("ai-packages")
-    left_behind = []
-    if is_packaged():
-        for item, paths in legacy_locations(install_root(), BASE_DIR).items():
-            in_use = (resolve(item), pack_loader.CACHE_DIR)
-            left_behind += [p for p in paths if os.path.exists(p) and p not in in_use]
-    return {
-        "root": data_root(),
-        "data_dir": pack_loader.CACHE_DIR,
-        "rooms_dir": os.path.join(pack_loader.CACHE_DIR, "rooms"),
-        "exports_dir": pack_loader.get_exports_dir(),
-        "ai_packages_dir": ai_dir,
-        "ai_packages_installed": os.path.isfile(os.path.join(ai_dir, INSTALL_COMPLETE)),
-        "config_file": pack_loader.get_config_path(),
-        "packs_dirs": [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.isdir(d)],
-        "packaged": is_packaged(),
-        "left_behind": left_behind,
-    }
+    used = {key(p) for p in in_use}
+    used |= {key(resolve(item, base_dir=base_dir, root=root, env=env, home=home)) for item in ITEMS}
+    return [os.path.normpath(p)
+            for paths in legacy_locations(install_root(base_dir), base_dir, home=home).values()
+            for p in paths
+            if os.path.exists(p) and key(p) not in used]
 
 
 def main(argv=None) -> int:
@@ -300,8 +353,9 @@ def main(argv=None) -> int:
     if not args.migrate:
         parser.print_help()
         return 0
-    migrate(args.copy, args.packbuilder)
-    return 0
+    results = migrate(args.copy, args.packbuilder)
+    # 1 tells the launcher's splash that something stayed in the old folder.
+    return 1 if any(r["status"] == "failed" for r in results) else 0
 
 
 if __name__ == "__main__":

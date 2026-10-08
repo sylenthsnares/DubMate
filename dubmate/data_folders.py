@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, HTTPException, Request
 
 import pack_loader
-from dubmate import common
+from dubmate import common, data_home
 
 router = APIRouter()
 
@@ -48,6 +48,9 @@ def data_folders() -> List[Dict[str, Any]]:
     if addon:
         rows.append(("addon", "Pack Builder add-on", addon, True))
     rows.append(("data", "All DubMate data", data, True))
+    # Folders an older DubMate kept in its install folder that 2.0 no longer uses.
+    old = [p for p in data_home.left_behind([path for _key, _label, path, _own in rows]) if os.path.isdir(p)]
+    rows += [(f"old-{i + 1}", "Old copy, no longer used", p, True) for i, p in enumerate(old)]
     return [{"key": key, "label": label, "path": n(path), "exists": os.path.isdir(path), "own": own}
             for key, label, path, own in rows]
 

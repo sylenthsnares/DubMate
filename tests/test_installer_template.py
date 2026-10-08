@@ -66,6 +66,11 @@ def test_upgrade_preselects_do_not_uninstall():
     downgrade = _between(page, "${ElseIf} $R0 = -1", "${Else}")
     assert not any("ReinstallPageCheck" in l for l in same + downgrade), \
         "same-version and downgrade defaults must stay as they are"
+    # The text above the choices doesn't recommend the other one (Tauri's line says
+    # "It's recommended that you uninstall the current version before installing").
+    assert upgrading[0] == ('StrCpy $R1 "An older version of DubMate is installed. '
+                            'Installing over it keeps your rooms, settings and Pack Builder."'), upgrading[0]
+    assert not any("olderOrUnknownVersionInstalled" in l for l in upgrading)
     # The radio that is checked is the one with keyboard focus.
     assert any(l.startswith("${NSD_SetFocus} $R3") for l in page), \
         "'Do not uninstall' must get the focus when it is the checked choice"
@@ -130,7 +135,7 @@ def test_uninstall_page_choice():
         "no tick-box when updating or reinstalling"
     text = "\n".join(show)
     assert 'w "Also remove Pack Builder and my DubMate data"' in text, "the tick-box label"
-    assert "StrCpy $9 \"Rooms, takes and videos saved in DubMate's own folder. Your scene packs are kept.\"" in show, \
+    assert "StrCpy $9 \"Rooms, takes, videos and settings in DubMate's own folder. Your scene packs are kept.\"" in show, \
         "the line under the tick-box"
     assert "__NSD_Label_CLASS" in text, "the second line is static text"
     assert "BM_SETCHECK" not in text, "the tick-box starts unticked"

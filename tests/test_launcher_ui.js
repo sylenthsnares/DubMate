@@ -142,6 +142,9 @@ async function boot({ tauri = true, health = false, handlers = {}, clipboard = n
   };
 }
 
+const MOVING_DETAIL = "This happens once and can take a few minutes";
+const NOT_MOVED = "Your files stayed in their old folder and still work";
+
 const UPDATE = {
   current_version: "1.1.3",
   latest_version: "1.2.0",
@@ -231,10 +234,10 @@ function deferredUpdate() {
     await t.emit("moving-files", true);
     check("it says what is happening",
       t.text("status-text") === "Moving your DubMate files to their new folder", t.text("status-text"));
-    check("and that it happens once", t.text("detail-text") === "This happens once", t.text("detail-text"));
+    check("and that it happens once", t.text("detail-text") === MOVING_DETAIL, t.text("detail-text"));
     await t.clock.advance(30 * 1000);
     check("counting from 8 s, without calling it slow",
-      t.text("detail-text") === "This happens once · 30 s", t.text("detail-text"));
+      t.text("detail-text") === `${MOVING_DETAIL} · 30 s`, t.text("detail-text"));
     check("no Restart while files move", !t.visible("btn-restart-slow"));
     await t.clock.advance(200 * 1000);
     check("no red card however long the copy takes", !t.visible("error-box") && t.visible("splash"));
@@ -246,6 +249,44 @@ function deferredUpdate() {
     check("with the usual marks", t.text("detail-text") === "Still starting · 8 s", t.text("detail-text"));
     await t.clock.advance(17 * 1000);
     check("and Restart from 25 s again", t.visible("btn-restart-slow"));
+    t.close();
+  }
+  {
+    // Rust starts the move from setup, before this page listens: the launcher asks.
+    const t = await boot({ handlers: { get_file_move: () => ({ moving: true, failed: false }) } });
+    check("a move that began before the launcher listened is shown",
+      t.text("status-text") === "Moving your DubMate files to their new folder", t.text("status-text"));
+    check("as happening once", t.text("detail-text") === MOVING_DETAIL, t.text("detail-text"));
+    await t.clock.advance(200 * 1000);
+    check("with no Restart and no red card", !t.visible("btn-restart-slow")
+      && !t.visible("error-box") && t.visible("splash"));
+    await t.emit("moving-files", false);
+    await t.clock.advance(8000);
+    check("then the usual marks", t.text("detail-text") === "Still starting · 8 s", t.text("detail-text"));
+    t.close();
+  }
+  {
+    const t = await boot({ handlers: { get_file_move: () => ({ moving: false, failed: false }) } });
+    check("no move: the splash is as usual", t.text("detail-text") === "" && t.text("status-text") !== "Moving your DubMate files to their new folder");
+    await t.clock.advance(25 * 1000);
+    check("and slow marks still apply", t.visible("btn-restart-slow"));
+    t.close();
+  }
+  {
+    const t = await boot();
+    await t.emit("moving-files", true);
+    await t.emit("files-not-moved");
+    await t.emit("moving-files", false);
+    check("a move that failed says the files still work where they were",
+      t.text("detail-text") === NOT_MOVED, t.text("detail-text"));
+    await t.clock.advance(8000);
+    check("until the start is slow", t.text("detail-text") === "Still starting · 8 s", t.text("detail-text"));
+    t.close();
+  }
+  {
+    const t = await boot({ handlers: { get_file_move: () => ({ moving: false, failed: true }) } });
+    check("a failed move before the launcher listened is noted too", t.text("detail-text") === NOT_MOVED,
+      t.text("detail-text"));
     t.close();
   }
 

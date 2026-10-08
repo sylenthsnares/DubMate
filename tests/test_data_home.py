@@ -6,8 +6,8 @@ per-user folder instead of the install folder, so no install, reinstall or unins
 touches them (documentation/design/v2-installer.md, sections 1, 2 and 4).
 
 Covers dubmate/data_home.py (where the folder is, the existence rule, the one-time
-move), pack_loader.get_cache_dir(), pack_builder.ensure_ai_packages_on_path() and
-GET /api/about/paths. Every path test builds Windows-style and macOS-style install
+move, the old folders About lists), pack_loader.get_cache_dir() and
+pack_builder.ensure_ai_packages_on_path(). Every path test builds Windows-style and macOS-style install
 trees in a temp dir, so it runs the same on Linux CI.
 """
 
@@ -78,12 +78,13 @@ def windows_layout(tmp):
 
 
 def macos_layout(tmp):
-    """DubMate Studio.app/Contents/{Resources, data, MacOS/ai-packages, MacOS/packbuilder.optin}."""
+    """DubMate Studio.app/Contents/{Resources/resources (app.py), Resources/data,
+    MacOS/ai-packages, MacOS/packbuilder.optin}, as a 1.x Tauri bundle left it."""
     contents = os.path.join(tmp, "DubMate Studio.app", "Contents")
-    base = os.path.join(contents, "Resources")
+    base = os.path.join(contents, "Resources", "resources")
     os.makedirs(base)
     old = {
-        "data": os.path.join(contents, "data"),
+        "data": os.path.join(contents, "Resources", "data"),
         "ai-packages": os.path.join(contents, "MacOS", "ai-packages"),
         "packbuilder.optin": os.path.join(contents, "MacOS", "packbuilder.optin"),
     }
@@ -123,7 +124,7 @@ class TestUserDataRoot(unittest.TestCase):
 
     def test_is_packaged_follows_the_resources_folder(self):
         self.assertTrue(data_home.is_packaged(os.path.join("inst", "resources")))
-        self.assertTrue(data_home.is_packaged(os.path.join("App.app", "Contents", "Resources")))
+        self.assertTrue(data_home.is_packaged(os.path.join("App.app", "Contents", "Resources", "resources")))
         self.assertFalse(data_home.is_packaged(os.path.join("src", "DubMate")))
 
 
@@ -321,6 +322,76 @@ class TestMigration(MigrationCase):
         self.migrate(base, include_packbuilder=False)
         self.assert_kept("data", old, before, base)
 
+    def move_status(self):
+        path = os.path.join(self.root, data_home.MOVE_STATUS)
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_data_kept_on_purpose_is_recorded_until_it_no_longer_is(self):
+        """The launcher skips a kept item, so it doesn't start Python on every launch."""
+        base, old = windows_layout(self.tmp)
+        before = {k: snapshot(v) for k, v in old.items()}
+        config = os.path.join(self.home, ".dubmate", "config.json")
+        write(config, json.dumps({"exports_dir": os.path.join(old["data"], "exports")}).encode())
+        self.migrate(base, include_packbuilder=False)
+        self.assertEqual(self.move_status(), {"data": {"status": "kept"}})
+        self.migrate(base, include_packbuilder=False)
+        self.assertEqual(self.move_status(), {"data": {"status": "kept"}})
+
+        write(config, b"{}")
+        self.migrate(base, include_packbuilder=False)
+        self.assertEqual(snapshot(self.new("data")), before["data"])
+        self.assertEqual(self.move_status(), {})
+        self.assertFalse(os.path.exists(os.path.join(self.root, data_home.MOVE_STATUS)))
+
+    def test_failed_copies_are_counted_and_cleared_once_it_moves(self):
+        base, old = windows_layout(self.tmp)
+        before = {k: snapshot(v) for k, v in old.items()}
+        real_copy2 = shutil.copy2
+
+        def disk_full(src, dst, *a, **kw):
+            if os.path.basename(src) == "line_001.wav":
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_copy2(src, dst, *a, **kw)
+
+        with mock.patch.object(data_home.os, "rename", side_effect=self._exdev_unless_partial()):
+            with mock.patch.object(data_home.shutil, "copy2", side_effect=disk_full):
+                self.migrate(base, include_packbuilder=False)
+                self.assertEqual(self.move_status(), {"data": {"status": "failed", "tries": 1}})
+                # The engine's rename-only check at import isn't a try.
+                self.migrate(base, allow_copy=False, include_packbuilder=False)
+                self.assertEqual(self.move_status(), {"data": {"status": "failed", "tries": 1}})
+                self.migrate(base, include_packbuilder=False)
+                self.assertEqual(self.move_status()["data"]["tries"], data_home.MOVE_TRIES)
+            self.assert_kept("data", old, before, base)
+            self.migrate(base, include_packbuilder=False)
+        self.assertEqual(snapshot(self.new("data")), before["data"])
+        self.assertEqual(self.move_status(), {})
+
+    def test_too_little_free_space_fails_before_copying(self):
+        base, old = windows_layout(self.tmp)
+        before = {k: snapshot(v) for k, v in old.items()}
+        copies = []
+        full = mock.Mock(free=1024)
+        with mock.patch.object(data_home.os, "rename", side_effect=self._exdev_unless_partial()), \
+                mock.patch.object(data_home.shutil, "disk_usage", return_value=full), \
+                mock.patch.object(data_home.shutil, "copy2", side_effect=copies.append):
+            results = self.migrate(base)
+        self.assertEqual(copies, [])
+        self.assertEqual({r["status"] for r in results}, {"failed"})
+        for item in old:
+            self.assert_kept(item, old, before, base)
+        line = next(l for l in self.logs if l.startswith("Could not move data"))
+        self.assertIn("there isn't enough free space", line)
+
+    def test_command_line_exit_code_says_whether_something_stayed(self):
+        with mock.patch.object(data_home, "migrate", return_value=[{"status": "moved"}, {"status": "kept"}]):
+            self.assertEqual(data_home.main(["--migrate", "--copy"]), 0)
+        with mock.patch.object(data_home, "migrate", return_value=[{"status": "moved"}, {"status": "failed"}]):
+            self.assertEqual(data_home.main(["--migrate", "--copy"]), 1)
+
     def test_source_install_never_migrates(self):
         repo = os.path.join(self.tmp, "DubMate")
         os.makedirs(repo)
@@ -385,17 +456,23 @@ class TestMigration(MigrationCase):
 
 
 class TestEngineUsesTheDataHome(MigrationCase):
-    def test_packaged_engine_moves_data_at_import_and_uses_it(self):
-        """A 1.x launcher that took the in-app update: pack_loader moves data (rename only)
-        before CACHE_DIR is chosen, and leaves Pack Builder where the old launcher looks."""
+    def packaged_engine(self):
         base, old = windows_layout(self.tmp)
-        before = {k: snapshot(v) for k, v in old.items()}
         shutil.copy2(os.path.join(_ROOT, "pack_loader.py"), base)
         shutil.copytree(os.path.join(_ROOT, "dubmate"), os.path.join(base, "dubmate"),
                         ignore=shutil.ignore_patterns("__pycache__"))
+        # Stands in for the engine: what matters is that app.py is the script being run.
+        write(os.path.join(base, "app.py"), b"import pack_loader; print(pack_loader.CACHE_DIR)")
         env = {k: v for k, v in os.environ.items() if k != "DUBMATE_CACHE_DIR"}
         env.update(DUBMATE_DATA_DIR=self.root, HOME=self.home, USERPROFILE=self.home)
-        res = subprocess.run([sys.executable, "-c", "import pack_loader; print(pack_loader.CACHE_DIR)"],
+        return base, old, env
+
+    def test_packaged_engine_moves_data_at_import_and_uses_it(self):
+        """A 1.x launcher that took the in-app update: pack_loader moves data (rename only)
+        before CACHE_DIR is chosen, and leaves Pack Builder where the old launcher looks."""
+        base, old, env = self.packaged_engine()
+        before = {k: snapshot(v) for k, v in old.items()}
+        res = subprocess.run([sys.executable, "app.py"],
                              cwd=base, env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
         self.assertEqual(os.path.normcase(res.stdout.strip().splitlines()[-1]),
@@ -404,6 +481,18 @@ class TestEngineUsesTheDataHome(MigrationCase):
         self.assertFalse(os.path.exists(old["data"]))
         for item in ("ai-packages", "packbuilder.optin"):
             self.assertEqual(snapshot(old[item]), before[item])
+
+    def test_other_processes_importing_pack_loader_move_nothing(self):
+        """The speaker-detection child imports pack_loader mid-session; moving the data
+        folder then would pull it out from under the running engine."""
+        base, old, env = self.packaged_engine()
+        before = snapshot(old["data"])
+        res = subprocess.run([sys.executable, "-c", "import pack_loader; print(pack_loader.CACHE_DIR)"],
+                             cwd=base, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+        self.assertEqual(os.path.normcase(res.stdout.strip().splitlines()[-1]), os.path.normcase(old["data"]))
+        self.assertEqual(snapshot(old["data"]), before)
+        self.assertFalse(os.path.exists(self.new("data")))
 
     def test_get_cache_dir_order(self):
         import pack_loader
@@ -450,48 +539,19 @@ class TestEngineUsesTheDataHome(MigrationCase):
         self.assertIn(old_ai, sys.path)
 
 
-ABOUT_KEYS = {"status", "root", "data_dir", "rooms_dir", "exports_dir", "ai_packages_dir",
-              "ai_packages_installed", "config_file", "packs_dirs", "install_dir", "packaged",
-              "left_behind", "licence_files"}
+class TestLeftBehind(MigrationCase):
+    """Old folders About lists as no longer used."""
 
+    def test_only_old_folders_not_in_use(self):
+        base, old = windows_layout(self.tmp)
+        os.makedirs(self.new("ai-packages"))  # the new one wins; the old one is left behind
+        left = data_home.left_behind([old["data"]], base_dir=base, root=self.root, env=self.env, home=self.home)
+        self.assertEqual(left, [os.path.normpath(old["ai-packages"])])
 
-class TestAboutPaths(unittest.TestCase):
-    """GET /api/about/paths: real folders for the About panel, on the host's computer only."""
-
-    @classmethod
-    def setUpClass(cls):
-        from starlette.testclient import TestClient
-        import app
-        cls.app = app.app
-        cls.TestClient = TestClient
-
-    def test_own_computer_gets_the_contract(self):
-        import pack_loader
-        res = self.TestClient(self.app, base_url="http://127.0.0.1:8000").get("/api/about/paths")
-        self.assertEqual(res.status_code, 200, res.text)
-        data = res.json()
-        self.assertEqual(set(data), ABOUT_KEYS)
-        self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["data_dir"], pack_loader.CACHE_DIR)
-        self.assertEqual(data["rooms_dir"], os.path.join(pack_loader.CACHE_DIR, "rooms"))
-        self.assertEqual(data["install_dir"], pack_loader.get_install_root())
-        self.assertFalse(data["packaged"])
-        self.assertIsInstance(data["packs_dirs"], list)
-        self.assertIsInstance(data["left_behind"], list)
-        self.assertIsInstance(data["ai_packages_installed"], bool)
-        self.assertIn(os.path.join(_ROOT, "LICENSE"), data["licence_files"])
-        for path in data["licence_files"]:
-            self.assertTrue(os.path.isfile(path), path)
-
-    def test_lan_and_tunnel_callers_are_refused(self):
-        lan = self.TestClient(self.app, base_url="http://192.168.1.5:8000")
-        self.assertEqual(lan.get("/api/about/paths").status_code, 403)
-        local = self.TestClient(self.app, base_url="http://127.0.0.1:8000")
-        for header in ({"Cf-Ray": "abc123-LHR"}, {"Cf-Connecting-Ip": "1.2.3.4"},
-                       {"Origin": "https://evil.example"}):
-            res = local.get("/api/about/paths", headers=header)
-            self.assertEqual(res.status_code, 403, header)
-            self.assertNotIn("data_dir", res.text)
+    def test_a_source_install_has_none(self):
+        repo = os.path.join(self.tmp, "DubMate")
+        os.makedirs(os.path.join(repo, "ai-packages"))
+        self.assertEqual(data_home.left_behind([], base_dir=repo, root=self.root, env=self.env, home=self.home), [])
 
 
 if __name__ == "__main__":

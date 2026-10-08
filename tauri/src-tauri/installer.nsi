@@ -244,7 +244,8 @@ Function PageReinstall
     !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
   ; Upgrading
   ${ElseIf} $R0 = 1
-    StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
+    ; DubMate: Tauri's line recommends uninstalling first, the choice not preselected here.
+    StrCpy $R1 "An older version of DubMate is installed. Installing over it keeps your rooms, settings and Pack Builder."
     StrCpy $R2 "$(uninstallBeforeInstalling)"
     StrCpy $R3 "$(dontUninstall)"
     !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
@@ -520,7 +521,7 @@ Function un.ConfirmShow ; Add add a `Delete app data` check box
   IntOp $5 $5 / 96
   IntOp $6 $6 / 96
   IntOp $7 $7 / 96
-  StrCpy $9 "Rooms, takes and videos saved in DubMate's own folder. Your scene packs are kept."
+  StrCpy $9 "Rooms, takes, videos and settings in DubMate's own folder. Your scene packs are kept."
   System::Call 'user32::CreateWindowEx(i r3, w "${__NSD_Label_CLASS}", w r9, i ${__NSD_Label_STYLE}, i r4, i r5, i r6, i r7, p r1, i0, i0, i0) i .s'
   Pop $8
 

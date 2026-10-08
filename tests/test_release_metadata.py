@@ -208,7 +208,10 @@ def test_bundle_creates_a_draft():
     w = step["with"]
     # A new version (or a leftover draft) is a draft; a manual rebuild of a published one stays published.
     assert w.get("draft") == "${{ steps.check.outputs.is_new == 'true' }}", f"the bundle step must create a draft: {w}"
-    assert str(w.get("make_latest")).lower() == "false", f"the draft must not become latest: {w}"
+    # A draft can't be latest; a rebuilt published release keeps GitHub's own choice
+    # ("legacy": newest by date and version), so it doesn't lose "latest" mid-build.
+    assert w.get("make_latest") == "${{ steps.check.outputs.is_new == 'true' && 'false' || 'legacy' }}", (
+        f"the draft must not become latest, and a rebuild must not drop it: {w}")
     assert w.get("target_commitish") == "${{ github.sha }}", f"the tag must point at this commit when published: {w}"
     assert step.get("id") == "release"
     assert bundle["outputs"].get("release_id") == "${{ steps.release.outputs.id }}", bundle["outputs"]
