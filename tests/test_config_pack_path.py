@@ -22,35 +22,34 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import pack_loader
 import app
-from dubmate import common, rooms
+from dubmate import common, packs_cache, rooms
 
 
 class TestConfigPackPath(unittest.TestCase):
 
     @classmethod
-    def setUpClass(cls):
-        # Reset config to clean default
-        default_dir = os.path.abspath(pack_loader.get_default_packs_dir())
-        pack_loader.save_config({"packs_dir": default_dir})
+    def _restore_config(cls):
+        pack_loader.save_config(dict(cls.orig_config))
         pack_loader.init_pack_dirs()
         pack_loader.PACK_OBJECT_CACHE.clear()
+        packs_cache.get_packs_registry(force_rescan=True)
+
+    @classmethod
+    def setUpClass(cls):
+        # The starting config points at the library under test (run_all_tests.py
+        # sets packs_dir to its temp fixture packs); every test restores it.
+        cls.orig_config = pack_loader.load_config()
+        cls._restore_config()
 
         cls.client = TestClient(app.app, base_url="http://127.0.0.1:8000")
         cls.client.__enter__()
 
     def tearDown(self):
-        default_dir = os.path.abspath(pack_loader.get_default_packs_dir())
-        pack_loader.save_config({"packs_dir": default_dir})
-        pack_loader.init_pack_dirs()
-        pack_loader.PACK_OBJECT_CACHE.clear()
+        self._restore_config()
 
     @classmethod
     def tearDownClass(cls):
-        # Restore default packs dir
-        default_dir = os.path.abspath(pack_loader.get_default_packs_dir())
-        pack_loader.save_config({"packs_dir": default_dir})
-        pack_loader.init_pack_dirs()
-        pack_loader.PACK_OBJECT_CACHE.clear()
+        cls._restore_config()
         cls.client.__exit__(None, None, None)
 
     def test_01_get_config_returns_active_directory(self):
@@ -81,12 +80,11 @@ class TestConfigPackPath(unittest.TestCase):
 
     def test_03_custom_packs_folder_persistence_and_scan(self):
         """Verify setting a custom packs folder persists to disk and indexes packs in that folder."""
+        packs = pack_loader.get_all_packs()
+        self.assertGreater(len(packs), 0, "Expected at least one fixture pack")
+        source_pack = next(iter(packs.values())).folder
         temp_packs_base = tempfile.mkdtemp(prefix="dubmate_test_custom_packs_")
-        source_pack = os.path.join(pack_loader.BASE_DIR, "Packs", "Deku_vs_Todoroki")
-        target_pack = os.path.join(temp_packs_base, "Deku_vs_Todoroki")
-
-        if os.path.exists(source_pack):
-            shutil.copytree(source_pack, target_pack)
+        shutil.copytree(source_pack, os.path.join(temp_packs_base, os.path.basename(source_pack)))
 
         try:
             # POST to /api/config
