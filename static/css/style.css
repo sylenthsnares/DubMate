@@ -1180,6 +1180,44 @@ body::after {
   margin: 20px 0;
 }
 
+/* ShadCN Segmented Tab Pills */
+.tab-pill-group {
+  display: flex;
+  padding: 4px;
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  gap: 4px;
+}
+
+.tab-pill {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--foreground-muted);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.tab-pill:hover {
+  color: var(--foreground);
+}
+.tab-pill.active {
+  background: var(--secondary);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-wood);
+}
+
 /* Buttons (ShadCN Variants with Vintage Hardware Tactility) */
 .btn {
   display: inline-flex;

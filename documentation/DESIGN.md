@@ -137,6 +137,12 @@ A warm darkroom palette: espresso and walnut surfaces, ivory text, brass trim, a
 - **Pilot Red** (#dc2626, `--accent-red`): the recording lamp and the record button. **Bright Red** (#ef4444, `--accent-red-bright`) and **Soft Red** (#fca5a5, `--accent-red-soft`) are for error text on dark surfaces, where pilot red is too dark to read.
 - **Take Green** (#16a34a, `--accent-teal`): a take is saved, a check passed. **Light Green** (#4ade80), **Bright Green** (#22c55e) and **Deep Green** (#15803d) are its text, meter and hover shades.
 
+### Person colours
+- Eight data colours, one per person in a room: **Coral** #f08a6c, **Lime** #b5cf5a, **Mint** #6fd3a8, **Cornflower** #7d9cf0, **Orchid** #d987d9, **Pink** #ec4899, **Cyan** #06b6d4, **Blush** #e9a3b8.
+- They are data, not tokens: set inline from the one list in `static/js/identity.js`, which the server reads too. The room gives each person a hue nobody else there has.
+- None is the record red, the take green or the amber (the closest, Coral, is 16.9 ΔE from amber), and the closest pair is 15.3 ΔE.
+- The person's initial always sits on the colour, in espresso (at least 5.4:1), because some pairs look alike to colour-blind eyes. Never a colour dot on its own.
+
 ### Neutral
 - **Espresso** (#12100e, `--background`): the page canvas, with faint warm radial washes and a foam-tile pattern. **Espresso Deep** (#0c0a09, `--background-darker`) for the darkest wells.
 - **Walnut** (#1a1714, `--card`): panels, cards and dialogs. **Walnut Header** (#201c18, `--card-header`) for section heads, **Walnut Popover** (#1f1b17, `--popover`) for menus.
@@ -220,6 +226,8 @@ Rounded rectangles on the ShadCN scale: 6px (`--radius-sm`) for small buttons, t
 - **Style:** 40px high, input background (#15120f), 1px input border, 8px radius, 14px text.
 - **Focus:** the border turns amber with a 2px `--ring` glow (brass at 40%).
 
+### Segmented Tabs
+- **`.tab-pill-group`:** an input-coloured track with 4px padding. The active pill is walnut control with a wood border and the small shadow. Used for the premiere's Mix presets.
 
 ### Toasts
 - Walnut control background, wood border, 8px radius, 13px 600 text and a slight backdrop blur.
