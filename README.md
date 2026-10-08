@@ -30,7 +30,7 @@ Dub anime and film scenes with friends. Pick a scene, cast the characters, recor
 - [🧪 Automated Testing & QA](#-automated-testing--qa)
 - [📝 Notes](#-notes)
 - [📜 Licensing](#-licensing)
-- [⚖️ Fair Use & Media Disclaimer](#️-fair-use--media-disclaimer)
+- [⚖️ Your Content](#️-your-content)
 
 ---
 
@@ -357,20 +357,12 @@ Common pitfalls when working on the desktop app and room registry:
 
 DubMate is open-source software licensed under the **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
 
-Speaker detection models (downloaded on first use, not bundled):
-
-- pyannote segmentation-3.0, ONNX export: MIT (CNRS). Its LICENSE file is saved next to the model.
-- 3D-Speaker CAM++ speaker embedding (`campplus_sv_zh_en_16k-common_advanced`): Apache-2.0.
-- sherpa-onnx (the runtime that uses them, installed with the Pack Builder): Apache-2.0.
-
-Bundled with the desktop app:
-
-- DeepFilterNet 0.5.6 (`deep-filter`, the official standalone binary, pinned by SHA-256): MIT OR Apache-2.0. It cleans background noise from takes. Its speech model is built into the binary, so this one model ships with the app instead of downloading on first use.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): the projects DubMate is built on, the models it downloads and their licences.
+- [PRIVACY.md](PRIVACY.md): what goes online, where your files are and how to delete them.
+- [SECURITY.md](SECURITY.md): how to report a security problem privately.
 
 ---
 
-## ⚖️ Fair Use & Media Disclaimer
+## ⚖️ Your Content
 
-All anime video clips, character voice tracks, background music, sound effects, and visual assets included in third-party scene packs remain the sole intellectual property of their respective creators, animation studios, and copyright holders.
-
-DubMate is an open-source voice-acting, educational, and accessibility practice tool designed for transformative dubbing practice, commentary, parody, and vocal training under **Fair Use** principles (17 U.S.C. § 107). DubMate does not sell, license, or claim ownership over any third-party media assets.
+You need the rights to the videos you import, dub and share. Downloading from YouTube and similar sites can be against their terms. This isn't legal advice; see [Your content](PRIVACY.md#your-content) in the privacy notice.
