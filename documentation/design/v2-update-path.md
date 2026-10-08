@@ -174,6 +174,7 @@ In `dubmate/rooms.py` `load_room_folder` / `_migrate_v1_takes` and `audio_proces
 9. A v1 take is placed only when the pack provably didn't change after it was recorded (mtimes). Otherwise it is kept aside in `unplaced_v1_takes`, with no UI yet.
 10. The project manifest gains `master.voice_effects: false` when dry, and keeps `"version": "2.3"`.
 11. The `allow-open-download-page` permission is also granted to the launcher capability.
+12. CHANGELOG (G4): `origin/main` (PR #27) was merged in first, because it adds entries right after "Easier to Read", which this PR rewords. New Changed entries go after "Older Rooms Keep Their Sound" and "Voice Effects on Older Desktop Installs", not at the end of Changed, because ui/v2-join-flow appends there. "Reconnecting" keeps "960px wide": the line above it is changed by ui/v2-join-flow, so rewording it would conflict. `git merge-tree` against both branches merges CHANGELOG.md cleanly.
 
 ## Hands-on checks
 
