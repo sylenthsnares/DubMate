@@ -368,7 +368,7 @@ try {
     // Search by character name "Todoroki"
     app.handlePackSearch("Todoroki");
     const cardsTodoroki = dom.window.document.querySelectorAll(".pack-card");
-    if (cardsTodoroki.length === 1 && app.selectedPackId === "Deku_vs_Todoroki") {
+    if (cardsTodoroki.length === 1 && cardsTodoroki[0].dataset.packId === "Deku_vs_Todoroki" && app.selectedPackId === null) {
       console.log("PASS: Searching 'Todoroki' correctly filtered to 1 pack!");
     } else {
       console.error("FAIL: Search 'Todoroki' expected 1 card, got:", cardsTodoroki.length);
@@ -701,10 +701,10 @@ try {
       }
       if (fetches.length !== 1 || fetches[0] !== "/api/rooms/R") fail("did not reload the room", fetches);
       if (JSON.stringify(app.roomState.role_assignments.Deku) !== '["mika"]') fail("the refused casting stayed", app.roomState.role_assignments);
-      const dot = row().querySelector(".actor-color-dot");
+      const avatar = row().querySelector(".cast-avatar-slot .avatar");
       const actor = row().querySelector(".cast-actor-name");
-      if (row().querySelector(".cast-select") || !actor || actor.textContent !== "Mika" || dot.title !== "Mika") {
-        fail("the casting row does not show the server's assignment as text", actor && actor.textContent, dot.title);
+      if (row().querySelector(".cast-select") || !actor || actor.textContent !== "Mika" || !avatar || avatar.textContent !== "M") {
+        fail("the casting row does not show the server's assignment as text", actor && actor.textContent, avatar && avatar.textContent);
       }
 
       toasts.length = 0;

@@ -27,27 +27,7 @@ import pack_loader
 import audio_processor
 from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def find_static_dir() -> str:
-    """Finds the static assets folder across dev, bundled desktop, and installed directory structures."""
-    candidates = [
-        os.path.join(BASE_DIR, "static"),
-        os.path.join(BASE_DIR, "static", "static"),
-        BASE_DIR,
-        os.path.join(BASE_DIR, "resources", "static"),
-        os.path.join(os.path.dirname(BASE_DIR), "static"),
-        os.path.join(os.path.dirname(BASE_DIR), "static", "static"),
-        os.path.join(os.path.dirname(BASE_DIR), "resources", "static"),
-        os.path.join(os.getcwd(), "static"),
-        os.path.join(os.getcwd(), "resources", "static"),
-    ]
-    for c in candidates:
-        if os.path.isdir(c) and os.path.isfile(os.path.join(c, "index.html")):
-            return os.path.abspath(c)
-    return os.path.join(BASE_DIR, "static")
-
-STATIC_DIR = find_static_dir()
+STATIC_DIR = common.find_static_dir()
 
 try:
     os.makedirs(STATIC_DIR, exist_ok=True)

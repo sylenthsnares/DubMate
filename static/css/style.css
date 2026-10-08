@@ -160,13 +160,14 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3e3328;
 }
-/* Firefox draws no ::-webkit-scrollbar, so the sideways strips (the line chips, the cast)
-   get the same thin bar and colours there. Only there: in Chromium/WebView2 a
+/* Firefox draws no ::-webkit-scrollbar, so the strips (the line chips, the cast) and the
+   lobby's casting card get the same thin bar and colours there. Only there: in Chromium/WebView2 a
    scrollbar-width or scrollbar-color on an element switches the rules above off and
    brings back the default grey bar. */
 @supports not selector(::-webkit-scrollbar) {
   .timeline-chips-box,
   .cast-activity-list,
+  .panel-casting,
   .takes-list {
     scrollbar-width: thin;
     scrollbar-color: var(--panel-raised) var(--background-darker);
@@ -503,6 +504,19 @@ body::after {
 .room-badge:hover {
   border-color: var(--primary);
   background: var(--secondary);
+}
+/* In the lobby the pill only shows the code, as plain text: the title row's Copy invite
+   link copies, and says when the code isn't live yet. */
+.room-badge.is-code-only,
+.room-badge.is-code-only:hover,
+.room-badge.is-code-only.room-badge-unpublished {
+  cursor: default;
+  border: 1px solid transparent;
+  background: transparent;
+  opacity: 1;
+}
+.room-badge.is-code-only svg {
+  display: none;
 }
 
 /* Connection pill. Amber while it is connecting or trying to get the room back;
@@ -1069,6 +1083,30 @@ body::after {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--ring);
 }
+.form-input::placeholder {
+  color: var(--foreground-muted);
+}
+.form-input[aria-invalid="true"] {
+  border-color: var(--accent-red-bright);
+}
+
+/* An inline error under a field or button (ui_common.js setFieldError). */
+.field-error {
+  margin-top: var(--space-1);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-red-soft);
+}
+.field-error[hidden] {
+  display: none;
+}
+
+/* A line of help under a control. */
+.form-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
 
 .code-input {
   font-family: var(--font-mono);
@@ -1079,29 +1117,71 @@ body::after {
   text-align: center;
 }
 
-/* Color Palette Swatches */
-.color-palette {
+/* The person colour picker (identity.js): 28px swatches, each in a 40px tall hit area
+   as wide as its column (32 to 40px). The negative margin lines the first and last
+   swatch up with the card's content edge. */
+.id-picker {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.id-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(32px, 40px));
+  justify-content: space-between;
+  margin-inline: calc((28px - 40px) / 2);
+}
+.id-swatch {
+  position: relative;
+  height: 40px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  cursor: pointer;
 }
-
-.color-option {
+.id-swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.id-swatch-dot {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid transparent;
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3), var(--shadow-sm);
-  transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--primary-foreground);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  transition: transform var(--duration-fast) var(--ease-out);
 }
-.color-option:hover {
+.id-swatch:hover .id-swatch-dot {
   transform: scale(1.1);
 }
-.color-option.selected {
-  border-color: var(--white);
-  transform: scale(1.15);
-  box-shadow: 0 0 10px rgba(217, 119, 6, 0.5);
+.id-swatch input:checked + .id-swatch-dot {
+  box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--foreground);
+}
+/* Someone in the room holds it: their initial, a dark inner ring, not choosable. */
+.id-swatch:has(input:disabled) {
+  cursor: not-allowed;
+}
+.id-swatch:has(input:disabled):hover .id-swatch-dot {
+  transform: none;
+}
+.id-swatch input:disabled + .id-swatch-dot {
+  box-shadow: inset 0 0 0 2px rgba(18, 16, 14, 0.55);
+  /* Dimmed, so it doesn't read as the chosen hue (which also carries an initial). */
+  opacity: 0.45;
 }
 
 .card-divider {
@@ -1174,7 +1254,8 @@ body::after {
 .btn:focus-visible,
 .btn-big-record:focus-visible,
 .pack-card:focus-visible,
-.color-option:focus-visible,
+.id-swatch input:focus-visible + .id-swatch-dot,
+.cast-select:focus-visible,
 .chip-item:focus-visible,
 .actor-hud-char:focus-visible {
   outline: 2px solid var(--accent-brass);
@@ -1352,9 +1433,9 @@ body::after {
 
 .hero-title-accent {
   color: var(--primary);
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 50%, var(--accent-brass) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+}
+.hero-banner[hidden] {
+  display: none;
 }
 
 .hero-subtitle {
@@ -1367,13 +1448,51 @@ body::after {
 
 .landing-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 24px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
 }
 
-.panel-actor-setup {
-  padding: 20px;
+/* "You": name, colour and a friend's room. Stays in view while the scenes scroll. */
+.landing-you {
+  position: sticky;
+  top: calc(50px + var(--space-4));
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.landing-you .card-divider {
+  margin: 0;
+}
+.landing-you > .field-error {
+  margin-top: calc(-1 * var(--space-3));
+}
+.you-identity {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.you-identity .avatar {
+  margin-bottom: calc((40px - 44px) / 2);
+}
+.you-name-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A "Room code or invite link" field with its Join button (lobby.js initCodeForm). */
+.code-form-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.code-form-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+.code-form-row .btn {
+  height: 40px;
+  flex-shrink: 0;
 }
 
 /* Continue where you left off (landing, own computer only) */
@@ -1444,11 +1563,6 @@ body::after {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--accent-brass);
-}
-
-/* Pack Instant Search & Filter Bar */
-.pack-search-container {
-  margin-top: 14px;
 }
 
 .search-input-wrapper {
@@ -1543,10 +1657,140 @@ body::after {
   font-weight: 600;
 }
 
-/* Drag and Drop Pack Overlay */
+/* The scenes: a toolbar, the cards, and the chosen scene in a bar that stays at the
+   bottom of the window while the cards scroll (overflow: clip keeps it sticky). */
 .panel-pack-selector {
-  padding: 20px;
   position: relative;
+  overflow: clip;
+}
+.scenes-head {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.scenes-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+}
+.scenes-head .search-input-wrapper {
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 420px;
+  margin-left: auto;
+}
+.btn-icon {
+  width: 32px;
+  padding: 0;
+}
+
+/* The ⋯ menu: Import, Packs folder, Rescan (packs.js initSceneMenu). */
+.scene-menu {
+  position: relative;
+}
+.scene-menu-pop {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--popover);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+.scene-menu-pop[hidden] {
+  display: none;
+}
+.scene-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.scene-menu-item:hover {
+  background: var(--secondary);
+}
+.scene-menu-item:focus-visible {
+  background: var(--secondary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.scene-menu-item:disabled {
+  color: var(--foreground-dim);
+  cursor: not-allowed;
+}
+.scene-menu-item svg {
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+}
+
+.scene-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card-header);
+  border-top: 1px solid var(--border);
+}
+.scene-bar-thumb {
+  width: 64px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-wood);
+  background: var(--input);
+  color: var(--foreground-dim);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scene-bar-thumb:empty {
+  display: none;
+}
+.scene-bar-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scene-bar-text {
+  min-width: 0;
+}
+.scene-bar-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scene-bar-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.scene-bar .btn {
+  margin-left: auto;
+  min-width: 220px;
+  flex-shrink: 0;
 }
 
 .pack-dropzone {
@@ -1594,8 +1838,8 @@ body::after {
 .pack-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
 .pack-card {
@@ -1613,7 +1857,6 @@ body::after {
 .pack-card:hover {
   border-color: var(--border-wood);
   background: var(--card);
-  transform: translateY(-2px);
 }
 .pack-card.selected {
   border-color: var(--primary);
@@ -1848,21 +2091,18 @@ body::after {
 /* 2. CASTING BOARD & LOBBY                                      */
 /* ------------------------------------------------------------- */
 
-.lobby-header-card {
-  padding: 20px 24px;
-  margin-bottom: 24px;
+/* Title row, no card: the scene, its one meta line, who's here, the invite and the next step. */
+.lobby-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+  margin-bottom: var(--space-5);
 }
-
-.lobby-badge-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+.lobby-title-group {
+  min-width: 0;
 }
 
 .badge-studio {
@@ -1879,33 +2119,73 @@ body::after {
 .lobby-pack-title {
   font-size: 20px;
   font-weight: 800;
+  line-height: 1.25;
   color: var(--foreground);
-  margin-bottom: 4px;
+  overflow-wrap: anywhere;
 }
 
-.lobby-desc {
+.lobby-meta {
+  margin-top: var(--space-1);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--foreground-muted);
 }
 
 .lobby-action-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
+.lobby-action-group [hidden] {
+  display: none;
+}
+.lobby-presence:empty {
+  display: none;
+}
+.lobby-here-count {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+/* A friend's line where the host has Start recording. */
+.lobby-waiting {
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
 
+/* The casting card and the rail. Below 1100px the rail drops under the card. */
 .lobby-layout {
   display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 39vw, 560px);
+  gap: var(--space-5);
   align-items: start;
 }
 
 .panel-casting {
-  max-height: 480px;
+  /* The card grows with its rows and scrolls inside itself only when the window is too short. */
+  max-height: calc(100vh - 170px);
   overflow-y: auto;
-  scrollbar-width: thin;
+}
+
+.casting-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--card-header);
+}
+.casting-head [hidden] {
+  display: none;
+}
+.casting-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
 }
 
 .casting-table {
@@ -1918,7 +2198,7 @@ body::after {
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
   background: var(--card-header);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1928,19 +2208,48 @@ body::after {
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
+.casting-table th.casting-col-lines,
+.casting-table td.casting-col-lines {
+  text-align: right;
+  white-space: nowrap;
+}
 
 .casting-table td {
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
+  height: 52px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
 }
 .casting-table tr:hover td {
   background: rgba(244, 237, 228, 0.02);
 }
+/* The row the scene preview shows: a tint, no coloured side stripe. */
+.casting-table tr.is-selected td {
+  background: var(--secondary);
+}
+
+/* The character's name pins the preview to its row. */
+.cast-char {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.cast-char:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
 
 .cast-select {
   height: 34px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   background: var(--input);
   border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
@@ -1950,45 +2259,53 @@ body::after {
   outline: none;
   cursor: pointer;
   width: 100%;
+  max-width: 280px;
   min-width: 0;
 }
 .cast-select:focus {
   border-color: var(--primary);
 }
 
-.actor-color-dot {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.actor-color-dot.unassigned {
-  box-shadow: inset 0 0 0 1px var(--foreground-dim);
-}
-
-/* Casting rows: the character, its line count, and who voices it. */
-.char-badge-cell {
+/* Voiced by: the person's avatar (an empty ring for the original voice), then their name or the select. */
+.cast-assign-cell {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
+  min-height: 34px;
 }
-.char-badge {
+.cast-voice-body {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.avatar.avatar-empty {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--foreground-dim);
+}
+.avatar.is-offline {
+  opacity: 0.45;
+}
+.cast-actor-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
+  overflow-wrap: anywhere;
 }
-.your-role-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(204, 164, 88, 0.12);
-  color: var(--accent-brass);
-  border: 1px solid rgba(204, 164, 88, 0.3);
-  border-radius: var(--radius-sm);
+.cast-actor-name.unassigned {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+/* "I'll voice X" sits at the end of the cell; Give back right after "You". */
+.cast-claim {
+  margin-left: auto;
   white-space: nowrap;
 }
+.cast-give-back {
+  white-space: nowrap;
+}
+
 .char-line-count {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1996,152 +2313,170 @@ body::after {
   color: var(--foreground-muted);
   white-space: nowrap;
 }
-.cast-assign-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-}
-.cast-actor-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-.cast-actor-name.unassigned {
-  font-weight: 500;
+
+.casting-note {
+  padding: var(--space-3) var(--space-4);
+  font-size: 12px;
   color: var(--foreground-muted);
 }
-.casting-table tr.assigned-to-me td {
-  background: rgba(204, 164, 88, 0.05);
-}
-
-/* Guests see who runs the room instead of its controls. */
-.lobby-action-group [hidden] {
+.casting-note[hidden] {
   display: none;
 }
-.lobby-waiting {
-  font-size: 13px;
-  color: var(--foreground-muted);
-  max-width: 280px;
-}
 
-.lobby-sidebar {
+/* The rail: the scene preview, then the mic card. */
+.lobby-rail {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-}
-
-.lobby-noise-box {
-  padding: 12px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  transition: border-color var(--duration-fast);
-}
-.lobby-noise-box:hover {
-  border-color: var(--border-wood);
-}
-.lobby-noise-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-.lobby-noise-title-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.lobby-noise-icon {
-  font-size: 14px;
-}
-.lobby-noise-title {
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--foreground);
-}
-.lobby-noise-desc {
-  font-size: 12px;
-  color: var(--foreground-muted);
-  line-height: 1.4;
-  margin: 0;
-}
-
-.lobby-cast-list {
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.lobby-user-item {
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 12px 5px 5px;
-}
-.lobby-user-who {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
-.lobby-user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.user-you-tag,
-.tag-host {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-wood);
-  background: var(--secondary);
-  color: var(--foreground-muted);
-}
-.tag-host {
-  border-color: rgba(217, 119, 6, 0.35);
-  background: rgba(217, 119, 6, 0.12);
-  color: var(--primary-hover);
-}
-.cast-status-pill {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-.cast-status-pill.online {
-  color: var(--foreground);
-}
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.dot-online {
-  background: var(--accent-green-bright);
-}
-.dot-offline {
-  box-shadow: inset 0 0 0 1px var(--foreground-dim);
-}
 
-.badge-online {
+.scene-preview-poster {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  /* Shorter on short windows, so the mic card under it stays in reach. */
+  max-height: 34vh;
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+}
+.scene-preview-poster video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.scene-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+.scene-preview-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--accent-teal);
-  border-radius: var(--radius-sm);
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent-brass);
 }
+.scene-preview-text {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--foreground);
+  overflow-wrap: break-word;
+}
+.scene-preview-text:empty {
+  display: none;
+}
+.scene-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.scene-preview-actions [hidden] {
+  display: none;
+}
+.scene-preview-time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground-muted);
+}
+.scene-preview-get {
+  margin-left: auto;
+}
+
+/* Check your mic: one step at a time, then one line. */
+.mic-card {
+  padding: var(--space-4);
+}
+.mic-card-steps,
+.mic-card-step,
+.mic-card-devices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.mic-card [hidden] {
+  display: none;
+}
+.mic-card-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.mic-card-lede {
+  margin-top: calc(-1 * var(--space-2));
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+.mic-card-devices .form-label {
+  margin-bottom: calc(-1 * var(--space-2));
+}
+.mic-card-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.mic-card-error {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--accent-red-soft);
+}
+.mic-card-hint,
+.mic-card-sync-copy {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+.mic-card-hint.is-error {
+  color: var(--accent-red-soft);
+}
+.mic-card-skip,
+.mic-card-done .btn-link-sm {
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.mic-card-done .btn-link-sm {
+  padding: 2px 4px;
+  margin-left: -4px;
+  color: var(--foreground);
+}
+.mic-card-done {
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+
+/* Short windows (1280x720): a shorter poster, so the mic card's buttons stay in view. */
+@media (max-height: 760px) {
+  .scene-preview-poster {
+    max-height: 22vh;
+  }
+}
+
+/* Below 1100px the rail goes under the casting card, the preview and the mic card side
+   by side, and the page scrolls instead of the card. */
+@media (max-width: 1099px) {
+  .lobby-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .panel-casting {
+    max-height: none;
+  }
+  .lobby-rail {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+  }
+}
+
 
 /* ------------------------------------------------------------- */
 /* 3. RECORDING BOOTH VIEW (IN-FRAME ZERO-SCROLL STUDIO DAW)     */
@@ -4595,28 +4930,138 @@ svg {
   .toast.is-leaving { transform: none; }
 }
 
-/* Join Room Actor Name & Mic Setup Modal */
-.join-modal-card {
-  max-width: 440px;
-  background: #1c1814;
-  border: 1px solid var(--border-wood);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(217, 119, 6, 0.2);
-}
+/* ------------------------------------------------------------- */
+/* JOIN CARD AND YOU LEFT: one centred column on the room's page  */
+/* ------------------------------------------------------------- */
 
-.join-modal-avatar-preview {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+.room-column {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--space-5) 0;
+}
+
+.join-card {
+  width: min(480px, 100%);
+}
+.join-poster {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  /* Shorter on short windows, so Join stays in view without scrolling. */
+  max-height: 30vh;
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+}
+.join-poster:empty {
+  display: none;
+}
+.join-poster img,
+.join-poster video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.join-body {
+  padding: var(--space-4);
+}
+.join-form,
+.join-missing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.join-form[hidden],
+.join-missing[hidden],
+.join-finding[hidden] {
+  display: none;
+}
+.join-finding {
+  padding: var(--space-5) 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+.join-title {
   font-family: var(--font-sans);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 800;
-  color: var(--white);
-  box-shadow: 0 0 14px rgba(0, 0, 0, 0.5);
-  flex-shrink: 0;
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.join-meta {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+.join-here {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.join-here:empty {
+  display: none;
+}
+.join-here-label {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.join-here-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.join-form .btn-primary {
+  width: 100%;
+}
+.join-hint {
+  text-align: center;
+}
+
+.left-card {
+  width: min(460px, 100%);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Less glow than a working panel, so Rejoin is the brightest thing on screen. */
+  box-shadow: 0 8px 28px -4px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(204, 164, 88, 0.35);
+}
+.left-card .card-divider {
+  margin: 0;
+}
+.left-title {
+  font-family: var(--font-sans);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--foreground);
+}
+.left-rejoin {
+  width: 100%;
+}
+.left-rejoin[hidden] {
+  display: none;
+}
+
+/* On a host's page with no DubMate of your own (join card, You left): no Audio, no ?,
+   and the logo is a plain wordmark (app.js showView also makes it inert). */
+body.no-home-chrome #btn-audio-settings,
+body.no-home-chrome #btn-shortcuts,
+body.no-home-chrome .logo-chevron {
+  display: none;
+}
+body.no-home-chrome .logo-with-dropdown {
+  cursor: default;
 }
 
 /* ------------------------------------------------------------- */
@@ -4624,8 +5069,7 @@ svg {
 /* ------------------------------------------------------------- */
 
 @media (max-width: 900px) {
-  .landing-grid,
-  .lobby-layout {
+  .landing-grid {
     grid-template-columns: 1fr;
   }
 

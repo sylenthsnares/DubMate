@@ -3,7 +3,7 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-import { showToast, announce, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
+import { showToast, announce, initModeDropdown, initTooltips, mixin, isDialogOpen, openDialog, setFieldError } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
 import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
@@ -11,14 +11,16 @@ import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
 import { VoiceRackMethods } from './studio/voice_rack.js';
 import { MicSyncMethods } from './studio/mic_sync.js';
+import { MicCardMethods } from './studio/mic_card.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
 import { PackBuilderInstallMethods } from './studio/packbuilder_install.js';
 import { TakesCardMethods } from './studio/takes_card.js';
 import { UpdateNoticeMethods } from './studio/update_notice.js';
-import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
+import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff, FIRST_ROOM_KEY } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
+import { IDENTITY_COLORS, normalizeColor, cleanName, colorName, renderColorPicker } from './identity.js';
 
 // What the connection pill says. Casting and ready changes wait in the socket's
 // queue; takes and voice changes go over HTTP and don't, hence the careful tip.
@@ -88,7 +90,6 @@ class DubMateApp {
 
     // Noise Reduction State
     this.applyNoiseReduction = localStorage.getItem('dubmate_noise_reduction') !== 'false';
-    this.pendingJoinRoomId = null;
 
     // Public registry status for the current room, refreshed while it publishes.
     this.roomShare = null;
@@ -108,6 +109,8 @@ class DubMateApp {
     this.stopTakeVoice();
     this.roomShare = null;
     this.roomState = null;
+    // The character the room cast you as on joining, for the lobby's one-time notice.
+    this.autoCastNotice = null;
     this.currentLineIndex = 0;
     this.currentTakeBuffer = null;
     this.backingBuffer = null;
@@ -119,18 +122,30 @@ class DubMateApp {
       this.screeningBuffers.clear();
     }
     if (this.screeningRenders) this.screeningRenders.clear();
+    // Back to your own colour until the next room gives you one.
+    this.updateUserUI();
   }
 
+  // A first run has no name yet (Start and Join ask for it) and the first person colour.
   loadUser() {
     const user = {
       id: 'u_' + Math.random().toString(36).substring(2, 9),
-      name: 'Actor ' + Math.floor(Math.random() * 900 + 100),
-      color: '#d97706',
+      name: '',
+      color: IDENTITY_COLORS[0].hex,
     };
     try {
       // A join handoff can leave a name and colour without an id; the defaults fill the gaps.
       const saved = JSON.parse(localStorage.getItem('dubmate_user') || 'null');
-      if (saved && typeof saved === 'object') return { ...user, ...saved };
+      if (saved && typeof saved === 'object') {
+        const merged = { ...user, ...saved };
+        // A colour from an older version becomes its new hue, saved back once.
+        const color = normalizeColor(merged.color) || user.color;
+        if (color !== merged.color) {
+          merged.color = color;
+          localStorage.setItem('dubmate_user', JSON.stringify(merged));
+        }
+        return merged;
+      }
     } catch (e) { }
     return user;
   }
@@ -139,26 +154,78 @@ class DubMateApp {
     localStorage.setItem('dubmate_user', JSON.stringify(this.user));
   }
 
+  /** Start and Join need a name: true when there is one, else the landing asks for it inline. */
+  requireName() {
+    const name = cleanName(this.user.name);
+    if (name) {
+      if (name !== this.user.name) {
+        this.user.name = name;
+        this.saveUser();
+        this.updateUserUI();
+      }
+      return true;
+    }
+    setFieldError(this.inputUserName, 'Type your name first');
+    this.inputUserName?.focus();
+    return false;
+  }
+
   updateUserUI() {
     if (this.inputUserName && document.activeElement !== this.inputUserName) {
       this.inputUserName.value = this.user.name || '';
     }
-    const displayName = (this.user.name || '').trim() || 'Actor';
+    const name = (this.user.name || '').trim();
     if (this.headerUserName) {
-      this.headerUserName.innerText = displayName;
+      this.headerUserName.textContent = name || 'You';
     }
+    // No name yet: a plain colour dot (a '?' would sit beside the header's ? shortcuts button).
+    const initial = (Array.from(name)[0] || '').toUpperCase();
     if (this.headerUserAvatar) {
-      const initial = displayName.charAt(0).toUpperCase() || 'A';
-      this.headerUserAvatar.innerText = initial;
-      this.headerUserAvatar.style.backgroundColor = this.user.color || '#d97706';
+      this.headerUserAvatar.textContent = initial;
+      // In a room, the colour the room gave you (yours may be taken there).
+      this.headerUserAvatar.style.backgroundColor = this.roomState?.users?.[this.user.id]?.color || this.user.color;
     }
-    if (this.colorPalette) {
-      this.colorPalette.querySelectorAll('.color-option').forEach((opt) => {
-        const isMatch = opt.dataset.color === this.user.color;
-        opt.classList.toggle('selected', isMatch);
-        opt.setAttribute('aria-checked', isMatch ? 'true' : 'false');
+    if (this.headerUserPill) {
+      this.headerUserPill.dataset.tip = this.roomState ? 'Your name and colour in this room' : 'Your name and colour';
+    }
+    if (this.youAvatar) {
+      this.youAvatar.textContent = initial;
+      this.youAvatar.style.background = this.user.color;
+    }
+    // Redrawn for the initial on your swatch, but never under a focused swatch.
+    if (this.colorPalette && !this.colorPalette.contains(document.activeElement)) {
+      renderColorPicker(this.colorPalette, {
+        selected: this.user.color,
+        label: 'Your colour',
+        name: this.user.name,
+        onChange: (hex) => {
+          this.user.color = hex;
+          this.saveUser();
+          this.updateUserUI();
+        },
       });
     }
+  }
+
+  /**
+   * Your own user_joined: keeps the character the room cast you as for the lobby's
+   * notice, and says once per room and colour when someone there holds your colour. Your
+   * saved colour doesn't change; the room's shows while you're in it.
+   */
+  noteOwnJoin(payload) {
+    if (!payload || payload.user_id !== this.user.id) return;
+    if (payload.cast) this.autoCastNotice = payload.cast;
+    const wanted = colorName(payload.wanted_color);
+    const given = colorName(payload.color);
+    // wanted_taken_by: someone else really holds the hue (a rejoin may just keep your room colour).
+    if (wanted && given && wanted !== given && payload.wanted_taken_by) {
+      const key = `dubmate_color_notice_${this.roomState?.room_id || ''}`;
+      if (sessionStorage.getItem(key) !== payload.color) {
+        sessionStorage.setItem(key, payload.color);
+        this.showToast(`${wanted} is taken here, so you're ${given} in this room.`);
+      }
+    }
+    this.updateUserUI();
   }
 
   initDOM() {
@@ -169,6 +236,7 @@ class DubMateApp {
       booth: document.getElementById('view-booth'),
       screening: document.getElementById('view-screening'),
       left: document.getElementById('view-left'),
+      join: document.getElementById('view-join'),
     };
 
     // Header & Studio Breadcrumbs
@@ -216,15 +284,22 @@ class DubMateApp {
     this.btnCreateRoom = document.getElementById('btn-create-room');
     this.btnJoinRoom = document.getElementById('btn-join-room');
     this.inputRoomCode = document.getElementById('input-room-code');
-    this.inputLeftRoomCode = document.getElementById('input-left-room-code');
-    this.btnLeftJoinRoom = document.getElementById('btn-left-join-room');
+    this.youAvatar = document.getElementById('you-avatar');
+    this.heroBanner = document.querySelector('#view-landing .hero-banner');
+    this.btnSceneMenu = document.getElementById('btn-scene-menu');
+    this.sceneMenu = document.getElementById('scene-menu');
 
     // Lobby elements
     this.lobbyPackTitle = document.getElementById('lobby-pack-title');
-    this.lobbyLineCount = document.getElementById('lobby-line-count');
+    this.lobbyMeta = document.getElementById('lobby-meta');
+    this.lobbyPresence = document.getElementById('lobby-presence');
+    this.lobbyHereCount = document.getElementById('lobby-here-count');
     this.castingTbody = document.getElementById('casting-tbody');
-    this.lobbyCastList = document.getElementById('lobby-cast-list');
-    this.castOnlineCount = document.getElementById('cast-online-count');
+    this.castingTitle = document.getElementById('casting-title');
+    this.castingFreeNote = document.getElementById('casting-free-note');
+    this.btnCastEvenly = document.getElementById('btn-cast-evenly');
+    this.scenePreviewVideo = document.getElementById('scene-preview-video');
+    this.btnPlayLine = document.getElementById('btn-play-line');
     this.btnStartSession = document.getElementById('btn-start-session');
     this.btnBackToBooth = document.getElementById('btn-back-to-booth');
     this.btnBackToPremiere = document.getElementById('btn-back-to-premiere');
@@ -290,7 +365,6 @@ class DubMateApp {
     this.valGain = document.getElementById('val-gain');
 
     // Studio Noise Reduction Elements
-    this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
     this.checkNoiseReduction = document.getElementById('check-noise-reduction');
 
     // Audio Device Setup Panel Elements
@@ -550,7 +624,6 @@ class DubMateApp {
         || this.recordState === 'countdown' || this.recordState === 'recording',
       getView: () => this.currentView,
     });
-    this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
@@ -561,6 +634,7 @@ class DubMateApp {
       this.user.name = e.target.value;
       this.saveUser();
       this.updateUserUI();
+      if (cleanName(this.user.name)) setFieldError(this.inputUserName, '');
     });
 
     this.inputUserName.addEventListener('focus', () => {
@@ -570,53 +644,29 @@ class DubMateApp {
     });
 
     this.inputUserName.addEventListener('blur', () => {
-      if (!this.user.name || !this.user.name.trim()) {
-        this.user.name = 'Actor ' + Math.floor(Math.random() * 900 + 100);
-        this.inputUserName.value = this.user.name;
-        this.saveUser();
-        this.updateUserUI();
-      }
-    });
-
-    this.colorPalette.querySelectorAll('.color-option').forEach((opt) => {
-      opt.addEventListener('click', () => {
-        this.colorPalette.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
-        opt.classList.add('selected');
-        this.user.color = opt.dataset.color;
-        this.saveUser();
-        this.updateUserUI();
-      });
-    });
-
-    // Landing Tabs
-    const tabCreate = document.getElementById('tab-btn-create');
-    const tabJoin = document.getElementById('tab-btn-join');
-    const panelCreate = document.getElementById('panel-create-room');
-    const panelJoin = document.getElementById('panel-join-room');
-
-    tabCreate.addEventListener('click', () => {
-      tabCreate.classList.add('active');
-      tabCreate.setAttribute('aria-selected', 'true');
-      tabJoin.classList.remove('active');
-      tabJoin.setAttribute('aria-selected', 'false');
-      panelCreate.style.display = 'block';
-      panelJoin.style.display = 'none';
-    });
-
-    tabJoin.addEventListener('click', () => {
-      tabJoin.classList.add('active');
-      tabJoin.setAttribute('aria-selected', 'true');
-      tabCreate.classList.remove('active');
-      tabCreate.setAttribute('aria-selected', 'false');
-      panelCreate.style.display = 'none';
-      panelJoin.style.display = 'block';
+      const name = cleanName(this.user.name);
+      if (name === this.user.name) return;
+      this.user.name = name;
+      this.inputUserName.value = name;
+      this.saveUser();
+      this.updateUserUI();
     });
 
     this.btnCreateRoom.addEventListener('click', () => this.createRoom());
-    this.btnJoinRoom.addEventListener('click', () => this.joinRoomFromInput());
-    if (this.btnLeftJoinRoom) {
-      this.btnLeftJoinRoom.addEventListener('click', () => this.joinRoomFromInput(this.inputLeftRoomCode));
-    }
+    this.initCodeForm(document.getElementById('form-join-room'));
+    this.initCodeForm(document.getElementById('join-missing-form'));
+    this.initCodeForm(document.getElementById('form-left-join'));
+    document.getElementById('btn-rejoin-room')?.addEventListener('click', () => this.rejoinRoom());
+    const joinForm = document.getElementById('join-form');
+    joinForm?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.submitJoinCard();
+    });
+    document.getElementById('input-join-name')?.addEventListener('input', (e) => {
+      setFieldError(e.target, '');
+      this.renderJoinCardIdentity();
+    });
+    this.initSceneMenu();
     if (this.btnRescanPacks) {
       this.btnRescanPacks.addEventListener('click', () => this.rescanPacksDirectory());
     }
@@ -641,11 +691,6 @@ class DubMateApp {
     }
     if (this.btnSavePackConfig) {
       this.btnSavePackConfig.addEventListener('click', () => this.savePackConfig());
-    }
-    if (this.modalPackConfig) {
-      this.modalPackConfig.addEventListener('click', (e) => {
-        if (e.target === this.modalPackConfig) this.closePackConfigModal();
-      });
     }
     if (this.webInputPackPath) {
       this.webInputPackPath.addEventListener('keydown', (e) => {
@@ -719,7 +764,17 @@ class DubMateApp {
 
     this.btnCopyInvite.addEventListener('click', () => this.copyRoomLink());
     if (this.btnGetScene) this.btnGetScene.addEventListener('click', () => this.getThisScene());
-    this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
+    // The room pill copies the invite on the room screens; in the lobby it only shows the code.
+    const copyFromBadge = () => {
+      if (!this.headerRoomBadge.classList.contains('is-code-only')) this.copyRoomLink();
+    };
+    this.headerRoomBadge.addEventListener('click', copyFromBadge);
+    this.headerRoomBadge.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      copyFromBadge();
+    });
+    this.initLobbyEvents();
 
     this.btnStartSession.addEventListener('click', () => {
       // Only the host sees Start (renderLobbyState) and moves everyone. The check stays
@@ -863,10 +918,6 @@ class DubMateApp {
       this.setNoiseReduction(e.target.checked);
     };
 
-    if (this.checkLobbyNoiseReduction) {
-      this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
-      this.checkLobbyNoiseReduction.addEventListener('change', onNoiseToggleChange);
-    }
     if (this.checkNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
       this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
@@ -874,6 +925,7 @@ class DubMateApp {
 
     this.initAudioSettingsEvents();
     this.initMicSyncEvents();
+    this.initMicCardEvents();
     this.initVoiceRackEvents();
     this.initTakesCardEvents();
     this.initRoomCheckEvents();
@@ -1096,6 +1148,10 @@ class DubMateApp {
       }
     });
 
+    this.socket.on('cast_evenly', (data) => {
+      if (data?.payload?.triggered_by === this.user.id) this.showToast('Characters shared out evenly.');
+    });
+
     this.socket.on('user_status_updated', (data) => {
       const before = this.roomState?.users;
       if (!this.applyIncomingState(data)) return;
@@ -1113,6 +1169,7 @@ class DubMateApp {
         const before = this.roomState?.users;
         if (!this.applyIncomingState(data)) return;
         this.announceCastChange(type, before, this.roomState.users?.[data.payload?.user_id]);
+        if (type === 'user_joined') this.noteOwnJoin(data.payload);
       });
     }
 
@@ -1518,19 +1575,23 @@ class DubMateApp {
 
     // First-run audio setup / remembered device routing. Deliberately not
     // awaited so a slow permissions query cannot stall the router.
-    this.initAudioSetupOnBoot().catch((err) => {
+    this.initAudioSetupOnBoot().then(() => this.renderMicCard()).catch((err) => {
       console.warn('[DubMate] Audio setup bootstrap failed:', err);
     });
 
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
+    const leftParam = params.get('left');
     const selectPackParam = params.get('select_pack');
     if (roomParam && this.joinHandoff) {
       // Joined from the member's own DubMate, where they already gave their name.
-      this.warnOnVersionMismatch({ toast: true });
+      this.warnOnVersionMismatch();
       this.joinRoom(roomParam);
     } else if (roomParam) {
-      this.promptJoinRoom(roomParam);
+      // A link guest: the join card checks the code, then asks their name and colour.
+      this.openJoinCard(roomParam);
+    } else if (leftParam) {
+      this.showLeftView(leftParam.trim().toUpperCase());
     } else {
       this.showView('landing');
       if (selectPackParam) {
@@ -1549,10 +1610,18 @@ class DubMateApp {
     // A browser guest who left stays on the "You left" view (a failed rejoin
     // must not fall back to the host's home screen).
     if (viewName === 'landing' && this.currentView === 'left') viewName = 'left';
+    // The join card and You left on a host's page, for someone with no DubMate of their
+    // own: Audio, ? and the logo menu would open the host's settings and home screen.
+    const noHome = (viewName === 'join' || viewName === 'left') && !this.hasHomeEngine();
+    document.body.classList.toggle('no-home-chrome', noHome);
+    // Who you are shows everywhere but the join card, where you are choosing it.
+    if (this.headerUserPill) this.headerUserPill.style.display = viewName === 'join' ? 'none' : 'inline-flex';
     document.body.classList.remove('resizing');
     if (viewName !== 'booth') this.flushPendingDelete();
     this.currentView = viewName;
     this.cancelCurrentCountdown();
+    // After the count-in is cancelled: ending a take gives the logo menu back (booth.js).
+    document.getElementById('logo-dropdown-container')?.toggleAttribute('inert', noHome);
     this.stopScreeningSyncMonitor();
     Object.keys(this.views).forEach((k) => {
       this.views[k].classList.toggle('active', k === viewName);
@@ -1564,6 +1633,9 @@ class DubMateApp {
     if (this.screeningVideo) {
       this.screeningVideo.pause();
     }
+    if (viewName !== 'lobby') this.stopLinePreview();
+    // The room pill is the copy control everywhere but the lobby (its title row has one).
+    this.applyShareStatusToBadge();
 
     if (viewName === 'lobby') {
       this.renderLobbyState();
@@ -1576,9 +1648,9 @@ class DubMateApp {
     const inRoom = viewName !== 'landing' && !!this.roomState;
     document.querySelector('.app-header')?.classList.toggle('in-room', inRoom);
     if (this.castActivityBar) {
-      // The booth bar says who's here, so the booth has no cast strip.
-      this.castActivityBar.style.display = (viewName === 'landing' || viewName === 'booth' || !this.roomState) ? 'none' : 'flex';
-      // The strip shows progress and ready counts everywhere but the lobby.
+      // The booth bar and the lobby's title row say who's here, so they have no cast strip.
+      const strip = this.roomState && !['landing', 'booth', 'lobby'].includes(viewName);
+      this.castActivityBar.style.display = strip ? 'flex' : 'none';
       if (this.roomState) this.renderCastActivityHUD();
     }
     if (this.studioBreadcrumbs) {
@@ -1593,6 +1665,8 @@ class DubMateApp {
     }
 
     if (viewName === 'landing') {
+      // The hero introduces DubMate until the first room.
+      if (this.heroBanner) this.heroBanner.hidden = localStorage.getItem(FIRST_ROOM_KEY) === '1';
       if (this.isEngineLocal()) this.loadRecentSessions();
       if (!this.packs || this.packs.length === 0) {
         this.fetchPacks();
@@ -1614,11 +1688,30 @@ class DubMateApp {
     }
   }
 
-  /** Asks first; returns true only if the user actually left. */
+  /** Asks first, in the app; resolves true only if the user actually left. */
   confirmLeaveRoom() {
-    if (!confirm('Leave this room?')) return false;
-    this.leaveRoom();
-    return true;
+    const overlay = document.getElementById('modal-leave-room');
+    const code = this.roomState?.room_id || '';
+    document.getElementById('leave-room-text').textContent = code
+      ? `Your takes stay in it. Rejoin any time with the code ${code}.`
+      : 'Your takes stay in it.';
+    return new Promise((resolve) => {
+      let answered = false;
+      const close = openDialog(overlay, {
+        // Escape, a backdrop click and Stay all keep you in the room.
+        onClose: () => {
+          if (!answered) resolve(false);
+        },
+      });
+      const answer = (left) => {
+        answered = true;
+        close();
+        if (left) this.leaveRoom();
+        resolve(left);
+      };
+      document.getElementById('btn-leave-room-cancel').onclick = () => answer(false);
+      document.getElementById('btn-leave-room-confirm').onclick = () => answer(true);
+    });
   }
 
   /** Drops ?room= (pushState to the bare path, so the whole query string goes). */
@@ -1647,25 +1740,26 @@ class DubMateApp {
     this._connectionLost = '';
     this._connectionOverflowed = false;
     const wasHost = this.isHost();
+    const leftCode = this.roomState?.room_id || '';
+    const leftScene = this.roomState?.pack?.name || this.roomState?.pack?.id || '';
     this.resetRoomSession();
     this.selectedPackId = null;
 
-    // Clean URL query parameters (?room=...)
-    this.clearRoomQueryParam();
-
     // Reset Header & HUD
     if (this.headerRoomBadge) this.headerRoomBadge.style.display = 'none';
-    if (this.headerUserPill) this.headerUserPill.style.display = 'none';
     if (this.btnLeaveRoom) this.btnLeaveRoom.style.display = 'none';
     if (this.studioBreadcrumbs) this.studioBreadcrumbs.style.display = 'none';
     if (this.castActivityBar) this.castActivityBar.style.display = 'none';
 
     // A guest who joined from a plain browser link has no DubMate of their own
-    // to go back to, and the home screen here would list the host's packs.
+    // to go back to, and the home screen here would list the host's packs. The
+    // address becomes /?left=CODE (replacing ?room=, so Back doesn't reopen the room).
     if (!wasHost && !getHomeOrigin()) {
-      this.showView('left');
+      this.showLeftView(leftCode, leftScene);
       return;
     }
+    // Clean URL query parameters (?room=...)
+    this.clearRoomQueryParam();
     this.showView('landing');
     this.showToast('You left the room');
   }
@@ -1770,8 +1864,8 @@ class DubMateApp {
       if (action) action.hidden = true;
       if (leave) leave.hidden = true;
       if (wasLost) announce(CONNECTION_COPY.back);
-      // Only show recovery if the user actually saw a problem.
-      if (banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
+      // Only show recovery if the user actually saw a problem (not after the first "Connecting…").
+      if (wasLost && banner.style.display === 'flex' && !banner.classList.contains('is-recovered')) {
         banner.classList.add('is-recovered');
         text.innerText = CONNECTION_COPY.back;
         clearTimeout(this._connectionBannerTimer);
@@ -1850,13 +1944,10 @@ class DubMateApp {
   initModeDropdown() {
     initModeDropdown({
       onStudioClick: (e, closeMenu) => {
+        closeMenu();
         if (this.roomState) {
           e.preventDefault();
-          if (this.confirmLeaveRoom()) {
-            closeMenu();
-          }
-        } else {
-          closeMenu();
+          this.confirmLeaveRoom();
         }
       },
     });
@@ -1886,7 +1977,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, MicCardMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods, PackBuilderInstallMethods, UpdateNoticeMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

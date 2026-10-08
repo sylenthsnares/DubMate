@@ -1,7 +1,7 @@
 // studio/packs.js - Pack library on the home screen: listing, search, pack cards,
 // import, rescan and the packs folder setting.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { escapeHtml, openDialog, joinLocalPath } from '../ui_common.js';
+import { escapeHtml, openDialog, joinLocalPath, plural } from '../ui_common.js';
 
 export class PackMethods {
   /**
@@ -28,9 +28,7 @@ export class PackMethods {
 
   renderSkeletonPacks() {
     if (!this.packGrid) return;
-    if (this.packCountBadge) {
-      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning…`;
-    }
+    if (this.packCountBadge) this.packCountBadge.textContent = 'Looking…';
     this.packGrid.innerHTML = `
       <div class="pack-card pack-card-skeleton">
         <div class="pack-card-thumb skeleton-thumb"></div>
@@ -114,9 +112,12 @@ export class PackMethods {
   }
 
   async openPackConfigModal() {
-    if (!this.modalPackConfig || !this.isEngineLocal()) return;
-    this.modalPackConfig.style.display = 'flex';
+    if (!this.modalPackConfig || !this.isEngineLocal() || !this.modalPackConfig.hidden) return;
     if (this.webConfigFeedback) this.webConfigFeedback.style.display = 'none';
+    // From the ⋯ menu (closed by now) focus goes back to its button.
+    const from = document.activeElement;
+    const returnFocus = this.sceneMenu?.contains(from) ? this.btnSceneMenu : from;
+    this._closePackConfig = openDialog(this.modalPackConfig, { returnFocus });
 
     try {
       const data = await this.fetchConfig();
@@ -132,15 +133,52 @@ export class PackMethods {
       console.warn("Could not fetch active packs config:", err);
     }
 
-    if (this.webInputPackPath) {
-      setTimeout(() => this.webInputPackPath.focus(), 50);
-    }
+    if (this.webInputPackPath && !this.modalPackConfig.hidden) this.webInputPackPath.focus();
   }
 
   closePackConfigModal() {
-    if (this.modalPackConfig) {
-      this.modalPackConfig.style.display = 'none';
-    }
+    if (this._closePackConfig) this._closePackConfig();
+    this._closePackConfig = null;
+  }
+
+  /** The ⋯ menu beside Make a scene: Import, Packs folder and Rescan. */
+  initSceneMenu() {
+    const button = this.btnSceneMenu;
+    const menu = this.sceneMenu;
+    if (!button || !menu) return;
+    const items = () => Array.from(menu.querySelectorAll('[role="menuitem"]')).filter((el) => el.style.display !== 'none');
+    const show = (open, { focus = true } = {}) => {
+      menu.hidden = !open;
+      button.setAttribute('aria-expanded', String(open));
+      if (open) items()[0]?.focus();
+      else if (focus) button.focus();
+    };
+    button.addEventListener('click', () => show(menu.hidden));
+    button.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' && menu.hidden) {
+        e.preventDefault();
+        show(true);
+      }
+    });
+    menu.addEventListener('keydown', (e) => {
+      const list = items();
+      const at = list.indexOf(document.activeElement);
+      const moves = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 };
+      if (e.key in moves) {
+        e.preventDefault();
+        list[(moves[e.key] + list.length) % list.length]?.focus();
+      } else if (e.key === 'Escape' || e.key === 'Tab') {
+        if (e.key === 'Escape') e.preventDefault();
+        show(false, { focus: e.key === 'Escape' });
+      }
+    });
+    // Choosing an item closes the menu first (its own handler then runs).
+    menu.addEventListener('click', (e) => {
+      if (e.target.closest('[role="menuitem"]')) show(false, { focus: false });
+    });
+    document.addEventListener('click', (e) => {
+      if (!menu.hidden && !menu.contains(e.target) && !button.contains(e.target)) show(false, { focus: false });
+    });
   }
 
   async savePackConfig() {
@@ -216,9 +254,7 @@ export class PackMethods {
       const textSpan = this.btnRescanPacks.querySelector('span');
       if (textSpan) textSpan.innerText = 'Scanning…';
     }
-    if (this.packCountBadge) {
-      this.packCountBadge.innerHTML = `<span class="spinning" style="display: inline-block; font-size: 10px;">⚙️</span> Scanning…`;
-    }
+    if (this.packCountBadge) this.packCountBadge.textContent = 'Looking…';
 
     try {
       const res = await fetch('/api/packs/rescan?t=' + Date.now(), { method: 'POST' });
@@ -230,7 +266,7 @@ export class PackMethods {
       this.renderPacks();
       const count = (this.packs || []).length;
       if (!silent) {
-        this.showToast(`Found ${count} pack${count === 1 ? '' : 's'}`);
+        this.showToast(`Found ${plural(count, 'scene')}`);
       }
     } catch (err) {
       console.error("Error during pack rescan:", err);
@@ -362,9 +398,9 @@ export class PackMethods {
     const query = this.packSearchQuery;
 
     if (!allPacks.length) {
-      this.selectedPackId = null;
+      this.renderSceneBar();
       if (this.packCountBadge) {
-        this.packCountBadge.innerText = '0 packs';
+        this.packCountBadge.textContent = '0 scenes';
       }
       const local = this.isEngineLocal();
       this.packGrid.innerHTML = `
@@ -395,14 +431,13 @@ export class PackMethods {
 
     if (this.packCountBadge) {
       if (query) {
-        this.packCountBadge.innerText = `${filteredPacks.length} of ${allPacks.length} packs`;
+        this.packCountBadge.textContent = `${filteredPacks.length} of ${plural(allPacks.length, 'scene')}`;
       } else {
-        this.packCountBadge.innerText = `${allPacks.length} packs`;
+        this.packCountBadge.textContent = plural(allPacks.length, 'scene');
       }
     }
 
     if (!filteredPacks.length) {
-      this.selectedPackId = null;
       const safeQuery = escapeHtml(query);
       this.packGrid.innerHTML = `
         <div class="empty-search-state glass-card" style="grid-column: 1 / -1; padding: 32px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
@@ -410,19 +445,21 @@ export class PackMethods {
           <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.clearPackSearch()">Clear search</button>
         </div>
       `;
+      this.renderSceneBar();
       return;
     }
 
-    const hasCurrentSelection = filteredPacks.some(p => p.id === this.selectedPackId);
-    if (!hasCurrentSelection && filteredPacks.length > 0) {
-      this.selectedPackId = filteredPacks[0].id;
-    }
+    // One tab stop: the chosen card, else the first one shown.
+    const tabStop = filteredPacks.some((p) => p.id === this.selectedPackId) ? this.selectedPackId : filteredPacks[0].id;
 
     filteredPacks.forEach((pack) => {
       const card = document.createElement('div');
       const isSelected = (this.selectedPackId === pack.id);
       card.className = `pack-card ${isSelected ? 'selected' : ''}`;
       card.dataset.packId = pack.id;
+      card.setAttribute('role', 'radio');
+      card.setAttribute('aria-checked', String(isSelected));
+      card.tabIndex = pack.id === tabStop ? 0 : -1;
 
       const rawTitle = pack.title || pack.name || pack.id;
       const displayTitle = this.highlightMatch(rawTitle, query);
@@ -466,6 +503,7 @@ export class PackMethods {
         }
       }
 
+      card.setAttribute('aria-label', rawTitle);
       card.innerHTML = `
         <div class="pack-card-top-row">
           ${thumbImg}
@@ -513,14 +551,89 @@ export class PackMethods {
         });
       }
 
-      card.addEventListener('click', () => {
-        this.packGrid.querySelectorAll('.pack-card').forEach(c => c.classList.remove('selected'));
-        card.classList.add('selected');
-        this.selectedPackId = pack.id;
-      });
+      card.addEventListener('click', () => this.chooseScene(pack.id));
+      card.addEventListener('keydown', (e) => this.onSceneCardKey(e, card));
 
       this.packGrid.appendChild(card);
     });
+    this.renderSceneBar();
+  }
+
+  /** Chooses a scene: marks its card, moves the tab stop to it and updates the bar. */
+  chooseScene(packId, { focus = false } = {}) {
+    this.selectedPackId = packId;
+    let chosen = null;
+    this.packGrid?.querySelectorAll('.pack-card[role="radio"]').forEach((c) => {
+      const on = c.dataset.packId === packId;
+      c.classList.toggle('selected', on);
+      c.setAttribute('aria-checked', String(on));
+      c.tabIndex = on ? 0 : -1;
+      if (on) chosen = c;
+    });
+    if (focus && chosen) chosen.focus();
+    this.renderSceneBar();
+  }
+
+  /** Arrows move and choose, Space chooses, Enter starts a room with the focused card. */
+  onSceneCardKey(e, card) {
+    if (e.target !== card) return; // the card's Share link keeps its own keys
+    const cards = Array.from(this.packGrid.querySelectorAll('.pack-card[role="radio"]'));
+    const at = cards.indexOf(card);
+    const moves = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: cards.length - 1 };
+    if (e.key in moves) {
+      e.preventDefault();
+      const next = cards[(moves[e.key] + cards.length) % cards.length];
+      this.chooseScene(next.dataset.packId, { focus: true });
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      this.chooseScene(card.dataset.packId);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      this.chooseScene(card.dataset.packId);
+      this.createRoom();
+    }
+  }
+
+  /**
+   * The pinned bar under the scenes: the chosen scene with its lines, characters and
+   * length, and Start a room (disabled as "Pick a scene" until one is chosen). A scene
+   * hidden by the search stays chosen and says so.
+   */
+  renderSceneBar() {
+    const button = this.btnCreateRoom;
+    const name = document.getElementById('scene-bar-name');
+    const meta = document.getElementById('scene-bar-meta');
+    const thumb = document.getElementById('scene-bar-thumb');
+    if (!button || !name || !meta) return;
+    const pack = (this.packs || []).find((p) => p.id === this.selectedPackId);
+    if (!pack) {
+      name.textContent = 'No scene chosen';
+      meta.textContent = 'Choose one above, then start a room.';
+      if (thumb) thumb.replaceChildren();
+      button.disabled = true;
+      button.textContent = 'Pick a scene';
+      button.removeAttribute('aria-label');
+      return;
+    }
+    const title = pack.title || pack.name || pack.id;
+    const lines = pack.line_count || (pack.lines ? pack.lines.length : 0);
+    const seconds = Math.round(pack.duration || (pack.lines && pack.lines.length ? pack.lines[pack.lines.length - 1].end : 0));
+    const shown = !this.packGrid || Array.from(this.packGrid.querySelectorAll('.pack-card')).some((c) => c.dataset.packId === pack.id);
+    name.textContent = title;
+    meta.textContent = `${plural(lines, 'line')} · ${plural((pack.characters || []).length, 'character')} · ${seconds} s${shown ? '' : ' (hidden by search)'}`;
+    if (thumb) {
+      if (pack.has_icon && pack.icon_url) {
+        const img = document.createElement('img');
+        img.src = pack.icon_url;
+        img.alt = '';
+        thumb.replaceChildren(img);
+      } else {
+        thumb.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/></svg>';
+      }
+    }
+    button.disabled = false;
+    button.textContent = 'Start a room ›';
+    button.setAttribute('aria-label', `Start a room with ${title}`);
   }
 
   /** Shows where the shared scene file was saved (engine's own computer only). */
