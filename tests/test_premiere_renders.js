@@ -86,6 +86,9 @@ const db = (x) => Math.pow(10, x / 20);
     if (u === "/api/rooms/R1/lines/t4000/takes/k2/render") {
       return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ effects_unavailable: true, message: "Download and install the latest DubMate to use voice effects." }) });
     }
+    if (u.startsWith("/api/rooms/R1/export?")) {
+      return Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ detail: "held for the test" }) });
+    }
     const body = u.startsWith("/api/packs") ? [] : u.startsWith("/api/config") ? { mic_sync: {} } : {};
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   };
@@ -177,6 +180,54 @@ const db = (x) => Math.pow(10, x / 20);
   if (!same(again, ["/api/rooms/R1/lines/t4000/takes/k2/render"])) fail(`renders on replay: ${JSON.stringify(again)}`);
   if (effectNodes.length) fail(`browser effect nodes created: ${effectNodes}`);
   console.log("PASS: presence follows live; a replay reuses renders and retries the unavailable one");
+
+  // A member's presence and Start stay on their own page: the engine refuses them anyway.
+  app.user = { id: "u2", name: "Ben" };
+  sent.length = 0;
+  app.setMasterDialoguePresence(-3);
+  app.btnStartSession.click();
+  if (sent.some((m) => m.type === "set_dialogue_presence" || m.type === "set_status")) {
+    fail(`a member sent host-only messages: ${JSON.stringify(sent)}`);
+  }
+  app.user = { id: "u1", name: "Ana" };
+  sent.length = 0;
+  app.showView("lobby");
+  app.btnStartSession.click();
+  if (!sent.some((m) => m.type === "set_status" && m.payload.status === "recording")) fail("the host's Start did not move the room");
+  console.log("PASS: a member's presence and Start are not sent to the room; the host's are");
+
+  // The Mix slider is the room's: the host's change drops the stale final video for the live
+  // mix, reaches the room, and the export asks for the same balance.
+  app.showView("screening");
+  app.isUsingExportedVideo = true;
+  app.roomState.has_export = true;
+  sent.length = 0;
+  const slider = app.sliderScreeningBalance;
+  slider.value = "80";
+  slider.dispatchEvent(new w.Event("input", { bubbles: true }));
+  if (!sent.some((m) => m.type === "set_mix_balance" && m.payload.balance === 80)) fail(`mix not sent: ${JSON.stringify(sent)}`);
+  if (app.isUsingExportedVideo || app.roomState.has_export) fail("the old final video still plays after the mix changed");
+  if (!app.screeningVideo.muted) fail("the theater did not switch to the live mix");
+  const failures = [];
+  app.failExport = (e) => failures.push(e);
+  const before2 = calls.length;
+  await app.exportFinalVideo("16:9");
+  const exportCall = calls.slice(before2).find((c) => c.url.startsWith("/api/rooms/R1/export?"));
+  if (!exportCall) fail("no export request");
+  const params = new w.URL(exportCall.url, "http://x").searchParams;
+  if (params.get("balance") !== "80" || params.get("user_id") !== "u1") fail(`export request: ${exportCall.url}`);
+
+  // Another client's change (or the room's state on arrival) moves this slider, sends nothing.
+  sent.length = 0;
+  app.isUsingExportedVideo = true;
+  app.socket.emit("mix_balance_sync", { type: "mix_balance_sync", payload: { balance: 20 } });
+  if (app.screeningBalance !== 20 || slider.value !== "20") fail(`synced balance: ${app.screeningBalance} / ${slider.value}`);
+  if (app.isUsingExportedVideo) fail("a synced mix change kept the old final video");
+  if (sent.length) fail(`a synced change was sent back: ${JSON.stringify(sent)}`);
+  app.roomState.master_mix_balance = 35;
+  await app.setupScreeningView();
+  if (app.screeningBalance !== 35) fail(`arrival balance: ${app.screeningBalance}`);
+  console.log("PASS: the Mix slider is the room's, drops the stale final video and reaches the export");
 
   if (errors.length) fail(`console errors: ${errors.join("\n")}`);
   console.log("ALL PREMIERE RENDER TESTS PASSED");

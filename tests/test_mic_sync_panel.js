@@ -24,9 +24,14 @@ const GUEST = "https://abc.trycloudflare.com/";
 const PAIR = "Microphone (Yeti X)|Headphones (Realtek)";
 const SR = 16000;
 const LEAD_SEC = 0.3;
-const CLICKS_COPY = "Hold your headphones against the mic, or turn on your speakers. You'll hear a few clicks.";
-const CLAP_COPY = "DubMate couldn't hear the clicks. Clap along with the beat instead.";
-const FAIL_COPY = "That didn't line up. Try again, clapping right on each click.";
+// The clap run starts its beat later, after a quiet pre-roll that measures the room.
+const CLAP_LEAD_SEC = 0.8;
+const CLICKS_COPY = "The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic.";
+const CLICKS_FAILED_COPY = "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again.";
+const CLAP_COPY = "Put your headphones back on, then clap on each beat you hear.";
+const UNEVEN_COPY = "Your claps were uneven. Try again, clapping right on each click.";
+const QUIET_COPY = "DubMate couldn't hear your claps. Clap closer to the mic, right on each click.";
+const NOISY_COPY = "DubMate heard other sounds besides your claps. Try again somewhere quieter, clapping right on each click.";
 const GUEST_TIP = "Your browser keeps this until the host restarts DubMate.";
 
 function fail(msg) {
@@ -72,14 +77,26 @@ function heardClicks(timing, times, delayMs) {
   return out;
 }
 
-// Claps (15 ms noise bursts) on each beat, `delayMs` late plus a per-beat jitter.
+// Claps (15 ms noise bursts) on each beat, `delayMs` late plus a per-beat jitter, over a quiet room.
 function heardClaps(beats, delayMs, jitterMs) {
-  const out = new Float32Array(Math.round((LEAD_SEC + beats[beats.length - 1] + 1.5) * SR));
+  const out = noise(Math.round((CLAP_LEAD_SEC + beats[beats.length - 1] + 1.5) * SR), 0.002, 9);
   beats.forEach((beat, i) => {
-    const at = Math.round((LEAD_SEC + beat + (delayMs + jitterMs[i % jitterMs.length]) / 1000) * SR);
+    const at = Math.round((CLAP_LEAD_SEC + beat + (delayMs + jitterMs[i % jitterMs.length]) / 1000) * SR);
     const burst = noise(Math.round(0.015 * SR), 0.8, 11 + i);
     for (let k = 0; k < burst.length && at + k < out.length; k++) out[at + k] = burst[k];
   });
+  return out;
+}
+
+// Nobody clapping: a quiet room with a sharp tick every 300 ms (a clock, a fan), which
+// lines up with every beat at the same delay, so the old rule saved it.
+function heardKnocks(seconds) {
+  const out = noise(Math.round(seconds * SR), 0.002, 13);
+  for (let at = 0.4, i = 0; at < seconds - 0.02; at += 0.3, i++) {
+    const burst = noise(Math.round(0.004 * SR), 0.5, 40 + i);
+    const start = Math.round(at * SR);
+    for (let k = 0; k < burst.length; k++) out[start + k] += burst[k];
+  }
   return out;
 }
 
@@ -137,7 +154,7 @@ async function boot(url, { stored = null } = {}) {
 
   // Stubbed engine: what each recording "hears" is chosen by the test.
   const audio = app.audio;
-  const log = { started: 0, stopped: 0, played: [], stopAll: 0, meterOn: 0, meterOff: 0 };
+  const log = { started: 0, stopped: 0, played: [], levels: [], stopAll: 0, meterOn: 0, meterOff: 0 };
   const env = { w, app, calls, toasts, errors, log, timing, hear: { clicks: "delayed", claps: "steady" } };
   let lastTimes = null;
   audio.ctx = { sampleRate: SR, currentTime: 0, outputLatency: 0.01, baseLatency: 0.005 };
@@ -153,10 +170,12 @@ async function boot(url, { stored = null } = {}) {
     audio.isRecording = true;
     audio.stream = { getAudioTracks: () => [{ getSettings: () => ({ latency: 0.01 }) }] };
   };
-  audio.playClickTrain = (times, lead) => {
-    if (lead !== LEAD_SEC) fail(`click lead ${lead}`);
+  audio.playClickTrain = (times, lead, level) => {
+    const wantLead = times.length === timing.CLICK_TIMES_SEC.length ? LEAD_SEC : CLAP_LEAD_SEC;
+    if (lead !== wantLead) fail(`click lead ${lead} for ${times.length} clicks`);
     lastTimes = times;
     log.played.push(times.length);
+    log.levels.push(level);
     return audio.ctx.currentTime;
   };
   audio.stopRecording = async () => {
@@ -168,7 +187,9 @@ async function boot(url, { stored = null } = {}) {
       samples = env.hear.clicks === "delayed" ? heardClicks(timing, timing.CLICK_TIMES_SEC, 140) : noise(3 * SR, 0.05, 3);
     } else {
       const jitter = env.hear.claps === "steady" ? [0, 6, -4, 8, -6, 2, 4, -2] : [0, 90, -60, 120, -80, 40, 100, -50];
-      samples = heardClaps(timing.CLAP_BEAT_SEC, 150, jitter);
+      if (env.hear.claps === "none") samples = noise(6 * SR, 0.002, 5);
+      else if (env.hear.claps === "knocks") samples = heardKnocks(6);
+      else samples = heardClaps(timing.CLAP_BEAT_SEC, 150, jitter);
     }
     return { blob: new w.Blob(["x"]), audioBuffer: { sampleRate: SR, getChannelData: () => samples } };
   };
@@ -199,8 +220,11 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     btn.click();
     if (!shown($(env, "mic-sync-panel"))) fail("panel did not open");
     if (text($(env, "mic-sync-message")) !== CLICKS_COPY) fail(`instruction: ${text($(env, "mic-sync-message"))}`);
-    if (!shown($(env, "btn-start-mic-sync")) || shown($(env, "btn-start-clapping"))) fail("ready state shows the wrong buttons");
-    if (env.w.document.activeElement !== $(env, "btn-start-mic-sync")) fail("Start not focused");
+    if (!shown($(env, "btn-start-mic-sync")) || shown($(env, "btn-start-clapping")) || shown($(env, "btn-clap-instead"))) {
+      fail("ready state shows the wrong buttons");
+    }
+    if (text($(env, "btn-start-mic-sync")) !== "Play clicks") fail(`start label: ${text($(env, "btn-start-mic-sync"))}`);
+    if (env.w.document.activeElement !== $(env, "btn-start-mic-sync")) fail("Play clicks not focused");
     if (env.log.started) fail("opening the panel started recording");
 
     const meterOffBefore = env.log.meterOff;
@@ -211,6 +235,7 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     await until(() => !env.app.micSyncBusy, "the click run");
     if (env.log.started !== 3 || env.log.stopped !== 3) fail(`click passes: ${env.log.started} started, ${env.log.stopped} stopped`);
     if (env.log.played.join() !== "6,6,6") fail(`played: ${env.log.played.join()}`);
+    if (env.log.levels.some((l) => l !== 1)) fail(`sync clicks not at full level: ${env.log.levels.join()}`);
     const entry = stored(env)[PAIR];
     if (!entry || entry.latency_ms !== 140 || entry.method !== "clicks") fail(`saved: ${JSON.stringify(stored(env))}`);
     if (text(status) !== "Synced. New takes move 140 ms earlier.") fail(`status after sync: ${text(status)}`);
@@ -219,7 +244,7 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     if (env.log.meterOn <= meterOnBefore) fail("input meter not restored after the sync");
     const post = env.calls.find((c) => c.url === "/api/config" && c.method === "POST");
     if (!post || JSON.parse(post.body).mic_sync[PAIR].latency_ms !== 140) fail("host sync not kept in the engine config");
-    console.log("PASS: Sync your mic hears the clicks, saves 140 ms (clicks) and the row reads 'Synced' / 'Sync again'");
+    console.log("PASS: Sync your mic warns the clicks are loud, hears them, saves 140 ms (clicks) and the row reads 'Synced' / 'Sync again'");
 
     // 7. A new microphone and output pair is not synced; the old one still is.
     const input = $(env, "select-audio-input");
@@ -235,25 +260,48 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
   }
 
-  // 2. No clicks heard: the clap test, then a steady clap run saves 'claps'.
+  // 2. No clicks heard: what to try, another click run, then the clap test saves 'claps'.
   {
     const env = await boot(HOST);
     env.hear.clicks = "none";
     $(env, "btn-mic-sync").click();
     $(env, "btn-start-mic-sync").click();
     await until(() => !env.app.micSyncBusy, "the click run");
-    if (text($(env, "mic-sync-message")) !== CLAP_COPY) fail(`clap copy: ${text($(env, "mic-sync-message"))}`);
-    if (!shown($(env, "btn-start-clapping")) || shown($(env, "btn-start-mic-sync"))) fail("clap state shows the wrong buttons");
-    if (text($(env, "btn-start-clapping")) !== "Start clapping") fail("Start clapping label");
+    if (text($(env, "mic-sync-message")) !== CLICKS_FAILED_COPY) fail(`clicks failed copy: ${text($(env, "mic-sync-message"))}`);
+    if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("unheard clicks not styled as an error");
+    if (!shown($(env, "btn-start-mic-sync")) || text($(env, "btn-start-mic-sync")) !== "Try again") fail("no Try again for the clicks");
+    if ($(env, "btn-start-mic-sync").disabled) fail("Try again disabled");
+    if (env.w.document.activeElement !== $(env, "btn-start-mic-sync")) fail("Try again not focused");
+    if (!shown($(env, "btn-clap-instead")) || shown($(env, "btn-start-clapping"))) fail("clicks failed state shows the wrong clap buttons");
     if (env.w.localStorage.getItem("dubmate_mic_sync") !== null) fail("a failed click run saved something");
     if (text($(env, "mic-sync-status")) !== "Not synced yet") fail("status changed without a sync");
-    console.log("PASS: when the clicks aren't heard, the clap test is offered");
+    console.log("PASS: unheard clicks say to turn the volume up and hold the earbuds closer, then try again");
+
+    const firstRun = env.log.started;
+    $(env, "btn-start-mic-sync").click();
+    await until(() => !env.app.micSyncBusy, "the second click run");
+    if (env.log.started <= firstRun) fail("Try again did not play the clicks again");
+    if (text($(env, "mic-sync-message")) !== CLICKS_FAILED_COPY) fail("second failed run copy");
+
+    const passes = env.log.started;
+    $(env, "btn-clap-instead").click();
+    if (env.log.started !== passes) fail("Clap instead started recording before the headphones are back on");
+    if (text($(env, "mic-sync-message")) !== CLAP_COPY) fail(`clap copy: ${text($(env, "mic-sync-message"))}`);
+    if ($(env, "mic-sync-panel").classList.contains("is-error")) fail("clap step styled as an error");
+    if (!shown($(env, "btn-start-clapping")) || shown($(env, "btn-start-mic-sync")) || shown($(env, "btn-clap-instead"))) {
+      fail("clap state shows the wrong buttons");
+    }
+    if (text($(env, "btn-start-clapping")) !== "Start clapping") fail("Start clapping label");
+    if (env.w.document.activeElement !== $(env, "btn-start-clapping")) fail("Start clapping not focused");
+    console.log("PASS: Clap instead asks for the headphones back on before the clap test starts");
 
     env.hear.claps = "steady";
     $(env, "btn-start-clapping").click();
     if (!$(env, "btn-start-clapping").disabled) fail("Start clapping stays enabled while listening");
     await until(() => !env.app.micSyncBusy, "the clap run");
     if (env.log.played[env.log.played.length - 1] !== 8) fail(`clap run played ${env.log.played.join()}`);
+    const beatLevel = env.log.levels[env.log.levels.length - 1];
+    if (!(beatLevel > 0 && beatLevel <= 0.35)) fail(`clap beat (heard in the ears) at level ${beatLevel}`);
     const entry = stored(env)[PAIR];
     if (!entry || entry.method !== "claps" || entry.latency_ms !== 150) fail(`clap sync saved ${JSON.stringify(stored(env))}`);
     if (text($(env, "mic-sync-status")) !== "Synced. New takes move 150 ms earlier.") fail(`status: ${text($(env, "mic-sync-status"))}`);
@@ -270,15 +318,61 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     $(env, "btn-mic-sync").click();
     $(env, "btn-start-mic-sync").click();
     await until(() => !env.app.micSyncBusy, "the click run");
+    $(env, "btn-clap-instead").click();
     $(env, "btn-start-clapping").click();
     await until(() => !env.app.micSyncBusy, "the clap run");
-    if (text($(env, "mic-sync-message")) !== FAIL_COPY) fail(`failure copy: ${text($(env, "mic-sync-message"))}`);
+    if (text($(env, "mic-sync-message")) !== UNEVEN_COPY) fail(`failure copy: ${text($(env, "mic-sync-message"))}`);
     if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("failure not styled as an error");
     if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot try clapping again");
     if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("a failed clap run changed the stored syncs");
     if (env.calls.some((c) => c.url === "/api/config" && c.method === "POST")) fail("a failed run wrote the engine config");
     if (text($(env, "mic-sync-status")) !== "Not synced yet") fail("status changed after a failed run");
     console.log("PASS: claps that don't line up show the failure copy and save nothing");
+
+    // Claps that weren't heard at all: the "couldn't hear" line, still an error step.
+    env.hear.claps = "none";
+    $(env, "btn-start-clapping").click();
+    await until(() => !env.app.micSyncBusy, "the quiet clap run");
+    if (text($(env, "mic-sync-message")) !== QUIET_COPY) fail(`quiet copy: ${text($(env, "mic-sync-message"))}`);
+    if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("quiet failure not styled as an error");
+    if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot clap again after a quiet run");
+    if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("a quiet clap run changed the stored syncs");
+    console.log("PASS: claps that weren't heard say so and save nothing");
+
+    // Nobody clapping, only room noise with knocks: refused with a plain line, nothing saved.
+    env.hear.claps = "knocks";
+    $(env, "btn-start-clapping").click();
+    await until(() => !env.app.micSyncBusy, "the knocks run");
+    if (text($(env, "mic-sync-message")) !== NOISY_COPY) fail(`noisy copy: ${text($(env, "mic-sync-message"))}`);
+    if (!$(env, "mic-sync-panel").classList.contains("is-error")) fail("noisy failure not styled as an error");
+    if (!shown($(env, "btn-start-clapping")) || $(env, "btn-start-clapping").disabled) fail("cannot clap again after a noisy run");
+    if (env.w.localStorage.getItem("dubmate_mic_sync") !== before) fail("room noise was saved as a clap sync");
+    if (env.calls.some((c) => c.url === "/api/config" && c.method === "POST")) fail("room noise wrote the engine config");
+    console.log("PASS: room noise with nobody clapping is refused and saves nothing");
+  }
+
+  // 3b. Microphone errors from getUserMedia get one plain line each.
+  {
+    const lines = {
+      NotAllowedError: "DubMate isn't allowed to use your microphone. Allow it, then try again.",
+      NotReadableError: "Another app is using your microphone. Close it and try again.",
+      OverconstrainedError: "Your saved microphone isn't connected. Choose another one.",
+    };
+    for (const [name, line] of Object.entries(lines)) {
+      const env = await boot(HOST);
+      const audio = env.app.audio;
+      env.w.navigator.mediaDevices.getUserMedia = async () => {
+        throw Object.assign(new Error(`${name} from the test`), { name });
+      };
+      audio.startRecording = () => audio.requestMicrophone();
+      env.toasts.length = 0;
+      $(env, "btn-mic-sync").click();
+      $(env, "btn-start-mic-sync").click();
+      await until(() => !env.app.micSyncBusy, `the ${name} run`);
+      if (env.toasts[env.toasts.length - 1] !== line) fail(`${name} toast: ${JSON.stringify(env.toasts)}`);
+      if (env.w.localStorage.getItem("dubmate_mic_sync") !== null) fail(`${name} saved something`);
+    }
+    console.log("PASS: microphone errors show the matching plain line");
   }
 
   // 4. Cancel mid-run stops recording and playback, restores the meter and saves nothing.
@@ -334,7 +428,7 @@ const stored = (env) => JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync"
     if (text(status) !== "Not synced yet") fail(`guest status: ${text(status)}`);
     if (status.getAttribute("data-tip") !== GUEST_TIP) fail(`guest tooltip: ${status.getAttribute("data-tip")}`);
     if (status.getAttribute("tabindex") !== "0") fail("guest tooltip not reachable by keyboard");
-    for (const id of ["btn-mic-sync", "btn-start-mic-sync", "btn-start-clapping", "btn-cancel-mic-sync"]) {
+    for (const id of ["btn-mic-sync", "btn-start-mic-sync", "btn-clap-instead", "btn-start-clapping", "btn-cancel-mic-sync"]) {
       const b = $(env, id);
       if (!b || b.tagName !== "BUTTON" || b.getAttribute("type") !== "button") fail(`${id} is not a button`);
       if (b.tabIndex < 0 || !text(b)) fail(`${id} is not focusable with a name`);

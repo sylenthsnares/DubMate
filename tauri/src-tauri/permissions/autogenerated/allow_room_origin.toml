@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-allow-room-origin"
+description = "Enables the allow_room_origin command without any pre-configured scope."
+commands.allow = ["allow_room_origin"]
+
+[[permission]]
+identifier = "deny-allow-room-origin"
+description = "Denies the allow_room_origin command without any pre-configured scope."
+commands.deny = ["allow_room_origin"]

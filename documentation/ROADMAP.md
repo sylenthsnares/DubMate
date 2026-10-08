@@ -68,6 +68,8 @@ All of this goes into one PR.
   - Turn hex colours into tokens.
   - Drop scipy.
   - S38: remove the Python sidecar fallback, so the installer no longer ships a second Python copy. Verified when the owner builds and installs PR 2, plus one macOS CI run.
+- **Fixes from the first hands-on test** (done, `design/first-test-fixes.md`): takes visible from the first take, joining from your own DubMate keeps your name and audio setup, no mic prompt on room pages in the desktop app, the host's folders and settings kept off other computers, output routing after a restart, fairer clap sync, plain mic errors, and a level meter that keeps moving during the mic tests. Hands-on recheck still needed: real mics, a member joining a host over the tunnel, Windows and macOS desktop.
+- **UI pass of every page** (owner request after the first hands-on test): screenshots, review, restyle the right-side booth panel.
 
 ## Features, in build order
 
@@ -98,7 +100,7 @@ All of this goes into one PR.
    - Follow-ups:
      - Booth arrow keys to move between lines. They must skip events already handled and slider, radio and tab targets, because knobs use the arrow keys.
      - Engine-to-engine "Add to my scenes", where the member's own DubMate fetches and imports the host's scene directly.
-     - Tighten `POST /api/config`, `POST /api/rooms` and pack import against LAN callers.
+     - Tighten `POST /api/config`, `POST /api/rooms` and pack import against LAN callers. `POST /api/config` is done: it is now refused for LAN callers (`design/first-test-fixes.md`). `POST /api/rooms` and pack import stay open.
 
 ## Later
 - **Host hand-off, done properly.** Move takes, casting and the pack to the new host's engine, re-register the room code, and redirect everyone. **L**

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod mic_permission;
 mod packbuilder;
 mod paths;
 mod sidecars;
@@ -19,6 +20,19 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState(Mutex::new(DubMateState::default())))
         .setup(|app| {
+            // Members join rooms on the host's tunnel origin; don't ask for the mic again there.
+            #[cfg(windows)]
+            if let Some(w) = app.get_webview_window("main") {
+                let res = w.with_webview(|wv| {
+                    if let Err(e) = mic_permission::install(wv.controller()) {
+                        eprintln!("[Mic] Could not install the microphone permission handler: {e}");
+                    }
+                });
+                if let Err(e) = res {
+                    eprintln!("[Mic] Could not reach the main webview: {e}");
+                }
+            }
+
             let handle = app.handle().clone();
 
             // Background task: check for updates and start sidecars
@@ -63,6 +77,7 @@ fn main() {
             packbuilder::get_packbuilder_status,
             packbuilder::install_packbuilder,
             packbuilder::remove_packbuilder,
+            mic_permission::allow_room_origin,
         ])
         .on_window_event(|window, event| {
             // Kill child sidecar processes cleanly when the window is closed

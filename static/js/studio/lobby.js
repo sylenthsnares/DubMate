@@ -3,6 +3,7 @@
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { escapeHtml } from '../ui_common.js';
 import { takeCount } from './takes.js';
+import { MIC_SYNC_KEY, deviceLabel, validEntry } from './mic_sync.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
 const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
@@ -47,6 +48,133 @@ export function captureHomeOriginParam() {
   window.history.replaceState(window.history.state, '', url);
 }
 
+// Join handoff: a member's name and audio setup travel from their own DubMate to
+// the host's tunnel page in the URL fragment (#dm=), which never reaches a server.
+// Each field is checked on its own on arrival. Anyone can write such a link, so it
+// only carries preferences the guest can see and change, never the user id.
+const HANDOFF_PREFIX = '#dm=';
+const HANDOFF_MAX_MIC_SYNC = 20;
+const MAX_LABEL_CHARS = 200;
+
+function toBase64Url(text) {
+  const binary = encodeURIComponent(text).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(value) {
+  const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+  return decodeURIComponent(Array.from(binary, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
+}
+
+function readJson(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function measuredAt(entry) {
+  return Number.isFinite(entry?.measured_at) ? entry.measured_at : 0;
+}
+
+// Only the known fields of a valid entry, or null.
+function cleanMicSyncEntry(entry) {
+  if (!validEntry(entry)) return null;
+  const clean = { latency_ms: entry.latency_ms, measured_at: measuredAt(entry) };
+  if (typeof entry.method === 'string' && entry.method.length <= 20) clean.method = entry.method;
+  return clean;
+}
+
+// Adds each valid entry of `incoming` to `map` unless `map` already has a newer one.
+function mergeMicSync(map, incoming) {
+  let changed = false;
+  for (const [key, entry] of Object.entries(incoming || {})) {
+    const clean = key.length <= MAX_LABEL_CHARS ? cleanMicSyncEntry(entry) : null;
+    if (!clean) continue;
+    if (validEntry(map[key]) && measuredAt(map[key]) >= clean.measured_at) continue;
+    map[key] = clean;
+    changed = true;
+  }
+  return changed;
+}
+
+/** base64url(JSON) of this member's name, colour and audio setup, for a host's page. */
+export function buildJoinHandoff(app) {
+  const user = app.user || {};
+  const setup = app.audioSetup || {};
+  const devices = setup.devices || {};
+  const label = (list, id) => (devices.labelled ? deviceLabel(list, id) : '');
+  const synced = {};
+  mergeMicSync(synced, readJson(MIC_SYNC_KEY));
+  mergeMicSync(synced, app.engineMicSync);
+  const newest = Object.entries(synced)
+    .sort((a, b) => b[1].measured_at - a[1].measured_at)
+    .slice(0, HANDOFF_MAX_MIC_SYNC);
+  return toBase64Url(JSON.stringify({
+    v: 1,
+    user: { name: user.name || '', color: user.color || '' },
+    audio: {
+      setup_done: !!setup.setupComplete,
+      input_label: label(devices.inputs, setup.inputId),
+      output_label: label(devices.outputs, setup.outputId),
+    },
+    mic_sync: Object.fromEntries(newest),
+    noise_reduction: localStorage.getItem('dubmate_noise_reduction') !== 'false',
+  }));
+}
+
+/**
+ * Applies a join handoff (#dm=) on a host's page reached from the member's own
+ * DubMate, and always removes the fragment. True when anything was applied.
+ */
+export function captureJoinHandoff() {
+  const url = new URL(window.location.href);
+  if (!url.hash.startsWith(HANDOFF_PREFIX)) return false;
+  const encoded = url.hash.slice(HANDOFF_PREFIX.length);
+  url.hash = '';
+  window.history.replaceState(window.history.state, '', url);
+  if (!url.searchParams.get('room') || !isLoopbackOrigin(url.searchParams.get('home'))) return false;
+
+  let data = null;
+  try {
+    data = JSON.parse(fromBase64Url(encoded));
+  } catch (e) {
+    return false;
+  }
+  if (!data || typeof data !== 'object' || data.v !== 1) return false;
+  let applied = false;
+  const store = (key, value) => { localStorage.setItem(key, value); applied = true; };
+  try {
+    const incoming = data.user && typeof data.user === 'object' ? data.user : {};
+    const user = readJson('dubmate_user') || {};
+    const name = typeof incoming.name === 'string' ? incoming.name.trim() : '';
+    const color = typeof incoming.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(incoming.color) ? incoming.color : '';
+    const nameOk = !!name && name.length <= 40;
+    if (nameOk) user.name = name;
+    if (color) user.color = color;
+    // The id stays the one this origin already has (loadUser() adds one when missing).
+    if (nameOk || color) store('dubmate_user', JSON.stringify(user));
+
+    const audio = data.audio && typeof data.audio === 'object' ? data.audio : {};
+    if (audio.setup_done === true) store('dubmate_audio_setup_done', '1');
+    const labelOf = (v) => (typeof v === 'string' && v.length <= MAX_LABEL_CHARS ? v : '');
+    const devices = { input_label: labelOf(audio.input_label), output_label: labelOf(audio.output_label) };
+    if (devices.input_label || devices.output_label) store('dubmate_audio_handoff', JSON.stringify(devices));
+
+    if (data.mic_sync && typeof data.mic_sync === 'object' && !Array.isArray(data.mic_sync)) {
+      const map = readJson(MIC_SYNC_KEY) || {};
+      if (mergeMicSync(map, data.mic_sync)) store(MIC_SYNC_KEY, JSON.stringify(map));
+    }
+
+    if (typeof data.noise_reduction === 'boolean') store('dubmate_noise_reduction', String(data.noise_reduction));
+  } catch (e) {
+    console.warn('[DubMate] Could not apply the join handoff:', e);
+  }
+  return applied;
+}
+
 /** [major, minor] of a version string such as "1.1.3", or null when unreadable. */
 function parseMajorMinor(version) {
   const m = /^(\d+)\.(\d+)/.exec(String(version || '').trim());
@@ -62,6 +190,18 @@ async function fetchEngineVersion(origin) {
     return (data && typeof data.version === 'string') ? data.version : null;
   } catch (e) {
     return null;
+  }
+}
+
+// In the desktop app, lets the microphone work on this room's page without a second
+// prompt (mic_permission.rs). Only this exact tunnel; no-op in a browser.
+async function allowRoomMic(origin) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return;
+  try {
+    await invoke('allow_room_origin', { url: origin });
+  } catch (e) {
+    // An older desktop app without the command: WebView2 asks for the mic instead.
   }
 }
 
@@ -311,13 +451,16 @@ export class LobbyMethods {
   }
 
   // On a host's page reached from the member's own DubMate (?home=), compare the
-  // two engines' versions and note in the join prompt which side should update.
-  // Never blocks joining. Browser-only guests have no home engine to compare.
-  async warnOnVersionMismatch() {
-    const note = document.getElementById('join-modal-version-note');
-    if (!note) return;
-    note.hidden = true;
-    note.textContent = '';
+  // two engines' versions and note in the join prompt (or a toast, when joining
+  // straight in) which side should update. Never blocks joining. Browser-only
+  // guests have no home engine to compare.
+  async warnOnVersionMismatch({ toast = false } = {}) {
+    const note = toast ? null : document.getElementById('join-modal-version-note');
+    if (!toast && !note) return;
+    if (note) {
+      note.hidden = true;
+      note.textContent = '';
+    }
     const home = getHomeOrigin();
     if (!home || home === window.location.origin) return;
     const [hostVersion, myVersion] = await Promise.all([
@@ -330,9 +473,14 @@ export class LobbyMethods {
     const diff = (mine[0] - host[0]) || (mine[1] - host[1]);
     if (diff === 0) return;
     const versions = `The host has DubMate ${hostVersion} and you have ${myVersion}.`;
-    note.textContent = diff < 0
+    const message = diff < 0
       ? `${versions} Update yours to avoid problems in this room.`
       : `${versions} Ask the host to update to avoid problems in this room.`;
+    if (toast) {
+      this.showToast(message);
+      return;
+    }
+    note.textContent = message;
     note.hidden = false;
   }
 
@@ -387,14 +535,22 @@ export class LobbyMethods {
           });
           if (resolveResp.ok) {
             const data = await resolveResp.json();
-            if (data && data.tunnel_url) {
+            const target = data && data.tunnel_url ? new URL(data.tunnel_url) : null;
+            // A registry entry pointing back at this page means the host no longer
+            // has the room; jumping would reload this page forever.
+            if (target && target.origin !== window.location.origin) {
               // Navigate to host's tunnel room session, carrying the member's own
               // engine along so leaving the room can come back to it.
-              const target = new URL(data.tunnel_url);
               target.searchParams.set('room', cleanCode);
               const home = getHomeOrigin();
-              if (home) target.searchParams.set('home', home);
+              if (home) {
+                target.searchParams.set('home', home);
+                // Device names are only readable once listed with the mic allowed.
+                await this.updateAudioDeviceList();
+                target.hash = 'dm=' + buildJoinHandoff(this);
+              }
               this.showToast(`Connecting to room ${cleanCode}…`);
+              await allowRoomMic(target.origin);
               this.navigateTo(target.toString());
               return;
             }

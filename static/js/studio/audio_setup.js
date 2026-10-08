@@ -9,6 +9,8 @@ const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
 const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
 const AUDIO_OUTPUT_DEVICE_KEY = 'dubmate_audio_output_device';
 const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
+// Device labels a member brought from their own DubMate (join handoff), waiting for labelled devices.
+const AUDIO_HANDOFF_KEY = 'dubmate_audio_handoff';
 
 // Meter spans -60 dBFS (silence floor) up to 0 dBFS (digital full scale).
 const METER_FLOOR_DB = -60;
@@ -37,6 +39,24 @@ export function safeStorageRemove(store, key) {
   try {
     if (store) store.removeItem(key);
   } catch (e) { }
+}
+
+// One plain line per getUserMedia / MediaRecorder failure, shared by the meter, mic sync and room checks.
+export function micErrorMessage(err) {
+  switch (err && err.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return "DubMate isn't allowed to use your microphone. Allow it, then try again.";
+    case 'NotFoundError':
+      return 'No microphone was found. Plug one in and press Rescan.';
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'Another app is using your microphone. Close it and try again.';
+    case 'OverconstrainedError':
+      return "Your saved microphone isn't connected. Choose another one.";
+    default:
+      return "Can't read this microphone. Try another one or press Rescan.";
+  }
 }
 
 function formatDbFS(db) {
@@ -70,6 +90,8 @@ export class AudioSetupMethods {
       outputId: safeStorageGet(ls, AUDIO_OUTPUT_DEVICE_KEY) || '',
       devices: { inputs: [], outputs: [], labelled: false, supported: false },
       meterRaf: null,
+      // Bumped by every startInputMeter(), so a start that waited for the mic can tell it was superseded.
+      meterToken: 0,
       peakDb: -Infinity,
       peakHoldUntil: 0,
       // Guards against two overlapping openAudioSettings() calls landing their
@@ -205,6 +227,7 @@ export class AudioSetupMethods {
       this.audioSetup.setupComplete = true;
       safeStorageSet(ls, AUDIO_SETUP_DONE_KEY, '1');
       this.updateAudioSettingsAffordance();
+      await this.refreshAudioDevices();
       return;
     }
     if (state === 'denied') {
@@ -423,8 +446,39 @@ export class AudioSetupMethods {
     }
     this.renderMicSyncRow();
     this.renderRoomCheckRow();
+    await this.resolveHandoffDevices();
 
     return devices;
+  }
+
+  // Picks the microphone and headphones a member chose on their own DubMate. Device ids differ
+  // per origin, so the handoff carries labels; they only match once the browser shows labels.
+  async resolveHandoffDevices() {
+    const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+    const raw = safeStorageGet(ls, AUDIO_HANDOFF_KEY);
+    const devices = this.audioSetup.devices || {};
+    if (!raw || !devices.labelled) return;
+    safeStorageRemove(ls, AUDIO_HANDOFF_KEY);
+    let wanted = null;
+    try {
+      wanted = JSON.parse(raw);
+    } catch (e) { }
+    if (!wanted || typeof wanted !== 'object') return;
+    const find = (list, label) => {
+      if (typeof label !== 'string' || !label) return null;
+      const match = (Array.isArray(list) ? list : []).find((d) => d && d.label === label && d.deviceId);
+      return match ? match.deviceId : null;
+    };
+    const inputId = find(devices.inputs, wanted.input_label);
+    const outputId = find(devices.outputs, wanted.output_label);
+    if (inputId) {
+      await this.applyInputDevice(inputId);
+      if (this.selectAudioInput) this.selectAudioInput.value = inputId;
+    }
+    if (outputId) {
+      await this.applyOutputDevice(outputId);
+      if (this.selectAudioOutput) this.selectAudioOutput.value = outputId;
+    }
   }
 
   // Builds options with createElement/textContent so attacker-influenceable
@@ -554,29 +608,13 @@ export class AudioSetupMethods {
   // --- Live Input Level Meter (dBFS) ---
 
   async startInputMeter() {
+    const token = ++this.audioSetup.meterToken;
     this.stopInputMeter();
     if (!this.isAudioSettingsOpen()) return;
     if (this.isDocumentHidden()) return;
     if (typeof requestAnimationFrame !== 'function') return;
 
-    try {
-      const info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
-      if (info && info.didFallBack) {
-        this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
-      } else {
-        this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
-      }
-    } catch (err) {
-      const name = (err && err.name) || '';
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        this.audioSetup.permission = 'denied';
-        this.renderMicDenial(err);
-        this.showAudioSetupStep('denied');
-        return;
-      }
-      this.setMeterHint("Can't read this microphone. Try another one or press Rescan.", true);
-      return;
-    }
+    if (!(await this.openMeterStream(token))) return;
 
     // Between the await above and here the user may already have closed the panel.
     if (!this.isAudioSettingsOpen()) {
@@ -598,6 +636,51 @@ export class AudioSetupMethods {
       this.audioSetup.meterRaf = requestAnimationFrame(tick);
     };
     this.audioSetup.meterRaf = requestAnimationFrame(tick);
+  }
+
+  // Opens the meter's own mic stream and sets the hint. False when it failed or a newer
+  // start (or a test pausing the meter) superseded it.
+  async openMeterStream(token) {
+    let info;
+    try {
+      info = await this.audio.startInputMonitor(this.audioSetup.inputId || null);
+    } catch (err) {
+      if (token !== this.audioSetup.meterToken) return false;
+      const name = (err && err.name) || '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        this.stopInputMeter();
+        this.audioSetup.permission = 'denied';
+        this.renderMicDenial(err);
+        this.showAudioSetupStep('denied');
+        return false;
+      }
+      console.warn('[DubMate] Input meter could not open the microphone:', err?.name, err?.message, err);
+      this.setMeterHint(micErrorMessage(err), true);
+      return false;
+    }
+    if (token !== this.audioSetup.meterToken || !info) return false;
+    if (info.didFallBack) {
+      this.setMeterHint("Your saved microphone isn't connected. Showing the system default.", true);
+    } else {
+      this.setMeterHint('Say your loudest line. Aim for the amber zone.', false);
+    }
+    return true;
+  }
+
+  // Mic sync and the room checks record through a fresh stream of their own, so they close
+  // the meter's stream; the loop keeps running and shows their stream meanwhile.
+  pauseMeterStream() {
+    this.audio.stopInputMonitor();
+  }
+
+  // After a test ends, fails or is cancelled: reopens the meter's stream, keeping a running loop.
+  resumeInputMeter() {
+    if (!this.isAudioSettingsOpen() || this.audio.monitorAnalyser) return;
+    if (this.audioSetup.meterRaf === null || this.audioSetup.meterRaf === undefined) {
+      this.startInputMeter().catch(() => { });
+      return;
+    }
+    this.openMeterStream(++this.audioSetup.meterToken).catch(() => { });
   }
 
   stopInputMeter() {
@@ -641,7 +724,11 @@ export class AudioSetupMethods {
 
   renderInputMeterFrame() {
     const level = this.audio.readInputLevel();
-    if (!level) return;
+    // No stream open (between test passes): rest at the floor instead of freezing.
+    if (!level) {
+      this.resetInputMeterUI();
+      return;
+    }
 
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const rmsDb = level.rmsDb;
@@ -702,6 +789,8 @@ export class AudioSetupMethods {
     // Stay hidden unless the running backend actually reports the key; the
     // server-side half of this feature may ship after this UI does.
     this.audioExportsRow.style.display = 'none';
+    // The export folder is on the engine's computer; other computers never see it.
+    if (!this.isEngineLocal()) return;
     try {
       const data = await this.fetchConfig();
       if (!data || typeof data !== 'object') return;
@@ -859,12 +948,37 @@ export class AudioSetupMethods {
   // Guard used by the record path so the browser permission
   // prompt is never the first thing a user sees.
   async ensureMicReady() {
-    if (this.audioSetup.permission === 'granted' || this.audioSetup.setupComplete) return true;
+    if (this.audioSetup.permission === 'granted') return true;
 
     let state = 'unknown';
     try {
       state = await this.audio.getMicPermissionState();
     } catch (e) { }
+
+    if (state !== 'granted' && this.audioSetup.setupComplete) {
+      // Set up elsewhere (a member on a host's page): ask for the mic now, before the count-in,
+      // then hand it back so the take opens its own fresh stream.
+      try {
+        await this.audio.requestMicrophone();
+        this.audio.releaseMicrophone();
+      } catch (err) {
+        const name = (err && err.name) || '';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          this.audioSetup.permission = 'denied';
+          await this.openAudioSettings();
+          this.renderMicDenial(err);
+          this.showAudioSetupStep('denied');
+        } else {
+          this.showToast(micErrorMessage(err));
+        }
+        this.updateAudioSettingsAffordance();
+        return false;
+      }
+      this.audioSetup.permission = 'granted';
+      this.updateAudioSettingsAffordance();
+      await this.refreshAudioDevices();
+      return true;
+    }
 
     if (state === 'granted') {
       const ls = (typeof localStorage !== 'undefined') ? localStorage : null;

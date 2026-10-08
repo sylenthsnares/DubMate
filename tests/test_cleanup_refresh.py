@@ -273,14 +273,14 @@ class TestRefreshWhileRunning(RefreshCase):
         with mock.patch.object(ap, "export_dub_video") as render, \
                 mock.patch.object(ap, "build_project_zip") as build_zip:
             for method, url in (("post", "export"), ("get", "export/download"), ("get", "export/project_zip")):
-                res = getattr(self.client, method)(f"/api/rooms/{self.ROOM}/{url}")
+                res = getattr(self.client, method)(f"/api/rooms/{self.ROOM}/{url}?user_id=hostT")
                 self.assertEqual(res.status_code, 409, url)
                 self.assertEqual(res.json()["detail"], REFRESHING)
             render.assert_not_called()
             build_zip.assert_not_called()
             self.gate.set()
             self._wait()
-            res = self.client.post(f"/api/rooms/{self.ROOM}/export")
+            res = self.client.post(f"/api/rooms/{self.ROOM}/export?user_id=hostT")
             self.assertEqual(res.status_code, 200, res.text)
             self.assertEqual(res.json()["status"], "processing")
         self.assertEqual(self.room.cleanup_refreshing, {})

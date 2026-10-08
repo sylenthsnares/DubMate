@@ -48,6 +48,12 @@ export class AudioEngine {
     this.monitorAnalyser = null;
     this.monitorFloatData = null;
     this.monitorByteData = null;
+    // Bumped by every start and stop, so a start still waiting for the mic can tell it was superseded.
+    this.monitorToken = 0;
+    // A level tap on the recording stream (never routed to the speakers): the meter reads it
+    // while a test records through its own stream.
+    this.recordSource = null;
+    this.recordAnalyser = null;
   }
 
   // --- dBFS helpers (shared with the settings level meter UI) ---
@@ -75,6 +81,10 @@ export class AudioEngine {
           try {
             this.ctx = new AudioCtx({ sampleRate: 44100 });
           } catch (e2) {}
+        }
+        // Clicks, previews and the backing track go to the chosen output from the start.
+        if (this.ctx && this.preferredOutputId && typeof this.ctx.setSinkId === 'function') {
+          this.ctx.setSinkId(this.preferredOutputId).catch(() => {});
         }
       }
     }
@@ -109,14 +119,15 @@ export class AudioEngine {
   }
 
   // Mic sync: schedules one short click per time at ctx.currentTime + leadSec + t
-  // on the chosen output. Returns the context time the last click ends.
-  playClickTrain(times, leadSec) {
+  // on the chosen output. The clicks peak at -1 dBFS (CLICK_PEAK) times `level`.
+  // Returns the context time the last click ends.
+  playClickTrain(times, leadSec, level = 1) {
     this.initContext();
     const ctx = this.ctx;
     const data = clickTrainSamples(ctx.sampleRate, [0]);
     const click = ctx.createBuffer(1, data.length, ctx.sampleRate);
     const channel = click.getChannelData(0);
-    for (let i = 0; i < data.length; i++) channel[i] = data[i] * 0.5;
+    for (let i = 0; i < data.length; i++) channel[i] = data[i] * level;
     const start = ctx.currentTime + leadSec;
     for (const t of times) {
       const source = ctx.createBufferSource();
@@ -257,6 +268,18 @@ export class AudioEngine {
     return constraints;
   }
 
+  // A device another stream just released can still be closing (Windows reports
+  // NotReadableError or AbortError), so that one case is tried again once after 300 ms.
+  async _getUserMediaRetry(audio) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio });
+    } catch (err) {
+      if (!err || (err.name !== 'NotReadableError' && err.name !== 'AbortError')) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return navigator.mediaDevices.getUserMedia({ audio });
+    }
+  }
+
   _streamIsLive(stream) {
     if (!stream) return false;
     if (typeof stream.getAudioTracks !== 'function') return true;
@@ -288,9 +311,10 @@ export class AudioEngine {
     let lastErr = null;
     for (const attempt of attempts) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: attempt.audio });
+        const stream = await this._getUserMediaRetry(attempt.audio);
         this.stream = stream;
         this.activeInputDeviceId = attempt.id;
+        this._attachRecordAnalyser(stream);
         return this.stream;
       } catch (err) {
         lastErr = err;
@@ -305,13 +329,31 @@ export class AudioEngine {
     throw lastErr || new Error('Microphone unavailable');
   }
 
+  // Best effort: some browsers can't tap a stream whose rate differs from the context's,
+  // and recording must not fail because of the meter.
+  _attachRecordAnalyser(stream) {
+    const ctx = this.ctx;
+    if (!ctx || typeof ctx.createMediaStreamSource !== 'function' || typeof ctx.createAnalyser !== 'function') return;
+    try {
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.15;
+      source.connect(analyser);
+      this.recordSource = source;
+      this.recordAnalyser = analyser;
+    } catch (e) {}
+  }
+
   // --- 4b. Live Input Level Monitor (dBFS meter source) ---
   // Opens its own short-lived stream so it never collides with, or gets torn
   // down by, the recording stream that releaseMicrophone()/stopAllPlayback()
   // manage. The analyser is deliberately NOT connected to ctx.destination:
   // monitoring must not feed the mic back into the speakers.
+  // Resolves null when a newer start or a stop superseded it while it waited for the mic.
   async startInputMonitor(deviceId = undefined) {
     this.stopInputMonitor();
+    const token = ++this.monitorToken;
     this.initContext();
     if (!this.ctx) throw new Error("This browser can't play DubMate's audio.");
     if (typeof this.ctx.createMediaStreamSource !== 'function' || typeof this.ctx.createAnalyser !== 'function') {
@@ -325,11 +367,16 @@ export class AudioEngine {
     let stream = null;
     let didFallBack = false;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: this._buildAudioConstraints(wanted) });
+      stream = await this._getUserMediaRetry(this._buildAudioConstraints(wanted));
     } catch (err) {
       if (!wanted || (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError'))) throw err;
-      stream = await navigator.mediaDevices.getUserMedia({ audio: this._buildAudioConstraints(null) });
+      if (token !== this.monitorToken) return null;
+      stream = await this._getUserMediaRetry(this._buildAudioConstraints(null));
       didFallBack = true;
+    }
+    if (token !== this.monitorToken) {
+      try { stream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} }); } catch (e) {}
+      return null;
     }
 
     let source = null;
@@ -366,11 +413,16 @@ export class AudioEngine {
     return { deviceId: actualId, label: actualLabel, didFallBack };
   }
 
-  // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame,
-  // or null when no monitor is running.
+  // Returns { rms, peak, rmsDb, peakDb } for the current analyser frame (the meter's
+  // own stream, else the recording stream), or null when neither is open.
   readInputLevel() {
-    const analyser = this.monitorAnalyser;
+    const analyser = this.monitorAnalyser || this.recordAnalyser;
     if (!analyser) return null;
+    const size = analyser.fftSize || 2048;
+    if (!this.monitorFloatData || this.monitorFloatData.length !== size) {
+      this.monitorFloatData = new Float32Array(size);
+      this.monitorByteData = new Uint8Array(size);
+    }
 
     let peak = 0;
     let sumSq = 0;
@@ -412,6 +464,7 @@ export class AudioEngine {
   }
 
   stopInputMonitor() {
+    this.monitorToken++;
     if (this.monitorSource) {
       try { this.monitorSource.disconnect(); } catch (e) {}
     }
@@ -460,6 +513,13 @@ export class AudioEngine {
   }
 
   releaseMicrophone() {
+    for (const node of [this.recordSource, this.recordAnalyser]) {
+      if (node) {
+        try { node.disconnect(); } catch (e) {}
+      }
+    }
+    this.recordSource = null;
+    this.recordAnalyser = null;
     if (this.stream) {
       try {
         this.stream.getTracks().forEach((track) => {

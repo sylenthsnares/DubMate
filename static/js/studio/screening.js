@@ -11,7 +11,7 @@ export class ScreeningMethods {
     // Screening Master Stem Balance Slider
     if (this.sliderScreeningBalance) {
       this.sliderScreeningBalance.addEventListener('input', (e) => {
-        this.setScreeningBalance(parseInt(e.target.value, 10));
+        this.setScreeningBalance(parseInt(e.target.value, 10), { share: true });
       });
     }
 
@@ -84,6 +84,8 @@ export class ScreeningMethods {
     const presenceVal = parseFloat(this.roomState.master_dialogue_presence_db ?? 0.0);
     this.masterDialoguePresence = presenceVal;
     this.renderPresenceUI(presenceVal);
+    const balance = Number(this.roomState.master_mix_balance ?? 50);
+    this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);
 
     if (this.roomState.has_export && (this.roomState.export_video_url || this.roomState.download_url)) {
       this.applyExportedVideoToTheater();
@@ -238,8 +240,16 @@ export class ScreeningMethods {
     }
   }
 
-  setScreeningBalance(val) {
-    this.screeningBalance = Math.max(0, Math.min(100, val));
+  /**
+   * The Mix slider (0 more music, 50 even, 100 more voice). With share, it is this user's
+   * own change: the final video no longer matches, and the host's change becomes the room's,
+   * which every render uses (a member's stays in their own preview).
+   */
+  setScreeningBalance(val, { share = false } = {}) {
+    this.screeningBalance = Math.max(0, Math.min(100, Number.isFinite(val) ? val : 50));
+    if (this.sliderScreeningBalance && String(this.sliderScreeningBalance.value) !== String(this.screeningBalance)) {
+      this.sliderScreeningBalance.value = this.screeningBalance;
+    }
     if (this.valScreeningBalance) {
       if (this.screeningBalance === 50) {
         this.valScreeningBalance.innerText = 'Even';
@@ -263,6 +273,22 @@ export class ScreeningMethods {
     if (this.screeningVocalGainNode && this.audio.ctx) {
       this.screeningVocalGainNode.gain.setValueAtTime(vocalGain, this.audio.ctx.currentTime);
     }
+
+    if (share) {
+      this.dropStaleExport();
+      if (this.roomState) this.roomState.master_mix_balance = this.screeningBalance;
+      if (this.socket && this.isHost({ allowDummy: true })) {
+        this.socket.send('set_mix_balance', { balance: this.screeningBalance });
+      }
+    }
+  }
+
+  /** The mix changed, so the final video is out of date: play the live mix until a new one is made. */
+  dropStaleExport() {
+    if (this.roomState) this.roomState.has_export = false;
+    if (this.isUsingExportedVideo) this.applyLiveMixToTheater();
+    this.isUsingExportedVideo = false;
+    if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
   }
 
   /** Presence label and preset highlight (and the slider, unless it is the source). */
@@ -283,15 +309,11 @@ export class ScreeningMethods {
 
     this.applyScreeningPresence();
 
-    // Reset pre-rendered export cache since dialogue presence changed
-    if (this.roomState) {
-      this.roomState.has_export = false;
-      this.roomState.master_dialogue_presence_db = this.masterDialoguePresence;
-      this.isUsingExportedVideo = false;
-      if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
-    }
+    this.dropStaleExport();
+    if (this.roomState) this.roomState.master_dialogue_presence_db = this.masterDialoguePresence;
 
-    if (this.socket) {
+    // The room's level is the host's; a member's change stays in their own preview.
+    if (this.socket && this.isHost({ allowDummy: true })) {
       this.socket.send('set_dialogue_presence', {
         presence_db: this.masterDialoguePresence
       });

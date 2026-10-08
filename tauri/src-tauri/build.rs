@@ -16,6 +16,7 @@ fn main() {
         "get_packbuilder_status",
         "install_packbuilder",
         "remove_packbuilder",
+        "allow_room_origin",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

@@ -823,11 +823,11 @@
             <!-- Tape Transport Status Readout Strip -->
             <div id="record-status-label" class="record-status-label">Press Space to record</div>
 
-            <!-- Take history: one click away, only with 2+ takes on a line you can record -->
+            <!-- Take history: one click away, from the first take on a line you can record -->
             <div id="take-history" class="take-history" style="display: none;">
-              <button id="btn-take-history" class="btn btn-ghost btn-xs" aria-expanded="false"
+              <button id="btn-take-history" class="btn btn-secondary btn-xs" aria-expanded="false"
                 aria-controls="take-history-panel"
-                data-tip="Listen to your other takes and choose the one used in the dub">Takes (2)</button>
+                data-tip="Listen to your takes and choose the one used in the dub"><span class="take-history-count">Takes (1)</span><span aria-hidden="true" class="take-history-chevron"></span></button>
               <div id="take-history-panel" class="take-history-panel" style="display: none;"></div>
             </div>
 
@@ -1811,7 +1811,10 @@
             <p id="mic-sync-message" style="margin: 0;" role="status" aria-live="polite"></p>
             <div class="modal-actions" style="margin-top: 10px; justify-content: flex-end; gap: 8px;">
               <button id="btn-cancel-mic-sync" class="btn btn-ghost btn-sm" type="button">Cancel</button>
-              <button id="btn-start-mic-sync" class="btn btn-primary btn-sm" type="button">Start</button>
+              <button id="btn-clap-instead" class="btn btn-secondary btn-sm" type="button"
+                style="display: none;">Clap instead</button>
+              <button id="btn-start-mic-sync" class="btn btn-primary btn-sm" type="button"
+                data-tip="On speakers? Turn them up and stay near the mic.">Play clicks</button>
               <button id="btn-start-clapping" class="btn btn-primary btn-sm" type="button"
                 style="display: none;">Start clapping</button>
             </div>

@@ -54,16 +54,6 @@ except Exception:
     pass
 
 
-def require_local_request(request: Request) -> None:
-    """
-    Rejects requests that arrived through the Cloudflare tunnel. cloudflared
-    connects to the engine from localhost, so the client address cannot tell a
-    tunnel guest from the host; the headers Cloudflare adds can.
-    """
-    if request.headers.get("cf-connecting-ip") or request.headers.get("cf-ray"):
-        raise HTTPException(status_code=403, detail="This can only be changed on the host's computer.")
-
-
 DEFAULT_ENGINE_PORT = 8000
 
 
@@ -182,9 +172,11 @@ async def get_system_encoder():
     }
 
 
-def _config_payload() -> Dict[str, Any]:
+def _config_payload(local: bool) -> Dict[str, Any]:
     """Configuration and pack list shared by GET and POST /api/config.
 
+    Off the engine's own computer (local=False) it is only the pack list: the folders
+    and the mic sync results belong to the host's machine.
     Blocking (it scans pack folders), so callers run it in a worker thread.
     """
     # get_current_packs_config scans too; holding the lock keeps it from racing a
@@ -192,6 +184,9 @@ def _config_payload() -> Dict[str, Any]:
     with packs_cache._RESCAN_LOCK:
         config_info = pack_loader.get_current_packs_config()
     registry = packs_cache.get_packs_registry()
+    packs = [p.to_dict() for p in registry.values()]
+    if not local:
+        return {"pack_count": len(packs), "packs": packs}
     mic_sync = pack_loader.load_config().get("mic_sync")
     return {
         **config_info,
@@ -202,7 +197,7 @@ def _config_payload() -> Dict[str, Any]:
         "install_root": pack_loader.get_install_root(),
         # Measured mic delay per microphone|output pair (Audio settings, Sync your mic).
         "mic_sync": mic_sync if isinstance(mic_sync, dict) else {},
-        "packs": [p.to_dict() for p in registry.values()],
+        "packs": packs,
     }
 
 
@@ -229,9 +224,11 @@ def _valid_mic_sync(value: Any) -> Dict[str, Dict[str, Any]]:
 
 
 @app.get("/api/config")
-async def get_config():
-    """Returns the current persistent configuration and pack paths."""
-    return {"status": "ok", **(await asyncio.to_thread(_config_payload))}
+async def get_config(request: Request):
+    """Returns the current persistent configuration and pack paths; other computers get
+    the pack list only."""
+    local = common.is_own_computer(request)
+    return {"status": "ok", **(await asyncio.to_thread(_config_payload, local))}
 
 
 @app.post("/api/config")
@@ -241,7 +238,7 @@ async def update_config(payload: Dict[str, Any], request: Request):
     at least one must be supplied. Previously packs_dir was mandatory, which made it
     impossible to change the export location on its own.
     """
-    require_local_request(request)
+    common.require_own_computer(request)
 
     packs_dir = (payload.get("packs_dir") or "").strip()
     exports_dir = (payload.get("exports_dir") or "").strip()
@@ -284,7 +281,7 @@ async def update_config(payload: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail=message)
         messages.append(message)
 
-    config = await asyncio.to_thread(_config_payload)
+    config = await asyncio.to_thread(_config_payload, True)
     return {
         "status": "ok",
         "message": " | ".join(messages),
