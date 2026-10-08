@@ -1,10 +1,11 @@
 /**
  * test_version_check.js
  *
- * P21: a member who reaches a host's room from their own DubMate (?home=) sees a
- * note in the join prompt when the two engines' major.minor versions differ,
- * saying which side should update. Browser-only guests are not checked, and the
- * check never blocks joining.
+ * P21 / 2.0 join flow: a member who reaches a host's room from their own DubMate
+ * (?home=) gets a toast when the two engines' major.minor versions differ, saying
+ * which side should update. There is no join prompt any more: with a handoff they
+ * join straight in, without one they get the join card. Browser-only guests are not
+ * checked, and the check never blocks joining.
  *
  * Both engines' /health responses are stubbed through window.fetch.
  */
@@ -74,73 +75,75 @@ async function boot(url, { hostVersion, homeVersion }) {
     return json(200, {});
   };
 
+  // JSDOM fires DOMContentLoaded itself; a second, manual one would boot a second app.
   w.eval(bundle);
-  w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
-  await tick();
+  await tick(150);
   const app = w.dubMateApp;
   if (!app) fail(`studio did not boot at ${url}`);
-  const note = w.document.getElementById("join-modal-version-note");
-  if (!note) fail("join prompt has no version note element");
-  const modal = w.document.getElementById("modal-join-room");
-  return { w, app, fetches, note, modal };
+  const toasts = () => Array.from(w.document.querySelectorAll("#toast-container .toast")).map((t) => t.innerText || t.textContent || "");
+  const versionToasts = () => toasts().filter((t) => /The host has DubMate/.test(t));
+  return { w, app, fetches, toasts, versionToasts };
 }
 
 const memberUrl = `${TUNNEL}/?room=DUB-AB12&home=${encodeURIComponent(HOME)}`;
 
 (async () => {
-  // 1. Member older than the host: the member is told to update.
+  // 1. Member older than the host: the member is told to update, in a toast.
   {
-    const { note, modal } = await boot(memberUrl, { hostVersion: "1.2.0", homeVersion: "1.1.3" });
-    if (modal.style.display !== "flex") fail("join prompt not shown");
-    if (note.hidden) fail("no note for an older member");
-    if (!/host has DubMate 1\.2\.0 and you have 1\.1\.3/.test(note.textContent)) fail(`versions missing: ${note.textContent}`);
-    if (!/Update yours/.test(note.textContent)) fail(`older member not told to update: ${note.textContent}`);
-    console.log("PASS: P21 an older member is told to update");
+    const { app, versionToasts, toasts, w } = await boot(memberUrl, { hostVersion: "1.2.0", homeVersion: "1.1.3" });
+    if (app.currentView !== "join") fail(`member without a handoff not on the join card: ${app.currentView}`);
+    if (w.document.getElementById("modal-join-room")) fail("the join prompt is still in the page");
+    const t = versionToasts();
+    if (t.length !== 1) fail(`expected one version toast: ${JSON.stringify(t)} all: ${JSON.stringify(toasts())} view ${app.currentView}`);
+    if (!/host has DubMate 1\.2\.0 and you have 1\.1\.3/.test(t[0])) fail(`versions missing: ${t[0]}`);
+    if (!/Update yours/.test(t[0])) fail(`older member not told to update: ${t[0]}`);
+    console.log("PASS: P21 an older member is told to update, in a toast");
   }
 
   // 2. Host older than the member: the member is told to ask the host.
   {
-    const { note } = await boot(memberUrl, { hostVersion: "1.1.9", homeVersion: "2.0.0" });
-    if (note.hidden) fail("no note for an older host");
-    if (!/Ask the host to update/.test(note.textContent)) fail(`older host not named: ${note.textContent}`);
+    const { versionToasts } = await boot(memberUrl, { hostVersion: "1.1.9", homeVersion: "2.0.0" });
+    if (!/Ask the host to update/.test(versionToasts()[0] || "")) fail(`older host not named: ${versionToasts()}`);
     console.log("PASS: P21 an older host is named as the side to update");
   }
 
-  // 3. Same major.minor (patch differs): no note.
+  // 3. Same major.minor (patch differs): nothing.
   {
-    const { note, fetches } = await boot(memberUrl, { hostVersion: "1.1.0", homeVersion: "1.1.7" });
+    const { versionToasts, fetches } = await boot(memberUrl, { hostVersion: "1.1.0", homeVersion: "1.1.7" });
     if (!fetches.includes(`${HOME}/health`)) fail("member's own engine was not asked for its version");
-    if (!note.hidden || note.textContent) fail(`note shown for a patch difference: ${note.textContent}`);
+    if (versionToasts().length) fail(`toast for a patch difference: ${versionToasts()}`);
     console.log("PASS: P21 a patch-level difference shows nothing");
   }
 
-  // 4. The member's engine can't be reached: no note, and joining still works.
+  // 4. The member's engine can't be reached: nothing, and joining still works.
   {
-    const { app, note, modal } = await boot(memberUrl, { hostVersion: "1.2.0", homeVersion: Error });
-    if (!note.hidden) fail("note shown when the member's version is unknown");
+    const { app, versionToasts } = await boot(memberUrl, { hostVersion: "1.2.0", homeVersion: Error });
+    if (versionToasts().length) fail("toast when the member's version is unknown");
     let joined = null;
-    app.joinRoom = (code) => { joined = code; };
-    app.confirmJoinModal();
+    app.joinRoom = async (code) => { joined = code; };
+    app.joinCardCode = "DUB-AB12";
+    const doc = app.views.join.ownerDocument;
+    doc.getElementById("input-join-name").value = "Ana";
+    await app.submitJoinCard();
     if (joined !== "DUB-AB12") fail(`joining was blocked: ${joined}`);
-    if (modal.style.display !== "none") fail("join prompt stayed open");
     console.log("PASS: P21 an unreachable engine skips the check and never blocks joining");
   }
 
   // 5. Browser-only guest (no ?home=): no check at all.
   {
-    const { note, fetches } = await boot(`${TUNNEL}/?room=DUB-AB12`, { hostVersion: "1.2.0", homeVersion: "1.0.0" });
+    const { fetches, versionToasts } = await boot(`${TUNNEL}/?room=DUB-AB12`, { hostVersion: "1.2.0", homeVersion: "1.0.0" });
     if (fetches.some((u) => u.endsWith("/health"))) fail(`guest was checked: ${fetches.filter((u) => u.endsWith("/health"))}`);
-    if (!note.hidden) fail("note shown to a browser-only guest");
+    if (versionToasts().length) fail("toast shown to a browser-only guest");
     console.log("PASS: P21 browser-only guests are not checked");
   }
 
   // 6. Joining a room on the member's own engine: nothing to compare.
   {
-    const { app, note, fetches } = await boot(`${HOME}/`, { hostVersion: "1.2.0", homeVersion: "1.0.0" });
-    app.promptJoinRoom("DUB-AB12");
+    const { app, fetches, versionToasts } = await boot(`${HOME}/`, { hostVersion: "1.2.0", homeVersion: "1.0.0" });
+    await app.warnOnVersionMismatch();
     await tick(20);
     if (fetches.some((u) => u.endsWith("/health"))) fail("own-engine join was checked");
-    if (!note.hidden) fail("note shown on the member's own engine");
+    if (versionToasts().length) fail("toast on the member's own engine");
     console.log("PASS: P21 joining on the member's own engine is not checked");
   }
 

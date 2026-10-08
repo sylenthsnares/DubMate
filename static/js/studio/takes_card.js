@@ -1,10 +1,11 @@
 // studio/takes_card.js - The booth's TAKES card: every take of the current line, newest
-// first, as a radio group with one tab stop. The green row is the take in the dub; Use (or
-// Enter) puts another one there, P plays the focused take, and Delete removes it after a
-// 6 s in-place Undo. On lines you can't record the rows are read-only and only play.
+// first, as a radio group with one tab stop. The green row is the take in the dub; a click
+// on another row (or Enter) puts that one there, ▶ (or P) plays a take, and Delete removes
+// it after a 6 s in-place Undo. On lines you can't record the rows are read-only and only play.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { announce } from '../ui_common.js';
 import { pickedTake, lineTakes, syncWords } from './takes.js';
+import { avatarEl } from './presence.js';
 
 // How long "Take 3 deleted · Undo" stays before the DELETE goes out.
 const UNDO_MS = 6000;
@@ -62,6 +63,12 @@ export class TakesCardMethods {
     const active = document.activeElement;
     const hadFocus = !!active && this.takesList.contains(active);
     const focusedId = hadFocus ? active.closest('.take-row')?.dataset.takeId : null;
+    // Many takes scroll inside the list. A redraw of the same line keeps where you
+    // scrolled to; a new line, or a new take in the dub, brings that take into view.
+    const sameLine = !!line && this.takesListView?.lineId === line.line_id;
+    const reveal = !sameLine || this.takesListView?.pickedId !== inDub?.take_id;
+    const scrollTop = sameLine ? this.takesList.scrollTop : 0;
+    this.takesListView = line ? { lineId: line.line_id, pickedId: inDub?.take_id } : null;
     this.closeTakeMenu();
     this.takesList.innerHTML = '';
 
@@ -92,6 +99,14 @@ export class TakesCardMethods {
         : this.takeRow(take, { inDub: take.take_id === inDub?.take_id, mine, best: take === best, locked: !!saving }));
     }
 
+    this.renderTakePlayButtons();
+    this.renderTakeDependents();
+
+    // Three rows or more: the card may shrink to two rows when the column runs short.
+    this.takesList.closest('.takes-card')?.classList.toggle('is-long', this.takesList.children.length >= 3);
+    this.takesList.scrollTop = scrollTop;
+    if (reveal) this.revealTakeRow(this.takesList.querySelector('.take-row.picked'));
+
     const radios = [...this.takesList.querySelectorAll('[role="radio"]')];
     const row = focusedId ? [...this.takesList.children].find((r) => r.dataset.takeId === focusedId) : null;
     const stop = row?.querySelector('[role="radio"]')
@@ -101,7 +116,22 @@ export class TakesCardMethods {
     if (hadFocus) (row?.querySelector('[role="radio"], .take-undo') || stop)?.focus();
   }
 
-  /** "◉ Take 3 · 0.8 s · Mika · Tight sync · In the dub | Use | ⋯" */
+  /** Scrolls the list (only the list, not the column or the page) the least it takes to
+   *  show this row whole. */
+  revealTakeRow(row) {
+    const list = this.takesList;
+    if (!row || !list || list.scrollHeight <= list.clientHeight) return;
+    const box = list.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    const pad = parseFloat(getComputedStyle(list).paddingTop) || 0;
+    if (r.top < box.top + pad) list.scrollTop -= box.top + pad - r.top;
+    else if (r.bottom > box.bottom - pad) list.scrollTop += r.bottom - (box.bottom - pad);
+  }
+
+  /** "◉ Take 3 · 0.8 s · (M) · Tight sync · In the dub | ▶ | ⋯". The slot after the sync
+   *  reads "In the dub" on the picked row, and "Use this take" on your other rows on hover
+   *  and focus (a click on the row uses it). ▶ sits at the same x on every row; ⋯ holds
+   *  Delete and is only on rows you can delete. */
   takeRow(take, { inDub, mine, best, locked = false }) {
     const row = takeEl('div', `take-row${inDub ? ' picked' : ''}`);
     row.dataset.takeId = take.take_id;
@@ -114,32 +144,56 @@ export class TakesCardMethods {
     radio.appendChild(takeEl('span', 'take-name', `Take ${take.number}`));
     radio.appendChild(takeEl('span', 'take-dur', `${(Number(take.duration) || 0).toFixed(1)} s`));
     if (take.user_id && take.user_id !== this.user.id) {
-      radio.appendChild(takeEl('span', 'take-by', take.user_name || 'Cast member'));
+      // Who recorded it: their avatar, with the name in its tooltip.
+      const by = this.roomState?.users?.[take.user_id];
+      const name = by?.name || take.user_name || 'Cast member';
+      const avatar = radio.appendChild(avatarEl({ name, color: by?.color }, 20));
+      avatar.removeAttribute('aria-hidden');
+      avatar.setAttribute('role', 'img');
+      avatar.setAttribute('aria-label', `Recorded by ${name}`);
+      avatar.dataset.tip = `Recorded by ${name}`;
     }
     const score = take.timing_score;
     const sync = radio.appendChild(takeEl('span', `take-sync${best ? ' best' : ''}`, syncWords(score)));
     sync.dataset.tip = syncWords(score) === '–'
       ? "Timing wasn't measured for this take"
       : `Timing ${Math.round(score * 100)}%: how closely this take follows the original line's timing`;
-    if (inDub) radio.appendChild(takeEl('span', 'take-in-dub', 'In the dub'));
+    const slot = radio.appendChild(takeEl('span', 'take-slot'));
+    if (inDub) {
+      slot.appendChild(takeEl('span', 'take-in-dub', 'In the dub'));
+    } else if (mine && !locked) {
+      slot.appendChild(takeEl('span', 'take-use-cue', 'Use this take')).dataset.tip = 'Use this take in the dub (Enter)';
+    }
     radio.addEventListener('click', () => {
       if (mine && !inDub) this.pickTake(take);
     });
     row.appendChild(radio);
 
-    if (mine && !inDub) {
-      const use = row.appendChild(takeEl('button', 'btn btn-secondary btn-xs take-use', 'Use'));
-      use.type = 'button';
-      use.setAttribute('aria-label', `Use take ${take.number}`);
-      use.dataset.tip = 'Use this take in the dub (Enter)';
-      use.disabled = locked;
-      use.addEventListener('click', () => this.pickTake(take));
-    }
+    const play = row.appendChild(takeEl('button', 'btn btn-ghost btn-xs take-play', '▶'));
+    play.type = 'button';
+    play.setAttribute('aria-label', `Play take ${take.number}`);
+    play.setAttribute('aria-pressed', 'false');
+    play.dataset.tip = `Play take ${take.number} (P)`;
+    play.addEventListener('click', () => this.playHistoryTake(take, play));
 
-    const items = [{ label: 'Play this take', key: 'P', onClick: () => this.playHistoryTake(take, radio) }];
-    if (mine) items.push({ label: 'Delete take', key: 'Del', onClick: () => this.deleteTake(take), disabled: locked });
-    this.appendTakeMenu(row, `Take ${take.number}`, items);
+    if (mine) {
+      this.appendTakeMenu(row, `Take ${take.number}`, [
+        { label: 'Delete take', key: 'Del', onClick: () => this.deleteTake(take), disabled: locked },
+      ]);
+    }
     return row;
+  }
+
+  /** ▶ on each row reads ■ while that take plays, or while its sound is on the way. */
+  renderTakePlayButtons() {
+    if (!this.takesList) return;
+    const busy = !!this.isPlayingTake || !!this.soundWait;
+    for (const play of this.takesList.querySelectorAll('.take-play')) {
+      const playing = busy && !!this.playingHistoryTakeId
+        && play.closest('.take-row')?.dataset.takeId === this.playingHistoryTakeId;
+      play.textContent = playing ? '■' : '▶';
+      play.setAttribute('aria-pressed', String(playing));
+    }
   }
 
   /** A row's ⋯ button and its menu: [{ label, key, onClick, disabled }]. */
@@ -149,6 +203,8 @@ export class TakesCardMethods {
     more.setAttribute('aria-haspopup', 'menu');
     more.setAttribute('aria-expanded', 'false');
     more.setAttribute('aria-label', `More for ${name.toLowerCase()}`);
+    // Nothing in it can be used now (its line is saving): the button is off too.
+    more.disabled = items.every((item) => item.disabled);
     // The menu opens in the row's flow, under it, so the scrolling column never clips it.
     const menu = row.appendChild(takeEl('div', 'take-menu'));
     menu.setAttribute('role', 'menu');
@@ -274,7 +330,7 @@ export class TakesCardMethods {
       this.focusTakeRadio(radios[Math.max(0, Math.min(radios.length - 1, i))]);
     } else if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
-      if (take) this.playHistoryTake(take, radio);
+      if (take) this.playHistoryTake(take, radio.closest('.take-row')?.querySelector('.take-play'));
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (take && mine && radio.getAttribute('aria-checked') !== 'true') this.pickTake(take);

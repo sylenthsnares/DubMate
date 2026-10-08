@@ -131,12 +131,9 @@ function fakeRoom(app) {
     if (navigations[0] !== `${HOME}/`) fail(`missing room did not go home: ${JSON.stringify(navigations)}`);
     console.log("PASS: B2 a missing room on a host's page falls back to the member's own engine");
 
-    // Declining the join prompt on a host's page goes home too.
-    navigations.length = 0;
-    w.history.replaceState({}, "", "/?room=DUB-AB12");
-    app.closeJoinModal();
-    if (navigations[0] !== `${HOME}/`) fail(`declining the join prompt stayed on the host: ${JSON.stringify(navigations)}`);
-    console.log("PASS: B2 declining a host's join prompt returns to the member's own engine");
+    // There is no join prompt to decline any more; the logo menu's Studio link goes home.
+    if (w.document.getElementById("logo-dropdown-container").hasAttribute("inert")) fail("a member's logo menu was switched off on a host's page");
+    console.log("PASS: B2 a member on a host's page keeps the logo menu that leads home");
   }
 
   // 2. On the member's own engine, joining a remote room passes that engine along,

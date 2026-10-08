@@ -16,7 +16,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 ### Added
 - **Remove Pack Builder**: in the desktop app, Audio settings can remove the Pack Builder add-on and show how much space that frees. DubMate restarts afterwards.
 - **Version Note When Joining**: if your DubMate and the host's are on different versions, joining shows which side should update. Joining is never blocked.
-- **"You Left" Screen**: members who joined from a browser link see a short screen with a room-code box after leaving, instead of the host's pack library.
+- **"You Left" Screen**: friends who joined from a browser link see "You left Rooftop Standoff" after leaving, with Rejoin, which takes them back in with one click, and a box for a different room. It stays after a reload.
 - **Update Progress**: desktop updates show real download progress instead of jumping to 100%.
 - **macOS Room Codes Launcher**: `run_cloudflare.sh` starts DubMate with a public room code on macOS source installs.
 - **Tooltips**: secondary explanations moved into tooltips that also open on keyboard focus.
@@ -91,9 +91,9 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **A Launcher That Looks Like DubMate**: the desktop launcher has the studio's colours, fonts and wordmark, and its fonts work offline.
 - **Honest Startup**: the launcher only says what DubMate is really doing. A slow start stays calm ("Still starting", then "Taking longer than usual" with Restart DubMate) instead of turning into an error after 15 seconds. A real failure says what went wrong and what to do: another app using DubMate's port, damaged or missing files, or the engine stopping. Details sit behind "Show details", with Copy details. The update card no longer shows the release notes.
 - **Calmer Notifications**: notifications appear at the bottom of the screen, three at most. Errors stay until you close them, and screen readers read each notification on its own.
-- **Only the Host Starts Recording**: guests see who voices each character instead of the casting dropdowns, and "Waiting for the host to start recording" instead of the Start button. If recording has already started, "Back to the booth" takes them there; during the premiere, "Back to the premiere".
+- **Only the Host Starts Recording**: guests see who voices each character instead of the casting dropdowns, and "Tani starts the recording" instead of the Start button. If recording has already started, "Back to the booth" takes them there; during the premiere, "Back to the premiere".
 - **Casting Table**: characters are listed in natural order (Guy 2 before Guy 10), counts read "1 line" or "2 lines", and an uncast character reads "Original voice".
-- **Calmer Cast Strip**: in the lobby the cast strip shows who is here and their roles. Someone with several characters shows "2 roles", with the names in a tooltip. Screen readers hear each join, leave and "is ready" once.
+- **Calmer Cast Strip**: in the premiere the cast strip shows who is here and their roles. Someone with several characters shows "2 roles", with the names in a tooltip. Screen readers hear each join, leave and "is ready" once.
 - **Reconnecting**: when the connection drops, the header says "Lost the room. Reconnecting…" with Retry now. If a room on someone else's DubMate can't be reached after about a minute, or the host has closed it, it stops trying and offers Try again or Leave room; on your own DubMate it keeps trying until DubMate is back. Changes that couldn't be sent are reported instead of lost silently, and the room hears where you are and whether you're ready again once you're back. The header's Leave stays in view in a window 960px wide.
 - **Shortcut Sheet by Screen**: the ? sheet shows the keys for the screen you're on first, then the ones that work everywhere, with the other screens' keys one click away.
 - **Booth Right Side**: it now reads in the order you work: Record, Takes, Voice, then what you hear, with Prev and Next always at the bottom. Everything can be reached in a 1280×720 window; the middle scrolls when it has to. The record button and its badge say what happens next (READY, COUNT-IN, REC, SAVING, NO MIC, OFFLINE). Original and Take sit side by side, and while one plays the other switches what you hear in place. The mic sync advice is a hint under them instead of a notification.
@@ -105,17 +105,33 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **Line Chips**: each chip shows its line's number in the scene and how many takes it has.
 - **Recording Feedback**: while you record, the video shows "● REC" with the time left and the waveform draws your voice as it comes in. Every take shows where the line ends.
 - **Keep Going While a Take Saves**: saving a take no longer blocks the booth. Go to the next line and record it while the last take saves; only the line that is saving waits, and its chip says "saving". "Take saved" shows only for a line you've moved away from.
+- **Calmer Booth**: a bigger picture, with one bar above it for the line chips, who's here, Mark ready and Start premiere. The line reads larger, centred under the picture, with its length beside it.
+- **Who's Here**: in the booth the cast strip gives way to a row of avatars in the bar. Point at it or Tab to it to see each person's line, how many of their lines are recorded, and who is ready.
+- **Takes Rows**: ▶ plays a take. Clicking a row, or Enter, puts that take in the dub, and the row says "Use this take" when you point at it or reach it with Tab. Someone else's take shows their avatar.
+- **Level in All Effects**: the Level dial moved to All effects. The Voice card sums it up, for example "level matched · noise cleanup on".
+- **Next Line After a Take**: Next line turns amber once the line has a take, and Start premiere once everyone is ready. Before the first take the timing row waits, since there is nothing to move. The ±100 ms buttons are gone; Shift with [ or ] still moves a take 100 ms.
+- **Recording Focus**: during the count-in and while you record, everything but the record button, the picture, the line and the waveform dims and can't be clicked, the header included. Esc cancels the count-in. While you record Esc does nothing, so a stray key never loses a take. Saving a take dims nothing.
 - **Takes Kept When the Upload Fails**: a take that couldn't upload stays in its Takes list as "waiting to upload" with Retry, and uploads by itself when you're back online. Closing the page asks first while a take is waiting or saving.
 - **Done on Your Last Line**: Done marks you ready, or asks first when some of your lines have no take. The host's one main button is "Start premiere" with how many people are ready; a guest whose lines all have takes gets "All recorded · Mark ready".
+- **One Name and Colour**: you choose your name and colour once, on the home screen or the join card, and every room shows them the same way. Names are up to 24 characters everywhere. Colours come from one set of 8 (Coral, Lime, Mint, Cornflower, Orchid, Pink, Cyan and Blush), none of them the record red, the done green or the amber, and your initial always sits on your colour. A room gives each person a colour nobody else there has; when yours is taken, a notification says which one you got. Colours saved by older versions become the nearest of the 8.
+- **Home Screen**: the New room and Join room tabs are gone. The You card holds your name, your colour and "Join a friend's room", which takes a room code or an invite link. No scene is chosen until you pick one; the bar under the scenes names it and holds "Start a room ›". Arrow keys move between scenes and Enter starts the room. A wrong code says so under the field and keeps what you typed.
+- **Join Card**: a friend who opens an invite link in a browser gets one card with the host, the scene and who's here, then their name and colour and "Join as Sam ›". The code is checked first, and a room that isn't open says so. Colours someone in the room has are marked with their initial. Members joining from their own DubMate go straight in, with no questions.
+- **Casting Done for You**: everyone who joins the lobby gets the free character with the most lines, and a notification says which. Friends can take a free character ("I'll voice Courier") or give theirs back; the host can still change anyone and has "Cast evenly". Once takes come in, the Lines column shows "2 of 3 recorded".
+- **Lobby**: the scene's name and who's here sit at the top, with Copy invite link and Start recording. On the right, a preview of the scene shows the selected character's first line; "▶ Play this line" plays it. Point at a character to preview theirs.
+- **Mic Check in the Lobby**: the mic set-up moved from the dialog at launch to a "Check your mic" card in the lobby, done while friends join: allow the mic, choose devices, check your level, then sync (take your earbuds out first; the clicks are loud). Skip it and the booth shows NO MIC as before.
+- **Leaving Asks in the App**: Leave asks "Leave the room?" in the studio instead of a browser dialog. Esc or Stay keeps you in.
 - **Audio Settings Says Where Your Takes Go**: on your own computer it says your takes are saved on this computer. In someone else's room it says your takes are sent to the host's computer, and the host can export and share them.
 
 ### Removed
+- **Lobby Extras**: the lobby's noise reduction card (the switch is in All effects in the booth) and its Cast list (the avatars at the top show who's here).
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
 - **Host Transfer**: the "Make Host" button, which moved a running room to another member's computer, is gone.
 - **COMPRESS Switch**: the booth's compressor switch is gone. It changed only the preview, never the saved video. Compress is in All effects, and you hear it in both.
 - **16:9/9:16 Switch**: the premiere's switch is gone. Save video saves the scene's own 16:9, and the 9:16 version is in Save's menu.
 
 ### Fixed
+- **"Back Online" When Joining**: joining a room no longer flashes "Back online" when nothing was lost.
+- **Casting Scrollbar**: the casting card's scrollbar now matches the rest of the studio in the desktop app and Chrome.
 - **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.
 - **Premiere Dialogue Level**: the premiere's video now uses the room's Dialogue level, like every other export.
 - **Premiere Mix Reaches the Video**: the premiere's mix (more music or more voice) now changes the video you save and the stems, not just what you hear. Changing it switches from the saved video back to the live mix, so you hear the change. The host's setting is the room's and everyone hears it.
@@ -133,6 +149,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
 - **Pack Builder Cast Row Scrolls**: with many characters, the Cast row scrolls with the mouse wheel, a trackpad, by dragging, or with the arrow keys. A fade shows which side has more.
 - **Pack Builder Play**: Play no longer repeats the start of a line. The voices wait for the video, and a line's Play stops at the end of the line.
+- **A Mic That Fails as the Take Starts**: if the microphone couldn't open when the count-in ended, the booth stayed stuck in recording. It now says why and shows NO MIC.
 - **"Take Saved" Twice**: saving your own take no longer shows "Take saved" twice.
 - **Refused Changes Say Why**: when the room refuses a change, such as a guest changing the casting, a message says why and the page shows the room as it really is, instead of a change that didn't happen.
 - **Updated Notice**: the "DubMate was updated" notice has a Reload button.

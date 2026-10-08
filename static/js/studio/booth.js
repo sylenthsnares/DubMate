@@ -6,10 +6,21 @@ import { openDialog, plural, announce } from '../ui_common.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
 import { micErrorMessage } from './audio_setup.js';
+import { renderPresenceStack, closePresence } from './presence.js';
 
 const LOCK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 const SAVING_ICON = '<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>';
 const IDLE_HINT = '<kbd>Space</kbd> · 3-beat count-in';
+// Inert and dimmed during the count-in and while recording: only the record button, the
+// picture, the line and the waveform stay (the waveform shows the live trace, undimmed and
+// not draggable: renderTakeDependents). The header goes as a whole, so a control added to
+// it later is covered too; only the connection banner always stays live.
+const INERT_WHILE_TAKING = [
+  'header.app-header > .header-left', 'header.app-header > .header-status',
+  '#view-booth .stage-top-bar', '#view-booth .nudge-preset-bar',
+  '#btn-expand-video', '#prompter-resize-handle', '#view-booth .transport-seg', '#mic-sync-hint',
+  '#booth-column-scroll', '#view-booth .booth-nav-group',
+].join(', ');
 
 export class BoothMethods {
   toggleFilterLines() {
@@ -51,10 +62,27 @@ export class BoothMethods {
   renderGainMatchBadge(take) {
     const hasAuto = !!take && take.auto_gain_db !== undefined && take.auto_gain_db !== null;
     if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = hasAuto ? 'inline-flex' : 'none';
-    if (!this.badgeGainMatch) return;
     const matched = hasAuto && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    this.renderVoiceSummary(take, matched);
+    if (!this.badgeGainMatch) return;
     this.badgeGainMatch.textContent = '✓ Matched';
     this.badgeGainMatch.style.display = matched ? 'inline-block' : 'none';
+  }
+
+  /** The Voice card's summary of what All effects holds: "level matched · noise cleanup on",
+   *  the level you set ("level +2 dB") once you turned it, "level as recorded" at 0 dB on a
+   *  take the engine couldn't level, and "level matched when you record" before the first take. */
+  renderVoiceSummary(take = this.takeForLine(this.currentLineIndex), matched = null) {
+    const summary = document.getElementById('voice-summary');
+    if (!summary) return;
+    if (matched === null) {
+      matched = !!take && take.auto_gain_db != null
+        && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    }
+    let level = 'level matched when you record';
+    if (take && matched) level = 'level matched';
+    else if (take) level = this.gainText(take.gain_db) === '0 dB' ? 'level as recorded' : `level ${this.gainText(take.gain_db)}`;
+    summary.textContent = `${level} · noise cleanup ${this.checkNoiseReduction?.checked ? 'on' : 'off'}`;
   }
 
   /** "+1.9 dB", one decimal. */
@@ -123,6 +151,23 @@ export class BoothMethods {
 
   // --- Booth & Recording Logic ---
 
+  /** The one place recordState changes. Counting in or recording, the rest of the page
+   *  is inert (body.is-taking dims it); any other state gives it back, and the timing
+   *  row keeps its own "no take yet" inert (renderTakeDependents). */
+  setRecordState(state) {
+    this.recordState = state;
+    const taking = state === 'countdown' || state === 'recording';
+    document.body.classList.toggle('is-taking', taking);
+    document.querySelectorAll(INERT_WHILE_TAKING).forEach((el) => el.toggleAttribute('inert', taking));
+    this.renderTakeDependents();
+    if (!taking) return;
+    // The who's-here popover would sit over the picture for the whole take.
+    closePresence(document.getElementById('booth-presence'));
+    // A take started from a take row, Next line or the stack: focus goes to Record, the one
+    // control left, instead of falling to the page.
+    if (document.activeElement?.closest?.('[inert]')) this.btnRecordMain?.focus();
+  }
+
   cancelCurrentCountdown() {
     this.countdownSessionId++;
     if (this.recordingTimeout) {
@@ -135,7 +180,7 @@ export class BoothMethods {
     if (this.audio && this.audio.isRecording && this.recordState !== 'stopping') {
       this.audio.stopRecording().catch(() => { });
     }
-    this.recordState = 'idle';
+    this.setRecordState('idle');
     this.endRecordingFeedback();
     if (this.videoOverlay) {
       this.videoOverlay.classList.add('hidden');
@@ -216,19 +261,17 @@ export class BoothMethods {
     const take = pickedTake(this.roomState.takes, line);
     this.hideDoneAsk();
     this.setNudgeValue(take ? (take.offset_ms || 0) : 0, false);
+    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
+    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
     const gainDb = take ? (parseFloat(take.gain_db) || 0) : 0;
     this.sliderGain.value = gainDb;
     this.valGain.textContent = this.gainText(gainDb);
     this.renderGainMatchBadge(take);
 
-    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
-    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
-    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
-
     this.startTakeVoice(line, take);
     this.updateKnobsVisuals();
 
-    this.recordState = 'idle';
+    this.setRecordState('idle');
     this.updateRecordButtonUI(take);
     this.updateTimingCaption();
     this.renderTakesCard();
@@ -325,6 +368,32 @@ export class BoothMethods {
     this.renderBoothToolbar();
   }
 
+  /** What follows whether the line has a take (one waiting on its Undo doesn't count):
+   *  - the timing row and the waveform are inert before the first take, the row dimmed,
+   *    since there is nothing to move yet; on a line you can't record the row is hidden
+   *    and the waveform is view only; counting in or recording, the row is inert too and the
+   *    waveform shows the live trace but can't be dragged;
+   *  - Next line (and Done) is amber only once your line has a take. */
+  renderTakeDependents() {
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (!line) return;
+    const count = takeCount(this.roomState.takes, line) - (this.pendingDelete?.lineId === line.line_id ? 1 : 0);
+    const mine = this.canRecordLine(line);
+    const empty = count <= 0;
+    const taking = this.recordState === 'countdown' || this.recordState === 'recording';
+    const row = document.querySelector('#view-booth .nudge-preset-bar');
+    if (row) {
+      row.hidden = !mine;
+      row.toggleAttribute('inert', (mine && empty) || taking);
+      row.classList.toggle('is-idle-empty', mine && empty);
+    }
+    document.querySelector('#view-booth .waveform-canvas-box')?.toggleAttribute('inert', empty || !mine || taking);
+    if (this.btnNextLine) {
+      this.btnNextLine.classList.toggle('btn-primary', !(mine && empty));
+      this.btnNextLine.classList.toggle('btn-secondary', mine && empty);
+    }
+  }
+
   prefetchAdjacentLines(currentIndex) {
     if (!this.roomState || !this.roomState.pack || !this.roomState.pack.lines) return;
     const lines = this.roomState.pack.lines;
@@ -357,6 +426,14 @@ export class BoothMethods {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
     const badge = this.recordEngineBadge;
     const sub = this.recordStatusSub;
+    // On a line you can't record: no record button, and Monitor keeps only Backing. A take
+    // under way keeps its Stop, even if the host took the role away meanwhile.
+    const taking = this.recordState === 'countdown' || this.recordState === 'recording';
+    const readOnly = !taking && !this.canRecordLine(line);
+    const bezel = this.btnRecordMain.closest('.record-bezel-wrapper');
+    if (bezel) bezel.hidden = readOnly;
+    const switches = document.querySelector('#card-studio-monitoring .monitor-switches');
+    if (switches) switches.hidden = readOnly;
     const show = ({ state = null, glyph, html = false, cls = '', main, hint = '', hintHtml = false, name }) => {
       if (badge) {
         badge.hidden = !state;
@@ -377,7 +454,7 @@ export class BoothMethods {
       this.btnRecordMain.dataset.tip = name;
     };
 
-    if (!this.canRecordLine(line)) {
+    if (readOnly) {
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
       const main = assignedNames.length > 0
@@ -416,6 +493,7 @@ export class BoothMethods {
     const hearOriginal = !!this.isPlayingReference || (playingTake && this.audio.abState === 'B');
     this.btnPlayOrig.setAttribute('aria-pressed', String(hearOriginal));
     this.btnPreviewTake.setAttribute('aria-pressed', String(playingTake && this.audio.abState !== 'B'));
+    this.renderTakePlayButtons();
   }
 
   /** A transport press. While the take plays, the other side switches what you hear in
@@ -453,8 +531,9 @@ export class BoothMethods {
 
     this.roomState.pack.lines.forEach((l, idx) => {
       const isMyLine = myAssignedChars.includes(l.character);
-      if (this.filterMyLinesOnly && !isMyLine && myAssignedChars.length > 0) {
-        return; // Filter out other characters' lines when in "My Lines Only" mode
+      // "My lines" hides other people's lines, except the one you're on.
+      if (this.filterMyLinesOnly && !isMyLine && myAssignedChars.length > 0 && idx !== this.currentLineIndex) {
+        return;
       }
 
       const chip = document.createElement('button');
@@ -837,12 +916,14 @@ export class BoothMethods {
     const wait = { button };
     this.soundWait = wait;
     if (button) button.classList.add('is-waiting-sound');
+    this.renderTakePlayButtons();
     return wait;
   }
 
   endSoundWait(wait) {
     if (wait.button) wait.button.classList.remove('is-waiting-sound');
     if (this.soundWait === wait) this.soundWait = null;
+    this.renderTakePlayButtons();
   }
 
   // --- Studio Noise Reduction ---
@@ -851,12 +932,10 @@ export class BoothMethods {
     this.applyNoiseReduction = !!enabled;
     localStorage.setItem('dubmate_noise_reduction', this.applyNoiseReduction);
 
-    if (this.checkLobbyNoiseReduction && this.checkLobbyNoiseReduction.checked !== this.applyNoiseReduction) {
-      this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
-    }
     if (this.checkNoiseReduction && this.checkNoiseReduction.checked !== this.applyNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
     }
+    this.renderVoiceSummary();
 
     const currentTake = this.takeForLine(this.currentLineIndex);
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
@@ -917,22 +996,16 @@ export class BoothMethods {
         }
       }
 
-      this.showToast(enable ? "Noise reduction on" : "Noise reduction off. Original take restored.");
+      this.showToast(enable ? "Noise cleanup on" : "Noise cleanup off. Original take restored.");
     } catch (err) {
       console.warn("[App] Error toggling take noise reduction:", err);
-      this.showToast(this.friendlyError(err, "Couldn't change the noise reduction setting."));
+      this.showToast(this.friendlyError(err, "Couldn't change noise cleanup."));
     }
   }
 
   async toggleRecording() {
     if (!this.roomState) return;
-    const line = this.roomState.pack.lines[this.currentLineIndex];
-    const isMyLine = this.canRecordLine(line);
-    if (!isMyLine) {
-      this.showToast(`Line ${this.currentLineIndex + 1} belongs to ${line.character}. Only their actor can record it.`);
-      return;
-    }
-
+    // A take under way can always be ended, even if the host took the role away meanwhile.
     if (this.recordState === 'countdown') {
       this.cancelCurrentCountdown();
       return;
@@ -940,6 +1013,12 @@ export class BoothMethods {
 
     if (this.recordState === 'recording') {
       await this.finishRecording();
+      return;
+    }
+
+    const line = this.roomState.pack.lines[this.currentLineIndex];
+    if (!this.canRecordLine(line)) {
+      this.showToast(`Line ${this.currentLineIndex + 1} belongs to ${line.character}. Only their actor can record it.`);
       return;
     }
 
@@ -963,7 +1042,7 @@ export class BoothMethods {
     const sessionId = ++this.countdownSessionId;
 
     this.ensureBackingBuffer(); // Preload backing in background during 3s countdown
-    this.recordState = 'countdown';
+    this.setRecordState('countdown');
     this.audio.stopAllPlayback();
     this.updateRecordButtonUI();
 
@@ -1008,14 +1087,24 @@ export class BoothMethods {
 
     if (this.countdownSessionId !== sessionId) return;
 
-    this.recordState = 'recording';
+    this.setRecordState('recording');
     this.updateRecordButtonUI();
     // Fixed for this take: toggling the checkbox before it's saved mustn't change
     // whether the engine treats it as a guide-voice take.
     const guideVoice = !!this.checkGuideVoice?.checked;
     this.recordingGuideVoice = guideVoice;
 
-    await this.audio.startRecording();
+    try {
+      await this.audio.startRecording();
+    } catch (err) {
+      // The mic didn't open after all: give the booth back and say why (the deck shows NO MIC).
+      if (this.countdownSessionId === sessionId) {
+        this.micError = err;
+        this.cancelCurrentCountdown();
+        this.showToast(micErrorMessage(err));
+      }
+      return;
+    }
     this.stageVideo.currentTime = Math.max(0, line.start);
     try {
       const p = this.stageVideo.play();
@@ -1097,14 +1186,14 @@ export class BoothMethods {
       clearTimeout(this.recordingTimeout);
       this.recordingTimeout = null;
     }
-    this.recordState = 'stopping';
+    this.setRecordState('stopping');
     this.setLineSaving(fields, true);
     this.stageVideo.pause();
 
     const res = await this.audio.stopRecording();
     this.audio.stopAllPlayback();
     if (this.recordState === 'stopping') {
-      this.recordState = 'idle';
+      this.setRecordState('idle');
       this.updateRecordButtonUI();
     }
 
@@ -1366,7 +1455,8 @@ export class BoothMethods {
     };
   }
 
-  /** The stage bar's actions. The host's one primary is Start premiere; guests get
+  /** The stage bar's actions. The host's one primary is Start premiere, once everyone is
+   *  ready; guests get
    *  "Back to the premiere" while it's on, and Mark ready turns into "All recorded ·
    *  Mark ready" once every line they can record has a take (their primary). */
   renderBoothToolbar() {
@@ -1378,10 +1468,18 @@ export class BoothMethods {
     const { recorded, total } = this.myLineProgress();
     const allRecorded = total > 0 && recorded === total;
 
+    // Who's here, with each person's line and progress in its popover.
+    renderPresenceStack(document.getElementById('booth-presence'),
+      { users: this.roomState.users, roomState: this.roomState, selfId: this.user.id });
+
     if (this.btnLaunchPremiere) {
       this.btnLaunchPremiere.style.display = isHost ? 'inline-flex' : 'none';
       const label = document.getElementById('label-launch-premiere');
       if (label) label.textContent = `Start premiere · ${readyCount}/${users.length} ready`;
+      // Amber only once everyone here is ready; until then it's there, but not the next step.
+      const allReady = users.length > 0 && readyCount === users.length;
+      this.btnLaunchPremiere.classList.toggle('btn-primary', allReady);
+      this.btnLaunchPremiere.classList.toggle('btn-secondary', !allReady);
     }
     if (this.btnJumpScreening) this.btnJumpScreening.hidden = isHost || !screening;
     if (this.btnToggleReady) {

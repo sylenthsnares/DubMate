@@ -312,6 +312,46 @@ async function show(env, state, index = 0) {
     console.log("PASS: the stage bar reads 'Line 1 of 3 · 0.9 s', one timing readout, Reset to auto at auto only");
   }
 
+  // 4b. One booth bar: the line chips sit after "Line 1 of 3", the line length is in the
+  // prompter, and "‹ Lobby" and the chip strip's own card are gone.
+  {
+    const bar = doc.querySelector("#view-booth .stage-top-bar");
+    const info = bar.querySelector(".stage-info-group");
+    const chips = $(env, "timeline-chips");
+    if (!chips || chips.parentElement !== info) fail("the line chips aren't in the booth bar's info group");
+    const indicator = $(env, "booth-line-indicator");
+    if (!(indicator.compareDocumentPosition(chips) & w.Node.DOCUMENT_POSITION_FOLLOWING)) fail("the chips don't follow 'Line 1 of 3'");
+    if (doc.querySelector(".timeline-chips-wrapper")) fail("the chip strip's card is still there");
+    if ($(env, "btn-back-lobby")) fail("‹ Lobby is still in the booth bar");
+    const presence = $(env, "booth-presence");
+    if (!presence || presence.parentElement !== bar.querySelector(".stage-action-group")
+      || presence.parentElement.firstElementChild !== presence) fail("no who's-here slot at the start of the action group");
+    const caption = $(env, "stage-caption-card");
+    if ($(env, "booth-time-badge").parentElement !== caption) fail("the line length isn't in the prompter");
+    const cells = [...caption.children].filter((c) => c.id !== "prompter-resize-handle").map((c) => c.id);
+    if (cells.join(",") !== "stage-caption-char,stage-caption-text,booth-time-badge") fail(`prompter cells: ${cells}`);
+    // The prompter reads each new line out; the length isn't read with it.
+    if (caption.getAttribute("aria-live") !== "polite" || $(env, "booth-time-badge").getAttribute("aria-live") !== "off") fail("the line length is read out with every line");
+    // The chip strip leaves room for a chip's focus ring (2px at 2px) and the active glow.
+    const css = fs.readFileSync(path.join(PROJECT_ROOT, "static", "css", "style.css"), "utf8");
+    const strip = (css.match(/\n\.timeline-chips-box\s*\{([^}]*)\}/) || [])[1] || "";
+    if (!/padding:\s*var\(--space-[12]\)/.test(strip) || !/margin:\s*calc\(-1 \* var\(--space-[12]\)\)/.test(strip)) fail("the chip strip clips the chips' focus ring");
+    console.log("PASS: one booth bar holds the line chips; the line length sits in the prompter; ‹ Lobby is gone");
+  }
+
+  // 4c. "My lines" keeps the line you're on, even when it isn't yours.
+  {
+    const nums = () => [...$(env, "timeline-chips").children].map((c) => text(c.querySelector(".chip-num")));
+    app.filterMyLinesOnly = true;
+    await show(env, room(), 2);
+    if (nums().join(",") !== "1,2,3") fail(`My lines on Ben's line 3: ${nums()}`);
+    const current = $(env, "timeline-chips").querySelector("[aria-current]");
+    if (!current || text(current.querySelector(".chip-num")) !== "3") fail("the current chip isn't line 3");
+    await show(env, room(), 0);
+    if (nums().join(",") !== "1,2") fail(`My lines on your line 1: ${nums()}`);
+    console.log("PASS: My lines keeps the current line's chip when the line isn't yours");
+  }
+
   // 5. Level: "✓ Matched" comes from the take's real gain and auto gain, not the 0.5-step dial.
   {
     const matchBadge = $(env, "badge-gain-match");
@@ -335,11 +375,23 @@ async function show(env, state, index = 0) {
     const ready = $(env, "btn-toggle-ready");
     const start = $(env, "btn-launch-premiere");
     const jump = $(env, "btn-jump-screening");
-    // Host, lines left to record.
+    // Host, lines left to record. Start premiere waits, secondary, until everyone is ready.
     await show(env, room(oneTake()));
     app.renderCastActivityHUD();
-    if (!visible(start) || text(start) !== "Start premiere · 0/2 ready" || !start.classList.contains("btn-primary")) {
+    if (!visible(start) || text(start) !== "Start premiere · 0/2 ready" || !start.classList.contains("btn-secondary")
+      || start.classList.contains("btn-primary")) {
       fail(`host start: ${visible(start)} ${text(start)} ${start.className}`);
+    }
+    const someReady = room(oneTake());
+    someReady.users.u9.is_ready = true;
+    await show(env, someReady);
+    if (text(start) !== "Start premiere · 1/2 ready" || !start.classList.contains("btn-secondary")) fail(`one of two ready: ${text(start)} ${start.className}`);
+    const allReady = room(oneTake());
+    allReady.users.u1.is_ready = true;
+    allReady.users.u9.is_ready = true;
+    await show(env, allReady);
+    if (text(start) !== "Start premiere · 2/2 ready" || !start.classList.contains("btn-primary") || start.classList.contains("btn-secondary")) {
+      fail(`everyone ready: ${text(start)} ${start.className}`);
     }
     if (visible(jump)) fail("host sees Premiere ›");
     if (text(ready) !== "Mark ready" || !ready.classList.contains("btn-secondary")) fail(`host ready: ${text(ready)} ${ready.className}`);
@@ -348,7 +400,7 @@ async function show(env, state, index = 0) {
     await show(env, room(allMine));
     app.renderCastActivityHUD();
     if (text(ready) !== "All recorded · Mark ready" || !ready.classList.contains("btn-secondary")) fail(`host all recorded: ${text(ready)} ${ready.className}`);
-    if (doc.querySelectorAll("#view-booth .stage-top-bar .btn-primary:not([hidden])").length !== 1) fail("host toolbar has more than one primary");
+    if (doc.querySelectorAll("#view-booth .stage-top-bar .btn-primary:not([hidden])").length > 1) fail("host toolbar has more than one primary");
 
     // Guest: no Start; Back to the premiere only while it's on; All recorded is the primary.
     await show(env, room(allMine, { host_id: "u9" }));
@@ -373,7 +425,7 @@ async function show(env, state, index = 0) {
     if (text(next) !== "Next line ›") fail(`first line footer: ${text(next)}`);
     if ($(env, "btn-clear-take")) fail("the trash button is still in the footer");
     await show(env, room(oneTake()), 1);
-    if (text(next) !== "Done ›" || !next.classList.contains("btn-primary")) fail(`last line footer: ${text(next)} ${next.className}`);
+    if (text(next) !== "Done ›" || !next.classList.contains("btn-secondary")) fail(`last line footer, no take: ${text(next)} ${next.className}`);
     next.click();
     if (!visible(ask) || text($(env, "booth-done-ask-text")) !== "1 of 2 lines recorded. Mark ready anyway?") {
       fail(`inline ask: ${visible(ask)} ${text(ask)}`);
@@ -417,6 +469,59 @@ async function show(env, state, index = 0) {
     app.showView = realShowView;
     app.setupScreeningView = realSetup;
     console.log("PASS: Done marks you ready, asks inline when lines are missing, and the host's premiere question is a dialog");
+  }
+
+  // 7b. Earned emphasis: Next line (and Done) is amber only once your line has a take; on
+  //     someone else's line it's amber. A take saving in, or a delete, changes it at once.
+  {
+    const next = $(env, "btn-next-line");
+    const isPrimary = () => next.classList.contains("btn-primary") && !next.classList.contains("btn-secondary");
+    const isSecondary = () => next.classList.contains("btn-secondary") && !next.classList.contains("btn-primary");
+    await show(env, room(), 0);
+    if (text(next) !== "Next line ›" || !isSecondary()) fail(`own line, no take: ${text(next)} ${next.className}`);
+    await show(env, room(oneTake()), 0);
+    if (!isPrimary()) fail(`own line with a take: ${next.className}`);
+    await show(env, room(oneTake()), 1);
+    if (text(next) !== "Done ›" || !isSecondary()) fail(`Done, no take: ${next.className}`);
+    await show(env, room({ t2000: { picked: "c1", next_number: 2, takes: [mk("c1", 1)] } }), 1);
+    if (text(next) !== "Done ›" || !isPrimary()) fail(`Done with a take: ${next.className}`);
+    await show(env, room(), 2);
+    if (!isPrimary()) fail(`someone else's line: ${next.className}`);
+
+    // The first take saves: amber.
+    await show(env, room(), 0);
+    env.reply = (u) => (/\/takes$/.test(u) ? { take: mk("n1", 1), line: { picked: "n1", next_number: 2, takes: [mk("n1", 1)] } } : {});
+    await app.uploadTake(0, new w.Blob(["x"], { type: "audio/webm" }));
+    await tick();
+    env.reply = null;
+    if (!isPrimary()) fail(`after the first take saved: ${next.className}`);
+    // Deleting it (waiting on Undo): secondary again; Undo: amber.
+    app.deleteTake(app.takeForLine(0));
+    if (!isSecondary()) fail(`after deleting the only take: ${next.className}`);
+    app.undoDeleteTake();
+    if (!isPrimary()) fail(`after Undo: ${next.className}`);
+    console.log("PASS: Next line and Done are amber only once your line has a take");
+  }
+
+  // 7c. Someone else's line is read-only: no record button or badge, who voices it over the
+  //     transport, no Voice card, and Monitor keeps only Backing (unboxed).
+  {
+    const bezel = doc.querySelector(".record-bezel-wrapper");
+    const monitor = $(env, "card-studio-monitoring");
+    const switches = monitor.querySelector(".monitor-switches");
+    const backing = $(env, "slider-backing-vol").closest(".monitor-row");
+    if (monitor.classList.contains("glass-card")) fail("Monitor still has a card frame");
+    await show(env, room(oneTake()), 0);
+    if (!visible(bezel) || !visible(switches) || !visible(backing)) fail("own line: record button or Monitor rows hidden");
+    await show(env, room({ t3000: { picked: "m1", next_number: 2, takes: [mk("m1", 1, { user_id: "u9", user_name: "Mika" })] } }), 2);
+    if (visible(bezel) || visible(badge)) fail("record button or badge on someone else's line");
+    if (text(label) !== "Ben is voiced by Mika") fail(`read-only label: ${text(label)}`);
+    if (!visible($(env, "btn-play-orig")) || !visible($(env, "btn-preview-take"))) fail("the transport is hidden on someone else's line");
+    if (visible($(env, "card-voice-dsp"))) fail("Voice card on someone else's line");
+    if (visible(switches) || !visible(backing)) fail("Monitor on someone else's line isn't Backing only");
+    await show(env, room(oneTake()), 0);
+    if (!visible(bezel) || !visible(switches)) fail("record button or Monitor switches didn't come back");
+    console.log("PASS: someone else's line shows who voices it over the transport, no record button, and Backing only");
   }
 
   // 8. An open tooltip follows the record button's state.

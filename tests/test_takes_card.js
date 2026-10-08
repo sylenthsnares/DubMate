@@ -2,11 +2,12 @@
  * test_takes_card.js
  *
  * The booth's TAKES card (UI pass U2, group 2): the 0, 1 and 3 take states, the rows
- * (radio, "Take 3", "0.8 s", the recorder when it isn't you, sync in words, "In the
- * dub" or Use, the ⋯ menu), picking by Use and by Enter, the deferred delete with its
+ * (radio, "Take 3", "0.8 s", the recorder's avatar when it isn't you, sync in words, "In
+ * the dub" or the "Use this take" cue, ▶ and the ⋯ menu with Delete), picking by a row
+ * click and by Enter, ▶ that turns to ■ while its take plays, the deferred delete with its
  * in-place Undo (no confirm; the DELETE goes out when the 6 s run out, at once on a
  * line change, or on pagehide with keepalive), the roving focus and the T, arrow, P,
- * Enter, Delete, A, "," and "." keys, read-only rows on someone else's line, and the
+ * Enter, Delete, A, "," and "." keys, read-only rows (▶ only) on someone else's line, and the
  * line chips (buttons with aria-current, spoken labels and a visible take count).
  * Socket and fetch are stubbed; the 6 s timer is captured, not waited for.
  */
@@ -191,7 +192,7 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     if (!visible(keyHint) || text(keyHint) !== "T to pick") fail(`T hint: ${text(keyHint)}`);
     const [only] = radios(env);
     if (!only || only.getAttribute("aria-checked") !== "true" || !rowOf(only).classList.contains("picked")) fail("the only take isn't the checked row");
-    if (!text(rowOf(only)).includes("In the dub") || rowOf(only).querySelector(".take-use")) fail("the take in the dub shows Use or lacks In the dub");
+    if (!text(rowOf(only)).includes("In the dub") || rowOf(only).querySelector(".take-use-cue")) fail("the take in the dub shows the Use cue or lacks In the dub");
 
     await show(env, room(threeTakes()));
     if (text(title) !== "TAKES · 3" || visible(hint) || visible(empty)) fail(`three takes: ${text(title)} hint ${visible(hint)}`);
@@ -201,8 +202,15 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     if (names.join("|") !== "Take 3|Take 2|Take 1") fail(`rows newest first: ${names}`);
     const durs = rs.map((r) => text(r.querySelector(".take-dur")));
     if (durs.join("|") !== "0.8 s|0.8 s|1.7 s") fail(`durations: ${durs}`);
-    const by = rs.map((r) => text(r.querySelector(".take-by")));
-    if (by.join("|") !== "||Mika") fail(`recorder names (only when it isn't you): ${JSON.stringify(by)}`);
+    // Who recorded it: their avatar (initial on their colour), the name in its tooltip.
+    if (list.querySelector(".take-by")) fail("the recorder's name is still cut-down text");
+    const avatars = rs.map((r) => r.querySelector(".avatar"));
+    if (avatars[0] || avatars[1] || !avatars[2]) fail("an avatar on your own take, or none on Mika's");
+    if (text(avatars[2]) !== "M" || avatars[2].dataset.tip !== "Recorded by Mika"
+        || avatars[2].getAttribute("aria-label") !== "Recorded by Mika") fail(`Mika's avatar: ${text(avatars[2])} ${avatars[2].dataset.tip}`);
+    if (!/#16a34a|rgb\(22, 163, 74\)/.test(avatars[2].style.background) || avatars[2].style.getPropertyValue("--avatar-size") !== "20px") {
+      fail(`avatar colour or size: ${avatars[2].style.cssText}`);
+    }
     const sync = rs.map((r) => r.querySelector(".take-sync"));
     if (sync.map(text).join("|") !== "Tight sync|–|Loose sync") fail(`sync words: ${sync.map(text)}`);
     if (sync[0].dataset.tip !== "Timing 82%: how closely this take follows the original line's timing") fail(`sync tip: ${sync[0].dataset.tip}`);
@@ -210,12 +218,30 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     const checked = rs.map((r) => r.getAttribute("aria-checked"));
     if (checked.join() !== "true,false,false") fail(`aria-checked: ${checked}`);
     if (!rowOf(rs[0]).classList.contains("picked") || rowOf(rs[1]).classList.contains("picked")) fail("green row on the wrong take");
-    if (rowOf(rs[0]).querySelector(".take-use") || !rowOf(rs[1]).querySelector(".take-use") || !rowOf(rs[2]).querySelector(".take-use")) fail("Use on the wrong rows");
-    if (rowOf(rs[1]).querySelector(".take-use").dataset.tip !== "Use this take in the dub (Enter)") fail("Use tooltip");
-    for (const r of rs) {
+    // No Use button: a row click (or Enter) uses a take, and the row says so on hover and focus.
+    if (list.querySelector(".take-use")) fail("the Use button is still there");
+    const cues = rs.map((r) => r.querySelector(".take-use-cue"));
+    if (cues[0] || !cues[1] || !cues[2]) fail("the Use this take cue is on the wrong rows");
+    if (text(cues[1]) !== "Use this take" || cues[1].dataset.tip !== "Use this take in the dub (Enter)") fail(`cue: ${text(cues[1])} / ${cues[1].dataset.tip}`);
+    if (!rs[1].contains(cues[1])) fail("the cue isn't part of the row's click target");
+    // ▶ on every row, after the slot, and ⋯ last.
+    for (const [i, r] of rs.entries()) {
+      const play = rowOf(r).querySelector(".take-play");
+      const n = [3, 2, 1][i];
+      if (!play || play.tagName !== "BUTTON" || text(play) !== "▶" || play.getAttribute("aria-label") !== `Play take ${n}`
+        || play.getAttribute("aria-pressed") !== "false") fail(`▶ on take ${n}: ${play && play.outerHTML}`);
       const more = rowOf(r).querySelector(".take-more");
       if (!more || more.getAttribute("aria-haspopup") !== "menu" || more.getAttribute("aria-expanded") !== "false") fail("⋯ button missing or not a menu button");
+      if (play.nextElementSibling !== more) fail("▶ isn't right before ⋯");
     }
+    // The cue shows only on hover and keyboard focus; its slot keeps its width so ▶ never moves.
+    const css = fs.readFileSync(path.join(PROJECT_ROOT, "static", "css", "style.css"), "utf8");
+    if (!/\.take-use-cue\s*\{[^}]*visibility:\s*hidden/.test(css)) fail("the cue isn't hidden by default");
+    // Only over the part a click uses (not ▶ or ⋯), and on keyboard focus.
+    if (!/\.take-pick:hover \.take-use-cue/.test(css) || !/\.take-pick:focus-visible \.take-use-cue/.test(css)) fail("the cue doesn't show on hover and keyboard focus of the row's pick area");
+    if (/\.take-row:hover \.take-use-cue/.test(css)) fail("the cue shows while the pointer is on ▶ or ⋯");
+    if (!/\.take-use-cue\s*\{[^}]*font-size:\s*12px/.test(css)) fail("the cue isn't 12px hint text");
+    if (!/\.take-slot\s*\{[^}]*width:/.test(css) || !/\.take-slot\s*\{[^}]*overflow:\s*hidden/.test(css)) fail("the slot has no fixed width, or lets a wide cue spill over the sync word");
     const tabStops = rs.filter((r) => r.tabIndex === 0);
     if (tabStops.length !== 1 || tabStops[0] !== rs[0]) fail("one tab stop, on the take in the dub");
 
@@ -227,7 +253,7 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     console.log("PASS: the card reads 0, 1 and 3 takes, newest first, with sync in words and one green row in the dub");
   }
 
-  // 2. Pick by Use and by Enter; focus stays on the card after the reload.
+  // 2. Pick by a row click and by Enter; focus stays on the card after the reload.
   {
     await show(env, room(threeTakes()));
     env.reply = (u, opts) => {
@@ -236,11 +262,21 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
       const line = { ...threeTakes().t1000, picked: m[1] };
       return { status: "ok", line_id: "t1000", line };
     };
-    rowOf(radios(env)[1]).querySelector(".take-use").click();
+    radios(env)[1].querySelector(".take-use-cue").click();
     await tick();
     let pick = env.calls.filter((c) => /\/pick$/.test(c.url)).pop();
-    if (!pick || pick.url !== "/api/rooms/R1/lines/t1000/takes/b2/pick" || JSON.parse(pick.body).user_id !== "u1") fail(`Use: ${JSON.stringify(pick)}`);
-    if (app.takeForLine(0).take_id !== "b2" || radios(env)[1].getAttribute("aria-checked") !== "true") fail("Use did not move the green row");
+    if (!pick || pick.url !== "/api/rooms/R1/lines/t1000/takes/b2/pick" || JSON.parse(pick.body).user_id !== "u1") fail(`row click: ${JSON.stringify(pick)}`);
+    if (app.takeForLine(0).take_id !== "b2" || radios(env)[1].getAttribute("aria-checked") !== "true") fail("a row click did not move the green row");
+    // ▶ plays; it never picks.
+    const picksBefore = env.calls.filter((c) => /\/pick$/.test(c.url)).length;
+    const realPlay = app.playHistoryTake;
+    const playedBy = [];
+    app.playHistoryTake = (take, button) => { playedBy.push([take.take_id, button && button.className]); };
+    rowOf(radios(env)[2]).querySelector(".take-play").click();
+    app.playHistoryTake = realPlay;
+    await tick();
+    if (env.calls.filter((c) => /\/pick$/.test(c.url)).length !== picksBefore) fail("▶ picked the take");
+    if (playedBy.length !== 1 || playedBy[0][0] !== "a1" || !/take-play/.test(playedBy[0][1])) fail(`▶ played ${JSON.stringify(playedBy)}`);
 
     radios(env)[2].focus();
     press(env, "Enter");
@@ -257,7 +293,7 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     await tick();
     if (env.calls.slice(before).some((c) => /\/pick$/.test(c.url))) fail("Enter re-picked the take in the dub");
     env.reply = null;
-    console.log("PASS: Use and Enter put a take in the dub, and focus stays on its row");
+    console.log("PASS: a row click and Enter put a take in the dub, ▶ only plays, and focus stays on its row");
   }
 
   // 3. Roving focus, T, and P.
@@ -277,9 +313,28 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
 
     const played = [];
     const realPlay = app.playHistoryTake;
-    app.playHistoryTake = (take) => { played.push(take.take_id); };
+    app.playHistoryTake = (take, button) => { played.push(take.take_id); played.button = button; };
     press(env, "p");
     if (played.join() !== "b2") fail(`P played ${played}`);
+    if (!played.button || !played.button.classList.contains("take-play") || rowOf(played.button) !== rowOf(rs[1])) fail("P doesn't pulse the row's ▶");
+
+    // ▶ reads ■ while its take plays (or waits for its sound), and ▶ again once it stops.
+    const plays = () => radios(env).map((r) => text(rowOf(r).querySelector(".take-play"))).join("");
+    app.playingHistoryTakeId = "b2";
+    app.isPlayingTake = true;
+    app.renderTransport();
+    if (plays() !== "▶■▶" || rowOf(radios(env)[1]).querySelector(".take-play").getAttribute("aria-pressed") !== "true") fail(`while take 2 plays: ${plays()}`);
+    app.renderTakesCard();
+    if (plays() !== "▶■▶") fail(`a redraw lost the playing take: ${plays()}`);
+    app.stopBoothPlayback();
+    if (plays() !== "▶▶▶") fail(`after stopping: ${plays()}`);
+    // The current take's own preview isn't a row playing.
+    app.isPlayingTake = true;
+    app.playingHistoryTakeId = null;
+    app.renderTransport();
+    if (plays() !== "▶▶▶") fail(`the transport's preview lit a row: ${plays()}`);
+    app.isPlayingTake = false;
+    app.renderTransport();
 
     // With T on a line after a pick by someone else, T still finds the take in the dub.
     await show(env, room({ t1000: { ...threeTakes().t1000, picked: "a1" } }));
@@ -317,7 +372,7 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     const menu = rowOf(rs[2]).querySelector(".take-menu");
     if (!visible(menu) || more.getAttribute("aria-expanded") !== "true") fail("⋯ did not open its menu");
     const items = [...menu.querySelectorAll('[role="menuitem"]')].map((b) => text(b.querySelector(".take-menu-label") || b));
-    if (items.join("|") !== "Play this take|Delete take") fail(`menu items: ${items}`);
+    if (items.join("|") !== "Delete take") fail(`menu items: ${items}`);
     if (doc.activeElement !== menu.querySelector('[role="menuitem"]')) fail("focus did not move into the menu");
 
     // Escape closes the menu and returns to ⋯; an outside click closes it too.
@@ -422,13 +477,11 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     if (list.getAttribute("aria-readonly") !== "true") fail("the radiogroup isn't read-only");
     const rs = radios(env);
     if (rs.length !== 2 || rs[0].getAttribute("aria-checked") !== "true" || !text(rowOf(rs[0])).includes("In the dub")) fail("no In the dub marker on the read-only rows");
-    if (list.querySelector(".take-use")) fail("Use on someone else's line");
+    if (list.querySelector(".take-use, .take-use-cue")) fail("Use on someone else's line");
     if (visible(keyHint)) fail("T to pick on someone else's line");
-    const more = rowOf(rs[1]).querySelector(".take-more");
-    more.click();
-    const items = [...rowOf(rs[1]).querySelectorAll('[role="menuitem"]')].map((b) => text(b.querySelector(".take-menu-label") || b));
-    if (items.join("|") !== "Play this take") fail(`read-only menu: ${items}`);
-    press(env, "Escape");
+    if (list.querySelector(".take-more")) fail("⋯ on rows you can't delete");
+    if (rs.some((r) => !rowOf(r).querySelector(".take-play"))) fail("a read-only row has no ▶");
+    if (rs.some((r) => !rowOf(r).querySelector(".take-slot"))) fail("a read-only row lost its slot, so ▶ moves");
     rs[1].focus();
     press(env, "Enter");
     press(env, "Delete");
@@ -439,7 +492,7 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
 
     await show(env, room({}), 2);
     if (text(empty) !== "No takes yet.") fail(`empty other's line: ${text(empty)}`);
-    console.log("PASS: someone else's line shows read-only rows with In the dub, and ⋯ holds only Play");
+    console.log("PASS: someone else's line shows read-only rows with In the dub and ▶, and no ⋯");
   }
 
   // 8. A, "," and "."
@@ -554,6 +607,75 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     env.calls.length = 0;
     env.reply = null;
     console.log("PASS: Backspace deletes, Space on Undo doesn't record, the chip drops the take, focus stays on the card");
+  }
+
+  // 11. Many takes stay tidy: the list scrolls inside the card (its scrollbar in the
+  //     card's gutter, so rows keep their width), a long card gives way before Voice and
+  //     Monitor, the durations line up, the A/B switch keeps one line, and the take in
+  //     the dub is scrolled into view without losing where you scrolled to on a redraw.
+  {
+    const css = fs.readFileSync(path.join(PROJECT_ROOT, "static", "css", "style.css"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    // The block whose whole selector is `sel` (not one in a selector list).
+    const rule = (sel) => {
+      const m = css.match(new RegExp(`(^|\\})\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
+      return m ? m[2] : "";
+    };
+    const listCss = rule(".takes-list");
+    for (const [what, re] of [
+      ["a max-height", /max-height\s*:\s*calc\(/],
+      ["overflow-y: auto", /overflow-y\s*:\s*auto/],
+      ["overflow-x: hidden", /overflow-x\s*:\s*hidden/],
+      ["scrollbar-gutter: stable", /scrollbar-gutter\s*:\s*stable/],
+    ]) {
+      if (!re.test(listCss)) fail(`.takes-list needs ${what} so many takes scroll inside the card`);
+    }
+    if (/scrollbar-(width|color)\s*:/.test(listCss)) fail(".takes-list sets scrollbar-width/color; Chromium then draws the grey bar");
+    if (!/@supports not selector\(::-webkit-scrollbar\)\s*\{[^}]*\.takes-list\s*[,{]/.test(css)) fail(".takes-list lacks the Firefox scrollbar colours");
+    const longCss = rule(".takes-card.is-long");
+    if (!/flex-shrink\s*:\s*1/.test(longCss) || !/min-height\s*:/.test(longCss)) fail("a long Takes card doesn't give way in the column");
+    if (!/white-space\s*:\s*nowrap/.test(rule(".transport-seg-btn"))) fail("the A/B switch can wrap ('▶ Take 25')");
+    if (!/minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)/.test(rule(".transport-seg"))) fail("the A/B halves can grow past the deck");
+    const nameCss = rule(".take-name");
+    if (!/min-width\s*:/.test(nameCss) || !/tabular-nums/.test(nameCss)) fail("'Take 9' and 'Take 10' rows don't line up their durations");
+
+    // 25 takes, the oldest in the dub: it sits at the bottom of the list.
+    const many = () => ({ t1000: { picked: "k1", next_number: 26, takes: Array.from({ length: 25 }, (_, i) => mk(`k${i + 1}`, i + 1, { timing_score: 0.5 })) } });
+    // A 150px list of 42px rows (JSDOM has no layout).
+    const ROW = 42, VIEW = 150, TOP = 100;
+    let scrolled = 0;
+    Object.defineProperty(list, "clientHeight", { configurable: true, get: () => VIEW });
+    Object.defineProperty(list, "scrollHeight", { configurable: true, get: () => list.children.length * ROW });
+    Object.defineProperty(list, "scrollTop", { configurable: true, get: () => scrolled,
+      set: (v) => { scrolled = Math.max(0, Math.min(v, Math.max(0, list.scrollHeight - VIEW))); } });
+    const realRect = w.Element.prototype.getBoundingClientRect;
+    w.Element.prototype.getBoundingClientRect = function rect() {
+      const box = (top, h) => ({ top, bottom: top + h, left: 0, right: 314, width: 314, height: h, x: 0, y: top });
+      if (this === list) return box(TOP, VIEW);
+      if (this.parentElement === list) return box(TOP + [...list.children].indexOf(this) * ROW - scrolled, ROW - 4);
+      return realRect.call(this);
+    };
+    const inView = (row) => { const r = row.getBoundingClientRect(); return r.top >= TOP && r.bottom <= TOP + VIEW; };
+    try {
+      await show(env, room(many()), 1);
+      await show(env, room(many()), 0);
+      const picked = list.querySelector(".take-row.picked");
+      if (!picked || text(picked.querySelector(".take-name")) !== "Take 1") fail("the oldest take isn't the row in the dub");
+      if (!inView(picked)) fail(`the take in the dub is scrolled out of view (scrollTop ${list.scrollTop})`);
+      if (!card.classList.contains("is-long")) fail("25 rows didn't mark the Takes card long");
+      list.scrollTop = 300;
+      app.renderTakesCard();
+      if (list.scrollTop !== 300) fail(`a redraw lost the list's scroll place (${list.scrollTop})`);
+      app.roomState.takes.t1000.picked = "k25";
+      app.renderTakesCard();
+      if (!inView(list.querySelector(".take-row.picked")) || list.scrollTop !== 0) fail(`a new take in the dub isn't scrolled into view (${list.scrollTop})`);
+      await show(env, room({ t1000: { picked: "a1", next_number: 3, takes: [mk("a1", 1), mk("b2", 2)] } }), 0);
+      if (card.classList.contains("is-long") || list.scrollTop !== 0) fail("two takes kept the long card or an old scroll place");
+    } finally {
+      w.Element.prototype.getBoundingClientRect = realRect;
+      for (const k of ["clientHeight", "scrollHeight", "scrollTop"]) delete list[k];
+    }
+    console.log("PASS: many takes scroll inside the card, the long card gives way, rows line up, A/B keeps one line, the take in the dub stays in view");
   }
 
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);

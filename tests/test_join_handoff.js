@@ -5,8 +5,9 @@
  * host's tunnel page, where localStorage is empty. Their name, colour and audio
  * setup travel along in the URL fragment (#dm=<base64url(JSON)>), which is read
  * once, checked field by field and removed. The member then joins straight in,
- * without a second name prompt or setup screen. Browser guests (no ?home=) keep
- * the join prompt, filled in with the name they last used on that host.
+ * without a name prompt or setup screen (there is no join modal at all any more).
+ * Browser guests (no ?home=) get the join card, filled in with the name they last
+ * used on that host.
  *
  * Navigation is observed through app.navigateTo(), which the suite replaces.
  */
@@ -27,6 +28,7 @@ const ROOM = "ABCD";
 const MEMBER_URL = `${TUNNEL}/?room=${ROOM}&home=${encodeURIComponent(HOME)}`;
 const GUEST_URL = `${TUNNEL}/?room=${ROOM}`;
 const PAIR = "Mic X|Phones";
+const CORAL = "#f08a6c";
 
 function fail(msg) {
   console.error("FAIL: " + msg);
@@ -122,7 +124,9 @@ async function boot(url, { storage = {}, hostVersion = "1.2.0", homeVersion = "1
   if (!app) fail(`studio did not boot at ${url}`);
   const navigations = [];
   app.navigateTo = (target) => navigations.push(target);
-  const modal = w.document.getElementById("modal-join-room");
+  // The join card for link guests (there is no join modal any more).
+  const modal = { get shown() { return app.currentView === "join"; } };
+  if (w.document.getElementById("modal-join-room")) fail("the join modal is still in the page");
   const toasts = () => Array.from(w.document.querySelectorAll("#toast-container .toast")).map((t) => t.textContent || t.innerText || "");
   const stored = (key) => w.localStorage.getItem(key);
   const storedJson = (key) => JSON.parse(w.localStorage.getItem(key) || "null");
@@ -162,7 +166,8 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
     if (!target.hash.startsWith("#dm=")) fail(`no handoff in the link: ${navigations[0]}`);
     const payload = decode(target.hash.slice(4));
     if (payload.v !== 1) fail(`handoff version: ${payload.v}`);
-    if (payload.user.name !== "Ana Lúcia" || payload.user.color !== "#123abc") fail(`user: ${JSON.stringify(payload.user)}`);
+    // An unknown saved colour became Coral on load (identity.js); the handoff carries that.
+    if (payload.user.name !== "Ana Lúcia" || payload.user.color !== CORAL) fail(`user: ${JSON.stringify(payload.user)}`);
     if (JSON.stringify(payload).includes("u_home") || "id" in payload.user) fail("the user id travelled in the handoff");
     if (!payload.audio.setup_done || payload.audio.input_label !== "Mic X" || payload.audio.output_label !== "Phones") fail(`audio: ${JSON.stringify(payload.audio)}`);
     if (payload.mic_sync[PAIR]?.latency_ms !== 85 || payload.mic_sync["Other|Speakers"]?.latency_ms !== 40) fail(`mic sync (local + engine): ${JSON.stringify(payload.mic_sync)}`);
@@ -175,7 +180,7 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
       storage: { dubmate_user: JSON.stringify({ id: "u_tunnel", name: "Old name", color: "#000000" }) },
     });
     const user = storedJson("dubmate_user");
-    if (user.id !== "u_tunnel" || user.name !== "Ana Lúcia" || user.color !== "#123abc") fail(`stored user: ${JSON.stringify(user)}`);
+    if (user.id !== "u_tunnel" || user.name !== "Ana Lúcia" || user.color !== CORAL) fail(`stored user: ${JSON.stringify(user)}`);
     if (app.user.id !== "u_tunnel" || app.user.name !== "Ana Lúcia") fail(`app user: ${JSON.stringify(app.user)}`);
     if (stored("dubmate_audio_setup_done") !== "1" || !app.audioSetup.setupComplete) fail("setup not marked done");
     const pending = storedJson("dubmate_audio_handoff");
@@ -186,13 +191,13 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
     if (w.location.hash !== "" || w.location.href.includes("#")) fail(`fragment left in the address bar: ${w.location.href}`);
     console.log("PASS: the host's page applies the handoff, keeps its own id and removes the fragment");
 
-    if (modal.style.display === "flex") fail("join prompt shown to a member from their own DubMate");
+    if (modal.shown) fail("join card shown to a member from their own DubMate");
     if (!joinedDirectly(fetches)) fail(`room not joined directly: ${fetches}`);
     if (app.currentView !== "lobby") fail(`member not in the room: ${app.currentView}`);
     const settings = w.document.getElementById("modal-audio-settings");
     if (settings && settings.style.display !== "none" && settings.style.display !== "") fail("first-run setup opened");
     if (app.audioSetup.firstRunMode) fail("first-run setup opened");
-    console.log("PASS: a member with a handoff joins straight in, without the name prompt or setup screen");
+    console.log("PASS: a member with a handoff joins straight in, without the join card or setup screen");
 
     // A reload (no fragment any more) keeps the same member id.
     const id = app.user.id;
@@ -200,14 +205,14 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
     console.log("PASS: the id used on the host's page is kept for reloads");
   }
 
-  // 2. No fragment: today's flow, with the join prompt and first-run setup.
+  // 2. No fragment: the join card, and no setup dialog stacked on it (the lobby checks the mic).
   {
-    const { app, fetches, modal } = await boot(MEMBER_URL);
-    if (modal.style.display !== "flex") fail("join prompt not shown without a handoff");
-    if (joinedDirectly(fetches)) fail("joined without the prompt and without a handoff");
+    const { app, modal } = await boot(MEMBER_URL);
+    if (!modal.shown) fail("join card not shown without a handoff");
+    if (app.socket.roomId) fail("joined without the card and without a handoff");
     if (app.audioSetup.setupComplete) fail("setup marked done without a handoff");
-    if (!app.audioSetup.firstRunMode) fail("first-run setup not opened without a handoff");
-    console.log("PASS: no handoff keeps today's join prompt and first-run setup");
+    if (app.audioSetup.firstRunMode) fail("first-run setup opened over the join card");
+    console.log("PASS: no handoff shows the join card, with no setup dialog on top");
   }
 
   // 3. A fragment without ?home= is ignored (and still removed).
@@ -215,15 +220,15 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
     const { w, fetches, modal, stored } = await boot(`${GUEST_URL}#dm=${encode({ v: 1, user: { name: "Eve" }, audio: { setup_done: true } })}`);
     if (stored("dubmate_user") && JSON.parse(stored("dubmate_user")).name === "Eve") fail("handoff applied without ?home=");
     if (stored("dubmate_audio_setup_done") === "1") fail("setup marked done without ?home=");
-    if (modal.style.display !== "flex" || joinedDirectly(fetches)) fail("guest without ?home= did not get the prompt");
+    if (!modal.shown || w.dubMateApp.socket.roomId) fail("guest without ?home= did not get the join card");
     if (w.location.hash !== "") fail("fragment left in place");
     console.log("PASS: a handoff without ?home= is ignored and removed");
   }
 
   // 4. A fragment that isn't valid base64url JSON is ignored.
   {
-    const { modal, fetches, stored } = await boot(`${MEMBER_URL}#dm=%%%not-base64`);
-    if (stored("dubmate_audio_setup_done") || modal.style.display !== "flex" || joinedDirectly(fetches)) fail("garbage handoff was used");
+    const { app, modal, stored } = await boot(`${MEMBER_URL}#dm=%%%not-base64`);
+    if (stored("dubmate_audio_setup_done") || !modal.shown || app.socket.roomId) fail("garbage handoff was used");
     console.log("PASS: an unreadable handoff is ignored");
   }
 
@@ -253,9 +258,18 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
       v: 1, user: { name: "n".repeat(500), color: "#ABCDEF" }, mic_sync: [1, 2],
     })}`);
     const user = storedJson("dubmate_user");
-    if (user.name === "n".repeat(500) || user.color !== "#ABCDEF") fail(`500-char name or colour: ${JSON.stringify(user).slice(0, 80)}`);
+    if (user.name === "n".repeat(500) || user.color !== CORAL) fail(`500-char name or colour: ${JSON.stringify(user).slice(0, 80)}`);
     if (stored("dubmate_mic_sync")) fail("a non-object mic sync was stored");
-    console.log("PASS: a 500-character name and a non-object mic sync are dropped");
+    console.log("PASS: a 500-character name and a non-object mic sync are dropped; an unknown colour becomes Coral");
+  }
+  {
+    // Older members could save names up to 40 characters: kept, cut to the 24 rooms show.
+    const { storedJson } = await boot(`${MEMBER_URL}#dm=${encode({ v: 1, user: { name: "  Ana   " + "l".repeat(30), color: "#7c5cff" } })}`);
+    const user = storedJson("dubmate_user");
+    if (user.name !== ("Ana " + "l".repeat(30)).slice(0, 24) || user.color !== "#7d9cf0") fail(`long name or old colour: ${JSON.stringify(user)}`);
+    const longer = await boot(`${MEMBER_URL}#dm=${encode({ v: 1, user: { name: "m".repeat(41) } })}`);
+    if ((longer.storedJson("dubmate_user") || {}).name === "m".repeat(24)) fail("a 41-character name was used");
+    console.log("PASS: a handoff name up to 40 characters is cut to 24, and an old colour becomes its new hue");
   }
   {
     const { stored } = await boot(`${MEMBER_URL}#dm=${encode({ v: 2, user: { name: "Future" } })}`);
@@ -287,21 +301,19 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
 
   // 8. A version difference shows as a toast when joining straight in.
   {
-    const { toasts, w } = await boot(`${MEMBER_URL}#dm=${encode({ v: 1, user: { name: "Ana" } })}`, { hostVersion: "1.3.0", homeVersion: "1.2.4" });
+    const { toasts } = await boot(`${MEMBER_URL}#dm=${encode({ v: 1, user: { name: "Ana" } })}`, { hostVersion: "1.3.0", homeVersion: "1.2.4" });
     await tick(50);
-    const note = w.document.getElementById("join-modal-version-note");
     if (!toasts().some((t) => /host has DubMate 1\.3\.0 and you have 1\.2\.4\. Update yours/.test(t))) fail(`no version toast: ${JSON.stringify(toasts())}`);
-    if (note && !note.hidden) fail("version note shown in a prompt that never opened");
     console.log("PASS: a version difference shows as a toast for a direct join");
   }
 
-  // 9. Browser guests: the prompt is filled with the name last used on this host.
+  // 9. Browser guests: the join card is filled with the name last used on this host.
   {
-    const { w, modal, fetches } = await boot(GUEST_URL, { storage: { dubmate_user: JSON.stringify({ id: "u_g", name: "Bea", color: "#0ea5e9" }) } });
-    if (modal.style.display !== "flex" || joinedDirectly(fetches)) fail("browser guest did not get the prompt");
-    const input = w.document.getElementById("input-join-actor-name");
-    if (input.value !== "Bea") fail(`prompt not filled with the remembered name: ${input.value}`);
-    console.log("PASS: a browser guest's join prompt is filled with the name they used on this host");
+    const { w, app, modal } = await boot(GUEST_URL, { storage: { dubmate_user: JSON.stringify({ id: "u_g", name: "Bea", color: "#0ea5e9" }) } });
+    if (!modal.shown || app.socket.roomId) fail("browser guest did not get the join card");
+    const input = w.document.getElementById("input-join-name");
+    if (input.value !== "Bea") fail(`card not filled with the remembered name: ${input.value}`);
+    console.log("PASS: a browser guest's join card is filled with the name they used on this host");
   }
 
   // 10. joinRoom adds the handoff only when there is a home origin.

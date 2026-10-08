@@ -6,7 +6,7 @@ import { escapeHtml } from '../ui_common.js';
 import { levelHint, levelZone } from './level_target.js';
 
 // --- Audio Device Setup persistence keys & meter constants ---
-const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
+export const AUDIO_SETUP_DONE_KEY = 'dubmate_audio_setup_done';
 const AUDIO_INPUT_DEVICE_KEY = 'dubmate_audio_input_device';
 const AUDIO_OUTPUT_DEVICE_KEY = 'dubmate_audio_output_device';
 const AUDIO_SETUP_SKIP_KEY = 'dubmate_audio_setup_skipped';
@@ -277,7 +277,6 @@ export class AudioSetupMethods {
   // Runs once on boot, before anything can trigger a bare permission prompt.
   async initAudioSetupOnBoot() {
     const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
-    const ss = (typeof sessionStorage !== 'undefined') ? sessionStorage : null;
 
     // Re-apply the remembered output device to the <video> elements that
     // already exist in the document.
@@ -309,12 +308,9 @@ export class AudioSetupMethods {
       this.audioSetup.permission = 'denied';
     }
 
+    // No dialog at launch: the lobby's "Check your mic" card sets the mic up while
+    // friends join (mic_card.js), and the booth still asks anyone who skipped it.
     this.updateAudioSettingsAffordance();
-
-    const skippedThisSession = safeStorageGet(ss, AUDIO_SETUP_SKIP_KEY) === '1';
-    if (!this.audioSetup.setupComplete && !skippedThisSession) {
-      this.openAudioSettings({ firstRun: true });
-    }
   }
 
   updateAudioSettingsAffordance() {

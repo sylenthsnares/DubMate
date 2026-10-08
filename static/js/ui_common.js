@@ -325,6 +325,27 @@ export function mixin(Target, ...Sources) {
   return Target;
 }
 
+/**
+ * Shows `message` under a form control (in #<id>-error) and marks the control invalid,
+ * or clears both when `message` is empty. The control keeps whatever was typed.
+ */
+export function setFieldError(control, message) {
+  if (!control) return;
+  const box = control.ownerDocument.getElementById(`${control.id}-error`);
+  if (!box) return;
+  box.textContent = message || '';
+  box.hidden = !message;
+  const described = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter((id) => id && id !== box.id);
+  if (message) {
+    if (control.tagName !== 'BUTTON') control.setAttribute('aria-invalid', 'true');
+    described.push(box.id);
+  } else {
+    control.removeAttribute('aria-invalid');
+  }
+  if (described.length) control.setAttribute('aria-describedby', described.join(' '));
+  else control.removeAttribute('aria-describedby');
+}
+
 let openDialogCount = 0;
 
 /** True while a dialog opened by openDialog() is showing. */
@@ -339,9 +360,10 @@ const FOCUSABLE = 'a[href], summary, button:not([disabled]), input:not([disabled
  * Shows a modal overlay: focuses its first control, keeps Tab / Shift+Tab inside,
  * closes on Escape or a click on the backdrop (the overlay itself), and gives
  * focus back to returnFocus. While canClose() is false, Escape and the backdrop do
- * nothing (the export modal while it saves). Returns close().
+ * nothing (the export modal while it saves). onClose runs once it has closed, however
+ * it closed. Returns close().
  */
-export function openDialog(overlay, { returnFocus = document.activeElement, canClose = () => true } = {}) {
+export function openDialog(overlay, { returnFocus = document.activeElement, canClose = () => true, onClose } = {}) {
   const doc = overlay.ownerDocument;
   const focusables = () => Array.from(overlay.querySelectorAll(FOCUSABLE)).filter((el) => !el.closest('[hidden]'));
   let isOpen = true;
@@ -383,6 +405,7 @@ export function openDialog(overlay, { returnFocus = document.activeElement, canC
     overlay.classList.remove('is-open');
     overlay.hidden = true;
     if (returnFocus && typeof returnFocus.focus === 'function' && returnFocus.isConnected) returnFocus.focus();
+    if (onClose) onClose();
   }
 
   openDialogCount += 1;

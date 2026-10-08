@@ -332,7 +332,7 @@ try {
       console.log("PASS: B3 re-takes get their own auto gain and the preview plays the engine's render!");
     }
 
-    // Test 4: the last line's footer reads "Done ›" (the amber primary)
+    // Test 4: the last line's footer reads "Done ›" (amber only once the line has a take)
     app.roomState = {
       room_id: "TEST12",
       host_id: app.user.id,
@@ -349,7 +349,7 @@ try {
 
     await app.loadBoothLine(1); // Last line of mockPack
     const lastText = btnNext.textContent || btnNext.innerHTML;
-    if (lastText.trim() === "Done ›" && btnNext.classList.contains("btn-primary")) {
+    if (lastText.trim() === "Done ›" && btnNext.classList.contains("btn-secondary")) {
       console.log("PASS: Last line correctly transforms to 'Done ›'!");
     } else {
       console.error("FAIL: Last line did not transform to 'Done ›':", lastText);
@@ -368,7 +368,7 @@ try {
     // Search by character name "Todoroki"
     app.handlePackSearch("Todoroki");
     const cardsTodoroki = dom.window.document.querySelectorAll(".pack-card");
-    if (cardsTodoroki.length === 1 && app.selectedPackId === "Deku_vs_Todoroki") {
+    if (cardsTodoroki.length === 1 && cardsTodoroki[0].dataset.packId === "Deku_vs_Todoroki" && app.selectedPackId === null) {
       console.log("PASS: Searching 'Todoroki' correctly filtered to 1 pack!");
     } else {
       console.error("FAIL: Search 'Todoroki' expected 1 card, got:", cardsTodoroki.length);
@@ -598,7 +598,7 @@ try {
       console.log("PASS: a tab from another DubMate version stops applying state and asks for a reload!");
     }
 
-    // Test 8e: Play this take, from a row's ⋯ menu in the Takes card, plays the engine's
+    // Test 8e: ▶ on a row of the Takes card plays the engine's
     // render of the take's own sound at its own timing and level, and leaves the controls
     // alone. The rest of the card is tests/test_takes_card.js.
     {
@@ -639,9 +639,8 @@ try {
         }
         return realFetch(url, opts);
       };
-      rows[1].querySelector(".take-more").click();
-      const play = [...rows[1].querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.includes("Play this take"));
-      if (!play) fail("no Play this take in the menu");
+      const play = rows[1].querySelector(".take-play");
+      if (!play) fail("no ▶ on the take's row");
       play.click();
       await new Promise((r) => setTimeout(r, 20));
       dom.window.fetch = realFetch;
@@ -656,7 +655,7 @@ try {
       app.audio.previewTakeIsolated = realPreview;
       delete app.syncVideoSeek;
       app.leaveRoom();
-      console.log("PASS: Play this take plays the engine's render of the take's own sound and leaves the controls alone!");
+      console.log("PASS: ▶ on a take row plays the engine's render of the take's own sound and leaves the controls alone!");
     }
 
     // Test 8f: the room refuses a change. A page that still thinks you are the host (the host
@@ -702,10 +701,10 @@ try {
       }
       if (fetches.length !== 1 || fetches[0] !== "/api/rooms/R") fail("did not reload the room", fetches);
       if (JSON.stringify(app.roomState.role_assignments.Deku) !== '["mika"]') fail("the refused casting stayed", app.roomState.role_assignments);
-      const dot = row().querySelector(".actor-color-dot");
+      const avatar = row().querySelector(".cast-avatar-slot .avatar");
       const actor = row().querySelector(".cast-actor-name");
-      if (row().querySelector(".cast-select") || !actor || actor.textContent !== "Mika" || dot.title !== "Mika") {
-        fail("the casting row does not show the server's assignment as text", actor && actor.textContent, dot.title);
+      if (row().querySelector(".cast-select") || !actor || actor.textContent !== "Mika" || !avatar || avatar.textContent !== "M") {
+        fail("the casting row does not show the server's assignment as text", actor && actor.textContent, avatar && avatar.textContent);
       }
 
       toasts.length = 0;

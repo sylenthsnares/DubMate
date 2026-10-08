@@ -115,6 +115,10 @@ async function boot() {
   check(!shown(action) && !shown(leave), "the first connect shows no buttons");
   check(said.length === 0, "the first connect is not read out", said);
   setState("open");
+  await tick(20);
+  // Nothing was lost: joining a room never says "Back online", it just goes away.
+  check(banner.style.display === "none" && !banner.classList.contains("is-recovered"),
+    "the first connect hides the pill without 'Back online'", banner.style.display, text.innerText);
 
   // Lost: amber, Retry now, the tip, the short form.
   setState("reconnecting", { retryInMs: 4000, attempt: 1 });
@@ -153,6 +157,8 @@ async function boot() {
   action.click();
   check(retries === 2, "Try again calls retryNow()");
   leave.click();
+  check(leaves === 0 && !doc.getElementById("modal-leave-room").hidden, "Leave room asks first, like the header's Leave");
+  doc.getElementById("btn-leave-room-confirm").click();
   check(leaves === 1, "Leave room takes the header's leave path");
 
   // Try again goes amber while it tries, then back online.
