@@ -237,7 +237,11 @@ export class AudioSetupMethods {
     this.updateAudioSettingsAffordance();
 
     const skippedThisSession = safeStorageGet(ss, AUDIO_SETUP_SKIP_KEY) === '1';
-    if (!this.audioSetup.setupComplete && !skippedThisSession) {
+    // Not over the join card or You left: a dialog there would stack on the one question
+    // the page asks (the lobby checks the mic while friends join).
+    const params = new URLSearchParams(window.location.search);
+    const roomPage = params.has('room') || params.has('left');
+    if (!this.audioSetup.setupComplete && !skippedThisSession && !roomPage) {
       this.openAudioSettings({ firstRun: true });
     }
   }

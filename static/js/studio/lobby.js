@@ -1,13 +1,44 @@
 // studio/lobby.js - Rooms: invite/share status, creating and joining a room, casting,
 // the cast activity HUD and ready states. Also the member's home-origin helpers.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { escapeHtml, plural } from '../ui_common.js';
+import { escapeHtml, plural, setFieldError } from '../ui_common.js';
 import { takeCount } from './takes.js';
 import { MIC_SYNC_KEY, deviceLabel, validEntry } from './mic_sync.js';
-import { normalizeColor, cleanName, renderColorPicker } from '../identity.js';
+import { avatarHtml } from './presence.js';
+import { IDENTITY_COLORS, normalizeColor, cleanName, renderColorPicker } from '../identity.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
 const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
+
+// Set once a room has been started or joined on this origin: the landing's hero is for first runs.
+export const FIRST_ROOM_KEY = 'dubmate_first_room_done';
+
+const ROOM_CODE_RE = /^[A-Za-z0-9-]{3,16}$/;
+
+/**
+ * What a "Room code or invite link" field holds: { code } for a code, a registry
+ * /join/CODE link or a ?room=CODE link to this page; { code, url } for a ?room= link to
+ * another page (a host's tunnel or LAN address), which is opened directly. null otherwise.
+ */
+export function parseRoomInput(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  if (ROOM_CODE_RE.test(raw)) return { code: raw.toUpperCase() };
+  let url = null;
+  for (const candidate of [raw, `https://${raw}`]) {
+    try {
+      url = new URL(candidate);
+      break;
+    } catch (e) { }
+  }
+  if (!url || !/^https?:$/.test(url.protocol)) return null;
+  const join = url.pathname.match(/^\/join\/([^/]+)\/?$/);
+  if (join && ROOM_CODE_RE.test(join[1])) return { code: join[1].toUpperCase() };
+  const room = url.searchParams.get('room') || '';
+  if (!ROOM_CODE_RE.test(room)) return null;
+  const code = room.toUpperCase();
+  return url.origin === window.location.origin ? { code } : { code, url: `${url.origin}${url.pathname}` };
+}
 
 // Joining a room hosted elsewhere moves the whole page onto the host's tunnel,
 // so every relative URL (/api/packs, "/", "/builder.html") then reaches the
@@ -323,8 +354,10 @@ export class LobbyMethods {
   }
 
   async createRoom() {
-    if (!this.selectedPackId) {
-      this.showToast("Choose a scene first.");
+    if (!this.requireName()) return;
+    const pack = (this.packs || []).find((p) => p.id === this.selectedPackId);
+    if (!pack) {
+      this.btnCreateRoom?.focus();
       return;
     }
 
@@ -355,95 +388,10 @@ export class LobbyMethods {
     }
   }
 
-  initJoinModal() {
-    this.modalJoinRoom = document.getElementById('modal-join-room');
-    this.joinModalRoomBadge = document.getElementById('join-modal-room-badge');
-    this.inputJoinActorName = document.getElementById('input-join-actor-name');
-    this.joinModalAvatarPreview = document.getElementById('join-modal-avatar-preview');
-    this.joinColorPalette = document.getElementById('join-color-palette');
-    this.btnCancelJoinModal = document.getElementById('btn-cancel-join-modal');
-    this.btnConfirmJoinModal = document.getElementById('btn-confirm-join-modal');
-
-    if (!this.modalJoinRoom) return;
-
-    if (this.inputJoinActorName) {
-      this.inputJoinActorName.addEventListener('input', (e) => {
-        const name = (e.target.value || '').trim();
-        if (this.joinModalAvatarPreview) {
-          this.joinModalAvatarPreview.innerText = (Array.from(name)[0] || '?').toUpperCase();
-        }
-        this.renderJoinColorPicker();
-      });
-
-      this.inputJoinActorName.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          this.confirmJoinModal();
-        }
-      });
-    }
-
-    if (this.btnCancelJoinModal) {
-      this.btnCancelJoinModal.addEventListener('click', () => {
-        this.closeJoinModal();
-      });
-    }
-
-    if (this.btnConfirmJoinModal) {
-      this.btnConfirmJoinModal.addEventListener('click', () => {
-        this.confirmJoinModal();
-      });
-    }
-
-    this.modalJoinRoom.addEventListener('click', (e) => {
-      if (e.target === this.modalJoinRoom) {
-        this.closeJoinModal();
-      }
-    });
-  }
-
-  promptJoinRoom(roomId) {
-    const cleanCode = (roomId || '').trim().toUpperCase();
-    if (!cleanCode) {
-      this.showToast("Enter a room code.");
-      return;
-    }
-    this.pendingJoinRoomId = cleanCode;
-    this.warnOnVersionMismatch();
-
-    if (this.joinModalRoomBadge) {
-      this.joinModalRoomBadge.innerText = `ROOM: ${cleanCode}`;
-    }
-    if (this.inputJoinActorName) {
-      this.inputJoinActorName.value = this.user.name || '';
-      if (this.joinModalAvatarPreview) {
-        this.joinModalAvatarPreview.innerText = (Array.from((this.user.name || '').trim())[0] || '?').toUpperCase();
-        this.joinModalAvatarPreview.style.backgroundColor = this.user.color;
-      }
-    }
-    this.renderJoinColorPicker();
-    if (this.modalJoinRoom) {
-      this.modalJoinRoom.style.display = 'flex';
-      setTimeout(() => {
-        if (this.inputJoinActorName) {
-          this.inputJoinActorName.focus();
-          this.inputJoinActorName.select();
-        }
-      }, 50);
-    }
-  }
-
   // On a host's page reached from the member's own DubMate (?home=), compare the
-  // two engines' versions and note in the join prompt (or a toast, when joining
-  // straight in) which side should update. Never blocks joining. Browser-only
-  // guests have no home engine to compare.
-  async warnOnVersionMismatch({ toast = false } = {}) {
-    const note = toast ? null : document.getElementById('join-modal-version-note');
-    if (!toast && !note) return;
-    if (note) {
-      note.hidden = true;
-      note.textContent = '';
-    }
+  // two engines' versions and say in a toast which side should update. Never blocks
+  // joining. Browser-only guests have no home engine to compare.
+  async warnOnVersionMismatch() {
     const home = getHomeOrigin();
     if (!home || home === window.location.origin) return;
     const [hostVersion, myVersion] = await Promise.all([
@@ -456,157 +404,385 @@ export class LobbyMethods {
     const diff = (mine[0] - host[0]) || (mine[1] - host[1]);
     if (diff === 0) return;
     const versions = `The host has DubMate ${hostVersion} and you have ${myVersion}.`;
-    const message = diff < 0
+    this.showToast(diff < 0
       ? `${versions} Update yours to avoid problems in this room.`
-      : `${versions} Ask the host to update to avoid problems in this room.`;
-    if (toast) {
-      this.showToast(message);
-      return;
-    }
-    note.textContent = message;
-    note.hidden = false;
+      : `${versions} Ask the host to update to avoid problems in this room.`);
   }
 
-  /** The join prompt's colour picker, with the initial of the name typed so far. */
-  renderJoinColorPicker() {
-    if (!this.joinColorPalette || this.joinColorPalette.contains(document.activeElement)) return;
-    renderColorPicker(this.joinColorPalette, {
-      selected: this.user.color,
-      label: 'Your colour',
-      name: this.inputJoinActorName?.value || this.user.name,
-      onChange: (hex) => {
-        this.user.color = hex;
-        if (this.joinModalAvatarPreview) this.joinModalAvatarPreview.style.backgroundColor = hex;
-      },
-    });
+  /**
+   * Looks a room code up: on this engine first, then in the public registry. Returns
+   * { room } for a room here, { navigated: true } when it moved the page to the host's,
+   * or {} when nobody has the code.
+   */
+  async findRoom(code) {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
+    if (res.ok) return { room: await res.json() };
+    // If room is not hosted on this local instance, resolve via dubmate.bkaproductions.com
+    try {
+      const resolveResp = await fetch(`${REGISTRY_BASE}/rooms/${encodeURIComponent(code)}/resolve`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      if (resolveResp.ok) {
+        const data = await resolveResp.json();
+        const target = data && data.tunnel_url ? new URL(data.tunnel_url) : null;
+        // A registry entry pointing back at this page means the host no longer
+        // has the room; jumping would reload this page forever.
+        if (target && target.origin !== window.location.origin) {
+          await this.goToRoomPage(target, code);
+          return { navigated: true };
+        }
+      }
+    } catch (resolveErr) {
+      console.warn('[Registry] Public resolve check:', resolveErr);
+    }
+    return {};
   }
 
-  confirmJoinModal() {
-    const name = cleanName(this.inputJoinActorName?.value || '');
-    if (!name) {
-      this.showToast('Type your name first.');
-      this.inputJoinActorName?.focus();
-      return;
+  /**
+   * Moves the page onto the host's room page, carrying the member's own engine along
+   * (?home=) so leaving can come back to it, and their name and setup (#dm=) so they
+   * join straight in. A browser guest goes without either.
+   */
+  async goToRoomPage(target, code) {
+    target.searchParams.set('room', code);
+    const home = getHomeOrigin();
+    if (home) {
+      target.searchParams.set('home', home);
+      // Device names are only readable once listed with the mic allowed.
+      await this.updateAudioDeviceList();
+      target.hash = 'dm=' + buildJoinHandoff(this);
     }
-    this.user.name = name;
-    this.saveUser();
-    this.updateUserUI();
-
-    if (this.modalJoinRoom) {
-      this.modalJoinRoom.style.display = 'none';
-    }
-
-    if (this.pendingJoinRoomId) {
-      const codeToJoin = this.pendingJoinRoomId;
-      this.pendingJoinRoomId = null;
-      this.joinRoom(codeToJoin);
-    }
+    this.showToast(`Connecting to room ${code}…`);
+    await allowRoomMic(target.origin);
+    this.navigateTo(target.toString());
   }
 
-  closeJoinModal() {
-    if (this.modalJoinRoom) {
-      this.modalJoinRoom.style.display = 'none';
-    }
-    this.pendingJoinRoomId = null;
-    if (new URL(window.location.href).searchParams.has('room')) {
-      this.clearRoomQueryParam();
-      // Declined a host's room: don't stay behind on the host's home screen.
-      this.goHome();
-    }
-  }
-
-  joinRoomFromInput(input = this.inputRoomCode) {
-    const code = (input?.value || '').trim().toUpperCase();
-    if (!code) {
-      this.showToast("Enter a room code.");
-      return;
-    }
-    this.promptJoinRoom(code);
-  }
-
-  async joinRoom(roomId) {
+  /**
+   * Joins a room by code with the saved name and colour. When nobody has the code,
+   * onMissing(code) says so where the person asked (a form); without it, a toast and
+   * the home screen.
+   */
+  async joinRoom(roomId, { onMissing } = {}) {
     this.resetRoomSession();
     const cleanCode = (roomId || '').trim().toUpperCase();
     try {
-      let res = await fetch(`/api/rooms/${cleanCode}`);
-      if (!res.ok) {
-        // If room is not hosted on this local instance, resolve via dubmate.bkaproductions.com
-        try {
-          const resolveResp = await fetch(`${REGISTRY_BASE}/rooms/${encodeURIComponent(cleanCode)}/resolve`, {
-            headers: { 'Accept': 'application/json' }
-          });
-          if (resolveResp.ok) {
-            const data = await resolveResp.json();
-            const target = data && data.tunnel_url ? new URL(data.tunnel_url) : null;
-            // A registry entry pointing back at this page means the host no longer
-            // has the room; jumping would reload this page forever.
-            if (target && target.origin !== window.location.origin) {
-              // Navigate to host's tunnel room session, carrying the member's own
-              // engine along so leaving the room can come back to it.
-              target.searchParams.set('room', cleanCode);
-              const home = getHomeOrigin();
-              if (home) {
-                target.searchParams.set('home', home);
-                // Device names are only readable once listed with the mic allowed.
-                await this.updateAudioDeviceList();
-                target.hash = 'dm=' + buildJoinHandoff(this);
-              }
-              this.showToast(`Connecting to room ${cleanCode}…`);
-              await allowRoomMic(target.origin);
-              this.navigateTo(target.toString());
-              return;
-            }
-          }
-        } catch (resolveErr) {
-          console.warn('[Registry] Public resolve check:', resolveErr);
+      const found = await this.findRoom(cleanCode);
+      if (found.navigated) return;
+      if (!found.room) {
+        if (onMissing) {
+          onMissing(cleanCode);
+          return;
         }
-
         // Strip stale room parameter so user is returned cleanly to scene explorer
         this.clearRoomQueryParam();
-
         this.showToast(`Room ${cleanCode} wasn't found. Check the code or ask the host for a new one.`);
         this.showView('landing');
         return;
       }
-      this.roomState = await res.json();
-
-      const url = new URL(window.location);
-      url.searchParams.set('room', this.roomState.room_id);
-      window.history.pushState({}, '', url);
-
-      // Read before connecting: the socket join resets this user's saved status.
-      const savedLine = this.savedLineIndex();
-      this.socket.connect(this.roomState.room_id, this.user.id, this.user.name, this.user.color);
-
-      this.headerRoomBadge.style.display = 'inline-flex';
-      this.headerRoomCode.innerText = this.roomState.room_id;
-      this.headerUserPill.style.display = 'inline-flex';
-      if (this.btnLeaveRoom) this.btnLeaveRoom.style.display = 'inline-flex';
-
-      // The registry publish is asynchronous and may still be waiting on the
-      // tunnel, so watch it rather than assuming the code works.
-      this.startShareWatch();
-
-      // Lazy load backing buffer when entering booth instead of blocking joinRoom
-      if (this.roomState.status === 'screening') {
-        this.showView('screening');
-        this.setupScreeningView();
-        this.broadcastMyStatus('screening');
-      } else if (this.roomState.status === 'recording') {
-        this.showView('booth');
-        this.loadBoothLine(savedLine ?? this.findFirstAssignedLine());
-        this.broadcastMyStatus('booth');
-      } else {
-        this.showView('lobby');
-        this.renderLobbyState();
-        this.renderCastActivityHUD();
-        this.broadcastMyStatus('lobby');
-      }
+      this.enterRoom(found.room);
     } catch (err) {
       this.clearRoomQueryParam();
       this.showToast(this.friendlyError(err, "Couldn't join that room. Try again."));
       this.showView('landing');
     }
+  }
+
+  /** Connects to a room this engine has (its state already fetched) and shows where it is. */
+  enterRoom(room) {
+    this.roomState = room;
+    try { localStorage.setItem(FIRST_ROOM_KEY, '1'); } catch (e) { }
+
+    const url = new URL(window.location);
+    url.searchParams.set('room', this.roomState.room_id);
+    url.searchParams.delete('left');
+    window.history.pushState({}, '', url);
+
+    // Read before connecting: the socket join resets this user's saved status.
+    const savedLine = this.savedLineIndex();
+    this.socket.connect(this.roomState.room_id, this.user.id, this.user.name, this.user.color);
+
+    this.headerRoomBadge.style.display = 'inline-flex';
+    this.headerRoomCode.innerText = this.roomState.room_id;
+    if (this.btnLeaveRoom) this.btnLeaveRoom.style.display = 'inline-flex';
+
+    // The registry publish is asynchronous and may still be waiting on the
+    // tunnel, so watch it rather than assuming the code works.
+    this.startShareWatch();
+
+    // Lazy load backing buffer when entering booth instead of blocking joinRoom
+    if (this.roomState.status === 'screening') {
+      this.showView('screening');
+      this.setupScreeningView();
+      this.broadcastMyStatus('screening');
+    } else if (this.roomState.status === 'recording') {
+      this.showView('booth');
+      this.loadBoothLine(savedLine ?? this.findFirstAssignedLine());
+      this.broadcastMyStatus('booth');
+    } else {
+      this.showView('lobby');
+      this.renderLobbyState();
+      this.renderCastActivityHUD();
+      this.broadcastMyStatus('lobby');
+    }
+  }
+
+  // --- Code-or-link forms (the landing, the join card's missing state, You left) ---
+
+  /** Wires a code-or-link <form>: Enter or Join looks it up; typing clears the error. */
+  initCodeForm(form) {
+    if (!form) return;
+    const input = form.querySelector('input');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.joinRoomFromInput(form);
+    });
+    input?.addEventListener('input', () => setFieldError(input, ''));
+  }
+
+  /**
+   * Joins the room a code-or-link form names. "Finding room…" while it looks; a wrong
+   * code shows under the field, keeping the text, with no toast and no view change. A
+   * direct link to a host's page goes straight there. On the landing the name comes
+   * first; elsewhere someone with no name yet gets the join card for a room found here.
+   */
+  async joinRoomFromInput(form) {
+    const input = form.querySelector('input');
+    const button = form.querySelector('button[type="submit"]');
+    setFieldError(input, '');
+    if (form.closest('#view-landing') && !this.requireName()) return;
+    const raw = (input.value || '').trim();
+    const parsed = parseRoomInput(raw);
+    if (!parsed) {
+      setFieldError(input, raw ? "That isn't a room code or invite link." : 'Type a room code or paste an invite link.');
+      input.focus();
+      return;
+    }
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Finding room…';
+    const done = () => {
+      button.disabled = false;
+      button.textContent = label;
+    };
+    try {
+      if (parsed.url) {
+        await this.goToRoomPage(new URL(parsed.url), parsed.code);
+        return;
+      }
+      const found = await this.findRoom(parsed.code);
+      if (found.navigated) return;
+      done();
+      if (!found.room) {
+        setFieldError(input, `No room ${parsed.code}. Check the code, or ask the host for a new link.`);
+        input.focus();
+        return;
+      }
+      this.resetRoomSession();
+      if (!cleanName(this.user.name) && !found.room.users?.[this.user.id]) {
+        this.showJoinCard(parsed.code, found.room);
+        return;
+      }
+      this.enterRoom(found.room);
+    } catch (err) {
+      done();
+      setFieldError(input, this.friendlyError(err, "Couldn't reach DubMate. Try again."));
+    }
+  }
+
+  // --- The join card (a friend who opened an invite link in a plain browser) ---
+
+  /** Shows the join card for ?room=CODE: "Finding room…" until the code is checked. */
+  async openJoinCard(code) {
+    const cleanCode = (code || '').trim().toUpperCase();
+    this.joinCardCode = cleanCode;
+    document.getElementById('join-finding').hidden = false;
+    document.getElementById('join-form').hidden = true;
+    document.getElementById('join-missing').hidden = true;
+    document.getElementById('join-poster').replaceChildren();
+    this.showView('join');
+    this.warnOnVersionMismatch();
+    let found = {};
+    try {
+      found = await this.findRoom(cleanCode);
+    } catch (err) {
+      console.warn('[DubMate] Room lookup failed:', err);
+    }
+    if (found.navigated) return;
+    if (!found.room) {
+      this.showJoinMissing(cleanCode);
+      return;
+    }
+    // Someone the room already knows (a reload) goes straight back in.
+    if (found.room.users?.[this.user.id] && cleanName(this.user.name)) {
+      this.enterRoom(found.room);
+      return;
+    }
+    this.showJoinCard(cleanCode, found.room);
+  }
+
+  showJoinMissing(code) {
+    this.showView('join');
+    document.getElementById('join-finding').hidden = true;
+    document.getElementById('join-form').hidden = true;
+    document.getElementById('join-missing').hidden = false;
+    document.getElementById('join-missing-title').textContent = `Room ${code} isn't open.`;
+    document.getElementById('join-poster').replaceChildren();
+    const input = document.getElementById('input-join-code');
+    input.focus();
+  }
+
+  /** Fills the join card in from the room's state: host, scene, who's here, name and colour. */
+  showJoinCard(code, room) {
+    this.joinCardCode = code;
+    this.joinCardRoom = room;
+    this.showView('join');
+    const pack = room.pack || {};
+    const users = Object.values(room.users || {});
+    const host = room.users?.[room.host_id];
+    document.getElementById('join-title').textContent = host?.name ? `Join ${host.name}'s room` : 'Join the room';
+    const lines = (pack.lines || []).length;
+    document.getElementById('join-meta').textContent =
+      `${pack.name || pack.id || 'Scene'} · ${plural(lines, 'line')} · ${plural((pack.characters || []).length, 'character')}`;
+
+    const poster = document.getElementById('join-poster');
+    if (pack.has_icon && pack.icon_url) {
+      const img = document.createElement('img');
+      img.src = pack.icon_url;
+      img.alt = '';
+      poster.replaceChildren(img);
+    } else if (pack.video_url) {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      const start = Number((pack.lines || [])[0]?.start) || 0;
+      video.setAttribute('src', `${pack.video_url}#t=${start}`);
+      poster.replaceChildren(video);
+    } else {
+      poster.replaceChildren();
+    }
+
+    const online = users.filter((u) => u && u.is_online);
+    document.getElementById('join-here').innerHTML = online.length
+      ? `<span class="join-here-label">Here now</span>${online.map((u) => `<span class="join-here-who">${avatarHtml(u, 20)}<span class="join-here-name">${escapeHtml(u.name)}</span></span>`).join('')}`
+      : '';
+
+    // Hues other people hold are taken. With all 8 held, offline people don't count,
+    // and with 8 online the server shares the least-used hue (the initial tells them apart).
+    const others = users.filter((u) => u && u.id !== this.user.id);
+    let taken = new Map(others.map((u) => [u.color, u]));
+    if (IDENTITY_COLORS.every((c) => taken.has(c.hex))) taken = new Map(others.filter((u) => u.is_online).map((u) => [u.color, u]));
+    if (IDENTITY_COLORS.every((c) => taken.has(c.hex))) taken = new Map();
+    this.joinCardTaken = taken;
+    this.joinCardColor = taken.has(this.user.color)
+      ? (IDENTITY_COLORS.find((c) => !taken.has(c.hex))?.hex || this.user.color)
+      : this.user.color;
+
+    const name = document.getElementById('input-join-name');
+    name.value = this.user.name || '';
+    setFieldError(name, '');
+    document.getElementById('join-finding').hidden = true;
+    document.getElementById('join-missing').hidden = true;
+    document.getElementById('join-form').hidden = false;
+    this.renderJoinCardIdentity();
+    name.focus();
+  }
+
+  /** The join card's picker and button follow the name typed so far. */
+  renderJoinCardIdentity() {
+    const name = cleanName(document.getElementById('input-join-name')?.value || '');
+    const button = document.getElementById('btn-join-card');
+    button.disabled = !name;
+    button.textContent = name ? `Join as ${name} ›` : 'Join ›';
+    const palette = document.getElementById('join-color-palette');
+    if (palette.contains(document.activeElement)) return;
+    renderColorPicker(palette, {
+      selected: this.joinCardColor,
+      taken: this.joinCardTaken || new Map(),
+      label: 'Your colour',
+      name,
+      onChange: (hex) => { this.joinCardColor = hex; },
+    });
+  }
+
+  /** Join as <name>: saves the name and colour on this origin, then joins. */
+  async submitJoinCard() {
+    const input = document.getElementById('input-join-name');
+    const name = cleanName(input.value);
+    if (!name) {
+      setFieldError(input, 'Type your name first');
+      input.focus();
+      return;
+    }
+    this.user.name = name;
+    this.user.color = this.joinCardColor || this.user.color;
+    this.saveUser();
+    this.updateUserUI();
+    const button = document.getElementById('btn-join-card');
+    button.disabled = true;
+    button.textContent = 'Joining…';
+    await this.joinRoom(this.joinCardCode, { onMissing: (code) => this.showJoinMissing(code) });
+    this.renderJoinCardIdentity();
+  }
+
+  // --- You left (browser guests with no DubMate of their own) ---
+
+  /**
+   * "You left <scene>", with Rejoin and a field prefilled with the code. `scene` is
+   * the scene's name when known (just left); after a reload the room is looked up,
+   * and a room that has closed says so instead of offering Rejoin.
+   */
+  async showLeftView(code, scene = '') {
+    this.leftRoomCode = code;
+    const title = document.getElementById('left-title');
+    const text = document.getElementById('left-text');
+    const rejoin = document.getElementById('btn-rejoin-room');
+    const field = document.getElementById('input-left-room-code');
+    const url = new URL(window.location.href);
+    url.search = `?left=${encodeURIComponent(code)}`;
+    url.hash = '';
+    window.history.replaceState({}, '', url);
+    setFieldError(rejoin, '');
+    setFieldError(field, '');
+    field.value = code;
+    rejoin.textContent = `Rejoin ${code}`;
+    rejoin.disabled = false;
+    this.showView('left');
+    let open = !!scene;
+    if (!scene) {
+      title.textContent = 'You left the room';
+      text.textContent = '';
+      rejoin.hidden = true;
+      try {
+        const res = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
+        if (res.ok) {
+          const room = await res.json();
+          scene = room?.pack?.name || room?.pack?.id || '';
+          open = true;
+        }
+      } catch (e) { }
+    }
+    if (this.currentView !== 'left' || this.leftRoomCode !== code) return;
+    title.textContent = scene ? `You left ${scene}` : 'You left the room';
+    // Leaving only marks you offline; the room and every take in it stay on the host's engine.
+    text.textContent = open ? 'The room is still open. Your takes stay in it.' : 'The room has closed.';
+    rejoin.hidden = !open;
+    (open ? rejoin : field).focus();
+  }
+
+  /** Rejoin: the saved name and colour, no card. A room that closed meanwhile says so here. */
+  async rejoinRoom() {
+    const button = document.getElementById('btn-rejoin-room');
+    const code = this.leftRoomCode;
+    if (!code) return;
+    setFieldError(button, '');
+    button.disabled = true;
+    button.textContent = 'Finding room…';
+    await this.joinRoom(code, {
+      onMissing: () => setFieldError(button, `Room ${code} isn't open any more. Ask the host for a new link.`),
+    });
+    button.disabled = false;
+    button.textContent = `Rejoin ${code}`;
   }
 
   /** Downloads the room's scene so a member can add it with Import pack at home. */

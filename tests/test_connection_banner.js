@@ -153,6 +153,8 @@ async function boot() {
   action.click();
   check(retries === 2, "Try again calls retryNow()");
   leave.click();
+  check(leaves === 0 && !doc.getElementById("modal-leave-room").hidden, "Leave room asks first, like the header's Leave");
+  doc.getElementById("btn-leave-room-confirm").click();
   check(leaves === 1, "Leave room takes the header's leave path");
 
   // Try again goes amber while it tries, then back online.

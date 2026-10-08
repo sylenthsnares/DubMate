@@ -193,23 +193,23 @@ async function boot({ storage = {} } = {}) {
   // Every name field stops at 24 characters.
   {
     const doc = new JSDOM(html).window.document;
-    const fields = ["input-user-name", "input-join-actor-name"].map((idv) => doc.getElementById(idv)).filter(Boolean);
-    check(fields.length >= 1 && fields.every((f) => f.getAttribute("maxlength") === "24"), "name fields have maxlength 24",
+    const fields = ["input-user-name", "input-join-name"].map((idv) => doc.getElementById(idv)).filter(Boolean);
+    check(fields.length === 2 && fields.every((f) => f.getAttribute("maxlength") === "24"), "name fields have maxlength 24",
       fields.map((f) => `${f.id}=${f.getAttribute("maxlength")}`));
     check(!doc.querySelector(".color-option[data-color]"), "no old colour swatches left in the markup");
   }
 
-  // The join modal won't send an empty name.
+  // The join card won't send an empty name.
   {
     const { app, doc } = await boot();
     let joined = null;
-    app.joinRoom = (code) => { joined = code; };
-    app.pendingJoinRoomId = "ABC123";
-    doc.getElementById("input-join-actor-name").value = "   ";
-    app.confirmJoinModal();
+    app.joinRoom = async (code) => { joined = code; };
+    app.joinCardCode = "ABC123";
+    doc.getElementById("input-join-name").value = "   ";
+    await app.submitJoinCard();
     check(joined === null && app.user.name === "", "an empty name doesn't join");
-    doc.getElementById("input-join-actor-name").value = "  Sam   Lee ";
-    app.confirmJoinModal();
+    doc.getElementById("input-join-name").value = "  Sam   Lee ";
+    await app.submitJoinCard();
     check(joined === "ABC123" && app.user.name === "Sam Lee", "a name joins, cleaned", app.user.name);
   }
 

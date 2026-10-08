@@ -1,10 +1,16 @@
 /**
  * test_left_room.js
  *
- * P22: a guest who joined from a plain browser link (no ?home=, page on the
- * host's tunnel) has no DubMate of their own to go back to. Leaving the room
- * shows a small "You left the room" view with a room-code box, never the host's
- * home screen and pack library. Hosts still land on the home screen as before.
+ * P22 / 2.0 join flow G2 (U4 35a): a guest who joined from a plain browser link (no
+ * ?home=, page on the host's tunnel) has no DubMate of their own to go back to.
+ *  - Leaving asks first in an in-app dialog (Escape and Stay keep you in, focus returns).
+ *  - Then "You left <scene>", "The room is still open. Your takes stay in it.", the amber
+ *    "Rejoin CODE" (one click, the saved name and colour, errors inline, focus on it) and
+ *    "Join a different room" with the field prefilled with the code. Never the host's
+ *    home screen and pack library.
+ *  - The address becomes /?left=CODE (a reload shows the same view, Back doesn't reopen
+ *    the room), and the header hides Audio, ? and the logo menu there.
+ * Hosts still land on the home screen as before.
  *
  * Also: Copy invite in a continued session (code not published again) copies the
  * direct link with "Invite link copied."
@@ -27,7 +33,7 @@ function fail(msg) {
 
 const tick = (ms = 100) => new Promise((r) => setTimeout(r, ms));
 
-async function boot(url) {
+async function boot(url, { rooms = {} } = {}) {
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (err) => {
     if (!/not implemented/i.test(String(err && err.message))) console.error(err);
@@ -48,7 +54,8 @@ async function boot(url) {
     createConvolver() { return { connect: () => {} }; }
   };
   w.scrollTo = () => {};
-  w.confirm = () => true;
+  w.confirm = (m) => fail(`window.confirm was used: ${m}`);
+  w.WebSocket = class { constructor(u) { this.url = u; this.readyState = 0; } send() {} close() {} };
 
   const fetches = [];
   const json = (status, body) => Promise.resolve({
@@ -61,13 +68,15 @@ async function boot(url) {
     const u = String(input || "");
     fetches.push(u);
     if (/\/rooms\/[^/]+\/resolve$/.test(u)) return json(404, {});
+    const room = u.match(/^\/api\/rooms\/([^/]+)$/);
+    if (room && rooms[decodeURIComponent(room[1])]) return json(200, rooms[decodeURIComponent(room[1])]);
     if (u.startsWith("/api/rooms/")) return json(404, { detail: "Room not found" });
     if (u.startsWith("/api/packs")) return json(200, [{ id: "HostPack", name: "Host Pack", lines: [], characters: [] }]);
     return json(200, {});
   };
 
+  // JSDOM fires DOMContentLoaded itself; a second, manual one would boot a second app.
   w.eval(bundle);
-  w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
   await tick();
   const app = w.dubMateApp;
   if (!app) fail(`studio did not boot at ${url}`);
@@ -78,46 +87,127 @@ async function boot(url) {
 }
 
 function fakeRoom(hostId) {
-  return { room_id: "DUB-AB12", host_id: hostId, pack: { id: "HostPack", lines: [], characters: [] }, takes: {}, users: {} };
+  return {
+    state_version: 3, room_id: "DUB-AB12", host_id: hostId, status: "lobby",
+    pack: { id: "HostPack", name: "Host Pack", lines: [], characters: [] },
+    takes: {}, users: {}, role_assignments: {},
+  };
 }
 
 const isActive = (w, id) => w.document.getElementById(id).classList.contains("active");
+const visible = (el) => !!el && !el.hidden && !el.closest("[hidden]") && el.style.display !== "none";
+const key = (w, k) => w.document.activeElement.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+
+/** Clicks Leave and answers the in-app question. */
+async function leave(w, app) {
+  app.btnLeaveRoom.click();
+  await tick(10);
+  const dialog = w.document.getElementById("modal-leave-room");
+  if (!dialog || dialog.hidden) fail("Leave did not ask first");
+  w.document.getElementById("btn-leave-room-confirm").click();
+  await tick(20);
+}
 
 (async () => {
+  // 0. Leaving asks in the app; Escape and Stay keep you in the room.
+  {
+    const { w, app } = await boot("https://abc.trycloudflare.com/?room=DUB-AB12");
+    app.roomState = fakeRoom("someone-else");
+    app.btnLeaveRoom.style.display = "inline-flex";
+    app.btnLeaveRoom.focus();
+    app.btnLeaveRoom.click();
+    await tick(10);
+    const dialog = w.document.getElementById("modal-leave-room");
+    if (!dialog || dialog.hidden || !dialog.classList.contains("is-open")) fail("no in-app leave dialog");
+    if (!/Leave the room\?/.test(dialog.textContent)) fail(`dialog text: ${dialog.textContent}`);
+    key(w, "Escape");
+    await tick(10);
+    if (!dialog.hidden || !app.roomState || app.currentView === "left") fail("Escape left the room");
+    if (w.document.activeElement !== app.btnLeaveRoom) fail(`focus did not return to Leave: ${w.document.activeElement.id}`);
+    app.btnLeaveRoom.click();
+    await tick(10);
+    w.document.getElementById("btn-leave-room-cancel").click();
+    await tick(10);
+    if (!app.roomState || !dialog.hidden) fail("Stay left the room");
+    console.log("PASS: Leave asks in an in-app dialog; Escape and Stay keep you in the room");
+  }
+
   // 1. A browser guest on the host's tunnel leaves and sees the "You left" view.
   {
-    const { w, app, fetches, navigations } = await boot("https://abc.trycloudflare.com/");
+    const { w, app, fetches, navigations } = await boot("https://abc.trycloudflare.com/?room=DUB-AB12");
     app.roomState = fakeRoom("someone-else");
     const before = fetches.length;
-    app.btnLeaveRoom.click();
-    await tick(20);
+    await leave(w, app);
+    const $ = (id) => w.document.getElementById(id);
     if (navigations.length) fail(`guest leave navigated: ${JSON.stringify(navigations)}`);
     if (app.currentView !== "left" || !isActive(w, "view-left")) fail(`guest did not see the left view (${app.currentView})`);
     if (isActive(w, "view-landing")) fail("guest still sees the host's home screen");
     if (fetches.slice(before).some((u) => u.startsWith("/api/packs"))) fail("guest leave fetched the host's packs");
-    const view = w.document.getElementById("view-left");
-    if (!/You left the room/.test(view.textContent)) fail("left view is missing its heading");
-    console.log("PASS: P22 a browser guest who leaves sees the 'You left the room' view");
+    if ($("left-title").textContent !== "You left Host Pack") fail(`left heading: ${$("left-title").textContent}`);
+    if (!/The room is still open\. Your takes stay in it\./.test($("view-left").textContent)) fail("left view does not say the room is open");
+    const rejoin = $("btn-rejoin-room");
+    if (!rejoin.classList.contains("btn-primary") || rejoin.textContent.trim() !== "Rejoin DUB-AB12") fail(`rejoin button: ${rejoin.textContent}`);
+    if (w.document.activeElement !== rejoin) fail("focus is not on Rejoin");
+    if (w.location.search !== "?left=DUB-AB12") fail(`address not /?left=: ${w.location.href}`);
+    if ($("input-left-room-code").value !== "DUB-AB12") fail("the code field is not prefilled");
+    if (!w.document.body.classList.contains("no-home-chrome")) fail("the header still offers Audio, ? and the logo menu");
+    if (!$("logo-dropdown-container").hasAttribute("inert")) fail("the logo menu still works");
+    if (w.document.querySelectorAll("#view-left .btn-primary").length !== 1) fail("the left view has more than one amber");
+    console.log("PASS: P22 a browser guest who leaves sees 'You left <scene>' with Rejoin, at /?left=CODE");
 
-    // Its Join button reuses the normal join flow (the name prompt).
-    w.document.getElementById("input-left-room-code").value = "dub-zz9";
-    w.document.getElementById("btn-left-join-room").click();
-    if (app.pendingJoinRoomId !== "DUB-ZZ9") fail(`left-view Join did not start a join: ${app.pendingJoinRoomId}`);
-    if (w.document.getElementById("modal-join-room").style.display !== "flex") fail("join prompt did not open");
-    console.log("PASS: P22 the left view's Join button opens the normal join prompt");
+    // Rejoin when the room has closed meanwhile: inline, no card.
+    rejoin.click();
+    await tick(60);
+    const err = $("btn-rejoin-room-error");
+    if (app.currentView !== "left" || !visible(err) || !/isn't open/.test(err.textContent)) fail(`failed rejoin: ${app.currentView} ${err && err.textContent}`);
+    if (isActive(w, "view-join")) fail("rejoin showed the join card");
+    console.log("PASS: P22 a failed rejoin stays on the left view with an inline error");
 
-    // A failed rejoin stays on the left view instead of the host's home screen.
+    // The other field: a wrong code stays inline too, with its text.
+    $("input-left-room-code").value = "dub-zz9";
+    $("form-left-join").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+    await tick(60);
+    const err2 = $("input-left-room-code-error");
+    if (app.currentView !== "left" || !visible(err2) || !/No room DUB-ZZ9/.test(err2.textContent)) fail(`left form error: ${err2 && err2.textContent}`);
+    if ($("input-left-room-code").value !== "dub-zz9") fail("the typed code was lost");
+    console.log("PASS: P22 Join a different room shows its errors inline and keeps the text");
+
+    // A failed joinRoom from elsewhere stays on the left view instead of the host's home screen.
     await app.joinRoom("GONE01");
     if (app.currentView !== "left" || isActive(w, "view-landing")) fail(`failed rejoin showed ${app.currentView}`);
-    console.log("PASS: P22 a failed rejoin keeps the guest on the left view");
+    console.log("PASS: P22 a failed join keeps the guest on the left view");
+  }
+
+  // 1b. Rejoin goes back in with one click when the room is open.
+  {
+    const room = fakeRoom("someone-else");
+    const { w, app } = await boot("https://abc.trycloudflare.com/?room=DUB-AB12", { rooms: { "DUB-AB12": room } });
+    await tick(60);
+    app.roomState = room;
+    await leave(w, app);
+    w.document.getElementById("btn-rejoin-room").click();
+    await tick(80);
+    if (app.currentView !== "lobby") fail(`rejoin did not go back in: ${app.currentView}`);
+    console.log("PASS: Rejoin goes straight back in with one click");
+  }
+
+  // 1c. A reload on /?left=CODE shows the left view again, and says when the room closed.
+  {
+    const { w, app } = await boot("https://abc.trycloudflare.com/?left=DUB-AB12", { rooms: { "DUB-AB12": fakeRoom("someone-else") } });
+    await tick(40);
+    if (app.currentView !== "left" || w.document.getElementById("left-title").textContent !== "You left Host Pack") fail(`reload on ?left=: ${app.currentView}`);
+    const closed = await boot("https://abc.trycloudflare.com/?left=GONE01");
+    await tick(40);
+    if (closed.app.currentView !== "left" || !/has closed/.test(closed.w.document.getElementById("view-left").textContent)) fail("a closed room's left view does not say so");
+    if (visible(closed.w.document.getElementById("btn-rejoin-room"))) fail("Rejoin offered for a closed room");
+    console.log("PASS: a reload on /?left=CODE shows the left view, and says when the room has closed");
   }
 
   // 2. A host leaves and sees the home screen as before (own engine, and a LAN address).
   for (const origin of ["http://127.0.0.1:8123", "http://192.168.1.20:8000"]) {
     const { w, app, navigations } = await boot(`${origin}/`);
     app.roomState = fakeRoom(app.user.id);
-    app.btnLeaveRoom.click();
-    await tick(20);
+    await leave(w, app);
     if (navigations.length) fail(`host leave navigated at ${origin}: ${JSON.stringify(navigations)}`);
     if (app.currentView !== "landing" || !isActive(w, "view-landing")) fail(`host at ${origin} saw ${app.currentView}`);
     if (isActive(w, "view-left")) fail(`host at ${origin} saw the left view`);
