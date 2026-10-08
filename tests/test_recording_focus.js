@@ -39,8 +39,8 @@ const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 const INERT_WHILE_TAKING = [
   "header .logo-dropdown-container", "#studio-breadcrumbs", "#header-room-badge", "#btn-audio-settings",
   "#btn-shortcuts", "#btn-leave-room", "#view-booth .stage-top-bar", "#view-booth .nudge-preset-bar",
-  "#btn-expand-video", "#view-booth .transport-seg", "#mic-sync-hint", "#booth-column-scroll",
-  "#view-booth .booth-nav-group",
+  "#btn-expand-video", "#prompter-resize-handle", "#view-booth .transport-seg", "#mic-sync-hint",
+  "#booth-column-scroll", "#view-booth .booth-nav-group",
 ];
 const ALWAYS_LIVE = ["#connection-banner", "#btn-record-main", "#stage-video", "#stage-caption-text"];
 
@@ -69,10 +69,9 @@ const ALWAYS_LIVE = ["#connection-banner", "#btn-record-main", "#stage-video", "
 
   // CSS: dimmed to .35 with a short fade that reduced motion drops; the waveform can't be dragged.
   if (!/body\.is-taking\s+\[inert\]:not\(\.waveform-canvas-box\)\s*\{[^}]*opacity:\s*0?\.35/.test(css)) fail("inert parts aren't dimmed to .35 while taking (the waveform excepted)");
-  if (!/body\.is-taking[^{]*\.waveform-canvas-box\s*\{[^}]*pointer-events:\s*none/.test(css)) fail("the waveform is still draggable while taking");
   const reduced = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
   if (!/\[inert\][^{]*\{[^}]*transition:\s*none/.test(reduced)) fail("reduced motion keeps the dimming fade");
-  console.log("PASS: one setRecordState; dimmed .35, no fade with reduced motion; no waveform drag while taking");
+  console.log("PASS: one setRecordState; dimmed .35 (not the waveform), no fade with reduced motion");
 }
 
 const LINES = [
@@ -192,6 +191,8 @@ const esc = (env) => key(env, { key: "Escape", code: "Escape" });
 
 function expectFocus(env, where) {
   if (!env.w.document.body.classList.contains("is-taking")) fail(`${where}: body isn't .is-taking`);
+  // The waveform shows the live trace but can't be dragged.
+  if (!q(env, "#view-booth .waveform-canvas-box").hasAttribute("inert")) fail(`${where}: the waveform can be dragged`);
   for (const sel of INERT_WHILE_TAKING) {
     const el = q(env, sel);
     if (!el) fail(`${where}: ${sel} is missing`);
@@ -214,6 +215,10 @@ function expectClear(env, where) {
     const el = q(env, sel);
     const want = sel.endsWith(".nudge-preset-bar") && !!app.roomState && mine && noTake;
     if (el.hasAttribute("inert") !== want) fail(`${where}: ${sel} inert=${el.hasAttribute("inert")}, want ${want}`);
+  }
+  if (line) {
+    const box = q(env, "#view-booth .waveform-canvas-box");
+    if (box.hasAttribute("inert") !== (noTake || !mine)) fail(`${where}: waveform inert=${box.hasAttribute("inert")} with ${noTake ? "no take" : "a take"}`);
   }
 }
 

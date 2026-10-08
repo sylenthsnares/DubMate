@@ -12,12 +12,13 @@ const LOCK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" s
 const SAVING_ICON = '<span class="spinning" style="display:inline-flex;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg></span>';
 const IDLE_HINT = '<kbd>Space</kbd> · 3-beat count-in';
 // Inert and dimmed during the count-in and while recording: only the record button, the
-// picture, the line and the waveform stay. The connection banner always stays live.
+// picture, the line and the waveform stay (the waveform shows the live trace, undimmed and
+// not draggable: renderTakeDependents). The connection banner always stays live.
 const INERT_WHILE_TAKING = [
   'header .logo-dropdown-container', '#studio-breadcrumbs', '#header-room-badge', '#btn-audio-settings',
   '#btn-shortcuts', '#btn-leave-room', '#view-booth .stage-top-bar', '#view-booth .nudge-preset-bar',
-  '#btn-expand-video', '#view-booth .transport-seg', '#mic-sync-hint', '#booth-column-scroll',
-  '#view-booth .booth-nav-group',
+  '#btn-expand-video', '#prompter-resize-handle', '#view-booth .transport-seg', '#mic-sync-hint',
+  '#booth-column-scroll', '#view-booth .booth-nav-group',
 ].join(', ');
 
 export class BoothMethods {
@@ -363,7 +364,8 @@ export class BoothMethods {
   /** What follows whether the line has a take (one waiting on its Undo doesn't count):
    *  - the timing row and the waveform are inert before the first take, the row dimmed,
    *    since there is nothing to move yet; on a line you can't record the row is hidden
-   *    and the waveform is view only;
+   *    and the waveform is view only; counting in or recording, the row is inert too and the
+   *    waveform shows the live trace but can't be dragged;
    *  - Next line (and Done) is amber only once your line has a take. */
   renderTakeDependents() {
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
@@ -371,14 +373,14 @@ export class BoothMethods {
     const count = takeCount(this.roomState.takes, line) - (this.pendingDelete?.lineId === line.line_id ? 1 : 0);
     const mine = this.canRecordLine(line);
     const empty = count <= 0;
+    const taking = this.recordState === 'countdown' || this.recordState === 'recording';
     const row = document.querySelector('#view-booth .nudge-preset-bar');
     if (row) {
       row.hidden = !mine;
-      const taking = this.recordState === 'countdown' || this.recordState === 'recording';
       row.toggleAttribute('inert', (mine && empty) || taking);
       row.classList.toggle('is-idle-empty', mine && empty);
     }
-    document.querySelector('#view-booth .waveform-canvas-box')?.toggleAttribute('inert', empty || !mine);
+    document.querySelector('#view-booth .waveform-canvas-box')?.toggleAttribute('inert', empty || !mine || taking);
     if (this.btnNextLine) {
       this.btnNextLine.classList.toggle('btn-primary', !(mine && empty));
       this.btnNextLine.classList.toggle('btn-secondary', mine && empty);

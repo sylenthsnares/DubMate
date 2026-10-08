@@ -2588,14 +2588,11 @@ body.resizing .resize-grip-pill {
 }
 
 /* Recording focus: counting in or recording, all but the record button, the picture, the
-   line and the waveform is inert (booth.js setRecordState) and dimmed. The waveform shows
-   the live trace undimmed, but can't be dragged. */
+   line and the waveform is inert (booth.js setRecordState) and dimmed. The waveform is
+   inert too, so it can't be dragged, but shows the live trace undimmed. */
 body.is-taking [inert]:not(.waveform-canvas-box) {
   opacity: 0.35;
   transition: opacity 0.15s ease;
-}
-body.is-taking #view-booth .waveform-canvas-box {
-  pointer-events: none;
 }
 
 .nudge-label {
@@ -3213,7 +3210,7 @@ body.is-taking #view-booth .waveform-canvas-box {
 /* A take saving, or waiting to upload: a dashed row above the takes */
 .take-row.is-pending {
   min-height: 36px;
-  padding-left: 10px;
+  padding-left: var(--space-2);
   gap: 8px;
   font-size: 12px;
   color: var(--foreground-muted);
@@ -3239,8 +3236,8 @@ body.is-taking #view-booth .waveform-canvas-box {
 }
 .take-row.is-deleted {
   min-height: 36px;
-  padding-left: 10px;
-  gap: 6px;
+  padding-left: var(--space-2);
+  gap: var(--space-2);
   font-size: 12px;
   color: var(--foreground-muted);
   border-style: dashed;
