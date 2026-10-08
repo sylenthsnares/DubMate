@@ -37,19 +37,28 @@ const PROCESS_FAILURES = {
   start: { row: 'audio_extraction', headline: "Processing didn't start" },
 };
 const ICON_TICK = '<svg class="icon-tick" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+// Whether CSS can size a textarea to its text (the selected line's text grows without JS).
+const FIELD_SIZING = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
+
+// The line rows' icon actions.
+const ICON_PLAY = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 19 12 6 20 6 4"/></svg>';
+const ICON_MIC = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
+const ICON_GLOBE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+const ICON_TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+const ICON_SPINNER = '<svg class="spinning" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
 const ICON_ALERT = '<svg class="icon-alert" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
 
+// Character colours, in an order that keeps neighbours apart. Red (recording) and
+// green (a confirmed take) mean something else in DubMate, so no character gets them.
 const PALETTE = [
-  '#d97706', // Vintage Amber
-  '#cca458', // Walnut Gold
-  '#dc2626', // Pilot Red
-  '#16a34a', // Studio Olive
-  '#b45309', // Terracotta Bronze
-  '#7c5cff', // Electric Violet
-  '#ec4899', // Magenta Neon
-  '#06b6d4', // Cyan Console
-  '#8b5cf6', // Purple Tone
-  '#f59e0b', // Amber Glow
+  '#d97706', // amber
+  '#06b6d4', // cyan
+  '#ec4899', // magenta
+  '#cca458', // brass
+  '#7c5cff', // violet
+  '#60a5fa', // sky
+  '#b45309', // terracotta
+  '#a3a3f5', // periwinkle
 ];
 
 export class PackBuilderApp {
@@ -587,9 +596,10 @@ export class PackBuilderApp {
     window.addEventListener('pointerup', (e) => this.handleGlobalPointerUp(e));
     window.addEventListener('pointercancel', (e) => this.handleGlobalPointerUp(e, true));
 
-    // 12. Character management
+    // 12. Character management and the Lines column
     this.btnAddCharacter.addEventListener('click', () => this.promptAddCharacter());
     this.initCastScroller();
+    this.initLinesList();
 
     // 13. Proceed to compile
     this.btnProceedToCompile.addEventListener('click', () => this.goToCompileStep());
@@ -1600,7 +1610,23 @@ export class PackBuilderApp {
 
   /** The text on a line's timeline block. */
   blockLabel(seg) {
-    return `[${seg.character}] ${seg.text || '(no words)'}`;
+    return seg.text || '(no words)';
+  }
+
+  /** A block's label, and its tip and name, which also say who speaks. */
+  labelBlock(block, seg) {
+    const label = block.querySelector('.segment-block-label');
+    if (label) label.innerText = this.blockLabel(seg);
+    const name = `${seg.character}: ${this.blockLabel(seg)}`;
+    block.dataset.tip = name;
+    block.setAttribute('aria-label', name);
+  }
+
+  /** A block in its character's colour. */
+  paintBlock(block, color) {
+    block.style.borderColor = color;
+    block.style.background = `${color}28`;
+    block.querySelectorAll('.builder-segment-handle').forEach((h) => { h.style.background = color; });
   }
 
   /** Puts a line's block at its time and track. A dragged line brings its track into view. */
@@ -1647,13 +1673,10 @@ export class PackBuilderApp {
       const block = document.createElement('div');
       block.className = `builder-segment-block ${isSelected ? 'selected' : ''}`;
       this.placeBlock(block, seg, lane, laneHeight, dragging && idx === this.dragSegmentIndex);
-      block.style.borderColor = color;
-      block.style.background = `${color}28`;
 
       // Left resize handle
       const handleL = document.createElement('div');
       handleL.className = 'builder-segment-handle handle-left';
-      handleL.style.background = color;
       handleL.dataset.idx = idx;
       handleL.dataset.type = 'start';
       handleL.dataset.tip = 'Drag to change the start';
@@ -1661,7 +1684,6 @@ export class PackBuilderApp {
       // Right resize handle
       const handleR = document.createElement('div');
       handleR.className = 'builder-segment-handle handle-right';
-      handleR.style.background = color;
       handleR.dataset.idx = idx;
       handleR.dataset.type = 'end';
       handleR.dataset.tip = 'Drag to change the end';
@@ -1672,7 +1694,6 @@ export class PackBuilderApp {
 
       const label = document.createElement('div');
       label.className = 'segment-block-label';
-      label.innerText = this.blockLabel(seg);
 
       // Inline Delete Action Button right on the block
       const deleteBtn = document.createElement('button');
@@ -1701,6 +1722,8 @@ export class PackBuilderApp {
       block.appendChild(handleL);
       block.appendChild(contentWrap);
       block.appendChild(handleR);
+      this.paintBlock(block, color);
+      this.labelBlock(block, seg);
 
       // Drag handlers on segment block (mouse, touch and pen). Capture goes on
       // the scroll wrap: this block is replaced by every re-render mid-drag.
@@ -1725,10 +1748,49 @@ export class PackBuilderApp {
     });
   }
 
+  /** A row's name for screen readers: "Line 4, Detective Mori, 0:12.40". */
+  rowLabel(seg, idx) {
+    return `Line ${idx + 1}, ${seg.character}, ${this.formatTime(seg.start)}`;
+  }
+
+  /** The selected row shows start – end; the others show their start. */
+  rowTimecode(seg, selected) {
+    return selected ? `${this.formatTime(seg.start)} – ${this.formatTime(seg.end)}` : this.formatTime(seg.start);
+  }
+
+  /**
+   * One line as a compact row. Every action is in the markup and CSS shows the ones that
+   * apply (Play on hover, all of them on the selected row), so selecting rebuilds nothing.
+   * The character select holds only its own option until it is opened (fillCharacterOptions).
+   */
+  lineRowHtml(seg, idx, selected, tabbable, canTranscribe) {
+    const text = seg.text || '';
+    const name = escapeHtml(seg.character);
+    const noWords = seg.nonverbal
+      ? `<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${text.trim() ? ' hidden' : ''}>No words</span>`
+      : '';
+    const action = (cls, label, icon, extra = '') =>
+      `<button type="button" class="btn btn-ghost btn-xs line-action ${cls}" aria-label="${label}" data-tip="${label}"${extra}>${icon}</button>`;
+    return `<div class="builder-line-row${selected ? ' selected' : ''}" id="cue-card-${idx}" data-idx="${idx}" role="listitem" tabindex="${tabbable ? 0 : -1}"${selected ? ' aria-current="true"' : ''} aria-label="${escapeHtml(this.rowLabel(seg, idx))}">`
+      + `<span class="cue-dot" style="background: ${this.getCharacterColor(seg.character)};"></span>`
+      + `<span class="cue-number" aria-hidden="true">${idx + 1}</span>`
+      + `<select class="form-input cue-char-select" aria-label="Character"><option value="${name}" selected>${name}</option></select>`
+      + `<div class="cue-text-cell">${noWords}<textarea class="form-input cue-text-input" rows="1" aria-label="Line text" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}">${escapeHtml(text)}</textarea></div>`
+      + '<div class="cue-actions">'
+      + action('btn-preview-cue', 'Play this line', ICON_PLAY)
+      + (canTranscribe ? action('btn-whisper-cue', 'Fill in this line&#39;s text from the audio', ICON_MIC) : '')
+      + action('btn-romaji-cue', 'Convert to romaji', ICON_GLOBE, this.romajiApplies(seg) ? '' : ' hidden')
+      + action('btn-delete-cue', 'Delete line', ICON_TRASH)
+      + '</div>'
+      + `<span class="cue-timecode-badge">${this.rowTimecode(seg, selected)}</span>`
+      + '</div>';
+  }
+
   renderSegmentsList() {
     const container = this.segmentsListContainer;
-    container.innerHTML = '';
+    const hadFocus = container.contains(document.activeElement);
     this.labelCueCount.innerText = `${this.segments.length} line${this.segments.length === 1 ? '' : 's'}`;
+    this.updateMarkButtons();
     // aria-disabled rather than disabled, so the tooltip still says why.
     if (this.segments.length) {
       this.btnProceedToCompile.removeAttribute('aria-disabled');
@@ -1736,6 +1798,7 @@ export class PackBuilderApp {
     } else {
       this.btnProceedToCompile.setAttribute('aria-disabled', 'true');
       this.btnProceedToCompile.dataset.tip = 'Add a line first';
+      container.removeAttribute('role'); // a note, not an empty list
       container.innerHTML = `
         <div class="lines-empty">
           <p class="lines-empty-title">No lines yet</p>
@@ -1744,136 +1807,172 @@ export class PackBuilderApp {
       return;
     }
 
-    const allCast = Array.from(new Set([
-      ...this.characterColors.keys(),
-      ...this.segments.map(s => s.character).filter(Boolean)
-    ]));
-    if (allCast.length === 0) allCast.push('Lead');
+    container.setAttribute('role', 'list');
     const canTranscribe = this.has('transcription');
+    const selected = this.segments[this.selectedSegmentIndex] ? this.selectedSegmentIndex : null;
+    // Roving tabindex: Tab reaches the selected row, or the first one before any selection.
+    const tabbable = selected === null ? 0 : selected;
+    container.innerHTML = this.segments
+      .map((seg, idx) => this.lineRowHtml(seg, idx, idx === selected, idx === tabbable, canTranscribe))
+      .join('');
+    const row = document.getElementById(`cue-card-${tabbable}`);
+    if (row && selected !== null) this.fitLineText(row.querySelector('.cue-text-input'));
+    if (row && hadFocus) row.focus({ preventScroll: true });
+  }
 
-    this.segments.forEach((seg, idx) => {
-      const isSelected = idx === this.selectedSegmentIndex;
-      const color = this.getCharacterColor(seg.character);
+  /**
+   * The selected row's text shows in full, up to 4 lines (CSS caps it), then scrolls. CSS
+   * field-sizing grows it without a layout read; this measures only where that is missing.
+   */
+  fitLineText(textarea) {
+    if (!textarea || FIELD_SIZING) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight + 2}px`; // + the 1px borders
+  }
 
-      const card = document.createElement('div');
-      card.className = `builder-cue-card ${isSelected ? 'selected' : ''}`;
-      card.id = `cue-card-${idx}`;
+  /** Fills a row's character select with the whole cast, when it is about to open. */
+  fillCharacterOptions(select, idx) {
+    const seg = this.segments[idx];
+    if (!seg) return;
+    const cast = Array.from(new Set([
+      ...this.characterColors.keys(),
+      ...this.segments.map(s => s.character).filter(Boolean),
+    ]));
+    if (!cast.includes(seg.character)) cast.push(seg.character);
+    select.innerHTML = cast.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
+      + '<option value="__ADD_NEW__">+ New character</option>';
+    select.value = seg.character;
+  }
 
-      // Build options for character dropdown
-      const charOptionsHtml = allCast.map(c =>
-        `<option value="${escapeHtml(c)}" ${c === seg.character ? 'selected' : ''}>${escapeHtml(c)}</option>`
-      ).join('') + '<option value="__ADD_NEW__">+ New character</option>';
+  /**
+   * The Lines column's events, delegated once to the list: rows are plain markup, so a
+   * re-render adds no listeners, and each handler finds its line by the row's data-idx.
+   */
+  initLinesList() {
+    const list = this.segmentsListContainer;
+    const rowOf = (el) => el.closest('.builder-line-row');
+    const idxOf = (row) => parseInt(row.dataset.idx, 10);
 
-      card.innerHTML = `
-        <div class="cue-card-header">
-          <div class="cue-index-wrap">
-            <span class="cue-dot" style="background: ${color};"></span>
-            <span class="cue-number">#${idx + 1}</span>
-            ${seg.nonverbal ? `<span class="cue-nonverbal-badge" tabindex="0" data-tip="A grunt, laugh or other sound without words. Record it like any other line."${(seg.text || '').trim() ? ' hidden' : ''}>No words</span>` : ''}
-          </div>
-          <div class="cue-timecode-badge">${this.formatTime(seg.start)} → ${this.formatTime(seg.end)}</div>
-          <div style="display: flex; gap: 4px; align-items: center;">
-            ${canTranscribe ? `<button class="btn btn-secondary btn-xs btn-whisper-cue" data-idx="${idx}" data-tip="Fill in this line's text from the audio">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-              <span>Transcribe</span>
-            </button>` : ''}
-            <button class="btn btn-secondary btn-xs btn-romaji-cue" data-idx="${idx}" data-tip="Convert Japanese text to romaji"${this.romajiApplies(seg) ? '' : ' hidden'}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-              <span>Romaji</span>
-            </button>
-            <button class="btn-delete-cue" data-idx="${idx}">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              <span>Delete</span>
-            </button>
-          </div>
-        </div>
-        <div class="cue-card-body">
-          <div class="cue-field-row">
-            <div class="cue-char-select-wrap">
-              <select class="form-input cue-char-select" data-idx="${idx}" aria-label="Character">
-                ${charOptionsHtml}
-              </select>
-            </div>
-            <button class="btn btn-secondary btn-xs btn-preview-cue" data-idx="${idx}">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              <span>Play</span>
-            </button>
-          </div>
-          <textarea class="form-input cue-text-input" rows="2" placeholder="${seg.nonverbal ? 'No words. Type a cue like (laughs) if you want.' : 'Line text'}" data-idx="${idx}">${escapeHtml(seg.text || '')}</textarea>
-        </div>
-      `;
-
-      card.addEventListener('click', (e) => {
-        if (!e.target.closest('input') && !e.target.closest('textarea') && !e.target.closest('select') && !e.target.closest('button')) {
-          this.selectSegment(idx);
-          this.seekTo(seg.start);
-        }
-      });
-
-      // Character dropdown selection change
-      const charSelect = card.querySelector('.cue-char-select');
-      charSelect.addEventListener('change', (e) => {
-        const val = e.target.value;
-        if (val === '__ADD_NEW__') {
-          const newName = prompt('Character name');
-          if (newName && newName.trim()) {
-            const clean = newName.trim();
-            this.getCharacterColor(clean);
-            this.segments[idx].character = clean;
-          } else {
-            charSelect.value = seg.character;
-            return;
-          }
-        } else {
-          this.segments[idx].character = val;
-        }
-
-        this.updateCharacterPalette();
-        this.renderTimelineSegments();
-        this.renderCharacterChips();
-        this.renderSegmentsList();
-        this.syncSegmentsToServer();
-      });
-
-      const textInput = card.querySelector('.cue-text-input');
-      const btnRomaji = card.querySelector('.btn-romaji-cue');
-      textInput.addEventListener('input', (e) => {
-        this.segments[idx].text = e.target.value;
-        this.updateNonverbalBadge(idx);
-        btnRomaji.hidden = !this.romajiApplies(this.segments[idx]);
-      });
-      textInput.addEventListener('change', () => {
-        const label = this.segmentBlocks[idx]?.querySelector('.segment-block-label');
-        if (label) label.innerText = this.blockLabel(this.segments[idx]);
-        this.syncSegmentsToServer();
-      });
-
-      const btnDel = card.querySelector('.btn-delete-cue');
-      btnDel.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.deleteSegment(idx);
-      });
-
-      const btnPrev = card.querySelector('.btn-preview-cue');
-      btnPrev.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.previewSegmentAudio(idx);
-      });
-
-      const btnWhisper = card.querySelector('.btn-whisper-cue');
-      if (btnWhisper) {
-        btnWhisper.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.transcribeSingleSegment(idx, btnWhisper, textInput);
-        });
+    list.addEventListener('click', (e) => {
+      const row = rowOf(e.target);
+      if (!row) return;
+      const idx = idxOf(row);
+      const btn = e.target.closest('button');
+      if (btn) {
+        const textInput = row.querySelector('.cue-text-input');
+        if (btn.classList.contains('btn-preview-cue')) this.previewSegmentAudio(idx);
+        else if (btn.classList.contains('btn-whisper-cue')) this.transcribeSingleSegment(idx, btn, textInput);
+        else if (btn.classList.contains('btn-romaji-cue')) this.romanizeSingleSegment(idx, btn, textInput);
+        else if (btn.classList.contains('btn-delete-cue')) this.deleteSegment(idx);
+        return;
       }
+      if (e.target.closest('select, textarea')) return;
+      this.selectSegment(idx);
+      this.seekTo(this.segments[idx].start);
+    });
 
-      btnRomaji.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.romanizeSingleSegment(idx, btnRomaji, textInput);
-      });
+    // A field of another line selects that line, without moving the video.
+    list.addEventListener('focusin', (e) => {
+      const row = rowOf(e.target);
+      if (!row || e.target === row) return;
+      const idx = idxOf(row);
+      if (e.target.classList.contains('cue-char-select')) this.fillCharacterOptions(e.target, idx);
+      if (this.selectedSegmentIndex !== idx) this.selectSegment(idx);
+    });
+    // A click can open the select as it takes focus, so the press fills it too.
+    list.addEventListener('pointerdown', (e) => {
+      const select = e.target.closest('.cue-char-select');
+      if (select && document.activeElement !== select) this.fillCharacterOptions(select, idxOf(rowOf(select)));
+    });
 
-      container.appendChild(card);
+    list.addEventListener('input', (e) => {
+      if (!e.target.classList.contains('cue-text-input')) return;
+      const row = rowOf(e.target);
+      const idx = idxOf(row);
+      this.segments[idx].text = e.target.value;
+      this.updateNonverbalBadge(idx);
+      const romaji = row.querySelector('.btn-romaji-cue');
+      if (romaji) romaji.hidden = !this.romajiApplies(this.segments[idx]);
+      if (row.classList.contains('selected')) this.fitLineText(e.target);
+    });
+
+    list.addEventListener('change', (e) => {
+      const row = rowOf(e.target);
+      if (!row) return;
+      const idx = idxOf(row);
+      if (e.target.classList.contains('cue-text-input')) {
+        const block = this.segmentBlocks[idx];
+        if (block) this.labelBlock(block, this.segments[idx]);
+        this.syncSegmentsToServer();
+      } else if (e.target.classList.contains('cue-char-select')) {
+        this.changeLineCharacter(idx, e.target);
+      }
+    });
+
+    list.addEventListener('keydown', (e) => {
+      const row = rowOf(e.target);
+      if (!row) return;
+      const idx = idxOf(row);
+      if (e.target === row && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        // A focused row that isn't selected yet (before any selection) selects itself first.
+        const next = this.selectedSegmentIndex !== idx ? idx : idx + (e.key === 'ArrowDown' ? 1 : -1);
+        if (!this.segments[next]) return;
+        this.selectSegment(next);
+        document.getElementById(`cue-card-${next}`).focus({ preventScroll: true });
+        this.seekTo(this.segments[next].start);
+      } else if (e.target === row && e.key === 'Enter') {
+        e.preventDefault();
+        row.querySelector('.cue-text-input').focus();
+      } else if (e.key === 'Escape' && e.target.classList.contains('cue-text-input')) {
+        e.preventDefault();
+        row.focus();
+      }
+    });
+  }
+
+  /** A line's new character: its dot, row name, block and the Cast row follow; nothing is rebuilt. */
+  changeLineCharacter(idx, select) {
+    const seg = this.segments[idx];
+    let name = select.value;
+    if (name === '__ADD_NEW__') {
+      const entered = prompt('Character name');
+      if (!entered || !entered.trim()) {
+        select.value = seg.character;
+        return;
+      }
+      name = entered.trim();
+      if (!Array.from(select.options).some((o) => o.value === name)) {
+        select.add(new Option(name, name), select.options[select.options.length - 1]);
+      }
+      select.value = name;
+    }
+    seg.character = name;
+    const color = this.getCharacterColor(name);
+    const row = document.getElementById(`cue-card-${idx}`);
+    if (row) {
+      row.querySelector('.cue-dot').style.background = color;
+      row.setAttribute('aria-label', this.rowLabel(seg, idx));
+    }
+    const block = this.segmentBlocks[idx];
+    if (block) {
+      this.paintBlock(block, color);
+      this.labelBlock(block, seg);
+    }
+    this.renderCharacterChips();
+    this.syncSegmentsToServer();
+  }
+
+  /** Start and End act on the selected line. With none they say so, and so do their keys. */
+  updateMarkButtons() {
+    const has = !!this.segments[this.selectedSegmentIndex];
+    if (this._markButtonsOn === has) return;
+    this._markButtonsOn = has;
+    [[this.btnMarkIn, 'Start the selected line at the playhead (I or [)'],
+      [this.btnMarkOut, 'End the selected line at the playhead (O or ])']].forEach(([btn, tip]) => {
+      if (has) btn.removeAttribute('aria-disabled');
+      else btn.setAttribute('aria-disabled', 'true');
+      btn.dataset.tip = has ? tip : 'Select a line first';
     });
   }
 
@@ -2036,18 +2135,43 @@ export class PackBuilderApp {
     }
   }
 
-  /** Moves the highlight to a line's block and card; nothing is rebuilt. */
+  /**
+   * Moves the highlight to a line's block and row: class toggles, the rows' tabindex and
+   * timecodes, and the one textarea that grows. Nothing is rebuilt.
+   */
   selectSegment(idx) {
     this.selectedSegmentIndex = idx;
+    const list = this.segmentsListContainer;
+    const target = document.getElementById(`cue-card-${idx}`);
+    const focusOnRow = document.activeElement?.parentElement === list && document.activeElement !== target;
+    const previous = Array.from(list.querySelectorAll('.builder-line-row.selected, .builder-line-row[tabindex="0"]'))
+      .filter((row) => row !== target);
+    // Tabindex and focus go first: changed after the classes and text below, a focused
+    // row's tabindex makes the browser recalculate the styles at once (about 2 ms).
+    if (target) target.tabIndex = 0;
+    previous.forEach((row) => { row.tabIndex = -1; });
+    // Keyboard focus on a row follows the selection.
+    if (target && focusOnRow) target.focus({ preventScroll: true });
+
     this.timelineSegmentsOverlay.querySelectorAll('.builder-segment-block.selected').forEach((b) => b.classList.remove('selected'));
     if (this.segmentBlocks[idx]) this.segmentBlocks[idx].classList.add('selected');
-
-    this.segmentsListContainer.querySelectorAll('.builder-cue-card.selected').forEach((c) => c.classList.remove('selected'));
-    const targetCard = document.getElementById(`cue-card-${idx}`);
-    if (targetCard) {
-      targetCard.classList.add('selected');
-      targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    previous.forEach((row) => {
+      row.classList.remove('selected');
+      row.removeAttribute('aria-current');
+      row.querySelector('.cue-text-input').style.height = '';
+      this.updateCardTimecode(parseInt(row.dataset.idx, 10));
+    });
+    if (target) {
+      target.classList.add('selected');
+      target.setAttribute('aria-current', 'true');
+      this.updateCardTimecode(idx);
+      this.fitLineText(target.querySelector('.cue-text-input'));
+      // Scrolled into view in the next frame, with that frame's layout, so the click or
+      // key that selected doesn't wait for one.
+      cancelAnimationFrame(this._scrollRowFrame);
+      this._scrollRowFrame = requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
     }
+    this.updateMarkButtons();
   }
 
   // --- Drag & Drop Segment Resizing, Moving, and Canvas Panning ---
@@ -2249,14 +2373,13 @@ export class PackBuilderApp {
     if (badge && seg) badge.hidden = !!(seg.text || '').trim();
   }
 
+  /** A row's timecode and name, after its line moved or was selected or deselected. */
   updateCardTimecode(idx) {
-    const card = document.getElementById(`cue-card-${idx}`);
-    if (card && this.segments[idx]) {
-      const badge = card.querySelector('.cue-timecode-badge');
-      if (badge) {
-        badge.innerText = `${this.formatTime(this.segments[idx].start)} → ${this.formatTime(this.segments[idx].end)}`;
-      }
-    }
+    const row = document.getElementById(`cue-card-${idx}`);
+    const seg = this.segments[idx];
+    if (!row || !seg) return;
+    row.querySelector('.cue-timecode-badge').innerText = this.rowTimecode(seg, row.classList.contains('selected'));
+    row.setAttribute('aria-label', this.rowLabel(seg, idx));
   }
 
   // --- Playback & Transport ---
@@ -2501,38 +2624,40 @@ export class PackBuilderApp {
       const chip = Array.from(this.characterChipsList.children)
         .find(c => c.querySelector('.chip-del-btn')?.dataset.char === clean);
       if (chip) chip.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-      this.renderSegmentsList();
       this.showToast(`"${clean}" added`);
     }
   }
 
   markInAtPlayhead() {
-    const t = Math.round(this.editorVideo.currentTime * 50) / 50;
-    if (this.selectedSegmentIndex !== null && this.segments[this.selectedSegmentIndex]) {
-      this.segments[this.selectedSegmentIndex].start = t;
-      if (this.segments[this.selectedSegmentIndex].end <= t) {
-        this.segments[this.selectedSegmentIndex].end = Math.min(this.duration, t + 1.0);
-      }
-      this.renderTimelineSegments();
-      this.renderSegmentsList();
-      this.syncSegmentsToServer();
-      this.showToast(`Start set to ${this.formatTime(t)}`);
-    } else {
-      this.addNewSegmentAtPlayhead();
+    const idx = this.selectedSegmentIndex;
+    const seg = this.segments[idx];
+    if (!seg) {
+      this.showToast('Select a line first');
+      return;
     }
+    const t = Math.round(this.editorVideo.currentTime * 50) / 50;
+    seg.start = t;
+    if (seg.end <= t) seg.end = Math.min(this.duration, t + 1.0);
+    this.renderTimelineSegments();
+    this.updateCardTimecode(idx);
+    this.syncSegmentsToServer();
+    this.showToast(`Start set to ${this.formatTime(t)}`);
   }
 
   markOutAtPlayhead() {
+    const idx = this.selectedSegmentIndex;
+    const seg = this.segments[idx];
+    if (!seg) {
+      this.showToast('Select a line first');
+      return;
+    }
     const t = Math.round(this.editorVideo.currentTime * 50) / 50;
-    if (this.selectedSegmentIndex !== null && this.segments[this.selectedSegmentIndex]) {
-      const seg = this.segments[this.selectedSegmentIndex];
-      if (t > seg.start) {
-        seg.end = t;
-        this.renderTimelineSegments();
-        this.renderSegmentsList();
-        this.syncSegmentsToServer();
-        this.showToast(`End set to ${this.formatTime(t)}`);
-      }
+    if (t > seg.start) {
+      seg.end = t;
+      this.renderTimelineSegments();
+      this.updateCardTimecode(idx);
+      this.syncSegmentsToServer();
+      this.showToast(`End set to ${this.formatTime(t)}`);
     }
   }
 
@@ -2562,7 +2687,7 @@ export class PackBuilderApp {
     const seg = this.segments[idx];
     const origText = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
-      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Transcribing</span>';
+      btnEl.innerHTML = ICON_SPINNER;
       btnEl.disabled = true;
     }
 
@@ -2617,7 +2742,7 @@ export class PackBuilderApp {
 
     const origText = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
-      btnEl.innerHTML = '<svg class="spinning" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>Converting</span>';
+      btnEl.innerHTML = ICON_SPINNER;
       btnEl.disabled = true;
     }
 
@@ -2654,7 +2779,7 @@ export class PackBuilderApp {
   transcribeSelectedSegment() {
     if (!this.has('transcription')) return; // the button's tooltip says why
     if (this.selectedSegmentIndex === null) {
-      this.showToast('Select a line first.');
+      this.showToast('Select a line first');
       return;
     }
     const idx = this.selectedSegmentIndex;

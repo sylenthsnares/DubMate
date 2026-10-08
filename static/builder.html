@@ -406,7 +406,7 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/></svg>
                     <span>-1s</span>
                   </button>
-                  <button id="btn-play-pause" class="btn btn-primary btn-sm btn-builder-play" data-tip="Play or pause (Space)">
+                  <button id="btn-play-pause" class="btn btn-secondary btn-sm btn-builder-play" data-tip="Play or pause (Space)">
                     <svg id="icon-play" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     <svg id="icon-pause" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/></svg>
                     <span id="label-play-btn">Play</span>
@@ -435,22 +435,22 @@
               <!-- Tier 2: ADR Cue Points & AI Actions (Spacious, Uncrowded Bar) -->
               <div class="deck-tier-bottom">
                 <div class="cue-inout-group">
-                  <button id="btn-mark-in" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Start the selected line at the playhead (I or [)">
+                  <button id="btn-mark-in" class="btn btn-secondary btn-sm btn-mark-pill" aria-disabled="true" data-tip="Select a line first">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16"/><path d="M4 4h10l4 6-4 6H4"/></svg>
                     <span>Start</span>
                   </button>
-                  <button id="btn-mark-out" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="End the selected line at the playhead (O or ])">
+                  <button id="btn-mark-out" class="btn btn-secondary btn-sm btn-mark-pill" aria-disabled="true" data-tip="Select a line first">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v16"/><path d="M20 4H10L6 10l4 6h10"/></svg>
                     <span>End</span>
                   </button>
                 </div>
 
                 <div class="cue-add-ai-group">
-                  <button id="btn-add-line-at-playhead" class="btn btn-primary btn-sm btn-cue-add-highlight" data-tip="Add a line at the playhead (N)">
+                  <button id="btn-add-line-at-playhead" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Add a line at the playhead (N)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                     <span>Add line</span>
                   </button>
-                  <button id="btn-transcribe-line" class="btn btn-secondary btn-sm btn-whisper-ai-deck" data-tip="Fill in the selected line's text from the audio">
+                  <button id="btn-transcribe-line" class="btn btn-secondary btn-sm btn-mark-pill" data-tip="Fill in the selected line's text from the audio">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                     <span>Transcribe</span>
                   </button>
@@ -469,10 +469,8 @@
           <!-- Right: Segment List & Character Management Sidebar -->
           <div class="editor-right-sidebar glass-card">
             <div class="sidebar-header">
-              <div>
-                <h3 class="panel-title">Lines</h3>
-                <span id="label-cue-count" class="badge-accent" style="margin-top: 4px; display: inline-block;">0 lines</span>
-              </div>
+              <h3 class="panel-title">Lines</h3>
+              <span id="label-cue-count" class="badge-accent">0 lines</span>
               <button id="btn-proceed-to-compile" class="btn btn-primary btn-sm">
                 <span>Continue</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
@@ -492,10 +490,8 @@
 
             <p id="editor-notice" class="editor-notice" role="status" hidden></p>
 
-            <!-- Chronological Dialogue Segment Cards List -->
-            <div class="segments-list-container" id="segments-list-container">
-              <!-- Dynamically populated line cards -->
-            </div>
+            <!-- The lines in time order, one compact row each (pack_builder.js renderSegmentsList) -->
+            <div class="segments-list-container" id="segments-list-container" role="list" aria-label="Lines"></div>
           </div>
         </div>
 

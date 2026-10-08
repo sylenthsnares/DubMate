@@ -350,7 +350,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(!!notice && notice.hidden === false && notice.textContent === "X", "the server warning shows in #editor-notice");
     check(ed.toasts().includes("Found 3 lines, 1 without words"), "the result toast counts lines and lines without words");
 
-    const cards = doc.querySelectorAll("#segments-list-container .builder-cue-card");
+    const cards = doc.querySelectorAll("#segments-list-container .builder-line-row");
     const badge = cards[1].querySelector(".cue-nonverbal-badge");
     check(!!badge && badge.textContent === "No words", "a line without words shows the 'No words' badge");
     check(badge.getAttribute("data-tip") === "A grunt, laugh or other sound without words. Record it like any other line.", "the badge explains itself in a tooltip");
@@ -360,7 +360,8 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
 
     const labels = Array.from(doc.querySelectorAll("#timeline-segments-overlay .segment-block-label"))
       .map((el) => (typeof el.innerText === "string" ? el.innerText : el.textContent));
-    check(labels.includes("[Speaker 2] (no words)"), "the timeline labels a line without words '(no words)'");
+    check(labels.includes("(no words)"), "the timeline labels a line without words '(no words)'");
+    check(labels.every((l) => !l.includes("[")), "timeline labels show only the text, with no [character] prefix");
 
     let putBody = null;
     ed.w.fetch = (url, opts) => {
@@ -369,13 +370,13 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     };
     const box = cards[1].querySelector(".cue-text-input");
     box.value = "(laughs)";
-    box.dispatchEvent(new ed.w.Event("input"));
+    box.dispatchEvent(new ed.w.Event("input", { bubbles: true })); // as a browser sends it
     await ed.app.syncSegmentsToServer();
     check(putBody && putBody.segments[1].nonverbal === true && putBody.segments[1].text === "(laughs)", "typing a cue keeps the flag, and the saved lines carry it");
-    const badgeNow = () => doc.querySelectorAll("#segments-list-container .builder-cue-card")[1].querySelector(".cue-nonverbal-badge");
+    const badgeNow = () => doc.querySelectorAll("#segments-list-container .builder-line-row")[1].querySelector(".cue-nonverbal-badge");
     check(badgeNow().hidden === true, "typing text clears the 'No words' badge");
     box.value = "  ";
-    box.dispatchEvent(new ed.w.Event("input"));
+    box.dispatchEvent(new ed.w.Event("input", { bubbles: true })); // as a browser sends it
     check(badgeNow().hidden === false, "clearing the text brings the badge back");
 
     // Transcribing the line fills it in and clears the badge too.
@@ -920,7 +921,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     ta.value = "Bee";
     ta.dispatchEvent(new w.Event("input", { bubbles: true }));
     ta.dispatchEvent(new w.Event("change", { bubbles: true }));
-    check(fullRenders === 0 && blocks()[1] === first[1] && textOf(first[1].querySelector(".segment-block-label")) === "[Speaker 2] Bee",
+    check(fullRenders === 0 && blocks()[1] === first[1] && textOf(first[1].querySelector(".segment-block-label")) === "Bee",
       "a text edit updates its block's label without rebuilding the timeline");
 
     // A drag moves the line's time at once, and its block once per frame.
@@ -936,8 +937,8 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     app.pixelsPerSecond = 100;
     renderAll.call(app);
     const b0 = blocks()[0];
-    const code0 = timecode(0);
     pointer(b0, "pointerdown", 150);
+    const code0 = timecode(0); // pressing the block selects its line, which shows start – end
     pointer(wrap, "pointermove", 200);
     check(app.segments[0].start === 1.5, "the dragged line's time follows the pointer at once");
     check(b0.style.left === "100px" && timecode(0) === code0, "the block and its card wait for the next frame");
@@ -945,7 +946,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     pointer(wrap, "pointermove", 250);
     await tick(20);
     check(blocks()[0] === b0 && b0.style.left === "200px", "the next frame moves the same block to the latest position");
-    check(timecode(0) === `${app.formatTime(2)} → ${app.formatTime(3)}`, "the card's timecode follows in the same frame");
+    check(timecode(0) === `${app.formatTime(2)} – ${app.formatTime(3)}`, "the selected row's timecode follows in the same frame");
     check(fullRenders === 0, "a drag doesn't rebuild the timeline while it moves");
     pointer(wrap, "pointerup", 250);
     check(fullRenders === 1 && !app.isDragging, "the drop packs the tracks once");
@@ -1008,6 +1009,130 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     await tick(50);
     check(app.waveformPeaks[0][1] === 0.3, "after processing again the editor fetches the new waveform");
     ed.w.close();
+  }
+
+  // (q) the Lines column: compact rows in a list, the keyboard moves between them, and
+  // selecting or recasting a line rebuilds neither the list nor the timeline.
+  {
+    const ed = await bootEditor({ segments: [
+      { start: 1, end: 2, text: "A", character: "Speaker 1" },
+      { start: 3, end: 4, text: "B", character: "Speaker 2" },
+      { start: 5, end: 6, text: "C", character: "Speaker 1" },
+    ] });
+    const { w, doc, app } = ed;
+    const textOf = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent).trim();
+    const list = doc.getElementById("segments-list-container");
+    const rows = () => Array.from(list.querySelectorAll('[role="listitem"]'));
+    const blocks = () => Array.from(doc.querySelectorAll("#timeline-segments-overlay .builder-segment-block"));
+    const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    // jsdom normalises colours; compare through the same parser.
+    const colour = (c) => { const d = doc.createElement("div"); d.style.borderColor = c; return d.style.borderColor; };
+
+    // The deck has one primary, Continue.
+    const primaries = Array.from(doc.querySelectorAll("#view-step-editor .btn-primary"));
+    check(primaries.length === 1 && primaries[0].id === "btn-proceed-to-compile", "the editor's only primary button is Continue");
+    check(["btn-play-pause", "btn-add-line-at-playhead", "btn-transcribe-line"].every((id) => doc.getElementById(id).classList.contains("btn-secondary")),
+      "Play, Add line and Transcribe are secondary buttons");
+
+    // List semantics and the roving tabindex.
+    check(list.getAttribute("role") === "list" && list.getAttribute("aria-label") === "Lines", "the Lines column is a list named 'Lines'");
+    check(rows().length === 3 && rows().every((r) => r.classList.contains("builder-line-row")), "each line is a row of the list");
+    check(rows()[1].getAttribute("aria-label") === `Line 2, Speaker 2, ${app.formatTime(3)}`, "a row is named by its number, character and start");
+    check(rows()[0].tabIndex === 0 && rows()[1].tabIndex === -1 && rows()[2].tabIndex === -1, "with nothing selected the first row takes Tab");
+    check(rows().every((r) => !r.hasAttribute("aria-current")), "no row is current before a selection");
+
+    // Start and End with nothing selected say so instead of adding a line.
+    const markIn = doc.getElementById("btn-mark-in");
+    const markOut = doc.getElementById("btn-mark-out");
+    check(markIn.getAttribute("aria-disabled") === "true" && markIn.dataset.tip === "Select a line first"
+      && markOut.getAttribute("aria-disabled") === "true" && markOut.dataset.tip === "Select a line first",
+      "Start and End are unavailable with nothing selected, and say why");
+    const toastsBefore = ed.toasts().length;
+    markIn.click();
+    markOut.click();
+    for (const k of ["i", "o", "[", "]"]) key(doc.body, k);
+    check(app.segments.length === 3 && rows().length === 3, "Start, End, I, O, [ and ] with nothing selected add no line");
+    await tick(0); // the toast log is a MutationObserver
+    const said = ed.toasts().slice(toastsBefore);
+    check(said.length === 6 && said.every((t) => t === "Select a line first"), "each of them shows 'Select a line first'");
+
+    // Selecting a row: a class toggle, the same nodes, and the seek.
+    let listRenders = 0, timelineRenders = 0;
+    const renderList = app.renderSegmentsList, renderTimeline = app.renderTimelineSegments;
+    app.renderSegmentsList = function (...a) { listRenders++; return renderList.apply(this, a); };
+    app.renderTimelineSegments = function (...a) { timelineRenders++; return renderTimeline.apply(this, a); };
+    const seeks = [];
+    const seekTo = app.seekTo;
+    app.seekTo = function (t) { seeks.push(t); return seekTo.call(this, t); };
+    const firstRows = rows();
+    const firstBlocks = blocks();
+    const same = () => rows().every((r, i) => r === firstRows[i]) && blocks().every((b, i) => b === firstBlocks[i]);
+
+    firstRows[1].querySelector(".cue-number").click();
+    check(app.selectedSegmentIndex === 1 && seeks[seeks.length - 1] === 3, "clicking a row selects its line and seeks to it");
+    check(firstRows[1].classList.contains("selected") && firstRows[1].getAttribute("aria-current") === "true" && firstRows[1].tabIndex === 0,
+      "the selected row is current and takes Tab");
+    check(firstRows.filter((r, i) => i !== 1).every((r) => r.tabIndex === -1 && !r.hasAttribute("aria-current")), "the other rows leave the Tab order");
+    check(textOf(firstRows[1].querySelector(".cue-timecode-badge")) === `${app.formatTime(3)} – ${app.formatTime(4)}`
+      && textOf(firstRows[0].querySelector(".cue-timecode-badge")) === app.formatTime(1), "the selected row shows start – end, the others their start");
+    check(same() && listRenders === 0 && timelineRenders === 0, "selecting keeps the same row and block nodes");
+    check(!markIn.hasAttribute("aria-disabled") && markIn.dataset.tip !== "Select a line first", "Start is available once a line is selected");
+
+    // Up and Down move the selection and the focus, and seek like a click.
+    firstRows[1].focus();
+    key(firstRows[1], "ArrowDown");
+    check(app.selectedSegmentIndex === 2 && doc.activeElement === firstRows[2] && seeks[seeks.length - 1] === 5, "ArrowDown selects the next line, focuses it and seeks");
+    key(firstRows[2], "ArrowDown");
+    check(app.selectedSegmentIndex === 2 && doc.activeElement === firstRows[2], "ArrowDown on the last line stays there");
+    key(firstRows[2], "ArrowUp");
+    key(firstRows[1], "ArrowUp");
+    check(app.selectedSegmentIndex === 0 && doc.activeElement === firstRows[0] && seeks[seeks.length - 1] === 1, "ArrowUp moves back up to the first line");
+    check(firstRows[0].tabIndex === 0 && firstRows[2].tabIndex === -1, "the roving tabindex follows the selection");
+
+    // Enter edits the text, Esc returns to the row.
+    key(firstRows[0], "Enter");
+    const text0 = firstRows[0].querySelector(".cue-text-input");
+    check(doc.activeElement === text0, "Enter on a row focuses its text");
+    key(text0, "Escape");
+    check(doc.activeElement === firstRows[0], "Esc in the text returns to the row");
+
+    // Focusing another row's field selects that line without seeking.
+    const seekCount = seeks.length;
+    firstRows[2].querySelector(".cue-text-input").focus();
+    check(app.selectedSegmentIndex === 2 && firstRows[2].classList.contains("selected") && seeks.length === seekCount,
+      "focusing a line's text selects it without seeking");
+
+    // The character select holds its own option until it is opened.
+    const sel = firstRows[0].querySelector(".cue-char-select");
+    check(sel.options.length === 1 && sel.value === "Speaker 1", "a row's character select holds only its current option");
+    sel.focus();
+    const names = Array.from(sel.options).map((o) => o.value);
+    check(names.includes("Speaker 1") && names.includes("Speaker 2") && names.includes("__ADD_NEW__"), "focusing the select fills in the cast");
+    check(app.selectedSegmentIndex === 0 && seeks.length === seekCount, "focusing a line's select selects it without seeking");
+    sel.value = "Speaker 2";
+    sel.dispatchEvent(new w.Event("change", { bubbles: true }));
+    check(app.segments[0].character === "Speaker 2", "changing the select recasts the line");
+    check(same() && listRenders === 0 && timelineRenders === 0, "recasting keeps the same row and block nodes");
+    const want = colour(app.getCharacterColor("Speaker 2"));
+    check(colour(firstRows[0].querySelector(".cue-dot").style.background) === want && firstBlocks[0].style.borderColor === want,
+      "the row's dot and its timeline block take the new character's colour");
+    check(firstBlocks[0].getAttribute("aria-label") === "Speaker 2: A" && firstBlocks[0].dataset.tip === "Speaker 2: A", "the block's name says the new character");
+    check(firstRows[0].getAttribute("aria-label") === `Line 1, Speaker 2, ${app.formatTime(1)}`, "the row's name says the new character");
+    const chip = Array.from(doc.querySelectorAll("#character-chips-list .char-color-chip"))
+      .find((c) => textOf(c.querySelector(".chip-name")) === "Speaker 2");
+    check(!!chip && textOf(chip.querySelector(".chip-count-badge")) === "(2)", "the Cast row counts the recast line");
+
+    // Timeline blocks show the text only and name the character in their tip.
+    check(textOf(firstBlocks[1].querySelector(".segment-block-label")) === "B" && firstBlocks[1].dataset.tip === "Speaker 2: B",
+      "a timeline block shows the line's text, and its tip names the character");
+
+    // The palette leaves out recording red and confirmed-take green.
+    app.characterColors.clear();
+    const palette = Array.from({ length: 8 }, (_, i) => colour(app.getCharacterColor(`Cast ${i}`)));
+    check(new Set(palette).size === 8, "eight characters get eight different colours");
+    check(!palette.includes(colour("#dc2626")) && !palette.includes(colour("#16a34a")), "no character is red or green");
+    check(palette[0] === colour("#d97706") && palette[1] === colour("#06b6d4"), "the palette starts amber, then cyan");
+    w.close();
   }
 
   console.log("All Pack Builder editor playback and timeline checks passed.");

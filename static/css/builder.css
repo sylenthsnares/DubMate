@@ -114,7 +114,9 @@
 .sub-dropzone:focus-visible,
 .cover-dropzone:focus-visible,
 .file-chip-remove:focus-visible,
-.url-import-missing-details summary:focus-visible {
+.url-import-missing-details summary:focus-visible,
+.builder-line-row:focus-visible,
+.cue-nonverbal-badge:focus-visible {
   outline: 2px solid var(--accent-brass);
   outline-offset: 2px;
 }
@@ -933,7 +935,6 @@ body:has(#view-step-editor.active) .builder-main-container {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  box-shadow: 0 0 10px var(--accent-amber-glow);
 }
 
 .deck-timecode-hud {
@@ -1009,54 +1010,13 @@ body:has(#view-step-editor.active) .builder-main-container {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  white-space: nowrap;
 }
 
 .cue-add-ai-group {
   display: flex;
   align-items: center;
   gap: 5px;
-}
-
-.btn-cue-add-highlight {
-  background: linear-gradient(135deg, var(--primary) 0%, #b45309 100%);
-  color: var(--white);
-  font-weight: 800;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--primary-hover);
-  box-shadow: 0 0 12px rgba(217, 119, 6, 0.4);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 140ms ease;
-  white-space: nowrap;
-}
-
-.btn-cue-add-highlight:hover {
-  background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary) 100%);
-  box-shadow: 0 0 16px rgba(245, 158, 11, 0.6);
-  transform: translateY(-1px);
-}
-
-.btn-whisper-ai-deck {
-  background: rgba(147, 51, 234, 0.15);
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  color: #e9d5ff;
-  font-weight: 700;
-  font-size: 11px;
-  padding: 4px 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 140ms ease;
-  white-space: nowrap;
-}
-
-.btn-whisper-ai-deck:hover {
-  background: rgba(147, 51, 234, 0.28);
-  border-color: #a855f7;
-  color: var(--white);
 }
 
 .deck-zoom-group {
@@ -1320,7 +1280,7 @@ body.resizing-timeline * {
   top: 0;
   height: 100%;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   color: var(--foreground-dim);
   padding-left: 4px;
   border-left: 1px solid rgba(255, 255, 255, 0.12);
@@ -1437,9 +1397,9 @@ body.resizing-timeline * {
 }
 
 .segment-block-label {
-  font-size: 9.5px;
-  font-weight: 700;
-  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sans);
   color: var(--white);
   white-space: nowrap;
   overflow: hidden;
@@ -1458,7 +1418,7 @@ body.resizing-timeline * {
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 11px;
   cursor: pointer;
   margin-left: 4px;
   flex-shrink: 0;
@@ -1524,12 +1484,17 @@ body.resizing-timeline * {
   overflow: hidden;
 }
 
+/* One row: Lines, the count, and Continue at the right end. */
 .sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-wood);
+}
+
+.sidebar-header #btn-proceed-to-compile {
+  margin-left: auto;
 }
 
 .character-manager-strip {
@@ -1675,13 +1640,15 @@ body.resizing-timeline * {
   color: var(--primary);
 }
 
+/* Rows stack in block flow: a change in one row then lays out that row, where a flex
+   column would measure every row again (about 3x the time with 40 lines). The padding
+   leaves room for a row's focus ring. */
 .segments-list-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 4px 12px 0;
+  margin: 0 -4px;
+  padding: 4px;
 }
 
 /* The editor with no lines: what to do, in place of the list. */
@@ -1705,55 +1672,141 @@ body.resizing-timeline * {
   color: var(--foreground-muted);
 }
 
-.builder-cue-card {
-  background: rgba(20, 16, 13, 0.7);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  transition: all 160ms ease;
+/* One line per row: dot, number, character, text, actions, timecode. Rows divide with
+   a 1px line; the selected one gets the amber border and wash. */
+.builder-line-row {
+  display: grid;
+  grid-template-columns: 8px 22px 140px minmax(0, 1fr) auto auto;
+  align-items: start;
+  column-gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
+  scroll-margin: 4px;
+  transition: background 120ms ease;
 }
 
-.builder-cue-card:hover {
+.builder-line-row:hover {
   background: rgba(30, 24, 19, 0.9);
-  border-color: var(--accent-brass);
 }
 
-.builder-cue-card.selected {
-  border-color: var(--primary);
+.builder-line-row.selected {
   background: rgba(217, 119, 6, 0.08);
-  box-shadow: 0 0 14px rgba(217, 119, 6, 0.25);
-}
-
-.cue-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.cue-index-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  box-shadow: inset 0 0 0 1px var(--primary);
 }
 
 .cue-dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
+  margin-top: 11px;
   border-radius: 50%;
 }
 
 .cue-number {
   font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 30px;
+  text-align: right;
+  color: var(--foreground-muted);
+}
+
+.builder-line-row.selected .cue-number {
   color: var(--foreground);
 }
 
+.cue-text-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Unselected: one line of plain text that fades at the right edge. */
+.builder-line-row .cue-text-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 16px;
+  color: var(--foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  resize: none;
+  white-space: pre;
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+/* Selected: the whole text as a field, up to 4 lines, then it scrolls. */
+.builder-line-row.selected .cue-text-input,
+.builder-line-row .cue-text-input:focus {
+  field-sizing: content;
+  height: auto;
+  max-height: 78px;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  cursor: text;
+  background: rgba(15, 12, 9, 0.85);
+  border-color: var(--border-wood);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.builder-line-row .cue-text-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
+}
+
+/* "No words" stands in for the empty text, so the cue placeholder waits for selection. */
+.builder-line-row:not(.selected) .cue-nonverbal-badge:not([hidden]) + .cue-text-input::placeholder {
+  color: transparent;
+}
+
+.cue-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+}
+
+/* Play shows on hover (its place is kept, so the text doesn't shift); the selected row shows
+   every action that applies. */
+.line-action {
+  display: none;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+
+.line-action.btn-preview-cue {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+.builder-line-row:hover .line-action.btn-preview-cue,
+.builder-line-row.selected .line-action {
+  display: inline-flex;
+  visibility: visible;
+}
+
+.line-action.btn-delete-cue:hover {
+  color: var(--white);
+  background: var(--accent-red);
+}
+
 .cue-nonverbal-badge {
+  flex-shrink: 0;
+  margin-top: 6px;
   font-size: 11px;
   font-weight: 700;
+  line-height: 14px;
   color: var(--foreground-muted);
   border: 1px solid currentColor;
   padding: 1px 6px;
@@ -1779,76 +1832,59 @@ body.resizing-timeline * {
 }
 
 .cue-timecode-badge {
+  min-width: 48px;
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-brass);
-  background: rgba(204, 164, 88, 0.12);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(204, 164, 88, 0.2);
-}
-
-.btn-delete-cue {
-  background: transparent;
-  border: none;
+  font-weight: 600;
+  line-height: 30px;
+  text-align: right;
+  white-space: nowrap;
   color: var(--foreground-muted);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  transition: all 120ms ease;
 }
 
-.btn-delete-cue:hover {
-  color: var(--white);
-  background: var(--accent-red);
-}
-
-.cue-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cue-field-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.cue-char-select-wrap {
-  flex: 1;
-  position: relative;
+.builder-line-row.selected .cue-timecode-badge {
+  color: var(--accent-brass);
 }
 
 .cue-char-select {
   width: 100%;
-  font-size: 11.5px !important;
-  padding: 4px 8px !important;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
   font-weight: 700;
-  height: 30px !important;
-  background: rgba(18, 14, 11, 0.9) !important;
-  border: 1px solid var(--border-wood) !important;
-  color: var(--foreground) !important;
-  border-radius: var(--radius-sm);
-}
-
-.cue-text-input {
-  font-size: 12.5px !important;
-  padding: 8px 10px !important;
-  resize: vertical;
-  min-height: 48px;
-  line-height: 1.35;
-  background: rgba(15, 12, 9, 0.85);
-  border: 1px solid var(--border-wood);
   color: var(--foreground);
+  background: rgba(18, 14, 11, 0.9);
+  border: 1px solid var(--border-wood);
   border-radius: var(--radius-sm);
+  cursor: pointer;
 }
 
-.cue-text-input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
+/* The selects of rows at rest read as names; the field shows on hover and selection. */
+.builder-line-row:not(.selected):not(:hover) .cue-char-select:not(:focus) {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Narrow windows (a Lines column under about 640px): a smaller select, and the selected
+   row puts its actions and times under the text, so the text keeps its width. */
+@media (max-width: 1180px) {
+  .builder-line-row {
+    grid-template-columns: 8px 22px 112px minmax(0, 1fr) auto auto;
+  }
+
+  .builder-line-row.selected .cue-text-cell {
+    grid-column: 4 / -1;
+  }
+
+  .builder-line-row.selected .cue-actions {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  .builder-line-row.selected .cue-timecode-badge {
+    grid-column: 5 / -1;
+    grid-row: 2;
+  }
 }
 
 /* Step 4: Compile View */
