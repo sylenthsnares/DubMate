@@ -5296,6 +5296,18 @@ span.voice-chip {
   font-weight: 600;
   color: var(--foreground-muted);
 }
+.voice-for-row {
+  flex-wrap: wrap;
+}
+.voice-summary {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  text-align: right;
+}
+.booth-controls.rack-open .voice-summary {
+  display: none;
+}
 .voice-scope-select {
   width: auto;
   min-width: 0;
@@ -5340,7 +5352,10 @@ span.voice-chip {
   align-items: center;
   gap: var(--space-2);
 }
-.voice-level-take .btn-auto-match {
+.voice-fx-level .voice-fx-head {
+  cursor: default;
+}
+.voice-fx-level .btn-auto-match {
   margin-left: auto;
 }
 .voice-level-matched {
@@ -5356,8 +5371,8 @@ span.voice-chip {
   color: var(--foreground-muted);
 }
 
-/* All effects: the column's page, on the plain card surface. An effect that's on shows its
-   dials; one that's off is a single row: switch, name, "off". */
+/* All effects: the column's page, on the plain card surface. Level comes first; an effect
+   that's on shows its dials, one that's off is a single row: switch, name, "off". */
 .voice-rack {
   display: none;
   flex-direction: column;

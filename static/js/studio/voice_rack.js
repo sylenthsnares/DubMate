@@ -1,6 +1,7 @@
-// studio/voice_rack.js - The booth's Voice card: presets, "For" and Level first; All effects turns
-// the column's middle into the full rack (documentation/design/effects-rack.md, "What changes for
-// the user"; ui-u2-booth.md, "VOICE card"). Every control changes the sound on screen at once and
+// studio/voice_rack.js - The booth's Voice card: presets, then "For" with a summary of the level
+// and noise cleanup; All effects turns the column's middle into the full rack, Level first
+// (documentation/design/effects-rack.md, "What changes for the user"; ui-u2-booth.md, "VOICE
+// card"; v2-booth-layout.md, "Right column"). Every control changes the sound on screen at once and
 // asks the engine for the take's render; the take keeps playing the last real render until the
 // new one crossfades in. "For" says where an edit goes: the take, its character, or every line.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.

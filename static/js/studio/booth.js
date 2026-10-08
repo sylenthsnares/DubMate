@@ -52,10 +52,26 @@ export class BoothMethods {
   renderGainMatchBadge(take) {
     const hasAuto = !!take && take.auto_gain_db !== undefined && take.auto_gain_db !== null;
     if (this.btnAutoMatchGain) this.btnAutoMatchGain.style.display = hasAuto ? 'inline-flex' : 'none';
-    if (!this.badgeGainMatch) return;
     const matched = hasAuto && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    this.renderVoiceSummary(take, matched);
+    if (!this.badgeGainMatch) return;
     this.badgeGainMatch.textContent = '✓ Matched';
     this.badgeGainMatch.style.display = matched ? 'inline-block' : 'none';
+  }
+
+  /** The Voice card's summary of what All effects holds: "level matched · noise cleanup on",
+   *  the level you set ("level +2 dB") once you turned it, and "level matched when you
+   *  record" before the first take. */
+  renderVoiceSummary(take = this.takeForLine(this.currentLineIndex), matched = null) {
+    const summary = document.getElementById('voice-summary');
+    if (!summary) return;
+    if (matched === null) {
+      matched = !!take && take.auto_gain_db != null
+        && Math.abs((parseFloat(take.gain_db) || 0) - parseFloat(take.auto_gain_db)) < 0.05;
+    }
+    const level = !take ? 'level matched when you record'
+      : (matched ? 'level matched' : `level ${this.gainText(take.gain_db)}`);
+    summary.textContent = `${level} · noise cleanup ${this.checkNoiseReduction?.checked ? 'on' : 'off'}`;
   }
 
   /** "+1.9 dB", one decimal. */
@@ -217,14 +233,13 @@ export class BoothMethods {
     const take = pickedTake(this.roomState.takes, line);
     this.hideDoneAsk();
     this.setNudgeValue(take ? (take.offset_ms || 0) : 0, false);
+    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
+    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
+    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
     const gainDb = take ? (parseFloat(take.gain_db) || 0) : 0;
     this.sliderGain.value = gainDb;
     this.valGain.textContent = this.gainText(gainDb);
     this.renderGainMatchBadge(take);
-
-    const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
-    if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
-    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
 
     this.startTakeVoice(line, take);
     this.updateKnobsVisuals();
@@ -859,6 +874,7 @@ export class BoothMethods {
     if (this.checkNoiseReduction && this.checkNoiseReduction.checked !== this.applyNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
     }
+    this.renderVoiceSummary();
 
     const currentTake = this.takeForLine(this.currentLineIndex);
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];

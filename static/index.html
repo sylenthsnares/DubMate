@@ -778,8 +778,9 @@
               <p id="takes-hint" class="takes-hint" hidden>Record again to compare takes.</p>
             </div>
           </div>
-          <!-- Voice: presets, who the sound is for, and Level; All effects turns the column's
-               middle into the full rack (voice_rack.js). Shown on every line you can record. -->
+          <!-- Voice: presets, who the sound is for, and a summary of Level and noise cleanup;
+               All effects turns the column's middle into the full rack (voice_rack.js). Shown on
+               every line you can record. -->
           <div class="fx-panel glass-card rack-wood-frame" id="card-voice-dsp" style="display: none;">
             <div class="panel-header-sm amp-faceplate voice-card-header">
               <div class="voice-card-title">
@@ -801,7 +802,7 @@
                 <span id="voice-preset-custom" class="voice-chip is-active" style="display: none;">Custom</span>
               </div>
 
-              <div class="voice-row">
+              <div class="voice-row voice-for-row">
                 <label class="voice-row-label" for="voice-scope">For</label>
                 <select id="voice-scope" class="form-input device-select voice-scope-select"
                   data-tip="Where your changes to the sound go">
@@ -809,6 +810,8 @@
                   <option value="character">All of this character's lines</option>
                   <option value="session">Every line</option>
                 </select>
+                <!-- What All effects holds: the level and noise cleanup -->
+                <span id="voice-summary" class="voice-summary">level matched when you record · noise cleanup on</span>
               </div>
               <div id="voice-scope-ask" class="voice-scope-ask" role="group" aria-labelledby="voice-scope-ask-text" hidden>
                 <span id="voice-scope-ask-text" class="voice-scope-ask-text"></span>
@@ -818,9 +821,17 @@
                 </div>
               </div>
               <p id="voice-scope-status" class="voice-scope-status" role="status" hidden></p>
+            </div>
 
-              <div class="voice-row voice-level-row">
-                <span class="voice-row-label">Level</span>
+            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
+
+            <!-- All effects: Level, then the effects in a fixed order, each with an on/off switch
+                 (an effect that's off is one row), then Clean up noise -->
+            <div id="voice-rack" class="voice-rack">
+              <div class="voice-fx voice-fx-level">
+                <div class="voice-fx-head">
+                  <span>Level</span>
+                </div>
                 <div id="voice-level-take" class="voice-level-take">
                   <input type="range" id="slider-gain" min="-12" max="12" step="0.5" value="0"
                     aria-label="Level (dB)" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"
@@ -832,12 +843,7 @@
                 </div>
                 <p id="voice-level-note" class="voice-level-note" hidden>Level is matched to the scene when you record.</p>
               </div>
-            </div>
 
-            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
-
-            <!-- All effects: fixed order, each with an on/off switch; an effect that's off is one row -->
-            <div id="voice-rack" class="voice-rack">
               <div class="voice-fx" data-node="lowcut">
                 <label class="voice-fx-head" data-tip="Cuts low rumble and hum">
                   <input type="checkbox" class="switch-checkbox" data-voice-on aria-label="Low cut">
