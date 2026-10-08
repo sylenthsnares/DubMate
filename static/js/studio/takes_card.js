@@ -167,7 +167,8 @@ export class TakesCardMethods {
       else this.openTakesMenu({ row, more, menu });
     });
     menu.addEventListener('keydown', (e) => {
-      const items = [...menu.querySelectorAll('[role="menuitem"]')];
+      // A locked Delete (its line is saving) is skipped.
+      const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
       const i = items.indexOf(document.activeElement);
       if (e.key === 'Escape') {
         e.preventDefault();

@@ -325,6 +325,27 @@ function beforeUnloadBlocked(env) {
     console.log("PASS: a failed take is kept, retried on 'open' and by Retry, dropped by Discard, and guards leaving");
   }
 
+  // 6. On a saving line the takes can't change: Use and Delete are off, and the ⋯ menu's
+  //    arrows skip the locked Delete.
+  {
+    const t = mk("t1000", "k1", 1);
+    const t2 = mk("t1000", "k2", 2);
+    app.roomState = room({ t1000: { picked: "k2", next_number: 3, takes: [t, t2] } });
+    await app.loadBoothLine(0);
+    app.savingLines.t1000 = { roomId: "R1", lineId: "t1000", number: 3, noiseReduction: false };
+    app.renderTakesCard();
+    const row = $(env, "takes-list").querySelector('[data-take-id="k1"]');
+    if (!row.querySelector(".take-use").disabled) fail("Use works on a saving line");
+    if (text(pendingRows(env)[0]) !== "Take 3 · Saving…") fail(`saving row without cleanup: ${text(pendingRows(env)[0])}`);
+    row.querySelector(".take-more").click();
+    const [play, del] = row.querySelectorAll('[role="menuitem"]');
+    if (!del.disabled || w.document.activeElement !== play) fail("Delete isn't locked, or Play isn't focused");
+    play.dispatchEvent(new w.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    if (w.document.activeElement !== play) fail("the arrows landed on the locked Delete");
+    delete app.savingLines.t1000;
+    console.log("PASS: a saving line's takes are locked, and the menu skips the locked Delete");
+  }
+
   console.log("PASS: test_background_save");
   process.exit(0);
 })();
