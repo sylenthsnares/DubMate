@@ -220,6 +220,7 @@ export class PackBuilderApp {
     // Paste link: without the tools, say how to add them instead of failing after a paste.
     const canImport = this.has('link_import');
     if (this.urlInputGroup) this.urlInputGroup.hidden = !canImport;
+    if (this.urlImportRights) this.urlImportRights.hidden = !canImport;
     if (this.urlImporterSub) this.urlImporterSub.hidden = !canImport;
     if (this.urlImportMissing) {
       this.urlImportMissing.hidden = canImport;
@@ -323,6 +324,7 @@ export class PackBuilderApp {
     this.selectTranscribeLang = document.getElementById('select-transcribe-lang');
     this.heroSub = document.getElementById('builder-hero-sub');
     this.urlInputGroup = document.getElementById('url-input-group');
+    this.urlImportRights = document.getElementById('url-import-rights');
     this.urlImporterSub = document.getElementById('url-importer-sub');
     this.urlImportMissing = document.getElementById('url-import-missing');
     this.urlImportMissingDesktop = document.getElementById('url-import-missing-desktop');

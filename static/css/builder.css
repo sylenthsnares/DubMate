@@ -637,6 +637,12 @@ body:has(#view-step-editor.active) .builder-main-container {
   color: var(--foreground-muted);
 }
 
+/* Under the link field: after .field-hint, so its own spacing wins. */
+.url-import-rights {
+  max-width: 480px;
+  margin: 10px 0 0;
+}
+
 .field-error {
   margin: 6px 0 0;
   font-size: 12px;

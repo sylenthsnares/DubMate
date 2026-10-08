@@ -4,6 +4,7 @@
 // desktop app to open the releases page (open_download_page in external.rs) and is a plain
 // link in a browser. A desktop app older than 2.0 can't open it, so there the button is
 // "Copy download link". The premiere tells the host once; the room check row says it too.
+// externalLinkControl is the same control for About's links (studio/about.js).
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { safeStorageGet, safeStorageSet } from './audio_setup.js';
 
@@ -51,16 +52,17 @@ function noticeStorage() {
 
 export class UpdateNoticeMethods {
   /**
-   * "Open download page". In the desktop app, on this computer's engine, a button that asks
-   * the app to open the page. An app older than 2.0 refuses (noteOlderDesktopApp), so there
-   * it is "Copy download link": it copies the address and says so beside it (or shows the
-   * address when the copy fails too). Elsewhere a link that opens a new tab.
+   * A link out of DubMate (a page on GitHub). In a browser, a link that opens a new tab. In
+   * the desktop app, on this computer's engine, a button that asks the app to open it:
+   * open_dubmate_page with the page's name, or open_download_page when there is no page.
+   * An app older than 2.0 refuses (noteOlderDesktopApp), so there the button copies the
+   * address and says so beside it (or shows the address when the copy fails too).
    */
-  downloadPageControl() {
+  externalLinkControl({ url, label, page = null, copyLabel = `Copy ${label.toLowerCase()} link` }) {
     const wrap = document.createElement('span');
-    wrap.className = 'download-page-control';
+    wrap.className = 'external-link-control';
     const hint = document.createElement('span');
-    hint.className = 'download-page-hint';
+    hint.className = 'external-link-hint';
     hint.setAttribute('role', 'status');
     hint.hidden = true;
     const invoke = this.desktopInvoke();
@@ -68,25 +70,26 @@ export class UpdateNoticeMethods {
     if (invoke) {
       control = document.createElement('button');
       control.type = 'button';
-      control.className = 'btn btn-secondary btn-sm download-page-button';
-      control.textContent = this.olderDesktopApp ? COPY_LABEL : OPEN_LABEL;
+      control.className = 'btn btn-secondary btn-sm external-link-button';
+      control.dataset.copyLabel = copyLabel;
+      control.textContent = this.olderDesktopApp ? copyLabel : label;
       control.addEventListener('click', async () => {
         if (!this.olderDesktopApp) {
           try {
-            await invoke('open_download_page');
+            await (page ? invoke('open_dubmate_page', { page }) : invoke('open_download_page'));
             hint.hidden = true;
             return;
           } catch (err) {
-            console.warn('[DubMate] The app could not open the download page:', err);
+            console.warn('[DubMate] The app could not open the page:', err);
             this.noteOlderDesktopApp();
           }
         }
         try {
-          await navigator.clipboard.writeText(DOWNLOAD_PAGE_URL);
+          await navigator.clipboard.writeText(url);
           hint.textContent = 'Link copied. Paste it into your browser.';
           hint.classList.remove('is-address');
         } catch (e) {
-          hint.textContent = DOWNLOAD_PAGE_URL;
+          hint.textContent = url;
           hint.classList.add('is-address');
         }
         hint.hidden = false;
@@ -94,25 +97,33 @@ export class UpdateNoticeMethods {
     } else {
       control = document.createElement('a');
       control.className = 'btn btn-secondary btn-sm';
-      control.href = DOWNLOAD_PAGE_URL;
+      control.href = url;
       control.target = '_blank';
       control.rel = 'noopener noreferrer';
-      control.textContent = OPEN_LABEL;
-      control.setAttribute('aria-label', `${OPEN_LABEL} (opens in a new tab)`);
+      control.textContent = label;
+      control.setAttribute('aria-label', `${label} (opens in a new tab)`);
     }
-    control.setAttribute('data-tip', DOWNLOAD_PAGE_URL);
+    control.setAttribute('data-tip', url);
     wrap.append(control, hint);
+    return wrap;
+  }
+
+  /** "Open download page", or "Copy download link" in a desktop app older than 2.0. */
+  downloadPageControl() {
+    const wrap = this.externalLinkControl({ url: DOWNLOAD_PAGE_URL, label: OPEN_LABEL, copyLabel: COPY_LABEL });
+    wrap.classList.add('download-page-control');
+    wrap.querySelector('.external-link-hint').classList.add('download-page-hint');
     return wrap;
   }
 
   /**
    * The desktop app is older than 2.0: it refused a command the 2.0 app allows this page
-   * (get_packbuilder_install at boot, or open_download_page). It can't open the download
-   * page, so every download button copies the link instead, and says so.
+   * (get_packbuilder_install at boot, or opening a page). It can't open pages, so every
+   * link button copies the address instead, and says so.
    */
   noteOlderDesktopApp() {
     this.olderDesktopApp = true;
-    for (const btn of document.querySelectorAll('.download-page-button')) btn.textContent = COPY_LABEL;
+    for (const btn of document.querySelectorAll('.external-link-button')) btn.textContent = btn.dataset.copyLabel;
   }
 
   /** Reads this engine's version and missing parts from /health once (the same answer the lobby reads). */

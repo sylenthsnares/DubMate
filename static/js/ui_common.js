@@ -116,11 +116,12 @@ export function showToast(message, { tone, action, duration = 3200 } = {}) {
  * onStudioClick(event, closeMenu), when given, handles clicks on the
  * "Studio" option; without it the option is a plain link.
  */
-export function initModeDropdown({ onStudioClick } = {}) {
+export function initModeDropdown({ onStudioClick, onAboutClick } = {}) {
   const container = document.getElementById('logo-dropdown-container');
   const btnDropdown = document.getElementById('btn-mode-dropdown');
   const menu = document.getElementById('mode-dropdown-menu');
   const optStudio = document.getElementById('mode-opt-studio');
+  const optAbout = document.getElementById('mode-opt-about');
   if (!container || !btnDropdown || !menu) return;
 
   const toggleMenu = (show) => {
@@ -151,6 +152,14 @@ export function initModeDropdown({ onStudioClick } = {}) {
 
   if (optStudio && onStudioClick) {
     optStudio.addEventListener('click', (e) => onStudioClick(e, () => toggleMenu(false)));
+  }
+
+  // About opens a dialog; when it closes, focus goes back to the menu button.
+  if (optAbout && onAboutClick) {
+    optAbout.addEventListener('click', () => {
+      toggleMenu(false);
+      onAboutClick(btnDropdown);
+    });
   }
 
   document.addEventListener('click', (e) => {

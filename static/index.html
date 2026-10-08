@@ -46,7 +46,7 @@
     <div class="header-left">
       <div class="logo-dropdown-container" id="logo-dropdown-container">
         <div class="logo logo-with-dropdown" id="btn-mode-dropdown" role="button" tabindex="0"
-          aria-haspopup="true" aria-expanded="false" aria-label="Switch between Studio and Pack Builder">
+          aria-haspopup="true" aria-expanded="false" aria-label="DubMate menu">
           <div class="logo-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
@@ -83,6 +83,23 @@
               <span class="mode-item-desc">Turn a video into a scene pack</span>
             </div>
           </a>
+          <div class="mode-dropdown-divider" role="presentation"></div>
+          <button type="button" class="mode-dropdown-item" id="mode-opt-about">
+            <div class="mode-item-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" x2="12" y1="16" y2="12" />
+                <line x1="12" x2="12.01" y1="8" y2="8" />
+              </svg>
+            </div>
+            <div class="mode-item-content">
+              <div class="mode-item-title-row">
+                <span class="mode-item-title">About DubMate</span>
+              </div>
+              <span class="mode-item-desc">Version, licences and privacy</span>
+            </div>
+          </button>
         </div>
       </div>
 
@@ -1603,6 +1620,53 @@
     </div>
   </div>
 
+  <!-- About DubMate (studio/about.js): opened from the logo menu and the ? sheet. The folders
+       are this computer's only; someone else's room never shows the host's paths. -->
+  <div id="modal-about" class="studio-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="about-title" hidden>
+    <div class="studio-modal-card about-card">
+      <button type="button" id="btn-close-about" class="modal-close-btn" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
+      <div class="about-head">
+        <div class="logo-icon about-logo" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" x2="12" y1="19" y2="22" />
+          </svg>
+        </div>
+        <div>
+          <h2 id="about-title" class="modal-title">About DubMate</h2>
+          <p id="about-version" class="about-meta" hidden></p>
+        </div>
+      </div>
+      <p class="about-licence">Free and open source under the GNU GPL v3.</p>
+      <div id="about-links" class="about-links"></div>
+
+      <section class="about-section about-privacy" aria-labelledby="about-privacy-title">
+        <h3 id="about-privacy-title" class="about-section-title">Privacy</h3>
+        <p class="about-text">DubMate has no accounts and collects no usage data. Your takes are saved and mixed on the computer running the room, not on a server.</p>
+        <!-- One of these two (about.js): on this computer, or in someone else's room. -->
+        <p id="about-takes-own" class="about-text">Recording in someone else's room: your takes are sent to the host's computer, and the host can export and share them.</p>
+        <p id="about-takes-guest" class="about-text" hidden>Your takes are sent to the host's computer, and the host can export and share them.</p>
+      </section>
+
+      <section class="about-section" aria-labelledby="about-data-title">
+        <h3 id="about-data-title" class="about-section-title">Where your data lives</h3>
+        <ul id="about-folders" class="about-folders"></ul>
+        <p id="about-folders-error" class="about-text" role="status" hidden>Couldn't read the folders. The Privacy link at the top lists them.</p>
+        <!-- Only says delete about DubMate's own folders: a chosen Export or Packs folder may be Videos or Downloads. -->
+        <p id="about-folders-note" class="about-text about-meta" hidden>To remove everything, quit DubMate and delete each folder that isn't marked “May hold other files”. In a marked folder, delete only what you don't need. The Privacy link at the top lists the rest.</p>
+        <p id="about-guest-data" class="about-text" hidden>Your name, colour and audio settings are kept on this device.</p>
+      </section>
+    </div>
+  </div>
+
   <!-- Audio Device Setup & Studio Settings Panel -->
   <!-- Shown once on first run (before any bare getUserMedia prompt fires) and
        re-openable at any time from the "Audio" button in the studio header. -->
@@ -1618,6 +1682,8 @@
           <span id="audio-setup-status-pill" class="audio-setup-pill status-text is-pending">No mic yet</span>
         </div>
         <p id="audio-setup-subtitle" class="modal-status-text" style="margin-top: 4px;">Choose your microphone and headphones.</p>
+        <!-- Off this computer's engine only (showAudioSetupStep): a desktop member skips the intro. -->
+        <p id="audio-guest-privacy" class="audio-setup-note" hidden>Your takes are sent to the host's computer, and the host can export and share them.</p>
       </div>
 
       <!-- STEP 1: First-run explainer shown BEFORE the browser permission prompt -->
@@ -1634,7 +1700,7 @@
           <div class="audio-intro-copy">
             <h4 class="audio-intro-title">So you can record your lines.</h4>
             <!-- Set by renderAudioIntro(): only says what is true for this page. -->
-            <p id="audio-intro-privacy" class="audio-intro-desc">Audio stays on this computer.</p>
+            <p id="audio-intro-privacy" class="audio-intro-desc">Your takes are saved on this computer.</p>
           </div>
         </div>
 

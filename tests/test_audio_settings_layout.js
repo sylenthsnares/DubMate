@@ -8,7 +8,8 @@
  *  - status lines and the mic pill use the status-text classes;
  *  - the denied step shows one recovery list for this computer, the rest behind
  *    "Using something else?", and no list for errors that aren't about permission;
- *  - first run says "Set up your mic" and a privacy line that is true where it shows;
+ *  - first run says "Set up your mic" and a privacy line that is true where it shows, and on
+ *    someone else's engine the devices step says the host can export and share the takes;
  *  - "Check again" on the room check's failed panel and its unusable card;
  *  - no emoji anywhere in the modal.
  * The audio engine is stubbed; animation frames and the clock are driven by the test.
@@ -40,6 +41,8 @@ const HINT = {
   done: "Good level.",
   error: "Too loud. Move back from the mic or turn down its input level.",
 };
+const OWN_PRIVACY = "Your takes are saved on this computer.";
+const GUEST_PRIVACY = "Your takes are sent to the host's computer, and the host can export and share them.";
 const FALLBACK = "Your saved microphone isn't connected. Showing the system default.";
 
 const STEPS = {
@@ -401,9 +404,9 @@ function done(env) {
   // 5. First run: the title, the hero line, a privacy line that is true where it shows.
   {
     const cases = [
-      { url: HOST, desktop: null, privacy: "Audio stays on this computer.", ask: "Your browser will ask for permission. Choose Allow." },
-      { url: GUEST, desktop: null, privacy: "Your takes are saved on the host's computer.", ask: "Your browser will ask for permission. Choose Allow." },
-      { url: HOST, desktop: { get_packbuilder_status: () => ({ installed: false }) }, privacy: "Audio stays on this computer.", ask: "Your computer may ask for permission. Choose Allow." },
+      { url: HOST, desktop: null, privacy: OWN_PRIVACY, ask: "Your browser will ask for permission. Choose Allow." },
+      { url: GUEST, desktop: null, privacy: GUEST_PRIVACY, ask: "Your browser will ask for permission. Choose Allow." },
+      { url: HOST, desktop: { get_packbuilder_status: () => ({ installed: false }) }, privacy: OWN_PRIVACY, ask: "Your computer may ask for permission. Choose Allow." },
     ];
     for (const c of cases) {
       const env = await boot(c.url, { permission: "prompt", desktop: c.desktop });
@@ -421,8 +424,26 @@ function done(env) {
     await env.app.openAudioSettings();
     check(text($(env, "audio-setup-title")) === "Audio settings", `settings title ${text($(env, "audio-setup-title"))}`);
     check(shown($(env, "audio-setup-subtitle")) && text($(env, "audio-setup-subtitle")) === "Choose your microphone and headphones.", "subtitle on the devices step");
+    check(!shown($(env, "audio-guest-privacy")), "the guest line shows on this computer's devices step");
     done(env);
     console.log("PASS: first run says Set up your mic, with a privacy line for this computer or a host's");
+
+    // A member's devices step says where their takes go too: a desktop member is granted the
+    // mic and never sees the intro. Every open, not just the first.
+    for (const desktop of [null, { get_packbuilder_status: () => ({ installed: false }) }]) {
+      const g = await boot(GUEST, { desktop });
+      const where = `guest${desktop ? " (desktop app)" : ""}`;
+      for (let i = 0; i < 2; i++) {
+        await g.app.openAudioSettings();
+        const line = $(g, "audio-guest-privacy");
+        check(!!line && line.classList.contains("audio-setup-note"), `${where}: no #audio-guest-privacy.audio-setup-note`);
+        check(line.previousElementSibling === $(g, "audio-setup-subtitle"), `${where}: the guest line isn't under the subtitle`);
+        check(shown(line) && text(line) === GUEST_PRIVACY, `${where}: devices step guest line ${shown(line)} ${text(line)}`);
+        g.app.closeAudioSettings();
+      }
+      done(g);
+    }
+    console.log("PASS: on someone else's engine the devices step says the takes go to the host's computer");
   }
 
   // 6. Check again on the room check's failed panel and on its unusable card.

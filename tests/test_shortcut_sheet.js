@@ -437,7 +437,7 @@ async function testStudio() {
   press(env, { key: "Tab", code: "Tab" });
   check(doc.activeElement === closeBtn, "Tab stays inside the sheet");
   press(env, { key: "Tab", code: "Tab", shiftKey: true });
-  check(doc.activeElement === el.querySelector("summary"), "Shift+Tab wraps to On other screens, inside the sheet");
+  check(doc.activeElement === el.querySelector(".shortcut-sheet-footer button"), "Shift+Tab wraps to About DubMate, the sheet's last control");
 
   // Space behind the sheet does not record.
   showView(env, "booth");
@@ -510,6 +510,7 @@ async function testBuilder() {
   const { SHORTCUT_GROUPS } = w.__mods["static/js/shortcuts.js"];
   const opener = doc.getElementById("btn-shortcuts");
   check(!!opener && opener.getAttribute("data-tip") === "Keyboard shortcuts (?)", "the Pack Builder header has the ? button");
+  check(!doc.querySelector(".shortcut-sheet-footer"), "the Pack Builder sheet has no About footer");
   // Before the editor step: a muted line in place of the editor keys.
   env.app.currentStep = "upload";
   opener.click();
