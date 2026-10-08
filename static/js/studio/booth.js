@@ -2,7 +2,7 @@
 // waveform/nudge, A/B preview and noise reduction.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { WaveformRenderer } from '../waveform.js';
-import { openDialog, plural } from '../ui_common.js';
+import { openDialog, plural, announce } from '../ui_common.js';
 import { pickedTake, lineTakes, takeCount } from './takes.js';
 import { resolveChain } from './voice.js';
 import { micErrorMessage } from './audio_setup.js';
@@ -74,6 +74,37 @@ export class BoothMethods {
     return { recorded, total: lines.length };
   }
 
+  /** The take saving on this line right now (its upload fields), or null. */
+  savingTake(line) {
+    const s = line ? this.savingLines[line.line_id] : null;
+    return s && s.roomId === this.roomState?.room_id ? s : null;
+  }
+
+  /** Marks a line as saving the take with these upload fields, or done, and redraws it. */
+  setLineSaving(fields, saving) {
+    if (saving) this.savingLines[fields.lineId] = fields;
+    else if (this.savingLines[fields.lineId] === fields) delete this.savingLines[fields.lineId];
+    else return;
+    this.renderLineSaveState(fields.lineId);
+  }
+
+  /** The line chips; on the current line also the record deck, Takes, Voice and take lane. */
+  renderLineSaveState(lineId) {
+    if (!this.roomState) return;
+    this.renderTimelineChips();
+    if (this.roomState.pack.lines[this.currentLineIndex]?.line_id !== lineId) return;
+    this.updateRecordButtonUI();
+    this.renderTakesCard();
+    this.refreshVoiceControls();
+    this.renderTakeLaneNote();
+  }
+
+  /** "Saving… cleaning up noise" over the take lane while the current line saves. */
+  renderTakeLaneNote() {
+    const s = this.savingTake(this.roomState?.pack?.lines?.[this.currentLineIndex]);
+    this.waveform.setTakeLaneNote(s ? (s.noiseReduction ? 'Saving… cleaning up noise' : 'Saving…') : null);
+  }
+
   getMyAssignedCharacters() {
     if (!this.roomState) return [];
     return Object.keys(this.roomState.role_assignments || {}).filter((char) => {
@@ -98,7 +129,8 @@ export class BoothMethods {
     }
     // An abandoned take must still stop the recorder and release the mic;
     // stopAllPlayback() no longer does that while a recording is running.
-    if (this.audio && this.audio.isRecording) {
+    // A recorder that's already stopping is handing its take over to be saved.
+    if (this.audio && this.audio.isRecording && this.recordState !== 'stopping') {
       this.audio.stopRecording().catch(() => { });
     }
     this.recordState = 'idle';
@@ -227,6 +259,7 @@ export class BoothMethods {
     }
 
     this.setWaveformForLine(line, take, origPeaks, takePeaks);
+    this.renderTakeLaneNote();
 
     this.renderTimelineChips();
 
@@ -353,12 +386,13 @@ export class BoothMethods {
     }
 
     const n = this.nextTakeNumber(line);
+    const saving = this.savingTake(line);
     if (this.recordState === 'recording') {
       show({ state: 'REC', glyph: '■', cls: ' recording', main: 'Recording · Space to stop', name: 'Stop recording (Space)' });
     } else if (this.recordState === 'countdown') {
       show({ state: 'COUNT-IN', glyph: '✕', main: 'Counting in… Space or click to cancel', name: 'Cancel the count-in (Space)' });
-    } else if (this.recordState === 'processing') {
-      show({ state: 'SAVING', glyph: SAVING_ICON, html: true, main: `Saving take ${n}…`, name: `Saving take ${n}` });
+    } else if (saving) {
+      show({ state: 'SAVING', glyph: SAVING_ICON, html: true, main: `Saving take ${saving.number}…`, name: `Saving take ${saving.number}` });
     } else {
       const idle = { glyph: '●', main: `Record take ${n}`, name: `Record take ${n} (Space)` };
       if (this.audioSetup?.permission === 'denied' || this.micError) {
@@ -374,7 +408,7 @@ export class BoothMethods {
   /** "▶ Original | ▶ Take N": Take waits for a take, and aria-pressed marks the side you hear. */
   renderTransport(take = this.takeForLine(this.currentLineIndex)) {
     if (!this.btnPlayOrig || !this.btnPreviewTake) return;
-    this.btnPreviewTake.disabled = !take || !!this.isProcessingTake;
+    this.btnPreviewTake.disabled = !take || !!this.savingTake(this.roomState?.pack?.lines?.[this.currentLineIndex]);
     if (this.labelPreviewTake) this.labelPreviewTake.textContent = take ? `Take ${take.number}` : 'Take';
     const playingTake = this.isPlayingCurrentTake();
     const hearOriginal = !!this.isPlayingReference || (playingTake && this.audio.abState === 'B');
@@ -426,10 +460,12 @@ export class BoothMethods {
       const isActive = idx === this.currentLineIndex;
 
       chip.type = 'button';
-      chip.className = `chip-item ${isActive ? 'active' : ''} ${count ? 'done' : ''} ${isMyLine ? 'my-line' : ''}`;
+      const saving = !!this.savingTake(l);
+      chip.className = `chip-item ${isActive ? 'active' : ''} ${count ? 'done' : ''} ${isMyLine ? 'my-line' : ''}${saving ? ' is-saving' : ''}`;
       if (isActive) chip.setAttribute('aria-current', 'step');
       // The tooltip says the same as the label, so it isn't read twice.
-      const name = `Line ${idx + 1}, ${l.character}, ${count ? `recorded, ${plural(count, 'take')}` : 'not recorded'}`;
+      const name = `Line ${idx + 1}, ${l.character}, ${count ? `recorded, ${plural(count, 'take')}` : 'not recorded'}`
+        + (saving ? ', saving a take' : '');
       chip.setAttribute('aria-label', name);
       chip.dataset.tip = name;
       const num = document.createElement('span');
@@ -444,6 +480,12 @@ export class BoothMethods {
         n.className = 'chip-count';
         n.textContent = plural(count, 'take');
         chip.append(tick, n);
+      }
+      if (saving) {
+        const mark = document.createElement('span');
+        mark.className = 'chip-saving';
+        mark.textContent = 'saving';
+        chip.appendChild(mark);
       }
 
       chip.addEventListener('click', () => {
@@ -716,9 +758,9 @@ export class BoothMethods {
 
   /** Undoes a fitted take's speed change. The engine rewrites the audio and re-times it. */
   async playAtOriginalSpeed() {
-    if (this.isProcessingTake || this.originalSpeedBusy) return;
     const lineIndex = this.currentLineIndex;
     const line = this.roomState?.pack?.lines?.[lineIndex];
+    if (this.originalSpeedBusy || this.savingTake(line)) return;
     const take = this.roomState && this.takeForLine(lineIndex);
     if (!line || !take) return;
     this.originalSpeedBusy = true;
@@ -814,14 +856,15 @@ export class BoothMethods {
     }
 
     const currentTake = this.takeForLine(this.currentLineIndex);
-    if (currentTake && this.views.booth.classList.contains('active') && !this.isProcessingTake) {
+    const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
+    if (currentTake && this.views.booth.classList.contains('active') && !this.savingTake(line)) {
       this.toggleTakeNoiseReduction(this.currentLineIndex, this.applyNoiseReduction);
     }
   }
 
   async toggleTakeNoiseReduction(lineIndex, enable) {
     const target = this.roomState && this.takeForLine(lineIndex);
-    if (!target) {
+    if (!target || this.savingTake(this.roomState.pack.lines[lineIndex])) {
       return;
     }
     const lineId = this.roomState.pack.lines[lineIndex].line_id;
@@ -897,8 +940,11 @@ export class BoothMethods {
       return;
     }
 
-    if (this.recordState === 'processing') {
-      this.showToast("Still saving the last take");
+    // The recorder is handing the take over; then this line saves it in the background.
+    if (this.recordState === 'stopping') return;
+    const saving = this.savingTake(line);
+    if (saving) {
+      this.showToast(`Still saving take ${saving.number}`);
       return;
     }
 
@@ -1038,97 +1084,40 @@ export class BoothMethods {
     if (this.recTally) this.recTally.hidden = true;
   }
 
-  setBoothProcessing(isProcessing) {
-    this.isProcessingTake = isProcessing;
-    if (this.boothProcessingOverlay) {
-      this.boothProcessingOverlay.style.display = isProcessing ? 'flex' : 'none';
-    }
-
-    if (this.boothProcessingTitle) {
-      if (this.applyNoiseReduction) {
-        this.boothProcessingTitle.innerText = "Saving take…";
-      } else {
-        this.boothProcessingTitle.innerText = "Saving take…";
-      }
-    }
-    if (this.boothProcessingSub) {
-      if (this.applyNoiseReduction) {
-        this.boothProcessingSub.innerText = "Removing background noise";
-      } else {
-        this.boothProcessingSub.innerText = "";
-      }
-    }
-
-    const interactiveElements = [
-      this.btnPrevLine,
-      this.btnNextLine,
-      this.btnToggleReady,
-      this.btnJumpScreening,
-      this.btnBackLobby,
-      this.btnPlayOrig,
-      this.btnPreviewTake,
-      this.btnToggleFilterLines,
-      this.sliderNudge,
-      this.sliderBackingVol,
-      this.checkMetronome,
-      this.checkGuideVoice,
-      this.sliderGain,
-      this.btnLeaveRoom,
-      this.navStepLobby,
-      this.navStepBooth,
-      this.navStepScreening
-    ];
-
-    interactiveElements.forEach((el) => {
-      if (el) {
-        el.disabled = isProcessing;
-        el.classList.toggle('ui-interaction-locked', isProcessing);
-      }
-    });
-
-    if (this.timelineChips) {
-      this.timelineChips.classList.toggle('ui-interaction-locked', isProcessing);
-    }
-    this.refreshVoiceControls();
-  }
-
   async finishRecording() {
-    // The line and the sound picked for its next take, as they are when recording stops.
     const lineIndex = this.currentLineIndex;
-    const chain = this.pendingNextTakeChain?.[this.roomState.pack.lines[lineIndex].line_id] || null;
+    // What the upload sends, read as recording stops: by the time it goes out the booth
+    // may be on another line. The line saves in the background; every other line works.
+    const fields = this.takeUploadFields(lineIndex, this.recordingGuideVoice);
     this.endRecordingFeedback();
     if (this.recordingTimeout) {
       clearTimeout(this.recordingTimeout);
       this.recordingTimeout = null;
     }
-    this.recordState = 'processing';
-    this.updateRecordButtonUI();
-    this.setBoothProcessing(true);
+    this.recordState = 'stopping';
+    this.setLineSaving(fields, true);
     this.stageVideo.pause();
 
     const res = await this.audio.stopRecording();
     this.audio.stopAllPlayback();
-
-    if (!res || !res.blob) {
+    if (this.recordState === 'stopping') {
       this.recordState = 'idle';
       this.updateRecordButtonUI();
-      this.setBoothProcessing(false);
+    }
+
+    if (!res || !res.blob) {
+      this.setLineSaving(fields, false);
       this.showToast("Nothing was recorded. Check your microphone.");
       return;
     }
-
-    const currentTakeBlob = res.blob;
-    await this.uploadTake(lineIndex, currentTakeBlob, res.audioBuffer, this.recordingGuideVoice, chain);
+    await this.uploadTake(lineIndex, res.blob, res.audioBuffer, fields);
   }
 
-  /** `chain`: the sound picked for this line before it had a take, or null to keep the
-   *  sound of the take it replaces in the dub. */
-  async uploadTake(lineIndex, blob, recordedBuffer = null, guideVoice = false, chain = null) {
-    // A synced setup starts the take its measured delay earlier; otherwise it
-    // inherits the slider (the picked take's timing) as before.
-    await this.updateAudioDeviceList();
-    const latencyMs = this.currentLatencyMs();
-    const offsetMs = latencyMs !== null ? -latencyMs : parseInt(this.sliderNudge.value, 10);
+  /** Everything a take's upload sends that belongs to its line, read at once: the line,
+   *  timing, level, guide voice, noise cleanup and the sound picked before the take
+   *  (`chain`; null keeps the sound of the take it replaces in the dub). */
+  takeUploadFields(lineIndex, guideVoice = false) {
+    const line = this.roomState.pack.lines[lineIndex];
     const gain = parseFloat(this.sliderGain.value);
     // Ask the server to apply this take's scene-matched gain unless the slider was moved
     // off 0 / off the previous take's auto gain (the slider still shows that take's level).
@@ -1138,41 +1127,84 @@ export class BoothMethods {
     const prevGain = prevTake ? (parseFloat(prevTake.gain_db) || 0) : NaN;
     const prevMatched = !Number.isNaN(prevAuto) && (Math.abs(gain - prevAuto) < 0.05
       || (Math.abs(gain - prevGain) <= 0.25 && Math.abs(prevGain - prevAuto) < 0.05));
-    const autoGain = gain === 0 || prevMatched;
+    return {
+      roomId: this.roomState.room_id,
+      lineId: line.line_id,
+      number: this.nextTakeNumber(line),
+      sliderOffsetMs: parseInt(this.sliderNudge.value, 10),
+      gain,
+      autoGain: gain === 0 || prevMatched,
+      // The checkbox as it was when this take started recording.
+      guideVoice: !!guideVoice,
+      noiseReduction: !!this.applyNoiseReduction,
+      chain: this.pendingNextTakeChain?.[line.line_id] || null,
+    };
+  }
+
+  /** Uploads a take with `fields` from takeUploadFields (read now when not given). The
+   *  booth reloads only if you're still on that line and not counting in or recording;
+   *  "Take saved" toasts only when the line is off screen. */
+  async uploadTake(lineIndex, blob, recordedBuffer = null, fields = null) {
+    const f = fields || this.takeUploadFields(lineIndex);
+    if (this.savingLines[f.lineId] !== f) this.setLineSaving(f, true);
+    if (f.offsetMs === undefined) {
+      // A synced setup starts the take its measured delay earlier; otherwise it
+      // inherits the slider (the picked take's timing) as before.
+      await this.updateAudioDeviceList();
+      const latencyMs = this.currentLatencyMs();
+      f.offsetMs = latencyMs !== null ? -latencyMs : f.sliderOffsetMs;
+      // The room check for this microphone tunes the cleanup; '' means standard cleanup.
+      f.noiseProfileId = this.currentRoomProfileId() || '';
+    }
 
     const formData = new FormData();
     formData.append('file', blob, `take_${lineIndex}.webm`);
     formData.append('user_id', this.user.id);
     formData.append('user_name', this.user.name);
     // Without a chain the engine gives the new take the sound of the take it replaces.
-    if (chain) formData.append('chain', JSON.stringify(chain));
-    formData.append('offset_ms', offsetMs);
-    formData.append('gain_db', gain);
-    formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
-    // The room check for this microphone tunes the cleanup; '' means standard cleanup.
-    formData.append('noise_profile_id', this.currentRoomProfileId() || '');
-    formData.append('auto_gain', autoGain ? 'true' : 'false');
+    if (f.chain) formData.append('chain', JSON.stringify(f.chain));
+    formData.append('offset_ms', f.offsetMs);
+    formData.append('gain_db', f.gain);
+    formData.append('noise_reduction', f.noiseReduction ? 'true' : 'false');
+    formData.append('noise_profile_id', f.noiseProfileId);
+    formData.append('auto_gain', f.autoGain ? 'true' : 'false');
     // The mic can pick up the guide voice, so the engine doesn't line those takes up.
-    // `guideVoice` is the checkbox as it was when this take started recording.
-    formData.append('guide_voice', guideVoice ? 'true' : 'false');
+    formData.append('guide_voice', f.guideVoice ? 'true' : 'false');
 
+    let data;
     try {
-      const lineId = this.roomState.pack.lines[lineIndex].line_id;
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/lines/${lineId}/takes`, {
+      const res = await fetch(`/api/rooms/${f.roomId}/lines/${f.lineId}/takes`, {
         method: 'POST',
         body: formData,
       });
       if (!res.ok) {
         throw new Error(`Server returned status ${res.status}`);
       }
-      const data = await res.json();
-      // The take has the picked sound now; a sound picked while it saved stays for the next one.
-      if (chain && this.pendingNextTakeChain[lineId] === chain) delete this.pendingNextTakeChain[lineId];
-      if (data.line) {
-        if (!this.roomState.takes) this.roomState.takes = {};
-        this.roomState.takes[lineId] = data.line;
+      data = await res.json();
+    } catch (err) {
+      this.setLineSaving(f, false);
+      if (this.roomState?.room_id === f.roomId) {
+        this.showToast(this.friendlyError(err, "That take didn't save. Record it again."));
       }
-      this.audio.evictTakeCache(this.takeForLine(lineIndex));
+      return;
+    }
+
+    if (this.savingLines[f.lineId] === f) delete this.savingLines[f.lineId];
+    if (this.roomState?.room_id !== f.roomId) return;
+    // The take has the picked sound now; a sound picked while it saved stays for the next one.
+    if (f.chain && this.pendingNextTakeChain[f.lineId] === f.chain) delete this.pendingNextTakeChain[f.lineId];
+    if (data.line) {
+      if (!this.roomState.takes) this.roomState.takes = {};
+      this.roomState.takes[f.lineId] = data.line;
+    }
+    const index = this.roomState.pack.lines.findIndex((l) => l.line_id === f.lineId);
+    this.audio.evictTakeCache(this.takeForLine(index));
+    const number = data.take?.number ?? f.number;
+    // On screen, the new row is the confirmation.
+    const onScreen = this.currentView === 'booth' && index === this.currentLineIndex;
+    if (!onScreen) this.showToast(`Take ${number} saved on line ${index + 1}`);
+    if (this.shouldOfferMicSync()) this.showMicSyncHint();
+    if (onScreen && this.recordState === 'idle') {
       // A fitted take's audio differs from what was recorded; preview the engine's copy.
       const fitted = Number(data.take?.stretch ?? 1) !== 1;
       if (recordedBuffer && !fitted) {
@@ -1181,20 +1213,15 @@ export class BoothMethods {
           this.screeningBuffers.set(data.take.url, recordedBuffer);
         }
       }
-      this.showToast('Take saved');
-      if (this.shouldOfferMicSync()) this.showMicSyncHint();
-      await this.loadBoothLine(lineIndex);
-    } catch (err) {
-      this.recordState = 'idle';
-      this.updateRecordButtonUI();
-      this.showToast(this.friendlyError(err, "That take didn't save. Record it again."));
-    } finally {
-      this.setBoothProcessing(false);
+      announce(`Take ${number} saved`);
+      await this.loadBoothLine(index);
+    } else {
+      this.renderLineSaveState(f.lineId);
     }
   }
 
   stepLine(delta) {
-    if (this.isProcessingTake || !this.roomState) return;
+    if (!this.roomState) return;
     this.cancelCurrentCountdown();
     const totalLines = this.roomState.pack.lines.length;
     const myAssignedChars = this.getMyAssignedCharacters();
@@ -1227,7 +1254,13 @@ export class BoothMethods {
   /** Done on your last line, for host and guests alike: with every line you can record
    *  taken it marks you ready; otherwise it asks first, inline in the footer. */
   handleUserFinishedAllLines() {
-    if (this.isProcessingTake) return;
+    // Ready waits for takes still saving, so the premiere doesn't start without them.
+    const lines = this.roomState?.pack?.lines || [];
+    const savingIndex = lines.findIndex((l) => this.savingTake(l));
+    if (savingIndex >= 0) {
+      this.showToast(`Still saving take ${this.savingTake(lines[savingIndex]).number} on line ${savingIndex + 1}`);
+      return;
+    }
     const { recorded, total } = this.myLineProgress();
     if (recorded < total) {
       this.showDoneAsk(recorded, total);
@@ -1369,10 +1402,9 @@ export class BoothMethods {
 
   /** Puts one of the current line's takes in the dub. */
   async pickTake(take) {
-    if (this.isProcessingTake) return;
     const lineIndex = this.currentLineIndex;
     const line = this.roomState?.pack?.lines?.[lineIndex];
-    if (!line || !take) return;
+    if (!line || !take || this.savingTake(line)) return;
     try {
       const res = await fetch(
         `/api/rooms/${this.roomState.room_id}/lines/${line.line_id}/takes/${take.take_id}/pick`,

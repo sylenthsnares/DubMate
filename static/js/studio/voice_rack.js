@@ -347,7 +347,8 @@ export class VoiceRackMethods {
     if (this.voiceLevelTake) this.voiceLevelTake.hidden = !take;
     if (this.voiceLevelNote) this.voiceLevelNote.hidden = !!take;
 
-    const enabled = mine && !this.isProcessingTake && !this.voiceUnavailable;
+    // Locked while this line's take saves; other lines stay usable.
+    const enabled = mine && !this.savingTake(line) && !this.voiceUnavailable;
     const controls = this.voicePanel?.querySelectorAll('[data-preset], [data-voice-on], [data-voice-param], #voice-scope, .voice-scope-ask button') || [];
     for (const el of controls) {
       el.disabled = !enabled;

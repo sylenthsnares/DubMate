@@ -101,6 +101,9 @@ async function boot(url, { engineMicSync = {}, stored = null } = {}) {
   const toasts = [];
   app.showToast = (msg) => toasts.push(msg);
   app.loadBoothLine = async () => {};
+  // On the booth's line 1: the new take's row is the confirmation, so no "Take saved".
+  app.currentView = "booth";
+  app.currentLineIndex = 0;
   app.user = { id: "u1", name: "Ana" };
   app.roomState = {
     room_id: "DUB-AB12", host_id: "u1",
@@ -135,8 +138,8 @@ const entry = (ms, method = "clicks") => ({ latency_ms: ms, method, measured_at:
     const offset = await record(env);
     if (offset !== "-140") fail(`synced take sent offset_ms ${offset}`);
     if (env.app.currentDevicePairKey() !== PAIR) fail(`pair key ${env.app.currentDevicePairKey()}`);
-    if (env.toasts.join() !== "Take saved") fail(`toasts: ${JSON.stringify(env.toasts)}`);
-    console.log("PASS: a synced pair sends offset_ms = -140 and only says 'Take saved'");
+    if (env.toasts.length) fail(`toasts: ${JSON.stringify(env.toasts)}`);
+    console.log("PASS: a synced pair sends offset_ms = -140 and never asks to sync");
   }
 
   // 2. Unsynced: the slider value as before; the toast asks once per pair per session.
@@ -145,13 +148,13 @@ const entry = (ms, method = "clicks") => ({ latency_ms: ms, method, measured_at:
     const offset = await record(env);
     if (offset !== "35") fail(`unsynced take sent offset_ms ${offset}`);
     await record(env);
-    if (JSON.stringify(env.toasts) !== JSON.stringify(["Take saved", SYNC_HINT, "Take saved"])) {
+    if (JSON.stringify(env.toasts) !== JSON.stringify([SYNC_HINT])) {
       fail(`host toasts: ${JSON.stringify(env.toasts)}`);
     }
     if (env.w.sessionStorage.getItem(`dubmate_mic_sync_asked:${PAIR}`) !== "1") fail("asked flag not kept for the tab session");
     env.app.audioSetup.inputId = "usb2";
     await record(env);
-    if (env.toasts[4] !== SYNC_HINT) fail(`a new pair was not asked: ${JSON.stringify(env.toasts)}`);
+    if (env.toasts[1] !== SYNC_HINT) fail(`a new pair was not asked: ${JSON.stringify(env.toasts)}`);
     console.log("PASS: unsynced takes keep the slider value; the sync hint shows once per pair per session");
   }
 
@@ -163,7 +166,7 @@ const entry = (ms, method = "clicks") => ({ latency_ms: ms, method, measured_at:
     if (offset !== "-140") fail(`engine fallback sent offset_ms ${offset}`);
     const kept = JSON.parse(env.w.localStorage.getItem("dubmate_mic_sync") || "{}");
     if (!kept[PAIR] || kept[PAIR].latency_ms !== 140) fail(`not copied to localStorage: ${JSON.stringify(kept)}`);
-    if (env.toasts.join() !== "Take saved") fail(`toasts: ${JSON.stringify(env.toasts)}`);
+    if (env.toasts.length) fail(`toasts: ${JSON.stringify(env.toasts)}`);
     console.log("PASS: the host's engine config is used when the browser has no sync, and copied into it");
   }
 
@@ -184,7 +187,7 @@ const entry = (ms, method = "clicks") => ({ latency_ms: ms, method, measured_at:
     const env = await boot(HOST, { stored });
     const offset = await record(env);
     if (offset !== "35") fail(`unreadable value ${stored} sent offset_ms ${offset}`);
-    if (env.toasts[1] !== SYNC_HINT) fail(`unreadable value ${stored} was not treated as unsynced`);
+    if (env.toasts[0] !== SYNC_HINT) fail(`unreadable value ${stored} was not treated as unsynced`);
   }
   console.log("PASS: an unreadable stored value counts as not synced");
 

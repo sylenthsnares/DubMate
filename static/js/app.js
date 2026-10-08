@@ -282,8 +282,6 @@ class DubMateApp {
     this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
     this.checkNoiseReduction = document.getElementById('check-noise-reduction');
     this.checkRackNoiseReduction = document.getElementById('check-rack-noise-reduction');
-    this.boothProcessingTitle = document.getElementById('booth-processing-title');
-    this.boothProcessingSub = document.getElementById('booth-processing-sub');
 
     // Audio Device Setup Panel Elements
     this.modalAudioSettings = document.getElementById('modal-audio-settings');
@@ -434,13 +432,14 @@ class DubMateApp {
     this.btnModalDownload916 = document.getElementById('btn-modal-download-916');
     this.exportSavedPath = document.getElementById('export-saved-path');
 
-    // Booth & Import Loading Overlays
-    this.boothProcessingOverlay = document.getElementById('booth-processing-overlay');
+    // Import Loading Overlay
     this.modalImportLoading = document.getElementById('modal-import-loading');
 
     // Global Interaction Lock Flags
     this.isRenderingExport = false;
-    this.isProcessingTake = false;
+    // Takes save in the background, one line at a time: line_id -> the take's upload fields.
+    // Only that line is locked (its record button, Voice and Takes).
+    this.savingLines = {};
     // setInterval id of exportFinalVideo's status poll, so export_failed can stop it.
     this.exportPollInterval = null;
 
@@ -870,7 +869,7 @@ class DubMateApp {
       }
 
       // Ignore shortcut triggers when locked or when user is focused in text/input fields
-      if (this.isProcessingTake || this.isRenderingExport) {
+      if (this.isRenderingExport) {
         return;
       }
 
@@ -1051,7 +1050,9 @@ class DubMateApp {
       }
 
       if (lineIdx === this.currentLineIndex) {
-        this.loadBoothLine(lineIdx);
+        // Counting in or recording on this line: show the new take, don't cancel yours.
+        if (this.recordState === 'countdown' || this.recordState === 'recording') this.renderTakesCard();
+        else this.loadBoothLine(lineIdx);
       }
       this.renderTimelineChips();
       this.renderCastActivityHUD();

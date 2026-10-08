@@ -96,6 +96,7 @@ async function boot() {
   app.socket.connectionState = "open";
   app.audioSetup.permission = "granted";
   app.audio.loadAudioBuffer = (url) => Promise.resolve({ duration: 2, url });
+  app.currentView = "booth";
   return env;
 }
 
@@ -165,11 +166,13 @@ async function show(env, state, index = 0) {
     }
     if (rec.getAttribute("aria-label") !== "Stop recording (Space)" || text(icon) !== "■") fail(`recording button: ${rec.getAttribute("aria-label")} ${text(icon)}`);
 
-    app.recordState = "processing";
+    // Saving is per line (savingLines), while recordState is back to idle.
+    app.recordState = "idle";
+    app.savingLines.t1000 = { roomId: app.roomState.room_id, lineId: "t1000", number: 2, noiseReduction: true };
     app.updateRecordButtonUI();
     if (text(badge) !== "SAVING" || text(label) !== "Saving take 2…") fail(`saving: ${text(badge)} / ${text(label)}`);
     if (rec.getAttribute("aria-label") !== "Saving take 2") fail(`saving name: ${rec.getAttribute("aria-label")}`);
-    app.recordState = "idle";
+    delete app.savingLines.t1000;
 
     // NO MIC: permission denied, with the plain mic line.
     app.audioSetup.permission = "denied";
@@ -276,7 +279,7 @@ async function show(env, state, index = 0) {
     if (!visible(hint) || text(hint.querySelector(".mic-sync-hint-text")) !== "Sync your mic so takes line up on their own.") {
       fail(`hint after the first take: ${visible(hint)} ${text(hint)}`);
     }
-    if (env.toasts.join() !== "Take saved") fail(`toasts: ${JSON.stringify(env.toasts)}`);
+    if (env.toasts.length) fail(`an on-screen save toasted: ${JSON.stringify(env.toasts)}`);
     $(env, "btn-mic-sync-dismiss").click();
     if (visible(hint)) fail("× did not close the hint");
     await app.uploadTake(0, new w.Blob(["x"], { type: "audio/webm" }));

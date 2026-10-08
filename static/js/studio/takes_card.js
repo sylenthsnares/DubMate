@@ -26,6 +26,17 @@ export class TakesCardMethods {
     });
     // A delete still waiting on its Undo goes out when the page closes.
     window.addEventListener('pagehide', () => this.flushPendingDelete({ keepalive: true }));
+    // Closing the page loses a take still saving: ask first.
+    window.addEventListener('beforeunload', (e) => {
+      if (!this.hasUnsavedTakes()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+  }
+
+  /** A take is still saving (in any room: its upload goes on after you leave). */
+  hasUnsavedTakes() {
+    return Object.keys(this.savingLines).length > 0;
   }
 
   /** One of the current line's takes by ID. */
@@ -41,6 +52,8 @@ export class TakesCardMethods {
     const mine = !!line && this.canRecordLine(line);
     const inDub = pickedTake(this.roomState?.takes, line);
     const pending = line && this.pendingDelete?.lineId === line.line_id ? this.pendingDelete : null;
+    // A take saving on this line: a row of its own, and the other rows can't change meanwhile.
+    const saving = line ? this.savingTake(line) : null;
 
     // Keyboard focus on a row stays on that take's row through the redraw.
     const active = document.activeElement;
@@ -51,7 +64,7 @@ export class TakesCardMethods {
     const live = takes.filter((t) => t.take_id !== pending?.takeId);
     if (this.takesCardTitle) this.takesCardTitle.textContent = live.length ? `TAKES · ${live.length}` : 'TAKES';
     if (this.takesEmpty) {
-      this.takesEmpty.hidden = takes.length > 0;
+      this.takesEmpty.hidden = takes.length > 0 || !!saving;
       this.takesEmpty.textContent = mine ? 'No takes yet. Press Space to record.' : 'No takes yet.';
     }
     if (this.takesHint) this.takesHint.hidden = !(mine && live.length === 1);
@@ -64,10 +77,11 @@ export class TakesCardMethods {
     for (const t of live) {
       if (Number.isFinite(t.timing_score) && t.timing_score > 0 && (!best || t.timing_score >= best.timing_score)) best = t;
     }
+    if (saving) this.takesList.appendChild(this.savingTakeRow(saving));
     for (const take of [...takes].reverse()) {
       this.takesList.appendChild(take.take_id === pending?.takeId
         ? this.deletedTakeRow(take)
-        : this.takeRow(take, { inDub: take.take_id === inDub?.take_id, mine, best: take === best }));
+        : this.takeRow(take, { inDub: take.take_id === inDub?.take_id, mine, best: take === best, locked: !!saving }));
     }
 
     const radios = [...this.takesList.querySelectorAll('[role="radio"]')];
@@ -79,7 +93,7 @@ export class TakesCardMethods {
   }
 
   /** "◉ Take 3 · 0.8 s · Mika · Tight sync · In the dub | Use | ⋯" */
-  takeRow(take, { inDub, mine, best }) {
+  takeRow(take, { inDub, mine, best, locked = false }) {
     const row = takeEl('div', `take-row${inDub ? ' picked' : ''}`);
     row.dataset.takeId = take.take_id;
 
@@ -109,6 +123,7 @@ export class TakesCardMethods {
       use.type = 'button';
       use.setAttribute('aria-label', `Use take ${take.number}`);
       use.dataset.tip = 'Use this take in the dub (Enter)';
+      use.disabled = locked;
       use.addEventListener('click', () => this.pickTake(take));
     }
 
@@ -122,9 +137,10 @@ export class TakesCardMethods {
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', `Take ${take.number}`);
     menu.hidden = true;
-    const item = (label, key, onClick) => {
+    const item = (label, key, onClick, disabled = false) => {
       const b = menu.appendChild(takeEl('button', 'take-menu-item'));
       b.type = 'button';
+      b.disabled = disabled;
       b.setAttribute('role', 'menuitem');
       b.tabIndex = -1;
       b.appendChild(takeEl('span', 'take-menu-label', label));
@@ -135,7 +151,7 @@ export class TakesCardMethods {
       });
     };
     item('Play this take', 'P', () => this.playHistoryTake(take, radio));
-    if (mine) item('Delete take', 'Del', () => this.deleteTake(take));
+    if (mine) item('Delete take', 'Del', () => this.deleteTake(take), locked);
     more.addEventListener('click', () => {
       if (this.openTakeMenu?.menu === menu) this.closeTakeMenu();
       else this.openTakesMenu({ row, more, menu });
@@ -155,6 +171,15 @@ export class TakesCardMethods {
         this.closeTakeMenu();
       }
     });
+    return row;
+  }
+
+  /** "Take 4 · Saving… cleaning up noise" while the take uploads and is cleaned. */
+  savingTakeRow(saving) {
+    const row = takeEl('div', 'take-row is-pending');
+    row.appendChild(takeEl('span', 'take-pending-spin spinning')).setAttribute('aria-hidden', 'true');
+    row.appendChild(takeEl('span', 'take-pending-text',
+      `Take ${saving.number} · ${saving.noiseReduction ? 'Saving… cleaning up noise' : 'Saving…'}`));
     return row;
   }
 
@@ -229,9 +254,9 @@ export class TakesCardMethods {
   /** Deletes a take of the current line after a 6 s in-place Undo. The DELETE goes out
    *  when the time is up, at once on a line change, on leaving the booth or on pagehide. */
   deleteTake(take) {
-    if (this.isProcessingTake || !this.roomState) return;
+    if (!this.roomState) return;
     const line = this.roomState.pack.lines[this.currentLineIndex];
-    if (!line || !take || !this.canRecordLine(line)) return;
+    if (!line || !take || !this.canRecordLine(line) || this.savingTake(line)) return;
     this.flushPendingDelete();
     this.pendingDelete = {
       roomId: this.roomState.room_id,

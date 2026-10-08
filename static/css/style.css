@@ -2545,6 +2545,17 @@ body.resizing .resize-grip-pill {
   font-weight: 500;
   color: var(--foreground-muted);
 }
+/* The line whose take is saving */
+.chip-item.is-saving {
+  border-style: dashed;
+  border-color: var(--primary);
+}
+.chip-saving {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+}
 
 /* ------------------------------------------------------------- */
 /* RIGHT COLUMN: VINTAGE HARDWARE CONSOLE RACK                   */
@@ -2974,6 +2985,37 @@ body.resizing .resize-grip-pill {
 }
 .take-menu-key {
   color: var(--foreground-muted);
+}
+.take-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* A take saving, or waiting to upload: a dashed row above the takes */
+.take-row.is-pending {
+  min-height: 36px;
+  padding-left: 10px;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+  border-style: dashed;
+  border-color: var(--border-wood);
+}
+.take-row.is-pending:hover {
+  background: transparent;
+}
+.take-pending-spin {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(217, 119, 6, 0.3);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.take-pending-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--foreground);
 }
 .take-row.is-deleted {
   min-height: 36px;
@@ -4136,69 +4178,6 @@ svg {
   justify-content: center;
   flex-wrap: wrap;
   animation: studioFadeIn 300ms ease;
-}
-
-/* Booth Voice Take Processing & Lockout Overlay */
-.booth-processing-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 1500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(12, 10, 9, 0.78);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: var(--radius-lg);
-  animation: studioFadeIn 150ms ease forwards;
-  pointer-events: all;
-  user-select: none;
-}
-
-.booth-processing-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  background: linear-gradient(180deg, var(--muted) 0%, var(--panel-shade) 100%);
-  border: 1px solid var(--primary);
-  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.8), 0 0 24px var(--accent-amber-glow);
-  padding: 18px 24px;
-  border-radius: var(--radius-xl);
-  max-width: 420px;
-}
-
-.processing-spinner-ring {
-  width: 32px;
-  height: 32px;
-  border: 3px solid rgba(217, 119, 6, 0.25);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spinSpinner 0.8s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes spinSpinner {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.processing-content {
-  text-align: left;
-}
-
-.processing-title {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--foreground);
-  margin-bottom: 3px;
-}
-
-.processing-sub {
-  font-size: 12px;
-  color: var(--foreground-muted);
-  line-height: 1.35;
 }
 
 /* Interaction Lock Class Utilities */

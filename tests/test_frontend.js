@@ -282,6 +282,9 @@ try {
         takes: { t1200: { picked: "old1", next_number: 2, takes: [{ ...prevTake }] } }, users: {} });
 
       // Slider still shows the previous take's auto gain: the new take must get its own.
+      // The booth is on that line, so the saved take loads into it.
+      app.currentView = "booth";
+      app.currentLineIndex = 0;
       app.roomState = roomB3();
       app.sliderGain.value = "6";
       await app.uploadTake(0, new dom.window.Blob(["x"]));

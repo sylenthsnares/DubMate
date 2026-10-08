@@ -94,6 +94,7 @@ async function boot() {
   env.sent = [];
   app.showToast = (msg) => env.toasts.push(msg);
   app.user = { id: "u1", name: "Ana" };
+  app.currentView = "booth";
   app.socket.send = () => {};
   app.socket.updateTakeParams = (lineId, takeId, params) => env.sent.push({ lineId, takeId, ...params });
   env.loaded = [];
