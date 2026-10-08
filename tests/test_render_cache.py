@@ -371,7 +371,7 @@ class TestRoomRoutes(UploadCase):
     """Upload levels, the project ZIP and exports through the room's render cache."""
 
     def _zip(self):
-        res = self.client.get(f"/api/rooms/{self.ROOM}/export/project_zip")
+        res = self.client.get(f"/api/rooms/{self.ROOM}/export/project_zip?user_id=hostT")
         self.assertEqual(res.status_code, 200, res.text)
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             manifest = json.loads(zf.read(next(n for n in zf.namelist() if n.endswith("project_manifest.json"))))
@@ -420,7 +420,7 @@ class TestRoomRoutes(UploadCase):
         self._room()
         self._upload("t1000", speech_like(duration=1.0, lead=0.1))
         with mock.patch.object(vocal_chain, "available", return_value=False):
-            zip_res = self.client.get(f"/api/rooms/{self.ROOM}/export/project_zip")
+            zip_res = self.client.get(f"/api/rooms/{self.ROOM}/export/project_zip?user_id=hostT")
             video_res = self.client.get(f"/api/rooms/{self.ROOM}/export/download")
         for res in (zip_res, video_res):
             self.assertEqual(res.status_code, 503, res.text)

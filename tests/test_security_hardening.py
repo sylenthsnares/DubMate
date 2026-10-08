@@ -224,7 +224,7 @@ class TestConfigLocalOnly(unittest.TestCase):
 
     def setUp(self):
         import tempfile
-        self.client = TestClient(app)
+        self.client = TestClient(app, base_url="http://127.0.0.1:8000")
         self.target = tempfile.mkdtemp(prefix="dm_cfg_")
         self.orig_config = pack_loader.load_config()
         self.orig_exports = common.exports_dir()
@@ -248,6 +248,62 @@ class TestConfigLocalOnly(unittest.TestCase):
         resp = self.client.post("/api/config", json={"exports_dir": self.target})
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(pack_loader.load_config().get("exports_dir"), self.target)
+
+    def test_lan_request_is_rejected_and_config_unchanged(self):
+        lan = TestClient(app, base_url="http://192.168.1.5:8000")
+        resp = lan.post("/api/config", json={"exports_dir": self.target})
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertEqual(pack_loader.load_config(), self.orig_config)
+        self.assertEqual(common.exports_dir(), self.orig_exports)
+
+
+_PRIVATE_CONFIG_KEYS = ("packs_dir", "default_packs_dir", "scanned_paths", "config_file",
+                        "exports_dir", "cache_dir", "install_root", "mic_sync")
+
+
+class TestConfigPrivacy(unittest.TestCase):
+    """GET /api/config and /api/packs/rescan keep the host's folders off other computers."""
+
+    LOCAL = "http://127.0.0.1:8000"
+
+    def _remote_calls(self):
+        """(label, client, headers) for every kind of caller that isn't this computer."""
+        local = TestClient(app, base_url=self.LOCAL)
+        return [
+            ("testserver host", TestClient(app), {}),
+            ("cf-ray", local, {"Cf-Ray": "abc123-LHR"}),
+            ("cf-connecting-ip", local, {"Cf-Connecting-Ip": "1.2.3.4"}),
+            ("lan host", TestClient(app, base_url="http://192.168.1.5:8000"), {}),
+            ("foreign origin", local, {"Origin": "https://evil.example"}),
+        ]
+
+    def test_remote_get_config_has_packs_but_no_paths(self):
+        for label, client, headers in self._remote_calls():
+            resp = client.get("/api/config", headers=headers)
+            self.assertEqual(resp.status_code, 200, label)
+            data = resp.json()
+            for key in _PRIVATE_CONFIG_KEYS:
+                self.assertNotIn(key, data, f"{label}: {key} leaked")
+            self.assertEqual(data["status"], "ok", label)
+            self.assertIsInstance(data["packs"], list, label)
+            self.assertEqual(data["pack_count"], len(data["packs"]), label)
+
+    def test_local_get_config_is_complete(self):
+        data = TestClient(app, base_url=self.LOCAL).get("/api/config").json()
+        for key in _PRIVATE_CONFIG_KEYS:
+            self.assertIn(key, data, key)
+        self.assertIn("packs", data)
+        self.assertIn("pack_count", data)
+
+    def test_rescan_hides_scanned_paths_from_remote_callers(self):
+        for method in ("get", "post"):
+            for label, client, headers in self._remote_calls():
+                resp = getattr(client, method)("/api/packs/rescan", headers=headers)
+                self.assertEqual(resp.status_code, 200, (method, label))
+                self.assertEqual(resp.json()["scanned_paths"], [], (method, label))
+            local = getattr(TestClient(app, base_url=self.LOCAL), method)("/api/packs/rescan").json()
+            expected = [os.path.abspath(d) for d in pack_loader.PACKS_DIRS if os.path.exists(d)]
+            self.assertEqual(local["scanned_paths"], expected, method)
 
 
 if __name__ == "__main__":

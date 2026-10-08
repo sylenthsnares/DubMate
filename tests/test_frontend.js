@@ -596,8 +596,8 @@ try {
       console.log("PASS: a tab from another DubMate version stops applying state and asks for a reload!");
     }
 
-    // Test 8e: take history in the booth. "Takes (N)" shows only with 2+ takes on a line
-    // you can record; rows list takes oldest first; Use picks, delete confirms, Play
+    // Test 8e: take history in the booth. "Takes (N)" shows from the first take on a line
+    // you can record; Escape inside it closes it and returns to the button; rows list takes oldest first; Use picks, delete confirms, Play
     // plays the engine's render of the take's own sound and leaves the controls alone.
     {
       const doc = dom.window.document;
@@ -619,10 +619,40 @@ try {
       app.showToast = (m) => toasts.push(m);
       app.audio.loadAudioBuffer = () => Promise.resolve({ duration: 2.5 });
 
-      // One take: no button.
-      app.roomState = roomWith({ t1200: { picked: "a1", next_number: 2, takes: [mk("a1", 1, "Ana")] } });
+      const btnLabel = () => btnTakes.textContent.trim();
+      // No takes: no button.
+      app.roomState = roomWith({});
       await app.loadBoothLine(0);
-      if (takesBox.style.display !== "none") fail("button shown with one take");
+      if (takesBox.style.display !== "none") fail("button shown with no takes");
+
+      // One take on your line: "Takes (1)", with a chevron the screen reader skips.
+      const one = () => ({ t1200: { picked: "a1", next_number: 2, takes: [mk("a1", 1, "Ana")] } });
+      app.roomState = roomWith(one());
+      await app.loadBoothLine(0);
+      if (takesBox.style.display === "none" || btnLabel() !== "Takes (1)") fail("button not shown with one take", btnLabel());
+      if (!btnTakes.classList.contains("btn-secondary")) fail("button not in the secondary style", btnTakes.className);
+      if (btnTakes.querySelector(".take-history-chevron")?.getAttribute("aria-hidden") !== "true") fail("chevron missing or read aloud");
+
+      // Escape inside the open history closes it, focuses the button, and leaves an open
+      // settings panel alone.
+      btnTakes.click();
+      if (panel.style.display === "none" || btnTakes.getAttribute("aria-expanded") !== "true") fail("one take: panel did not open");
+      const realSettingsOpen = app.isAudioSettingsOpen;
+      const realCloseSettings = app.closeAudioSettings;
+      let settingsClosed = false;
+      app.isAudioSettingsOpen = () => true;
+      app.closeAudioSettings = () => { settingsClosed = true; };
+      panel.querySelector(".take-history-play").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      app.isAudioSettingsOpen = realSettingsOpen;
+      app.closeAudioSettings = realCloseSettings;
+      if (panel.style.display !== "none" || app.takeHistoryOpen || btnTakes.getAttribute("aria-expanded") !== "false") fail("Escape did not close the history");
+      if (doc.activeElement !== btnTakes) fail("Escape did not return focus to the button", doc.activeElement?.id);
+      if (settingsClosed) fail("Escape in the take history also closed the settings");
+
+      // One take on a line someone else is cast for: no button.
+      app.roomState = roomWith(one(), { host_id: "someone", role_assignments: { Deku: ["u9"] } });
+      await app.loadBoothLine(0);
+      if (takesBox.style.display !== "none") fail("button shown with one take on a line you can't record");
 
       // Two takes on a line someone else is cast for: no button.
       const a1Chain = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1.0, semitones: 2 } } };
@@ -636,8 +666,8 @@ try {
       // Two takes on your line: button shown, panel opens with rows oldest first.
       app.roomState = roomWith(two());
       await app.loadBoothLine(0);
-      if (takesBox.style.display === "none" || btnTakes.innerText !== "Takes (2)") fail("button not shown with 2 takes", btnTakes.innerText);
-      if (btnTakes.dataset.tip !== "Listen to your other takes and choose the one used in the dub") fail("button tooltip");
+      if (takesBox.style.display === "none" || btnLabel() !== "Takes (2)") fail("button not shown with 2 takes", btnLabel());
+      if (btnTakes.dataset.tip !== "Listen to your takes and choose the one used in the dub") fail("button tooltip");
       if (panel.style.display !== "none") fail("panel open before the button is clicked");
       btnTakes.click();
       const rows = [...panel.querySelectorAll(".take-history-row")];
@@ -716,7 +746,7 @@ try {
       app.audio.previewTakeIsolated = realPreview;
       delete app.syncVideoSeek;
       app.leaveRoom();
-      console.log("PASS: take history shows on your lines with 2+ takes, and Play, Use and delete work!");
+      console.log("PASS: take history shows on your lines from the first take, Escape closes it, and Play, Use and delete work!");
     }
 
     // Test 8f: the room refuses a change. A page that still thinks you are the host (the host

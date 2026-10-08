@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "studio",
-  "description": "Lets the studio page, served by the engine on this computer, show and remove Pack Builder in its settings.",
+  "description": "Lets the studio page, served by the engine on this computer, show and remove Pack Builder in its settings, and let the microphone work on the room it joins.",
   "windows": ["main"],
   "local": false,
   "remote": {
@@ -10,6 +10,7 @@
   "permissions": [
     "allow-get-engine-port",
     "allow-get-packbuilder-status",
-    "allow-remove-packbuilder"
+    "allow-remove-packbuilder",
+    "allow-allow-room-origin"
   ]
 }

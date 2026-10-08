@@ -254,7 +254,10 @@ export class ExportMethods {
 
     try {
       const presenceParam = encodeURIComponent(this.masterDialoguePresence || 0.0);
-      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${aspectRatio}&presence=${presenceParam}`, {
+      const userParam = encodeURIComponent(this.user?.id || '');
+      // The Mix the host hears, in case its set_mix_balance hasn't reached the room yet.
+      const balanceParam = encodeURIComponent(this.screeningBalance ?? 50);
+      const res = await fetch(`/api/rooms/${this.roomState.room_id}/export?aspect_ratio=${aspectRatio}&presence=${presenceParam}&balance=${balanceParam}&user_id=${userParam}`, {
         method: 'POST',
       });
 
@@ -508,7 +511,7 @@ export class ExportMethods {
     }
     const roomId = this.roomState.room_id;
     const packName = (this.roomState.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const zipUrl = `/api/rooms/${roomId}/export/project_zip?v=${Date.now()}`;
+    const zipUrl = `/api/rooms/${roomId}/export/project_zip?user_id=${encodeURIComponent(this.user?.id || '')}&v=${Date.now()}`;
 
     // Fetched rather than navigated to. The endpoint answers errors as JSON, so
     // window.location.assign() rendered "{"detail":"Room not found"}" as a page --
@@ -532,7 +535,7 @@ export class ExportMethods {
     }
     const roomId = this.roomState.room_id;
     const packName = (this.roomState.pack?.name || 'Dub').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return this.saveRemoteFile(`/api/rooms/${roomId}/export/stems?v=${Date.now()}`, `DubMate_Stems_${packName}_${roomId}.zip`, {
+    return this.saveRemoteFile(`/api/rooms/${roomId}/export/stems?user_id=${encodeURIComponent(this.user?.id || '')}&v=${Date.now()}`, `DubMate_Stems_${packName}_${roomId}.zip`, {
       control,
       busyText: 'Preparing…',
       startMessage: 'Preparing stems…',
@@ -552,6 +555,7 @@ export class ExportMethods {
    * saveExportsDir() refreshes the cache when the user changes it.
    */
   async fetchExportsDir() {
+    if (!this.isEngineLocal()) return null;
     if (typeof this.exportsDirCache === 'string') return this.exportsDirCache;
     try {
       const data = await this.fetchConfig();

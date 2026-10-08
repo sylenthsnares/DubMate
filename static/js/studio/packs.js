@@ -69,6 +69,8 @@ export class PackMethods {
   }
 
   async fetchPacks() {
+    // The packs folder is on the engine's computer: only its own user may choose it.
+    if (this.btnOpenPackFolder && !this.isEngineLocal()) this.btnOpenPackFolder.style.display = 'none';
     if (!this.packs || this.packs.length === 0) {
       this.renderSkeletonPacks();
     }
@@ -97,7 +99,7 @@ export class PackMethods {
             </p>
             <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
               <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.fetchPacks()">Retry</button>
-              <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">Packs folder</button>
+              ${this.isEngineLocal() ? '<button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">Packs folder</button>' : ''}
             </div>
           </div>
         `;
@@ -112,7 +114,7 @@ export class PackMethods {
   }
 
   async openPackConfigModal() {
-    if (!this.modalPackConfig) return;
+    if (!this.modalPackConfig || !this.isEngineLocal()) return;
     this.modalPackConfig.style.display = 'flex';
     if (this.webConfigFeedback) this.webConfigFeedback.style.display = 'none';
 
@@ -364,14 +366,15 @@ export class PackMethods {
       if (this.packCountBadge) {
         this.packCountBadge.innerText = '0 packs';
       }
+      const local = this.isEngineLocal();
       this.packGrid.innerHTML = `
         <div class="empty-packs-guide glass-card" style="grid-column: 1 / -1; padding: 36px 24px; text-align: center; border: 1px dashed var(--border-wood); border-radius: var(--radius-md); background: rgba(26, 23, 20, 0.6);">
           <h3 style="font-size: 17px; font-weight: 700; margin-bottom: 8px; color: var(--foreground);">No scene packs yet</h3>
           <p style="font-size: 13px; color: var(--foreground-muted); max-width: 500px; margin: 0 auto 18px; line-height: 1.6;">
-            Choose your packs folder, import a pack .zip, or make one in Pack Builder.
+            ${local ? 'Choose your packs folder, import' : 'Import'} a pack .zip, or make one in Pack Builder.
           </p>
           <div style="display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
-            <button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">Choose folder</button>
+            ${local ? '<button class="btn btn-primary btn-sm" onclick="window.dubMateApp.openPackConfigModal()">Choose folder</button>' : ''}
             <button class="btn btn-secondary btn-sm" onclick="document.getElementById('input-pack-zip').click()">Import pack</button>
             <button class="btn btn-secondary btn-sm" onclick="window.dubMateApp.rescanPacksDirectory()">↺ Rescan</button>
           </div>

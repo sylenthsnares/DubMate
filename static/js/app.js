@@ -14,7 +14,7 @@ import { MicSyncMethods } from './studio/mic_sync.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
-import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam } from './studio/lobby.js';
+import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 
 // What the connection pill says. Casting and ready changes wait in the socket's
@@ -39,6 +39,8 @@ const CONNECTION_COPY = {
 
 class DubMateApp {
   constructor() {
+    // Before anything reads localStorage: a member's name and setup from their own DubMate.
+    this.joinHandoff = captureJoinHandoff();
     this.audio = new AudioEngine();
     this.initAudioSetupState();
     this.socket = new RoomSocket();
@@ -47,6 +49,8 @@ class DubMateApp {
 
     // App State
     this.user = this.loadUser();
+    // Keep the id this origin now uses, so a reload stays the same member.
+    if (this.joinHandoff) this.saveUser();
     this.packs = [];
     this.selectedPackId = null;
     this.packSearchQuery = '';
@@ -107,16 +111,17 @@ class DubMateApp {
   }
 
   loadUser() {
-    const saved = localStorage.getItem('dubmate_user');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { }
-    }
-    const randomId = 'u_' + Math.random().toString(36).substring(2, 9);
-    return {
-      id: randomId,
+    const user = {
+      id: 'u_' + Math.random().toString(36).substring(2, 9),
       name: 'Actor ' + Math.floor(Math.random() * 900 + 100),
       color: '#d97706',
     };
+    try {
+      // A join handoff can leave a name and colour without an id; the defaults fill the gaps.
+      const saved = JSON.parse(localStorage.getItem('dubmate_user') || 'null');
+      if (saved && typeof saved === 'object') return { ...user, ...saved };
+    } catch (e) { }
+    return user;
   }
 
   saveUser() {
@@ -315,6 +320,7 @@ class DubMateApp {
     this.micSyncMessage = document.getElementById('mic-sync-message');
     this.btnStartMicSync = document.getElementById('btn-start-mic-sync');
     this.btnStartClapping = document.getElementById('btn-start-clapping');
+    this.btnClapInstead = document.getElementById('btn-clap-instead');
     this.btnCancelMicSync = document.getElementById('btn-cancel-mic-sync');
     this.roomCheckStatus = document.getElementById('room-check-status');
     this.btnRoomCheck = document.getElementById('btn-room-check');
@@ -646,7 +652,8 @@ class DubMateApp {
     this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
 
     this.btnStartSession.addEventListener('click', () => {
-      this.socket.setStatus('recording');
+      // The host moves everyone; a member just goes to the booth themselves.
+      if (this.isHost({ allowDummy: true })) this.socket.setStatus('recording');
       this.showView('booth');
       this.loadBoothLine(this.findFirstAssignedLine());
     });
@@ -792,6 +799,13 @@ class DubMateApp {
     this.btnNextLine.addEventListener('click', () => this.stepLine(1));
     this.btnClearTake.addEventListener('click', () => this.clearCurrentTake());
     this.btnTakeHistory.addEventListener('click', () => this.toggleTakeHistory());
+    // Escape inside the take history closes it and returns to the button, and nothing else.
+    this.btnTakeHistory.parentElement.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.takeHistoryOpen) return;
+      e.stopPropagation();
+      this.toggleTakeHistory();
+      this.btnTakeHistory.focus();
+    });
     this.btnOriginalSpeed?.addEventListener('click', () => this.playAtOriginalSpeed());
 
     // Studio Noise Reduction Synchronization Listeners
@@ -1129,6 +1143,14 @@ class DubMateApp {
       this.masterDialoguePresence = pres;
       this.renderPresenceUI(pres);
       this.applyScreeningPresence();
+      this.dropStaleExport();
+    });
+
+    this.socket.on('mix_balance_sync', (data) => {
+      const balance = Number(data.payload?.balance ?? 50);
+      if (this.roomState) this.roomState.master_mix_balance = balance;
+      this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);
+      this.dropStaleExport();
     });
   }
 
@@ -1357,7 +1379,11 @@ class DubMateApp {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     const selectPackParam = params.get('select_pack');
-    if (roomParam) {
+    if (roomParam && this.joinHandoff) {
+      // Joined from the member's own DubMate, where they already gave their name.
+      this.warnOnVersionMismatch({ toast: true });
+      this.joinRoom(roomParam);
+    } else if (roomParam) {
       this.promptJoinRoom(roomParam);
     } else {
       this.showView('landing');
@@ -1704,6 +1730,11 @@ class DubMateApp {
    */
   isEngineLocal() {
     return isLoopbackOrigin(window.location.origin);
+  }
+
+  /** True when this member has a DubMate of their own (this page's engine or ?home=). */
+  hasHomeEngine() {
+    return !!getHomeOrigin();
   }
 }
 

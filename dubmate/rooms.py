@@ -76,6 +76,8 @@ class Room:
         self.exported_video_path: Optional[str] = None
         self.exported_video_9_16_path: Optional[str] = None
         self.master_dialogue_presence_db: float = 0.0
+        # The premiere's Mix slider: 0 = more music, 50 = even, 100 = more voice.
+        self.master_mix_balance: float = 50.0
         self.export_status: Dict[str, str] = {}
         self.sockets: Set[WebSocket] = set()
         self._save_dirty: bool = False
@@ -286,6 +288,7 @@ class Room:
                 "creator_id": self.creator_id,
                 "created_here": self.created_here,
                 "master_dialogue_presence_db": self.master_dialogue_presence_db,
+                "master_mix_balance": self.master_mix_balance,
             }
             if self.pending_v1_takes:
                 data["pending_v1_takes"] = self.pending_v1_takes
@@ -323,6 +326,7 @@ class Room:
             # (a dropped socket) still learns the refresh ended.
             "cleanup_refreshing": sorted(self.cleanup_refreshing),
             "master_dialogue_presence_db": self.master_dialogue_presence_db,
+            "master_mix_balance": self.master_mix_balance,
             "has_export": has_export,
             "export_video_url": f"/api/rooms/{self.room_id}/export/video?aspect_ratio=16:9" if has_export else None,
             "download_url": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9" if has_export else None,
@@ -609,6 +613,11 @@ def load_room_folder(room_id: str) -> Optional[Room]:
         except (TypeError, ValueError):
             presence = 0.0
         room.master_dialogue_presence_db = max(-12.0, min(12.0, presence))
+        try:
+            balance = float(data.get("master_mix_balance", 50.0))
+        except (TypeError, ValueError):
+            balance = 50.0
+        room.master_mix_balance = max(0.0, min(100.0, balance)) if balance == balance else 50.0
         if version == STATE_VERSION:
             room.takes = raw_takes
             v1_takes = data.get("pending_v1_takes") or {}

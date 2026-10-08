@@ -638,7 +638,7 @@ try {
       clickUi(el);
       await settle();
       const requested = stemsFetches(fetchesBefore);
-      if (requested.length !== 1 || !/^\/api\/rooms\/TEST12\/export\/stems\?v=\d+$/.test(requested[0])) {
+      if (requested.length !== 1 || !/^\/api\/rooms\/TEST12\/export\/stems\?user_id=[^&]+&v=\d+$/.test(requested[0])) {
         fail(`#${el.id} did not fetch the stems route once`, requested);
       }
       if (savedFiles.length !== savesBefore + 1) fail(`#${el.id} did not hand the stems to the browser`);

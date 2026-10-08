@@ -76,6 +76,7 @@
 ### Fixed
 - **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.
 - **Premiere Dialogue Level**: the premiere's video now uses the room's Dialogue level, like every other export.
+- **Premiere Mix Reaches the Video**: the premiere's Mix slider (more music or more voice) now changes the video you save, the stems and the premiere video, not just what you hear. Moving it switches the final video back to the live mix so you hear the change. The host's setting is the room's and everyone hears it.
 - **Export Folder Cleanup**: creating a room no longer deletes earlier renders and ZIPs from your export folder.
 - **Outdated Link Importer**: when a link import fails because the downloader is out of date, Pack Builder says so and shows how to update it.
 - **Wrong Background Track in the Next Scene**: after recording one scene, the next scene could play the previous scene's backing track.
@@ -98,10 +99,21 @@
 - **Pack Import Safety**: archive entries disguised under `__MACOSX` names are now checked like every other file.
 - **Desktop Install Paths**: installing under a folder whose path merely contains "target" (for example `D:\Targets\DubMate`) no longer confuses the app's install-folder detection.
 - **Windows `update.bat`**: the dependency and tools steps now report errors correctly.
+- **Takes From the First Take**: the Takes button shows as soon as a line has one take, so your take history is easy to find. Escape closes it.
+- **Joining Keeps Your Setup**: joining a room from your own DubMate keeps your name, colour, mic, headphones and mic sync. There's no second name prompt and no setup screen.
+- **No Mic Prompt on a Host's Page in the Desktop App**: the desktop app no longer asks for the microphone again when you join a host's room. Only the room you joined gets the mic without asking. In a browser, the question comes before your first count-in, never during it.
+- **Sound on Your Chosen Headphones**: clicks, previews, the count-in and the backing track play on the headphones you chose, even after DubMate restarts.
+- **Fairer Clap Sync**: clap sync accepts normal human timing. If it can't use your claps, it says whether it couldn't hear them or they were uneven.
+- **Louder Sync Clicks**: Sync your mic plays loud, sharp clicks that small earbuds held to the mic can get through. It first asks you to take your earbuds or headphones out and hold them right next to the mic. If the clicks aren't heard, it says to turn your volume up and hold the earbuds closer, then try again, or clap instead.
+- **Clap Sync Ignores Room Noise**: clap sync only counts sharp claps on the beat. Room noise, typing or talking with nobody clapping is no longer saved as your mic's delay. DubMate says it heard other sounds and asks you to try somewhere quieter.
+- **Mic Problems Say What to Do**: when the microphone can't be opened, DubMate says why in plain words: not allowed, not plugged in, in use by another app, or no longer connected.
+- **Level Meter Keeps Moving**: the level meter in Audio settings keeps moving during Sync your mic, Check your room and Check your loudest line, and comes back after they finish, fail or are cancelled.
 
 ### Security
 - **Settings Locked to the Host Machine**: `POST /api/config` (packs folder, export folder) now refuses requests that arrive through the public Cloudflare tunnel.
 - **Room Registry Hardening**: the worker answers a malformed room-create request with a 400 instead of a server error.
+- **The Host's Folders Stay Private**: people in a room no longer see the host's folders or settings. On a host's page, Audio settings shows only your own audio, and the host's folders can only be changed on the host's computer.
+- **Only the Host Runs the Room**: only the host can move everyone to recording, change the room's dialogue level, make the video, or get the stems and project files. Members who try are told only the host can do it, and their Start just takes them to the booth.
 
 ### Changed
 - **Engine Layout**: the backend routes moved from `app.py` into the `dubmate/` package, and the studio frontend was split into `static/js/studio/` modules and `static/css/builder.css`. No behaviour change.

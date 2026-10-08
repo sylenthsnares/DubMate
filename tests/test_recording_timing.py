@@ -551,7 +551,7 @@ class TestMicSyncConfig(unittest.TestCase):
     def setUpClass(cls):
         import app
         from starlette.testclient import TestClient
-        cls.client = TestClient(app.app)
+        cls.client = TestClient(app.app, base_url="http://127.0.0.1:8000")
 
     def setUp(self):
         import pack_loader

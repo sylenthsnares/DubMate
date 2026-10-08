@@ -35,6 +35,9 @@
         "installerHooks": "installer-hooks.nsh"
       }
     },
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    },
     "resources": [
       "resources/**/*"
     ],
