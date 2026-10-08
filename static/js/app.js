@@ -3,7 +3,7 @@ import { AudioEngine } from './audio_engine.js';
 import { WaveformRenderer } from './waveform.js';
 import { RoomSocket } from './room_socket.js';
 import { initAllKnobs } from './knob.js';
-import { showToast, announce, initModeDropdown, initTooltips, mixin, isDialogOpen } from './ui_common.js';
+import { showToast, announce, initModeDropdown, initTooltips, mixin, isDialogOpen, openDialog, setFieldError } from './ui_common.js';
 import { initShortcutSheet } from './shortcuts.js';
 import { AudioSetupMethods } from './studio/audio_setup.js';
 import { ExportMethods } from './studio/export.js';
@@ -15,7 +15,7 @@ import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
 import { TakesCardMethods } from './studio/takes_card.js';
-import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff } from './studio/lobby.js';
+import { LobbyMethods, isLoopbackOrigin, getHomeOrigin, captureHomeOriginParam, captureJoinHandoff, FIRST_ROOM_KEY } from './studio/lobby.js';
 import { TAKE_STATE_VERSION, lineTakes } from './studio/takes.js';
 import { IDENTITY_COLORS, normalizeColor, cleanName, colorName, renderColorPicker } from './identity.js';
 
@@ -82,7 +82,6 @@ class DubMateApp {
 
     // Noise Reduction State
     this.applyNoiseReduction = localStorage.getItem('dubmate_noise_reduction') !== 'false';
-    this.pendingJoinRoomId = null;
 
     // Public registry status for the current room, refreshed while it publishes.
     this.roomShare = null;
@@ -147,18 +146,42 @@ class DubMateApp {
     localStorage.setItem('dubmate_user', JSON.stringify(this.user));
   }
 
+  /** Start and Join need a name: true when there is one, else the landing asks for it inline. */
+  requireName() {
+    const name = cleanName(this.user.name);
+    if (name) {
+      if (name !== this.user.name) {
+        this.user.name = name;
+        this.saveUser();
+        this.updateUserUI();
+      }
+      return true;
+    }
+    setFieldError(this.inputUserName, 'Type your name first');
+    this.inputUserName?.focus();
+    return false;
+  }
+
   updateUserUI() {
     if (this.inputUserName && document.activeElement !== this.inputUserName) {
       this.inputUserName.value = this.user.name || '';
     }
     const name = (this.user.name || '').trim();
     if (this.headerUserName) {
-      this.headerUserName.innerText = name || 'You';
+      this.headerUserName.textContent = name || 'You';
     }
+    const initial = (Array.from(name)[0] || '?').toUpperCase();
     if (this.headerUserAvatar) {
-      this.headerUserAvatar.innerText = (Array.from(name)[0] || '?').toUpperCase();
+      this.headerUserAvatar.textContent = initial;
       // In a room, the colour the room gave you (yours may be taken there).
       this.headerUserAvatar.style.backgroundColor = this.roomState?.users?.[this.user.id]?.color || this.user.color;
+    }
+    if (this.headerUserPill) {
+      this.headerUserPill.dataset.tip = this.roomState ? 'Your name and colour in this room' : 'Your name and colour';
+    }
+    if (this.youAvatar) {
+      this.youAvatar.textContent = initial;
+      this.youAvatar.style.background = this.user.color;
     }
     // Redrawn for the initial on your swatch, but never under a focused swatch.
     if (this.colorPalette && !this.colorPalette.contains(document.activeElement)) {
@@ -203,6 +226,7 @@ class DubMateApp {
       booth: document.getElementById('view-booth'),
       screening: document.getElementById('view-screening'),
       left: document.getElementById('view-left'),
+      join: document.getElementById('view-join'),
     };
 
     // Header & Studio Breadcrumbs
@@ -246,8 +270,10 @@ class DubMateApp {
     this.btnCreateRoom = document.getElementById('btn-create-room');
     this.btnJoinRoom = document.getElementById('btn-join-room');
     this.inputRoomCode = document.getElementById('input-room-code');
-    this.inputLeftRoomCode = document.getElementById('input-left-room-code');
-    this.btnLeftJoinRoom = document.getElementById('btn-left-join-room');
+    this.youAvatar = document.getElementById('you-avatar');
+    this.heroBanner = document.querySelector('#view-landing .hero-banner');
+    this.btnSceneMenu = document.getElementById('btn-scene-menu');
+    this.sceneMenu = document.getElementById('scene-menu');
 
     // Lobby elements
     this.lobbyPackTitle = document.getElementById('lobby-pack-title');
@@ -536,7 +562,6 @@ class DubMateApp {
       isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
       getView: () => this.currentView,
     });
-    this.initJoinModal();
 
     const btnLeaveRoom = document.getElementById('btn-leave-room');
     if (btnLeaveRoom) {
@@ -547,6 +572,7 @@ class DubMateApp {
       this.user.name = e.target.value;
       this.saveUser();
       this.updateUserUI();
+      if (cleanName(this.user.name)) setFieldError(this.inputUserName, '');
     });
 
     this.inputUserName.addEventListener('focus', () => {
@@ -564,35 +590,21 @@ class DubMateApp {
       this.updateUserUI();
     });
 
-    // Landing Tabs
-    const tabCreate = document.getElementById('tab-btn-create');
-    const tabJoin = document.getElementById('tab-btn-join');
-    const panelCreate = document.getElementById('panel-create-room');
-    const panelJoin = document.getElementById('panel-join-room');
-
-    tabCreate.addEventListener('click', () => {
-      tabCreate.classList.add('active');
-      tabCreate.setAttribute('aria-selected', 'true');
-      tabJoin.classList.remove('active');
-      tabJoin.setAttribute('aria-selected', 'false');
-      panelCreate.style.display = 'block';
-      panelJoin.style.display = 'none';
-    });
-
-    tabJoin.addEventListener('click', () => {
-      tabJoin.classList.add('active');
-      tabJoin.setAttribute('aria-selected', 'true');
-      tabCreate.classList.remove('active');
-      tabCreate.setAttribute('aria-selected', 'false');
-      panelCreate.style.display = 'none';
-      panelJoin.style.display = 'block';
-    });
-
     this.btnCreateRoom.addEventListener('click', () => this.createRoom());
-    this.btnJoinRoom.addEventListener('click', () => this.joinRoomFromInput());
-    if (this.btnLeftJoinRoom) {
-      this.btnLeftJoinRoom.addEventListener('click', () => this.joinRoomFromInput(this.inputLeftRoomCode));
-    }
+    this.initCodeForm(document.getElementById('form-join-room'));
+    this.initCodeForm(document.getElementById('join-missing-form'));
+    this.initCodeForm(document.getElementById('form-left-join'));
+    document.getElementById('btn-rejoin-room')?.addEventListener('click', () => this.rejoinRoom());
+    const joinForm = document.getElementById('join-form');
+    joinForm?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.submitJoinCard();
+    });
+    document.getElementById('input-join-name')?.addEventListener('input', (e) => {
+      setFieldError(e.target, '');
+      this.renderJoinCardIdentity();
+    });
+    this.initSceneMenu();
     if (this.btnRescanPacks) {
       this.btnRescanPacks.addEventListener('click', () => this.rescanPacksDirectory());
     }
@@ -617,11 +629,6 @@ class DubMateApp {
     }
     if (this.btnSavePackConfig) {
       this.btnSavePackConfig.addEventListener('click', () => this.savePackConfig());
-    }
-    if (this.modalPackConfig) {
-      this.modalPackConfig.addEventListener('click', (e) => {
-        if (e.target === this.modalPackConfig) this.closePackConfigModal();
-      });
     }
     if (this.webInputPackPath) {
       this.webInputPackPath.addEventListener('keydown', (e) => {
@@ -1452,13 +1459,17 @@ class DubMateApp {
 
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
+    const leftParam = params.get('left');
     const selectPackParam = params.get('select_pack');
     if (roomParam && this.joinHandoff) {
       // Joined from the member's own DubMate, where they already gave their name.
-      this.warnOnVersionMismatch({ toast: true });
+      this.warnOnVersionMismatch();
       this.joinRoom(roomParam);
     } else if (roomParam) {
-      this.promptJoinRoom(roomParam);
+      // A link guest: the join card checks the code, then asks their name and colour.
+      this.openJoinCard(roomParam);
+    } else if (leftParam) {
+      this.showLeftView(leftParam.trim().toUpperCase());
     } else {
       this.showView('landing');
       if (selectPackParam) {
@@ -1477,6 +1488,13 @@ class DubMateApp {
     // A browser guest who left stays on the "You left" view (a failed rejoin
     // must not fall back to the host's home screen).
     if (viewName === 'landing' && this.currentView === 'left') viewName = 'left';
+    // The join card and You left on a host's page, for someone with no DubMate of their
+    // own: Audio, ? and the logo menu would open the host's settings and home screen.
+    const noHome = (viewName === 'join' || viewName === 'left') && !this.hasHomeEngine();
+    document.body.classList.toggle('no-home-chrome', noHome);
+    document.getElementById('logo-dropdown-container')?.toggleAttribute('inert', noHome);
+    // Who you are shows everywhere but the join card, where you are choosing it.
+    if (this.headerUserPill) this.headerUserPill.style.display = viewName === 'join' ? 'none' : 'inline-flex';
     document.body.classList.remove('resizing');
     if (viewName !== 'booth') this.flushPendingDelete();
     this.currentView = viewName;
@@ -1521,6 +1539,8 @@ class DubMateApp {
     }
 
     if (viewName === 'landing') {
+      // The hero introduces DubMate until the first room.
+      if (this.heroBanner) this.heroBanner.hidden = localStorage.getItem(FIRST_ROOM_KEY) === '1';
       if (this.isEngineLocal()) this.loadRecentSessions();
       if (!this.packs || this.packs.length === 0) {
         this.fetchPacks();
@@ -1542,11 +1562,30 @@ class DubMateApp {
     }
   }
 
-  /** Asks first; returns true only if the user actually left. */
+  /** Asks first, in the app; resolves true only if the user actually left. */
   confirmLeaveRoom() {
-    if (!confirm('Leave this room?')) return false;
-    this.leaveRoom();
-    return true;
+    const overlay = document.getElementById('modal-leave-room');
+    const code = this.roomState?.room_id || '';
+    document.getElementById('leave-room-text').textContent = code
+      ? `Your takes stay in it. Rejoin any time with the code ${code}.`
+      : 'Your takes stay in it.';
+    return new Promise((resolve) => {
+      let answered = false;
+      const close = openDialog(overlay, {
+        // Escape, a backdrop click and Stay all keep you in the room.
+        onClose: () => {
+          if (!answered) resolve(false);
+        },
+      });
+      const answer = (left) => {
+        answered = true;
+        close();
+        if (left) this.leaveRoom();
+        resolve(left);
+      };
+      document.getElementById('btn-leave-room-cancel').onclick = () => answer(false);
+      document.getElementById('btn-leave-room-confirm').onclick = () => answer(true);
+    });
   }
 
   /** Drops ?room= (pushState to the bare path, so the whole query string goes). */
@@ -1575,25 +1614,26 @@ class DubMateApp {
     this._connectionLost = '';
     this._connectionOverflowed = false;
     const wasHost = this.isHost();
+    const leftCode = this.roomState?.room_id || '';
+    const leftScene = this.roomState?.pack?.name || this.roomState?.pack?.id || '';
     this.resetRoomSession();
     this.selectedPackId = null;
 
-    // Clean URL query parameters (?room=...)
-    this.clearRoomQueryParam();
-
     // Reset Header & HUD
     if (this.headerRoomBadge) this.headerRoomBadge.style.display = 'none';
-    if (this.headerUserPill) this.headerUserPill.style.display = 'none';
     if (this.btnLeaveRoom) this.btnLeaveRoom.style.display = 'none';
     if (this.studioBreadcrumbs) this.studioBreadcrumbs.style.display = 'none';
     if (this.castActivityBar) this.castActivityBar.style.display = 'none';
 
     // A guest who joined from a plain browser link has no DubMate of their own
-    // to go back to, and the home screen here would list the host's packs.
+    // to go back to, and the home screen here would list the host's packs. The
+    // address becomes /?left=CODE (replacing ?room=, so Back doesn't reopen the room).
     if (!wasHost && !getHomeOrigin()) {
-      this.showView('left');
+      this.showLeftView(leftCode, leftScene);
       return;
     }
+    // Clean URL query parameters (?room=...)
+    this.clearRoomQueryParam();
     this.showView('landing');
     this.showToast('You left the room');
   }
@@ -1778,13 +1818,10 @@ class DubMateApp {
   initModeDropdown() {
     initModeDropdown({
       onStudioClick: (e, closeMenu) => {
+        closeMenu();
         if (this.roomState) {
           e.preventDefault();
-          if (this.confirmLeaveRoom()) {
-            closeMenu();
-          }
-        } else {
-          closeMenu();
+          this.confirmLeaveRoom();
         }
       },
     });

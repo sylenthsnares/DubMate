@@ -120,7 +120,7 @@ async function checkFolders(url, local) {
 
   await app.openPackConfigModal();
   await settle();
-  if (isShown(w, "modal-pack-config") !== local) fail(`the packs folder dialog ${local ? "did not open" : "opened"} ${where}`);
+  if (!byId(w, "modal-pack-config").hidden !== local) fail(`the packs folder dialog ${local ? "did not open" : "opened"} ${where}`);
 
   const dir = await app.fetchExportsDir();
   if (local ? dir !== HOST_CONFIG.exports_dir : dir !== null) fail(`fetchExportsDir gave ${dir} ${where}`);

@@ -968,6 +968,30 @@ body::after {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--ring);
 }
+.form-input::placeholder {
+  color: var(--foreground-muted);
+}
+.form-input[aria-invalid="true"] {
+  border-color: var(--accent-red-bright);
+}
+
+/* An inline error under a field or button (ui_common.js setFieldError). */
+.field-error {
+  margin-top: var(--space-1);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-red-soft);
+}
+.field-error[hidden] {
+  display: none;
+}
+
+/* A line of help under a control. */
+.form-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
 
 .code-input {
   font-family: var(--font-mono);
@@ -1047,44 +1071,6 @@ body::after {
   border: none;
   border-top: 1px solid var(--border);
   margin: 20px 0;
-}
-
-/* ShadCN Segmented Tab Pills */
-.tab-pill-group {
-  display: flex;
-  padding: 4px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  margin-bottom: 16px;
-  gap: 4px;
-}
-
-.tab-pill {
-  flex: 1;
-  padding: 8px 12px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--foreground-muted);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-.tab-pill:hover {
-  color: var(--foreground);
-}
-.tab-pill.active {
-  background: var(--secondary);
-  color: var(--foreground);
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border-wood);
 }
 
 /* Buttons (ShadCN Variants with Vintage Hardware Tactility) */
@@ -1261,9 +1247,9 @@ body::after {
 
 .hero-title-accent {
   color: var(--primary);
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 50%, var(--accent-brass) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+}
+.hero-banner[hidden] {
+  display: none;
 }
 
 .hero-subtitle {
@@ -1276,13 +1262,51 @@ body::after {
 
 .landing-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 24px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
 }
 
-.panel-actor-setup {
-  padding: 20px;
+/* "You": name, colour and a friend's room. Stays in view while the scenes scroll. */
+.landing-you {
+  position: sticky;
+  top: calc(50px + var(--space-4));
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.landing-you .card-divider {
+  margin: 0;
+}
+.landing-you > .field-error {
+  margin-top: calc(-1 * var(--space-3));
+}
+.you-identity {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.you-identity .avatar {
+  margin-bottom: calc((40px - 44px) / 2);
+}
+.you-name-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A "Room code or invite link" field with its Join button (lobby.js initCodeForm). */
+.code-form-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.code-form-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+.code-form-row .btn {
+  height: 40px;
+  flex-shrink: 0;
 }
 
 /* Continue where you left off (landing, own computer only) */
@@ -1353,11 +1377,6 @@ body::after {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--accent-brass);
-}
-
-/* Pack Instant Search & Filter Bar */
-.pack-search-container {
-  margin-top: 14px;
 }
 
 .search-input-wrapper {
@@ -1452,10 +1471,140 @@ body::after {
   font-weight: 600;
 }
 
-/* Drag and Drop Pack Overlay */
+/* The scenes: a toolbar, the cards, and the chosen scene in a bar that stays at the
+   bottom of the window while the cards scroll (overflow: clip keeps it sticky). */
 .panel-pack-selector {
-  padding: 20px;
   position: relative;
+  overflow: clip;
+}
+.scenes-head {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.scenes-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--foreground-muted);
+}
+.scenes-head .search-input-wrapper {
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 420px;
+  margin-left: auto;
+}
+.btn-icon {
+  width: 32px;
+  padding: 0;
+}
+
+/* The ⋯ menu: Import, Packs folder, Rescan (packs.js initSceneMenu). */
+.scene-menu {
+  position: relative;
+}
+.scene-menu-pop {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--popover);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+.scene-menu-pop[hidden] {
+  display: none;
+}
+.scene-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.scene-menu-item:hover {
+  background: var(--secondary);
+}
+.scene-menu-item:focus-visible {
+  background: var(--secondary);
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.scene-menu-item:disabled {
+  color: var(--foreground-dim);
+  cursor: not-allowed;
+}
+.scene-menu-item svg {
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+}
+
+.scene-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card-header);
+  border-top: 1px solid var(--border);
+}
+.scene-bar-thumb {
+  width: 64px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-wood);
+  background: var(--input);
+  color: var(--foreground-dim);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scene-bar-thumb:empty {
+  display: none;
+}
+.scene-bar-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scene-bar-text {
+  min-width: 0;
+}
+.scene-bar-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scene-bar-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.scene-bar .btn {
+  margin-left: auto;
+  min-width: 220px;
+  flex-shrink: 0;
 }
 
 .pack-dropzone {
@@ -1503,8 +1652,8 @@ body::after {
 .pack-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
 .pack-card {
@@ -1522,7 +1671,6 @@ body::after {
 .pack-card:hover {
   border-color: var(--border-wood);
   background: var(--card);
-  transform: translateY(-2px);
 }
 .pack-card.selected {
   border-color: var(--primary);
@@ -3965,28 +4113,138 @@ svg {
   .toast.is-leaving { transform: none; }
 }
 
-/* Join Room Actor Name & Mic Setup Modal */
-.join-modal-card {
-  max-width: 440px;
-  background: #1c1814;
-  border: 1px solid var(--border-wood);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(217, 119, 6, 0.2);
-}
+/* ------------------------------------------------------------- */
+/* JOIN CARD AND YOU LEFT: one centred column on the room's page  */
+/* ------------------------------------------------------------- */
 
-.join-modal-avatar-preview {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+.room-column {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--space-5) 0;
+}
+
+.join-card {
+  width: min(480px, 100%);
+}
+.join-poster {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  /* Shorter on short windows, so Join stays in view without scrolling. */
+  max-height: 30vh;
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+}
+.join-poster:empty {
+  display: none;
+}
+.join-poster img,
+.join-poster video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.join-body {
+  padding: var(--space-4);
+}
+.join-form,
+.join-missing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.join-form[hidden],
+.join-missing[hidden],
+.join-finding[hidden] {
+  display: none;
+}
+.join-finding {
+  padding: var(--space-5) 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+.join-title {
   font-family: var(--font-sans);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 800;
-  color: var(--white);
-  box-shadow: 0 0 14px rgba(0, 0, 0, 0.5);
-  flex-shrink: 0;
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.join-meta {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground-muted);
+}
+.join-here {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.join-here:empty {
+  display: none;
+}
+.join-here-label {
+  font-size: 12px;
+  color: var(--foreground-muted);
+}
+.join-here-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.join-form .btn-primary {
+  width: 100%;
+}
+.join-hint {
+  text-align: center;
+}
+
+.left-card {
+  width: min(460px, 100%);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Less glow than a working panel, so Rejoin is the brightest thing on screen. */
+  box-shadow: 0 8px 28px -4px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(204, 164, 88, 0.35);
+}
+.left-card .card-divider {
+  margin: 0;
+}
+.left-title {
+  font-family: var(--font-sans);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--foreground);
+}
+.left-rejoin {
+  width: 100%;
+}
+.left-rejoin[hidden] {
+  display: none;
+}
+
+/* On a host's page with no DubMate of your own (join card, You left): no Audio, no ?,
+   and the logo is a plain wordmark (app.js showView also makes it inert). */
+body.no-home-chrome #btn-audio-settings,
+body.no-home-chrome #btn-shortcuts,
+body.no-home-chrome .logo-chevron {
+  display: none;
+}
+body.no-home-chrome .logo-with-dropdown {
+  cursor: default;
 }
 
 /* ------------------------------------------------------------- */

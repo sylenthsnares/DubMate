@@ -220,8 +220,6 @@ Rounded rectangles on the ShadCN scale: 6px (`--radius-sm`) for small buttons, t
 - **Style:** 40px high, input background (#15120f), 1px input border, 8px radius, 14px text.
 - **Focus:** the border turns amber with a 2px `--ring` glow (brass at 40%).
 
-### Segmented Tabs
-- **`.tab-pill-group`:** an input-coloured track with 4px padding. The active pill is walnut control with a wood border and the small shadow. Used for "Create Room" vs "Join Code" and "16:9 Cinema" vs "9:16 Shorts".
 
 ### Toasts
 - Walnut control background, wood border, 8px radius, 13px 600 text and a slight backdrop blur.

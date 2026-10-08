@@ -368,7 +368,7 @@ try {
     // Search by character name "Todoroki"
     app.handlePackSearch("Todoroki");
     const cardsTodoroki = dom.window.document.querySelectorAll(".pack-card");
-    if (cardsTodoroki.length === 1 && app.selectedPackId === "Deku_vs_Todoroki") {
+    if (cardsTodoroki.length === 1 && cardsTodoroki[0].dataset.packId === "Deku_vs_Todoroki" && app.selectedPackId === null) {
       console.log("PASS: Searching 'Todoroki' correctly filtered to 1 pack!");
     } else {
       console.error("FAIL: Search 'Todoroki' expected 1 card, got:", cardsTodoroki.length);

@@ -118,16 +118,16 @@ function selectedCards(w) {
     console.log("PASS: a freshly built pack is selected once the rescan lists it");
   }
 
-  // 3. An unknown pack id leaves the default selection and still cleans the URL.
+  // 3. An unknown pack id chooses nothing and still cleans the URL.
   {
     const { w, app, scrolledTo } = await boot(
       "http://localhost:8000/?select_pack=Nope",
       [pack("First"), pack("Second")],
     );
-    if (app.selectedPackId !== "First") fail(`default selection changed: ${app.selectedPackId}`);
+    if (app.selectedPackId !== null || selectedCards(w).length) fail(`an unknown pack chose a scene: ${app.selectedPackId}`);
     if (scrolledTo.length) fail(`scrolled for an unknown pack: ${JSON.stringify(scrolledTo)}`);
     if (new w.URLSearchParams(w.location.search).has("select_pack")) fail("?select_pack= left in the URL");
-    console.log("PASS: an unknown ?select_pack= keeps the default selection");
+    console.log("PASS: an unknown ?select_pack= chooses nothing (there is no default scene)");
   }
 
   console.log("ALL SELECT PACK TESTS PASSED");
