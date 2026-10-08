@@ -2,7 +2,7 @@
 // noise cleanup can be tuned to the room, and the Room row in Audio settings that runs it
 // and shows the report card. The pure functions below are exported for the node tests.
 // RoomCheckMethods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { micErrorMessage, safeStorageGet, safeStorageSet, safeStorageRemove } from './audio_setup.js';
+import { micErrorMessage, safeStorageGet, safeStorageSet, safeStorageRemove, setStatusState } from './audio_setup.js';
 import { chosenDevice, deviceLabel } from './mic_sync.js';
 import { LEVEL_GOOD_MAX_DB, LEVEL_GOOD_MIN_DB, LEVEL_QUIET_PEAK_DB } from './level_target.js';
 
@@ -238,6 +238,10 @@ export class RoomCheckMethods {
     const matches = checkMatchesMic(check, this.roomCheckInputs(), this.audioSetup.inputId);
     if (!check) this.roomCheckStatus.textContent = ROOM_NOT_CHECKED;
     else this.roomCheckStatus.textContent = matches ? ROOM_ROW_COPY[check.verdict] : ROOM_NEW_MIC;
+    // A noisy room, or a check made with another microphone, needs attention.
+    let state = 'pending';
+    if (check) state = matches && check.verdict !== 'noisy' ? 'done' : 'attention';
+    setStatusState(this.roomCheckStatus, state);
     // A guest's page lives on an address that changes whenever the host restarts DubMate.
     if (this.isEngineLocal()) {
       this.roomCheckStatus.removeAttribute('data-tip');
@@ -270,6 +274,7 @@ export class RoomCheckMethods {
       this.roomState && this.roomState.takes, this.user && this.user.id, check ? check.profile_id : null);
     this.roomCheckRefresh.style.display = refreshing || count > 0 ? '' : 'none';
     if (this.roomCheckRefreshText) {
+      setStatusState(this.roomCheckRefreshText, 'attention');
       const when = check ? 'before this check' : 'with an earlier room check';
       this.roomCheckRefreshText.textContent = refreshing
         ? 'Refreshing older takes…'

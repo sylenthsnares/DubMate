@@ -1591,7 +1591,7 @@
       <div class="modal-header-content" style="text-align: left; margin-bottom: 18px;">
         <div class="modal-badge-row" style="justify-content: flex-start;">
           <span class="badge-studio">AUDIO SETUP</span>
-          <span id="audio-setup-status-pill" class="badge-render-live">NO MIC</span>
+          <span id="audio-setup-status-pill" class="audio-setup-pill status-text is-pending">No mic yet</span>
         </div>
         <h3 id="audio-setup-title" class="modal-title" style="margin-top: 10px; font-size: 19px;">Audio settings</h3>
         <p id="audio-setup-subtitle" class="modal-status-text" style="margin-top: 4px;">
@@ -1749,7 +1749,7 @@
         <div class="audio-device-row" id="mic-sync-row">
           <span class="form-label">Timing</span>
           <div class="audio-path-row">
-            <p id="mic-sync-status" class="audio-device-note" style="flex: 1; margin: 0;" aria-live="polite">Not synced yet</p>
+            <p id="mic-sync-status" class="audio-device-note status-text is-pending" style="flex: 1; margin: 0;" aria-live="polite">Not synced yet</p>
             <button id="btn-mic-sync" class="btn btn-secondary btn-sm" type="button">Sync your mic</button>
           </div>
           <div id="mic-sync-panel" class="audio-inline-feedback mic-sync-panel" style="display: none;">
@@ -1771,7 +1771,7 @@
         <div class="audio-device-row" id="room-check-row">
           <span class="form-label">Room</span>
           <div class="audio-path-row">
-            <p id="room-check-status" class="audio-device-note" style="flex: 1; margin: 0;" aria-live="polite">Not checked yet</p>
+            <p id="room-check-status" class="audio-device-note status-text is-pending" style="flex: 1; margin: 0;" aria-live="polite">Not checked yet</p>
             <button id="btn-room-check" class="btn btn-secondary btn-sm" type="button">Check your room</button>
           </div>
           <button id="btn-room-check-standard" class="btn-link-sm room-check-standard" type="button" style="display: none;"
@@ -1800,7 +1800,7 @@
             </div>
           </div>
           <div id="room-check-refresh" class="audio-path-row room-check-refresh" style="display: none;">
-            <p id="room-check-refresh-text" class="audio-device-note" style="flex: 1; margin: 0;" aria-live="polite"></p>
+            <p id="room-check-refresh-text" class="audio-device-note status-text is-attention" style="flex: 1; margin: 0;" aria-live="polite"></p>
             <button id="btn-room-check-refresh" class="btn btn-secondary btn-sm" type="button"
               data-tip="Cleans them again with your latest room check. Your original recordings are kept.">Refresh older takes</button>
           </div>
@@ -1828,7 +1828,7 @@
         <div class="audio-device-row" id="packbuilder-row" style="display: none;">
           <span class="form-label">Pack Builder</span>
           <div class="audio-path-row">
-            <p id="packbuilder-size-note" class="audio-device-note" style="flex: 1; margin: 0;"></p>
+            <p id="packbuilder-size-note" class="audio-device-note status-text is-pending" style="flex: 1; margin: 0;"></p>
             <button id="btn-remove-packbuilder" class="btn btn-secondary btn-sm" type="button"
               data-tip="To add it back, run the DubMate installer again and tick Pack Builder.">
               <span id="btn-remove-packbuilder-text">Remove Pack Builder</span>

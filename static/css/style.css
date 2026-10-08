@@ -4026,6 +4026,29 @@ svg {
   letter-spacing: 0.05em;
 }
 
+/* The mic pill beside Audio settings' title: a status line in the label style. */
+.audio-setup-pill.status-text {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-wood);
+  background: rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+
+.audio-setup-pill.status-text.is-done::before {
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  vertical-align: 0;
+}
+
 .badge-render-live.ready {
   color: var(--accent-green-bright);
   background: rgba(34, 197, 94, 0.16);
@@ -4493,19 +4516,12 @@ svg {
   color: var(--popover-foreground);
 }
 
+/* Help lines under a row; status lines add .status-text and a state. */
 .audio-device-note {
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--accent-brass);
-}
-
-.audio-device-note.is-warning {
-  color: #fbbf24;
-}
-
-.audio-device-note.is-error {
-  color: var(--accent-red-soft);
+  color: var(--foreground-muted);
 }
 
 .audio-unsupported-box {

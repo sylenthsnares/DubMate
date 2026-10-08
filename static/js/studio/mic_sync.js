@@ -2,7 +2,7 @@
 // remembered per pair and used as a new take's starting timing, and the Timing row in
 // Audio settings that measures it (a click pattern heard back through the mic, or claps).
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { micErrorMessage, safeStorageGet, safeStorageSet } from './audio_setup.js';
+import { micErrorMessage, safeStorageGet, safeStorageSet, setStatusState } from './audio_setup.js';
 import { CLAP_BEAT_SEC, CLICK_TIMES_SEC, combineRuns, devicePairKey, findClapLag, findClickTrainLag, judgeClaps, snapMs } from './timing.js';
 
 // localStorage: {"<mic>|<output>": {latency_ms, method, measured_at}}.
@@ -177,6 +177,7 @@ export class MicSyncMethods {
     const ms = this.currentLatencyMs();
     if (ms === null) this.micSyncStatus.textContent = 'Not synced yet';
     else this.micSyncStatus.textContent = ms > 0 ? `Synced. New takes move ${ms} ms earlier.` : 'Synced.';
+    setStatusState(this.micSyncStatus, ms === null ? 'pending' : 'done');
     // A guest's page lives on an address that changes whenever the host restarts DubMate.
     // A member from their own DubMate brings that one's sync along when joining.
     if (this.isEngineLocal()) {

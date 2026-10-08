@@ -279,13 +279,9 @@ export class AudioSetupMethods {
     });
 
     if (this.audioSetupStatusPill) {
-      if (step === 'devices') {
-        this.audioSetupStatusPill.innerText = 'MIC READY';
-      } else if (step === 'denied') {
-        this.audioSetupStatusPill.innerText = 'MIC BLOCKED';
-      } else {
-        this.audioSetupStatusPill.innerText = 'NO MIC';
-      }
+      const [text, state] = { devices: ['Mic ready', 'done'], denied: ['Mic blocked', 'error'] }[step] || ['No mic yet', 'pending'];
+      this.audioSetupStatusPill.textContent = text;
+      setStatusState(this.audioSetupStatusPill, state);
     }
     if (this.audioSetupSubtitle) {
       if (step === 'devices') {
@@ -539,23 +535,21 @@ export class AudioSetupMethods {
 
   renderDeviceNote(noteEl, result, devices, kindLabel) {
     if (!noteEl) return;
-    noteEl.className = 'audio-device-note';
-
     if (!devices.supported) {
       noteEl.style.display = 'block';
-      noteEl.classList.add('is-error');
-      noteEl.innerText = "This browser can't list audio devices.";
+      setStatusState(noteEl, 'error');
+      noteEl.textContent = "This browser can't list audio devices.";
       return;
     }
     if (result.count === 0) {
       noteEl.style.display = 'block';
-      noteEl.classList.add('is-warning');
-      noteEl.innerText = `No ${kindLabel} was detected. Plug one in and press Rescan.`;
+      setStatusState(noteEl, 'attention');
+      noteEl.textContent = `No ${kindLabel} was detected. Plug one in and press Rescan.`;
       return;
     }
     if (result.missing) {
       noteEl.style.display = 'block';
-      noteEl.classList.add('is-warning');
+      setStatusState(noteEl, 'attention');
       // escapeHtml() because the remembered label is device-supplied text.
       noteEl.innerHTML =
         `Your saved ${escapeHtml(kindLabel)} isn’t connected. Using the system default.`;
@@ -563,11 +557,12 @@ export class AudioSetupMethods {
     }
     if (!devices.labelled) {
       noteEl.style.display = 'block';
-      noteEl.innerText = 'Device names show after you allow microphone access.';
+      setStatusState(noteEl, 'pending');
+      noteEl.textContent = 'Device names show after you allow microphone access.';
       return;
     }
     noteEl.style.display = 'none';
-    noteEl.innerText = '';
+    noteEl.textContent = '';
   }
 
   async applyInputDevice(deviceId) {
@@ -608,18 +603,16 @@ export class AudioSetupMethods {
     }
 
     if (this.audioOutputNote) {
-      this.audioOutputNote.className = 'audio-device-note';
       if (routed.ok) {
         this.audioOutputNote.style.display = 'block';
-        this.audioOutputNote.innerText = next
-          ? '✓ Using this output.'
-          : '✓ Using the system default.';
+        setStatusState(this.audioOutputNote, 'done');
+        this.audioOutputNote.textContent = next ? 'Using this output.' : 'Using the system default.';
       } else if (routed.reason === 'unsupported') {
         this.audioOutputNote.style.display = 'none';
       } else {
         this.audioOutputNote.style.display = 'block';
-        this.audioOutputNote.classList.add('is-error');
-        this.audioOutputNote.innerText =
+        setStatusState(this.audioOutputNote, 'error');
+        this.audioOutputNote.textContent =
           "Couldn't switch to that device. Using the system default.";
       }
     }
@@ -931,7 +924,7 @@ export class AudioSetupMethods {
 
     if (this.packBuilderSizeNote) {
       const size = formatDiskSize(status.size_bytes);
-      this.packBuilderSizeNote.innerText = size ? `Removing it frees ${size}.` : '';
+      this.packBuilderSizeNote.textContent = size ? `Removing it frees ${size}.` : '';
     }
     this.packBuilderRow.style.display = 'block';
   }
