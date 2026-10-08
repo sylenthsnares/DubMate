@@ -22,6 +22,7 @@ fn main() {
         "allow_room_origin",
         "open_mic_settings",
         "open_studio_in_browser",
+        "open_download_page",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

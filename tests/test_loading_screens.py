@@ -233,7 +233,7 @@ class TestHonestLauncherRust(unittest.TestCase):
 
     def test_commands_are_registered_and_allowed(self):
         new = ["start_packbuilder_install", "get_packbuilder_install", "cancel_update",
-               "open_mic_settings", "open_studio_in_browser"]
+               "open_mic_settings", "open_studio_in_browser", "open_download_page"]
         build = self._read("build.rs")
         main = self._read("src", "main.rs")
         for cmd in new:
@@ -245,13 +245,14 @@ class TestHonestLauncherRust(unittest.TestCase):
         default = json.loads(self._read("capabilities", "default.json"))["permissions"]
         for perm in ("allow-start-packbuilder-install", "allow-get-packbuilder-install",
                      "allow-cancel-update", "allow-open-mic-settings",
-                     "allow-open-studio-in-browser"):
+                     "allow-open-studio-in-browser", "allow-open-download-page"):
             self.assertIn(perm, default)
         self.assertNotIn("allow-install-packbuilder", default)
 
         studio = json.loads(self._read("capabilities", "studio.json"))
         for perm in ("allow-open-mic-settings", "allow-start-packbuilder-install",
-                     "allow-get-packbuilder-install", "allow-trigger-start-sidecars"):
+                     "allow-get-packbuilder-install", "allow-trigger-start-sidecars",
+                     "allow-open-download-page"):
             self.assertIn(perm, studio["permissions"])
         # The studio page never gets the browser opener or the updater.
         self.assertNotIn("allow-open-studio-in-browser", studio["permissions"])
