@@ -1,9 +1,13 @@
-//! Opening the only two places outside DubMate it sends someone: the system's
-//! microphone privacy page and the studio in the default browser. The targets are fixed,
-//! so no page can make the app open an arbitrary address or program.
+//! Opening the only three places outside DubMate it sends someone: the system's
+//! microphone privacy page, the studio in the default browser and the download page
+//! for the DubMate installer. The targets are fixed, so no page can make the app open
+//! an arbitrary address or program.
 
 use crate::sidecars::DEFAULT_ENGINE_PORT;
 use crate::state::SharedState;
+
+/// Where the DubMate installers are published.
+const DOWNLOAD_PAGE_URL: &str = "https://github.com/sylenthsnares/DubMate/releases/latest";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ExternalTarget {
@@ -11,6 +15,8 @@ pub(crate) enum ExternalTarget {
     MicSettings,
     /// The studio served by the engine on this port.
     Studio(u16),
+    /// The releases page with the DubMate installers.
+    DownloadPage,
 }
 
 /// The program and arguments that open `target` on `os` (`std::env::consts::OS`).
@@ -31,6 +37,11 @@ pub(crate) fn external_command(
             vec!["url.dll,FileProtocolHandler".to_string(), studio_url(port)],
         )),
         (ExternalTarget::Studio(port), "macos") => Ok(("open", vec![studio_url(port)])),
+        (ExternalTarget::DownloadPage, "windows") => Ok((
+            "rundll32",
+            vec!["url.dll,FileProtocolHandler".to_string(), DOWNLOAD_PAGE_URL.to_string()],
+        )),
+        (ExternalTarget::DownloadPage, "macos") => Ok(("open", vec![DOWNLOAD_PAGE_URL.to_string()])),
         _ => Err(format!("Opening this isn't supported on {}.", os)),
     }
 }
@@ -63,6 +74,12 @@ pub fn open_mic_settings() -> Result<(), String> {
 pub fn open_studio_in_browser(state: tauri::State<'_, SharedState>) -> Result<(), String> {
     let port = state.0.lock().unwrap().engine_port.unwrap_or(DEFAULT_ENGINE_PORT);
     open(ExternalTarget::Studio(port))
+}
+
+/// Opens the download page for the DubMate installer in the default browser.
+#[tauri::command]
+pub fn open_download_page() -> Result<(), String> {
+    open(ExternalTarget::DownloadPage)
 }
 
 #[cfg(test)]
@@ -99,5 +116,19 @@ mod tests {
             ("open", vec!["http://127.0.0.1:8000/".to_string()])
         );
         assert!(external_command(ExternalTarget::Studio(8000), "linux").is_err());
+    }
+
+    #[test]
+    fn the_download_page_in_the_default_browser() {
+        let url = "https://github.com/sylenthsnares/DubMate/releases/latest".to_string();
+        assert_eq!(
+            external_command(ExternalTarget::DownloadPage, "windows").unwrap(),
+            ("rundll32", vec!["url.dll,FileProtocolHandler".to_string(), url.clone()])
+        );
+        assert_eq!(
+            external_command(ExternalTarget::DownloadPage, "macos").unwrap(),
+            ("open", vec![url])
+        );
+        assert!(external_command(ExternalTarget::DownloadPage, "linux").is_err());
     }
 }

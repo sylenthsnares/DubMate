@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import pack_loader
+import audio_processor
 from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -153,12 +154,14 @@ async def add_performance_cache_headers(request: Request, call_next):
 
 @app.get("/health")
 async def health_check():
-    """Liveness probe used by the desktop app launcher and orchestrators."""
+    """Liveness probe used by the desktop app launcher and orchestrators. "missing" lists
+    what only the DubMate 2.0 installer brings (audio_processor.missing_parts)."""
     return {
         "status": "ok",
         "version": common.read_version(),
         "port": get_engine_port(),
         "timestamp": int(time.time()),
+        "missing": audio_processor.missing_parts(),
     }
 
 

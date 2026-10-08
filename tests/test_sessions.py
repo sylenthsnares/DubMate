@@ -76,6 +76,9 @@ class SessionCase(unittest.TestCase):
             pack.lines.append({"index": i, "start": start, "end": start + 1.5, "character": char,
                                "filename": fname, "caption": f"Line {i + 1}"})
         pack_loader.assign_line_ids(pack.lines)  # t1000, t3000
+        # Older than the v1 take below, so it is placed on its line.
+        for path in [os.path.join(folder, line["filename"]) for line in pack.lines] + [folder]:
+            os.utime(path, (OLD_MTIME - 3600, OLD_MTIME - 3600))
         return pack
 
     def _write_state(self, state, mtime=OLD_MTIME):
@@ -140,7 +143,8 @@ class TestRoomStateCompat(SessionCase):
               "users": {"hostS": {"id": "hostS", "name": "Host", "color": "#7c5cff",
                                   "is_host": True, "is_online": True}},
               "role_assignments": {"Ana": ["hostS"], "Ben": []},
-              "takes": {"0": {"user_name": "Host", "duration": 0.25, "noise_reduction": False}},
+              "takes": {"0": {"user_name": "Host", "duration": 0.25, "noise_reduction": False,
+                             "recorded_at": OLD_MTIME - 60}},
               "status": "recording", "exported_video_path": None}
         self._write_state(v1)
         room = rooms.load_room_folder(self.ROOM)

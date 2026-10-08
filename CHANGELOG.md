@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+Using the DubMate desktop app 1.1.3? Run the DubMate 2.0.0 installer from https://github.com/sylenthsnares/DubMate/releases/latest to get voice effects and the stronger noise cleanup. The in-app update alone brings everything else.
+
+Running DubMate from source? Run update.bat (Windows) or update.sh (macOS or Linux) again after updating.
+
+What's new in 2.0:
+- Every take is kept. Pick the one in the dub and shape its sound with four presets or the full set of effects.
+- Takes line up with the original and are levelled for you, and noise cleanup is tuned to your room.
+- A bigger premiere with mix presets and one Save button, sessions you can continue, and a faster Pack Builder.
+
+Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a copy of the room as it was (room_state.v1-backup.json, in the room's folder) and leaves its take files where they were. To open the room in 1.1.3 again, put that copy back as room_state.json; takes recorded in 2.0 aren't in it.
+
 ### Added
 - **Remove Pack Builder**: in the desktop app, Audio settings can remove the Pack Builder add-on and show how much space that frees. DubMate restarts afterwards.
 - **Version Note When Joining**: if your DubMate and the host's are on different versions, joining shows which side should update. Joining is never blocked.
@@ -27,7 +38,7 @@
 - **Refresh Older Takes**: takes cleaned before your latest check can be cleaned again with it. Your original recordings are kept.
 - **Use Standard Cleanup**: forgets your room check. New takes get standard cleanup; takes already cleaned keep their sound until you refresh them.
 - **Guests' Room Checks**: a guest's room check lasts until the host restarts DubMate. After that the guest's row says "Not checked yet" and their earlier takes keep the cleanup they were made with.
-- **Stems**: the Stems button next to Project files saves the voices and the music and effects as separate WAV files, plus one per character, to finish the mix in another editor. They all start with the scene and have the same length. Played together they have the video's balance and loudness, without its peak limiting. While stems or a video are being made, Refresh older takes waits and says "An export is running. Refresh older takes when it's done."
+- **Stems**: Separate tracks, in the premiere's Save menu, saves the voices and the music and effects as separate WAV files, plus one per character, to finish the mix in another editor. They all start with the scene and have the same length. Played together they have the video's balance and loudness, without its peak limiting. While stems or a video are being made, Refresh older takes waits and says "An export is running. Refresh older takes when it's done."
 - **Continue Where You Left Off**: your last 5 sessions are kept. The landing page lists them with how many lines are recorded and when you last worked on them. Continue reopens a session with its takes, casting and dialogue level, back on the line you were recording.
 - **Remove a Session**: remove a session from that list. Its takes are deleted; videos you saved stay in your export folder.
 - **Keyboard Shortcuts**: press ? (or the ? button in the header) for a list of keyboard shortcuts, grouped by where they work.
@@ -37,30 +48,36 @@
 - **Pack Builder Installs in the Background**: in the desktop app, ticking Pack Builder no longer holds DubMate behind a 2 GB download. The studio opens straight away and a small bar in the header shows how far the install has got, with the step and the time left in its tooltip. The Pack Builder line in the menu says the same. If it doesn't install, Try again starts it again. When it's done, "Restart to finish Pack Builder" loads it, and asks first if you're in a room, because restarting disconnects everyone. If you don't restart, DubMate loads Pack Builder the next time it opens.
 - **Skip an Update**: while an update downloads, "Skip this time" opens the version you have. The update is offered again the next time DubMate opens. Updates and the Pack Builder install show the time left once the speed has settled.
 - **Open Microphone Settings**: when the desktop app can't use your mic, Audio settings has a button that opens the Windows or macOS microphone settings page.
+- **Live Mix or Final Video**: next to Save, the premiere says whether you're hearing the live mix or the saved video.
+- **In This Dub**: the premiere lists every line with who voices it and the take in the dub, or "Original voice". Click a line and playback jumps there for everyone. Change take opens the line in the booth.
+- **Mix Presets**: the premiere's Mix has Balanced, Voices forward and Music forward, with the music and dialogue sliders under Fine-tune. Friends see the host's mix and hear what the video will sound like.
+- **Open Download Page**: when DubMate is missing voice effects or the stronger noise cleanup, Open download page takes you to the DubMate download page. In a browser it's a link. A desktop app older than 2.0 can't open it, so there the button is Copy download link: it copies the link for you to paste into your browser.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
 - **Gentler Noise Reduction**: noise reduction no longer runs at maximum strength, and the fallback no longer gates out whispers and breaths. Cleaned takes are rebuilt when the settings change.
-- **Stronger Noise Cleanup in the Desktop App**: the desktop app now includes the stronger noise cleanup that source installs on Windows already had, instead of the weaker fallback.
+- **Stronger Noise Cleanup in the Desktop App**: the 2.0 installer adds the stronger noise cleanup that source installs on Windows already had. A desktop app updated from 1.1.3 without it keeps the standard cleanup, and Check your room says how to get the stronger one.
 - **ZIPs Saved Once**: on the host's own computer, project and pack ZIPs are saved once to the export folder instead of also landing in Downloads.
 - **Error Details**: raw error text now sits behind "Show details".
-- **Smaller Install**: scipy is no longer needed.
-- **Leaner Desktop Install**: the installer no longer puts an extra copy of Python next to `DubMate.exe`. DubMate always runs its bundled Python runtime.
-- **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
 - **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
 - **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
 - **Pack Builder Tracks Follow Overlapping Lines**: lines that play at the same time, like a collective gasp or people talking over each other, get their own track automatically, up to 5. Add track, Delete track and track names are gone. When the tracks don't fit, the timeline scrolls up and down: use the wheel over the track numbers, drag empty timeline, or the scrollbar.
 - **Faster Pack Builder Editor**: the editor responds faster. Lines show as soon as it opens, with the waveform following. Selecting, typing in and dragging a line no longer redraws the whole timeline, and switching between Voices only and Full audio is instant after the first time.
-- **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
+- **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes on their lines when the scene hasn't changed since they were recorded.
 - **Invites After a Restart**: after DubMate restarts, the room code of a continued session no longer works, so Copy invite gives a direct link instead.
-- **What You Preview Is What You Export**: takes now sound exactly the same in the booth, the premiere and the exported video, including low cut and compress, which used to change only the preview.
+- **What You Preview Is What You Export**: takes now have the same effects in the booth, the premiere and the saved video, including low cut and compress, which used to change only the preview. The saved video is also brought to a steady loudness, so it can sound a little louder or quieter overall.
 - **Sound Changes Crossfade In**: when you change a sound or an effect, the take keeps playing and the new sound fades in as soon as it's ready. Presets are prepared in the background after you save a take, so switching between them is quick.
 - **Dialogue Presence**: dialogue presence now balances the voices against the music instead of changing the whole export's volume.
 - **Older Rooms Keep Their Sound**: takes recorded with pitch or reverb in earlier versions keep those settings. Pitch now sounds cleaner.
-- **Updates Bring What They Need**: when an update needs new parts, the desktop app downloads them while it installs the update, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
-- **Voice Effects on Older Desktop Installs**: a desktop app installed before this release updates without voice effects. Recording still works; the Voice panel and export ask you to download and install the latest DubMate.
+- **Bigger Premiere**: the video fills most of the premiere, with a timeline under it. Click or drag it to jump, and each line has a mark. Everyone arrives on the live mix straight away while the video is made in the background.
+- **Saving the Video**: Save video shows what it's doing, first mixing your takes, then making the video. If it doesn't finish, it says why, with Try again. When it's done, Watch the dub plays it for everyone and Show in folder opens it. Save then reads Saved, or "Mix changed · Save again" after a change. The 9:16 version, separate tracks and the editing project are in Save's menu.
+- **Only the Host Saves the Video**: friends get Download video once the host has saved the video. Their download never starts a video on the host's computer.
+- **Updates Bring What They Need**: once you have the 2.0 desktop app, an update that needs new parts downloads them while it installs, before DubMate restarts. If it can't, the update doesn't install, DubMate stays on the version you had and says why.
+- **Voice Effects on Older Desktop Installs**: a desktop app updated from 1.1.3 has no voice effects until you run the 2.0 installer. Recording, takes and timing work, and takes play without effects, levelled as usual. Videos, stems and projects save without voice effects instead of failing. The host is told once, on the premiere, with a way to the download page, and the Voice panel says the same.
+- **Old Rooms Keep a Backup**: the first time 2.0 opens a room from an earlier version, it keeps a copy of the room as it was (room_state.v1-backup.json) and leaves the original take files where they were. An earlier copy is never replaced: a newer one is saved beside it with a number.
+- **Takes Kept Aside**: a take from an earlier version that DubMate can't be sure belongs to its line, for example because the scene changed after it was recorded, is kept aside instead of being put on the wrong line. Its recording stays in the room's folder as take_line_<number>.wav.
 - **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
-- **Easier to Read**: outside the Pack Builder timeline, no words in the studio or Pack Builder are smaller than 11px, and sentences and hints are at least 12px. Line details and hints are in a lighter colour that stands out from the cards.
+- **Easier to Read**: the smallest text in the studio and Pack Builder is bigger, and sentences and hints are bigger still. Line details and hints are in a lighter colour that stands out from the cards.
 - **Pack Builder Offers What's Installed**: Step 1 and the editor only offer what your install can do. Without automatic transcription, add a subtitle file or write the lines yourself, and Paste link says how to add the tools. "Fast processing" shows only when your graphics card speeds up processing.
 - **Pack Builder Processing**: each step shows as it runs, and Cancel goes back to your video. A dropped subtitle file is checked at once and shows how many lines and speakers it has. If processing stops, the step that failed says why, with Try again, Write the lines myself or Back to video. Try again doesn't upload the video or separate the voices again.
 - **Pack Builder Lines**: lines are compact rows, so about 10 show at once. Move between them with the arrow keys. Characters are renamed, merged and added in place, and the colours no longer include recording red or take green.
@@ -92,26 +109,24 @@
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
-- **Host Transfer**: the "Make Host" button and the hand-off flow that moved a running room to another member's machine are gone. The unused client-version check on room join was removed with it.
-- **COMPRESS Rocker**: the booth's compressor switch only affected the in-browser preview; the exported video was never compressed, so previews played louder or quieter than the export. Preview and export now go through the same processing.
-- **Registry `/rooms/:code/update` Route (worker)**: nothing called it, and it let anyone holding the shared app key repoint a live room. Re-registering a room now always needs that room's own token. Takes effect after the worker is redeployed with `npm run cf:deploy`.
-- **Pack Builder Touch Resizing**: the timeline splitter's touch handler never worked (it had no move or end handlers) and was removed.
-- **Legacy Leftovers**: `scripts/launch_local.py`, reuse of cached FFmpeg zips from the temp folder, copying of a root-level `cloudflared.exe` into `tools\`, and several unused engine routes.
+- **Host Transfer**: the "Make Host" button, which moved a running room to another member's computer, is gone.
+- **COMPRESS Switch**: the booth's compressor switch is gone. It changed only the preview, never the saved video. Compress is in All effects, and you hear it in both.
+- **16:9/9:16 Switch**: the premiere's switch is gone. Save video saves the scene's own 16:9, and the 9:16 version is in Save's menu.
 
 ### Fixed
 - **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.
 - **Premiere Dialogue Level**: the premiere's video now uses the room's Dialogue level, like every other export.
-- **Premiere Mix Reaches the Video**: the premiere's Mix slider (more music or more voice) now changes the video you save, the stems and the premiere video, not just what you hear. Moving it switches the final video back to the live mix so you hear the change. The host's setting is the room's and everyone hears it.
+- **Premiere Mix Reaches the Video**: the premiere's mix (more music or more voice) now changes the video you save and the stems, not just what you hear. Changing it switches from the saved video back to the live mix, so you hear the change. The host's setting is the room's and everyone hears it.
 - **Export Folder Cleanup**: creating a room no longer deletes earlier renders and ZIPs from your export folder.
 - **Outdated Link Importer**: when a link import fails because the downloader is out of date, Pack Builder says so and shows how to update it.
 - **Wrong Background Track in the Next Scene**: after recording one scene, the next scene could play the previous scene's backing track.
 - **Leaving a Host's Room**: party members who joined a room hosted on another machine now return to their own studio and pack list when they leave, instead of staying on the host's.
-- **Auto Volume Matching**: each take is now matched to the loudness measured from its own original line, instead of a fixed -21 dBFS for every line. Re-takes get their own level, boosts never push the take's peak above -1 dBFS, and toggling noise reduction re-matches the take. Stale per-pack `*_loudness.json` files from older versions are no longer read.
+- **Auto Volume Matching**: each take is now matched to the loudness of its own original line, instead of one fixed level for every line. Re-takes get their own level, a boost never makes a take clip, and switching noise reduction on or off matches the take again.
 - **Renders Saved Twice**: on the host's own computer, the download buttons no longer save a second copy of a render to the Downloads folder; the render is written once to the Render & Export Folder. Members joining from another computer still download their copy through the browser.
 - **9:16 Videos in the Pack Builder**: portrait videos no longer push the timeline controls (Play, Mark IN/OUT, Add Cue, Whisper AI, Zoom) off screen.
-- **Pack Builder Duplicated Segments on Save**: editing a cue added it again as a new segment instead of replacing the list.
+- **Pack Builder Edits Saved Once**: an edited line is no longer saved a second time as a new line.
 - **Pack Builder Errors Are Shown**: failed processing, cover uploads and romanization now show an error instead of stalling silently.
-- **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old dialogue lines or the old cover behind, and stuck FFmpeg steps now time out with a clear error.
+- **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old lines or the old cover behind, and a step that gets stuck stops with a clear message.
 - **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
 - **Pack Builder Cast Row Scrolls**: with many characters, the Cast row scrolls with the mouse wheel, a trackpad, by dragging, or with the arrow keys. A fade shows which side has more.
@@ -121,9 +136,8 @@
 - **Updated Notice**: the "DubMate was updated" notice has a Reload button.
 - **Record Button Pulse**: the record button pulses while recording again.
 - **Bigger Timing Nudge on More Keyboards**: Shift with [ or ] nudges a take by 100 ms on keyboard layouts where Shift turns those keys into { and }.
-- **Stale State in Room Events**: room events are applied before they are handled, so a new take shows up right away; joining another room no longer carries over the previous room's line, takes or audio; and a render finishing mid-take no longer cuts the microphone.
-- **Pitch Shift Mix-Up**: two different takes of the same length could share one cached pitch-shifted version.
-- **Pack Import Safety**: archive entries disguised under `__MACOSX` names are now checked like every other file.
+- **Room Updates**: a new take shows up right away, joining another room no longer carries over the last room's line, takes or audio, and a video finishing while you record no longer cuts your mic.
+- **Pitch on Two Takes**: two takes of the same length with pitch changed no longer play each other's sound.
 - **Desktop Install Paths**: installing under a folder whose path merely contains "target" (for example `D:\Targets\DubMate`) no longer confuses the app's install-folder detection.
 - **Windows `update.bat`**: the dependency and tools steps now report errors correctly.
 - **Takes From the First Take**: the booth lists your takes from the first one, so your take history is easy to find.
@@ -137,14 +151,8 @@
 - **Level Meter Keeps Moving**: the level meter in Audio settings keeps moving during Sync your mic, Check your room and Check your loudest line, and comes back after they finish, fail or are cancelled.
 
 ### Security
-- **Settings Locked to the Host Machine**: `POST /api/config` (packs folder, export folder) now refuses requests that arrive through the public Cloudflare tunnel.
-- **Room Registry Hardening**: the worker answers a malformed room-create request with a 400 instead of a server error.
 - **The Host's Folders Stay Private**: people in a room no longer see the host's folders or settings. On a host's page, Audio settings shows only your own audio, and the host's folders can only be changed on the host's computer.
 - **Only the Host Runs the Room**: only the host can move everyone to recording, change the room's dialogue level, make the video, or get the stems and project files. Members who try are told only the host can do it, and their Start just takes them to the booth.
-
-### Changed
-- **Engine Layout**: the backend routes moved from `app.py` into the `dubmate/` package, and the studio frontend was split into `static/js/studio/` modules and `static/css/builder.css`. No behaviour change.
-- **CI**: release builds now run the full test suite and check that the staged engine imports before bundling.
 
 ## [1.1.3] - 2026-08-31
 

@@ -864,7 +864,7 @@
               </div>
             </div>
 
-            <p id="voice-effects-note" class="voice-effects-note" role="status" style="display: none;"></p>
+            <div id="voice-effects-note" class="voice-effects-note" style="display: none;"><p class="voice-effects-note-text" role="status"></p></div>
 
             <!-- All effects: fixed order, each with an on/off switch; an effect that's off is one row -->
             <div id="voice-rack" class="voice-rack">
@@ -1218,6 +1218,18 @@
       <div id="screening-save-error" class="screening-save-error" role="status" hidden>
         <span id="screening-save-error-text"></span>
         <button id="btn-save-retry" class="btn btn-ghost btn-sm" type="button">Try again</button>
+      </div>
+      <!-- What only the DubMate 2.0 installer brings, and where to get it (host only, once).
+           Filled by UpdateNoticeMethods in studio/update_notice.js. -->
+      <div id="screening-update-notice" class="update-notice" hidden>
+        <svg class="update-notice-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" x2="12" y1="8" y2="12" />
+          <line x1="12" x2="12.01" y1="16" y2="16" />
+        </svg>
+        <p class="update-notice-text" role="status"></p>
+        <div class="update-notice-actions"></div>
       </div>
 
       <!-- Mix and In this dub: side by side on wide windows, stacked below that -->
@@ -1791,6 +1803,7 @@
             <p id="room-check-status" class="audio-device-note status-text is-pending" style="flex: 1; margin: 0;" aria-live="polite">Not checked yet</p>
             <button id="btn-room-check" class="btn btn-secondary btn-sm" type="button">Check your room</button>
           </div>
+          <p id="room-check-cleanup-note" class="audio-device-note room-check-cleanup-note" hidden></p>
           <button id="btn-room-check-standard" class="btn-link-sm room-check-standard" type="button" style="display: none;"
             data-tip="Forget this room check. New takes get standard cleanup.">Use standard cleanup</button>
           <div id="room-check-panel" class="audio-inline-feedback mic-sync-panel" style="display: none;">
