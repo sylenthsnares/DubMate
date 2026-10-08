@@ -328,8 +328,8 @@ python tests/run_all_tests.py
 ```
 On Windows, use the project's virtual environment: `.venv\Scripts\python.exe tests/run_all_tests.py`.
 
-- The test scene packs (`Packs/ZZ_Fixture_*`) are generated automatically when they are missing.
-- Each run uses a temporary home and cache folder, so tests never touch your `~/.dubmate` settings or cache.
+- Each run generates its test scene packs (`ZZ_Fixture_*`) in a temporary folder, never in `Packs/`, so they don't show up in your library. To add them to `Packs/` on purpose, run `python scripts/make_test_packs.py` (`--dir PATH` picks another folder, `--clean` removes them).
+- Each run uses a temporary home, cache and temp folder, so tests never touch your `~/.dubmate` settings or cache, and the run deletes them all when it ends.
 
 ---
 

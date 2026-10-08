@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 make_test_packs.py
-Generates synthetic DubMate scene packs into Packs/ so the test suites that
-expect a populated pack library can run on a clean checkout or in CI.
+Generates synthetic DubMate scene packs, for the test suites or for trying the
+app from source without real packs.
 
-Packs/ is git-ignored, so these fixtures never enter version control.
+tests/run_all_tests.py passes --dir with a temporary folder, so a test run never
+writes into Packs/ (which may be the app's real pack library). Run this by hand
+only when you want the fixtures in your library.
 
 Usage:
-    python scripts/make_test_packs.py [count]      # default 15
-    python scripts/make_test_packs.py --clean      # remove generated fixtures
+    python scripts/make_test_packs.py [count] [--dir PATH]   # default 15, into Packs/
+    python scripts/make_test_packs.py --clean [--dir PATH]   # remove generated fixtures
 """
 import json
 import math
@@ -107,12 +109,21 @@ def clean() -> int:
 
 
 def main() -> None:
-    if "--clean" in sys.argv:
+    global PACKS_DIR
+    args = sys.argv[1:]
+    if "--dir" in args:
+        i = args.index("--dir")
+        if i + 1 >= len(args):
+            sys.exit("--dir needs a folder path")
+        PACKS_DIR = os.path.abspath(args[i + 1])
+        del args[i:i + 2]
+
+    if "--clean" in args:
         clean()
         return
 
     count = 15
-    for a in sys.argv[1:]:
+    for a in args:
         if a.isdigit():
             count = int(a)
 
@@ -124,7 +135,7 @@ def main() -> None:
     for i in range(1, count + 1):
         name = make_pack(i)
         print(f"  [OK] {name}")
-    print(f"\nDone. Remove them anytime with: python scripts/make_test_packs.py --clean")
+    print(f"\nDone. Remove them anytime with: python scripts/make_test_packs.py --clean --dir \"{PACKS_DIR}\"")
 
 
 if __name__ == "__main__":
