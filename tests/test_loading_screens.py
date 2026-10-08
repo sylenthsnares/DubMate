@@ -43,22 +43,29 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
             "export-modal-badge",
             "export-modal-title",
             "export-modal-status-text",
+            "export-modal-progress",
             "export-modal-progress-bar",
             "modal-step-dsp",
             "modal-step-mux",
-            "modal-step-ready",
             "connector-dsp-mux",
-            "connector-mux-ready",
             "export-modal-reassurance",
             "export-modal-actions",
+            "export-modal-failed-actions",
+            "export-modal-timeout-actions",
             "btn-modal-close-view",
             "btn-modal-close-x",
-            "btn-modal-dismiss",
+            "btn-modal-reveal",
+            "btn-modal-make-916",
             "btn-modal-download-169",
             "btn-modal-download-916",
+            "btn-modal-retry",
+            "btn-modal-keep-working",
         ]
         for el_id in required_export_ids:
             self.assertIn(f'id="{el_id}"', html, f"Missing element id: {el_id} in index.html")
+        # Two real steps (no "Finish" nothing reports), and no text Close once done (UI pass U5a).
+        for gone in ("modal-step-ready", "connector-mux-ready", "btn-modal-dismiss", "export-saved-path"):
+            self.assertNotIn(f'id="{gone}"', html, f"{gone} is still in the export modal")
 
         # A take saves in the background (UI pass U2): no booth-wide overlay.
         self.assertNotIn('id="booth-processing-overlay"', html)

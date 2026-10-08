@@ -419,12 +419,20 @@ class TestRoomRoutes(UploadCase):
     def test_exports_fail_with_the_missing_effects_message(self):
         self._room()
         self._upload("t1000", speech_like(duration=1.0, lead=0.1))
+        self._one_event_loop(self.client)   # the video renders in a background task
         with mock.patch.object(vocal_chain, "available", return_value=False):
             zip_res = self.client.get(f"/api/rooms/{self.ROOM}/export/project_zip?user_id=hostT")
-            video_res = self.client.get(f"/api/rooms/{self.ROOM}/export/download")
-        for res in (zip_res, video_res):
-            self.assertEqual(res.status_code, 503, res.text)
-            self.assertEqual(res.json()["detail"], audio_processor.EFFECTS_MISSING_MESSAGE)
+            video_res = self.client.post(f"/api/rooms/{self.ROOM}/export?user_id=hostT")
+            self.assertEqual(video_res.json()["status"], "processing", video_res.text)
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                status = self.client.get(video_res.json()["poll_url"]).json()["status"]
+                if status != "processing":
+                    break
+                time.sleep(0.05)
+        self.assertEqual(zip_res.status_code, 503, zip_res.text)
+        self.assertEqual(zip_res.json()["detail"], audio_processor.EFFECTS_MISSING_MESSAGE)
+        self.assertEqual(status, "failed: " + audio_processor.EFFECTS_MISSING_MESSAGE)
 
 
 if __name__ == "__main__":

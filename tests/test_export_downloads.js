@@ -2,14 +2,20 @@
  * test_export_downloads.js
  *
  * Covers the export/download feedback fixes:
- *   - the four export-video anchors and the pack ZIP anchor must fetch a blob,
- *     never navigate (a JSON error body used to replace the whole studio);
- *   - every download must announce itself starting and finishing;
+ *   - the premiere's Save (its main part and its menu's video rows), a remote host's
+ *     two Download anchors in the export modal and the pack ZIP anchor must fetch a
+ *     blob, never navigate
+ *     (a JSON error body used to replace the whole studio);
+ *   - every download shows it is under way (the row reads Preparing…) and says
+ *     when it finished;
  *   - a failed download must produce a toast, not a page;
- *   - a successful render must name the folder it was written to;
- *   - on the engine's own computer (loopback origin) a Download button must not
- *     save a second copy: the render is already in the export folder (bug B4);
- *     the same holds for the project ZIP and pack ZIP buttons (P23).
+ *   - a successful render must name the folder it was written to (the done modal's
+ *     facts line);
+ *   - on the engine's own computer (loopback origin) nothing saves a second copy:
+ *     the render is already in the export folder (bug B4), so Save shows it in its
+ *     folder (so does the done modal, which offers Make 9:16 version instead of
+ *     Download); the separate tracks and editing project rows say "saved · Show in
+ *     folder" instead (P23), and the pack ZIP opens its Share.
  *
  * Navigation detection note: jsdom cannot have `location.assign` patched (it is an
  * unforgeable own property), but every navigation route it could take --
@@ -269,106 +275,119 @@ try {
       users: {},
     };
 
-    // Give the anchors the real hrefs a finished render puts on them. With the
+    // Give the modal anchors the real hrefs a finished render puts on them. With the
     // placeholder "#" still in place jsdom treats a click as a hash change, which
     // would hide exactly the navigation this suite is here to catch.
     app.handleExportSuccess({
+      aspect_ratio: "16:9",
       export_video_url: "/api/rooms/TEST12/export/video",
       download_url_16_9: "/api/rooms/TEST12/export/download?aspect_ratio=16:9",
       download_url_9_16: "/api/rooms/TEST12/export/download?aspect_ratio=9:16",
     });
+    app.roomState.exports = { "16:9": "ready", "9:16": "ready" };
+    app.updateScreeningControls();
     await settle();
-    for (const id of ["btn-download-link", "btn-download-link-9-16", "btn-modal-download-169", "btn-modal-download-916"]) {
+    for (const id of ["btn-modal-download-169", "btn-modal-download-916"]) {
       const href = doc.getElementById(id)?.getAttribute("href");
       if (!href || href === "#") fail(`#${id} never received a real download href`, href);
     }
-    pass("a finished render puts real download hrefs on all four export anchors");
+    pass("a finished render puts real download hrefs on the modal's anchors");
 
-    // Tests 1-3 are a remote member: their page is on the host's tunnel, the
-    // render lives on the host's disk, so they need a real browser download.
+    // Tests 1-3 are a remote host: their page is on a tunnel, the render lives on
+    // the engine's disk, so they need a real browser download.
     app.isEngineLocal = () => false;
+    app.updateScreeningControls();
 
-    // --- Test 1: every export anchor is wired to the fetch/blob path ---------
-    const anchorIds = [
-      "btn-download-link",
-      "btn-download-link-9-16",
-      "btn-modal-download-169",
-      "btn-modal-download-916",
-    ];
-    const anchors = anchorIds.map((id) => {
+    // --- Test 1: every video download is wired to the fetch/blob path --------
+    // The Save menu's two video rows, Save's main part once saved, and the modal's anchors.
+    const videoControls = ["save-menu-video-169", "save-menu-video-916", "btn-export-video",
+      "btn-modal-download-169", "btn-modal-download-916"].map((id) => {
       const el = doc.getElementById(id);
       if (!el) fail(`#${id} missing from the export DOM`);
       return el;
     });
-    pass("all four export download anchors found in the DOM");
+    pass("the Save menu's video rows, Save and the modal's anchors are in the DOM");
+    for (const id of ["btn-download-link", "btn-download-link-9-16", "btn-toolbar-project-zip", "btn-download-project-zip",
+      "btn-toolbar-stems", "btn-download-stems", "export-progress-box"]) {
+      if (doc.getElementById(id)) fail(`#${id} is still on the premiere`);
+    }
 
-    for (const anchor of anchors) {
+    for (const control of videoControls) {
       const navBefore = navigationAttempts.length;
       const savesBefore = savedFiles.length;
       const fetchesBefore = fetchLog.length;
       toasts.length = 0;
 
-      clickUi(anchor);
+      clickUi(control);
       await settle();
 
       if (navigationAttempts.length !== navBefore) {
-        fail(`clicking #${anchor.id} navigated the page instead of downloading`, navigationAttempts.slice(navBefore));
+        fail(`clicking #${control.id} navigated the page instead of downloading`, navigationAttempts.slice(navBefore));
       }
       const requested = fetchLog.slice(fetchesBefore).filter(u => u.includes("/export/download"));
       if (requested.length !== 1) {
-        fail(`#${anchor.id} did not fetch the export exactly once`, requested);
+        fail(`#${control.id} did not fetch the export exactly once`, requested);
       }
       if (savedFiles.length !== savesBefore + 1) {
-        fail(`#${anchor.id} never handed a blob to the browser`);
+        fail(`#${control.id} never handed a blob to the browser`);
       }
       const saved = savedFiles[savedFiles.length - 1];
       if (!saved.href.startsWith("blob:") || !/^DubMate_.+\.mp4$/.test(saved.download || "")) {
-        fail(`#${anchor.id} saved with a bad href/filename`, saved);
+        fail(`#${control.id} saved with a bad href/filename`, saved);
       }
-      if (toastsMatching(/preparing/i).length === 0 || toastsMatching(/downloaded/i).length === 0) {
-        fail(`#${anchor.id} did not toast both start and completion`, toasts);
+      if (toastsMatching(/downloaded/i).length === 0) {
+        fail(`#${control.id} did not say the download finished`, toasts);
       }
-      if (anchor.hasAttribute("aria-busy") || anchor.hasAttribute("aria-disabled")) {
-        fail(`#${anchor.id} was left in its busy state after the download finished`);
+      if (control.hasAttribute("aria-busy") || control.getAttribute("aria-disabled") === "true" || control.disabled) {
+        fail(`#${control.id} was left in its busy state after the download finished`);
       }
     }
-    pass("each export anchor fetches a blob, saves it, toasts start + completion, and never navigates");
+    pass("each video download fetches a blob, saves it, says it finished, and never navigates");
 
     const aspectsRequested = fetchLog.filter(u => u.includes("/export/download"));
     if (!aspectsRequested.some(u => u.includes("16%3A9") || u.includes("16:9")) ||
         !aspectsRequested.some(u => u.includes("9%3A16") || u.includes("9:16"))) {
-      fail("the 16:9 and 9:16 buttons did not request different aspect ratios", aspectsRequested);
+      fail("the 16:9 and 9:16 rows did not request different aspect ratios", aspectsRequested);
     }
-    pass("16:9 and 9:16 buttons request their own aspect ratio");
+    pass("16:9 and 9:16 request their own aspect ratio");
 
     // --- Test 2: a second click while one is in flight is ignored -----------
     let releaseGate;
     exportDownloadGate = new Promise((resolve) => { releaseGate = resolve; });
-    const doubleClickTarget = anchors[0];
+    const doubleClickTarget = videoControls[0];
     const beforeDouble = fetchLog.length;
     clickUi(doubleClickTarget);
     await settle();
     if (doubleClickTarget.getAttribute("aria-busy") !== "true") {
-      fail("an in-flight download did not mark its button busy");
+      fail("an in-flight download did not mark its row busy");
+    }
+    if (doubleClickTarget.querySelector(".save-menu-label").textContent !== "Preparing…") {
+      fail("an in-flight download did not read Preparing… on its row", doubleClickTarget.textContent);
+    }
+    if (doubleClickTarget.disabled) {
+      fail("an in-flight download disabled its row, which drops the keyboard focus");
     }
     clickUi(doubleClickTarget);
     clickUi(doubleClickTarget);
     await settle();
     const inFlight = fetchLog.slice(beforeDouble).filter(u => u.includes("/export/download"));
     if (inFlight.length !== 1) {
-      fail("double-clicking a download button started more than one download", inFlight);
+      fail("double-clicking a download row started more than one download", inFlight);
     }
     releaseGate();
     exportDownloadGate = null;
     await settle();
-    pass("double-clicking a download button only ever starts one download");
+    if (doubleClickTarget.querySelector(".save-menu-label").textContent !== "Video 16:9") {
+      fail("the row did not get its label back", doubleClickTarget.textContent);
+    }
+    pass("double-clicking a download row only ever starts one download, reading Preparing… meanwhile");
 
     // --- Test 3: a failing response toasts, it does not become a page -------
     exportDownloadFails = true;
     toasts.length = 0;
     const navBeforeFailure = navigationAttempts.length;
     const savesBeforeFailure = savedFiles.length;
-    clickUi(anchors[0]);
+    clickUi(videoControls[0]);
     await settle();
     exportDownloadFails = false;
 
@@ -385,8 +404,8 @@ try {
     if (errorToasts.some(t => /ffmpeg|non-zero exit|[A-Za-z]:\\/.test(t))) {
       fail("the failure toast leaked raw ffmpeg output", errorToasts);
     }
-    if (anchors[0].hasAttribute("aria-busy")) {
-      fail("a failed download left the button stuck in its busy state");
+    if (videoControls[0].hasAttribute("aria-busy")) {
+      fail("a failed download left the row stuck in its busy state");
     }
     pass("a failed download toasts a plain-language error, saves nothing, and never navigates");
 
@@ -422,16 +441,28 @@ try {
     pass("the pack ZIP link downloads via fetch, toasts, and does not select the card behind it");
 
     // --- Test 5: a finished render says where it was written ---------------
-    const savedPathEl = doc.getElementById("export-saved-path");
-    if (!savedPathEl) fail("#export-saved-path missing from the export modal");
+    // The done modal's subtitle carries the facts: format, length and, on the engine's
+    // computer, the folder (its last segment; the full path in title).
+    const facts = doc.getElementById("export-modal-status-text");
+    if (doc.getElementById("export-saved-path")) fail("the separate Saved to line is still in the export modal");
+    const ready169 = {
+      aspect_ratio: "16:9",
+      duration: 38.5,
+      export_video_url: "/api/rooms/TEST12/export/video",
+      download_url_16_9: "/api/rooms/TEST12/export/download?aspect_ratio=16:9",
+      download_url_9_16: "/api/rooms/TEST12/export/download?aspect_ratio=9:16",
+    };
 
-    // A remote member must not be shown the host's disk path as "Saved to".
+    // A remote host must not be shown the host's disk path.
     app.exportsDirCache = undefined;
-    await app.showExportSavedPath();
-    if (savedPathEl.classList.contains("is-visible")) {
-      fail("a remote member was told the render is saved to the host's folder", savedPathEl.innerText);
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    if (facts.textContent !== "16:9 · 0:39" || facts.hasAttribute("title")) {
+      fail("a remote host was told the render is saved to the host's folder", facts.textContent);
     }
-    pass("a remote member is not shown the host's Render & Export folder");
+    app.closeExportModal();
+    pass("a remote host sees the format and length, not the host's Render & Export folder");
 
     // From here on the page is on the engine's own computer (the real loopback
     // origin this jsdom runs at).
@@ -439,40 +470,37 @@ try {
     if (app.isEngineLocal() !== true) fail("http://localhost:8000 was not detected as a local engine");
 
     app.exportsDirCache = undefined;
-    app.handleExportSuccess({
-      export_video_url: "/api/rooms/TEST12/export/video",
-      download_url_16_9: "/api/rooms/TEST12/export/download?aspect_ratio=16:9",
-      download_url_9_16: "/api/rooms/TEST12/export/download?aspect_ratio=9:16",
-    });
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
     await settle();
-
-    if (!savedPathEl.classList.contains("is-visible")) {
-      fail("the export modal never revealed where the render was saved");
+    if (facts.textContent !== "16:9 · 0:39 · in DubMate Renders") {
+      fail("the done modal does not name the configured exports_dir", facts.textContent);
     }
-    if (!String(savedPathEl.innerText || "").includes(EXPORTS_DIR)) {
-      fail("the saved-path line does not show the configured exports_dir", savedPathEl.innerText);
-    }
-    if (savedPathEl.getAttribute("title") !== EXPORTS_DIR) {
-      fail("the full path is not available in the title attribute", savedPathEl.getAttribute("title"));
+    if (facts.getAttribute("title") !== EXPORTS_DIR) {
+      fail("the full path is not available in the title attribute", facts.getAttribute("title"));
     }
     pass("a finished render names the configured Render & Export folder, full path in title");
 
-    // Starting another render must not leave the previous path under the bar.
+    // Starting another render must not leave the previous folder under the bar.
     app.openExportModal();
-    if (savedPathEl.classList.contains("is-visible")) {
-      fail("a new render kept the previous 'Saved to ...' line visible");
+    if (/DubMate Renders/.test(facts.textContent) || facts.hasAttribute("title")) {
+      fail("a new render kept the previous folder visible", facts.textContent);
     }
-    pass("a new render hides the previous saved-path line");
+    app.closeExportModal();
+    pass("a new render hides the previous folder");
 
     // --- Test 6: no folder reported -> say nothing rather than guess -------
     configHasExportsDir = false;
     app.exportsDirCache = undefined;
-    await app.showExportSavedPath();
-    if (savedPathEl.classList.contains("is-visible")) {
-      fail("a backend without exports_dir still showed a fabricated save path");
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    if (facts.textContent !== "16:9 · 0:39" || facts.hasAttribute("title")) {
+      fail("a backend without exports_dir still showed a fabricated folder", facts.textContent);
     }
+    app.closeExportModal();
     configHasExportsDir = true;
-    pass("no exports_dir from the backend means no invented path");
+    pass("no exports_dir from the backend means no invented folder");
 
     // --- Test 7: the settings copy explains the two locations --------------
     const exportsRow = doc.getElementById("audio-exports-row");
@@ -485,70 +513,107 @@ try {
     }
     pass("the Render & Export Folder setting explains renders vs downloaded copies");
 
-    // --- Test 8 (B4): on the engine's computer, Download saves no second copy
+    // --- Test 8 (B4): on the engine's computer, nothing saves a second copy
+    // Save's main part and the menu's video rows show the file in its folder.
+    app.roomState.exports = { "16:9": "ready", "9:16": "ready" };
+    app.updateScreeningControls();
     const createdBeforeHost = objectUrls.created;
-    for (const anchor of anchors) {
+    for (const [id, aspect] of [["btn-export-video", "16:9"], ["save-menu-video-169", "16:9"], ["save-menu-video-916", "9:16"]]) {
+      const el = doc.getElementById(id);
       const savesBefore = savedFiles.length;
-      const fetchesBefore = fetchLog.length;
-      toasts.length = 0;
-      app.exportsDirCache = undefined;
-      savedPathEl.classList.remove("is-visible");
-
-      clickUi(anchor);
+      const methodsBefore = methodLog.length;
+      if (id !== "btn-export-video" && el.querySelector(".save-menu-state").textContent !== "saved · Show in folder") {
+        fail(`#${id} does not read saved · Show in folder on the engine's computer`, el.textContent);
+      }
+      clickUi(el);
       await settle();
-
-      const requested = fetchLog.slice(fetchesBefore);
-      if (requested.some(u => u.includes("/export/download"))) {
-        fail(`#${anchor.id} pulled the render through the browser on the host's own computer`, requested);
+      const calls = methodLog.slice(methodsBefore);
+      if (calls.some(c => c.includes("/export/download")) || savedFiles.length !== savesBefore) {
+        fail(`#${id} pulled the render through the browser on the host's own computer`, calls);
       }
-      if (savedFiles.length !== savesBefore) {
-        fail(`#${anchor.id} saved a second copy of the render on the host's own computer`);
-      }
-      if (!toasts.some(t => t.includes(EXPORTS_DIR))) {
-        fail(`#${anchor.id} did not say which folder the render is already in`, toasts);
-      }
-      if (!savedPathEl.classList.contains("is-visible")) {
-        fail(`#${anchor.id} did not reveal the saved-path line`);
-      }
+      if (!calls.includes("POST /api/rooms/TEST12/export/reveal")) fail(`#${id} did not show the video in its folder`, calls);
     }
+    // The done modal shows the video in its folder too; it has no Download here.
+    app.exportsDirCache = undefined;
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    for (const id of ["btn-modal-download-169", "btn-modal-download-916"]) {
+      if (!doc.getElementById(id).hidden) fail(`#${id} shows on the engine's own computer`);
+    }
+    {
+      const savesBefore = savedFiles.length;
+      const methodsBefore = methodLog.length;
+      clickUi(doc.getElementById("btn-modal-reveal"));
+      await settle();
+      const calls = methodLog.slice(methodsBefore);
+      if (calls.some(c => c.includes("/export/download")) || savedFiles.length !== savesBefore) {
+        fail("Show in folder pulled the render through the browser on the host's own computer", calls);
+      }
+      if (!calls.includes("POST /api/rooms/TEST12/export/reveal")) fail("Show in folder did not show the video in its folder", calls);
+    }
+    app.closeExportModal();
     if (objectUrls.created !== createdBeforeHost) {
       fail("the host path still created a blob URL for a download");
     }
-    pass("on the engine's own computer, every Download button names the export folder and saves no copy");
+    pass("on the engine's own computer, Save and the done modal show the video in its folder and save no copy");
 
-    // An aspect that was never rendered is rendered into the export folder, once,
-    // through the normal render route -- still no browser copy.
-    exportStatusReady = false;
+    // A member in a second tab on the host's computer has no Show in folder: their
+    // Download video is a real download, not "Already saved to <folder>" with no file.
+    {
+      const hostId = app.roomState.host_id;
+      app.roomState.host_id = "someone-else";
+      app.updateScreeningControls();
+      const savesBefore = savedFiles.length;
+      const methodsBefore = methodLog.length;
+      toasts.length = 0;
+      clickUi(doc.getElementById("btn-export-video"));
+      await settle();
+      const calls = methodLog.slice(methodsBefore);
+      if (!calls.some(c => /\/export\/download\?aspect_ratio=16(:|%3A)9/.test(c)) || savedFiles.length !== savesBefore + 1) {
+        fail("an engine-local member's Download video saved no file", { calls, toasts });
+      }
+      if (toastsMatching(/Already saved/).length) fail("an engine-local member was told the video is already saved", toasts);
+      app.roomState.host_id = hostId;
+      app.updateScreeningControls();
+    }
+    pass("a member on the engine's computer downloads the video");
+
+    // A format that was never rendered is rendered into the export folder, once,
+    // through the normal render route (Make 9:16 version) -- still no browser copy.
+    app.roomState.exports = { "16:9": "ready", "9:16": "idle" };
+    app.openExportModal();
+    app.handleExportSuccess(ready169);
+    await settle();
+    const make916 = doc.getElementById("btn-modal-make-916");
+    if (make916.hidden) fail("the done modal has no Make 9:16 version while 9:16 isn't saved");
     const savesBeforeRender = savedFiles.length;
     const methodsBefore = methodLog.length;
-    clickUi(doc.getElementById("btn-download-link-9-16"));
+    clickUi(make916);
     await settle();
-    exportStatusReady = true;
     const calls = methodLog.slice(methodsBefore);
-    if (!calls.some(c => c.startsWith("POST /api/rooms/TEST12/export?aspect_ratio=9:16"))) {
-      fail("an unrendered aspect was not rendered into the export folder", calls);
+    if (calls.filter(c => c.startsWith("POST /api/rooms/TEST12/export?aspect_ratio=9:16")).length !== 1) {
+      fail("an unrendered format was not rendered into the export folder once", calls);
     }
     if (calls.some(c => c.includes("/export/download")) || savedFiles.length !== savesBeforeRender) {
-      fail("rendering a missing aspect on the host also saved a browser copy", calls);
+      fail("rendering a missing format on the host also saved a browser copy", calls);
     }
-    if (!savedPathEl.classList.contains("is-visible")) {
-      fail("rendering a missing aspect did not end on the 'Saved to' line");
+    if (!/^9:16 · 0:39 · in DubMate Renders$/.test(facts.textContent) || !make916.hidden) {
+      fail("making 9:16 did not end on its done state", facts.textContent);
     }
-    pass("an unrendered aspect on the host renders once into the export folder, no browser copy");
+    app.closeExportModal();
+    pass("an unrendered format on the host renders once into the export folder, no browser copy");
 
     // --- Test 9 (P23): ZIPs are written to the export folder by the server,
     // so on the engine's computer they are not saved a second time either.
-    const zipButtons = ["btn-download-project-zip", "btn-toolbar-project-zip"].map((id) => {
-      const el = doc.getElementById(id);
-      if (!el) fail(`#${id} missing from the DOM`);
-      return el;
-    });
-    const zipChecks = [
-      ...zipButtons.map((el) => ({ el, route: "/export/project_zip", folder: EXPORTS_DIR })),
-      { el: doc.querySelector(".btn-pack-download-icon"), route: "/api/packs/", sharePath: `${EXPORTS_DIR}\\packs\\DubMate_Pack_Deku_vs_Todoroki.zip` },
-    ];
+    const projectRow = doc.getElementById("save-menu-project");
+    const stemsRow = doc.getElementById("save-menu-stems");
+    if (!projectRow || !stemsRow) fail("the Save menu has no Separate tracks or Editing project row");
     const createdBeforeZips = objectUrls.created;
-    for (const { el, route, folder, sharePath } of zipChecks) {
+    for (const { el, route } of [
+      { el: projectRow, route: "/export/project_zip" },
+      { el: doc.querySelector(".btn-pack-download-icon"), route: "/api/packs/", sharePath: `${EXPORTS_DIR}\\packs\\DubMate_Pack_Deku_vs_Todoroki.zip` },
+    ]) {
       const savesBefore = savedFiles.length;
       const fetchesBefore = fetchLog.length;
       toasts.length = 0;
@@ -564,15 +629,20 @@ try {
       if (savedFiles.length !== savesBefore) {
         fail(`${el.id || el.className} saved a second copy of the ZIP on the host's own computer`);
       }
-      if (sharePath) {
+      if (el === projectRow) {
+        // The row says so itself; no toast.
+        if (el.querySelector(".save-menu-label").textContent !== "Editing project" ||
+            el.querySelector(".save-menu-state").textContent !== "saved · Show in folder") {
+          fail("the Editing project row did not say it was saved", el.textContent);
+        }
+        if (toasts.length) fail("the Editing project row also toasted", toasts);
+      } else {
         // The pack's Share opens "Ready to send" with the file's full path instead.
         const pathInput = doc.getElementById("share-pack-path");
-        if (doc.getElementById("modal-share-pack").hidden || pathInput.value !== sharePath) {
+        if (doc.getElementById("modal-share-pack").hidden || pathInput.value !== `${EXPORTS_DIR}\\packs\\DubMate_Pack_Deku_vs_Todoroki.zip`) {
           fail("the pack Share did not show where the file was saved", pathInput.value);
         }
         doc.getElementById("btn-share-pack-done").click();
-      } else if (!toasts.some(t => t === `Saved to ${folder}`)) {
-        fail(`${el.id || el.className} did not say which folder the ZIP was saved to`, toasts);
       }
       if (el.hasAttribute("aria-busy")) {
         fail(`${el.id || el.className} was left busy after saving`);
@@ -581,162 +651,164 @@ try {
     if (objectUrls.created !== createdBeforeZips) {
       fail("a ZIP on the host path still created a blob URL");
     }
-    pass("on the engine's own computer, project and pack ZIP buttons name the folder and save no copy");
+    // Saved: the row now shows the file in its folder instead of building it again.
+    const methodsBeforeReveal = methodLog.length;
+    clickUi(projectRow);
+    await settle();
+    const revealCalls = methodLog.slice(methodsBeforeReveal);
+    if (revealCalls.join() !== "POST /api/rooms/TEST12/export/reveal") fail("a saved Editing project did not show in its folder", revealCalls);
+    pass("on the engine's own computer, Editing project and pack ZIP save no copy; the row reads saved · Show in folder");
 
-    // A remote member still gets the project ZIP as a normal download.
+    // A remote host still gets the project ZIP as a normal download.
     app.isEngineLocal = () => false;
+    app.updateScreeningControls();
     const savesBeforeRemoteZip = savedFiles.length;
     toasts.length = 0;
-    clickUi(zipButtons[0]);
+    clickUi(projectRow);
     await settle();
-    delete app.isEngineLocal;
     if (savedFiles.length !== savesBeforeRemoteZip + 1 || !/\.zip$/.test(savedFiles[savedFiles.length - 1].download || "")) {
-      fail("a remote member did not get the project ZIP as a download");
+      fail("a remote host did not get the project ZIP as a download");
     }
     if (toasts.some(t => t.includes(EXPORTS_DIR))) {
-      fail("a remote member was shown the host's folder for the project ZIP", toasts);
+      fail("a remote host was shown the engine's folder for the project ZIP", toasts);
     }
-    pass("a remote member still downloads the project ZIP");
+    pass("a remote host still downloads the project ZIP");
 
     if (objectUrls.created === 0) {
       fail("no object URL was ever created; the blob path did not run");
     }
 
-    // A render the engine refuses says why (older takes are being refreshed).
+    // A render the engine refuses says why (older takes are being refreshed), in the
+    // modal and not again in a toast.
     const REFRESHING = "Older takes are being refreshed. Try again in a moment.";
     exportRefusal = { detail: REFRESHING };
     toasts.length = 0;
     await app.exportFinalVideo("16:9");
     exportRefusal = null;
-    if (!toasts.includes(REFRESHING)) fail("a refused render did not say why", toasts);
+    if (facts.textContent !== REFRESHING) fail("a refused render did not say why", facts.textContent);
+    if (toasts.length) fail("a refused render also toasted", toasts);
+    app.closeExportModal();
     pass("a render refused during a refresh shows the engine's reason");
 
-    // --- Stems ---------------------------------------------------------------
+    // --- Separate tracks -----------------------------------------------------
     const STEMS_TIP = "Separate WAV files for the voices and for the music and effects, plus one per character, to finish the mix in another editor. They all start with the scene.";
-    const stemsButtons = ["btn-toolbar-stems", "btn-download-stems"].map((id) => {
-      const el = doc.getElementById(id);
-      if (!el) fail(`#${id} missing from the DOM`);
-      if (el.tagName !== "BUTTON") fail(`#${id} is not a button`, el.tagName);
-      if (el.querySelector("span")?.textContent.trim() !== "Stems") fail(`#${id} is not labelled Stems`);
-      if (el.getAttribute("data-tip") !== STEMS_TIP) fail(`#${id} has the wrong tooltip`, el.getAttribute("data-tip"));
-      return el;
-    });
-    if (doc.getElementById("btn-toolbar-project-zip").nextElementSibling !== stemsButtons[0] ||
-        doc.getElementById("btn-download-project-zip").nextElementSibling !== stemsButtons[1]) {
-      fail("the Stems buttons do not sit right after the Project files buttons");
-    }
-    pass("both Stems buttons exist after Project files, labelled Stems, with the tooltip");
+    if (stemsRow.tagName !== "BUTTON" || stemsRow.getAttribute("role") !== "menuitem") fail("Separate tracks is not a menu row");
+    if (stemsRow.querySelector(".save-menu-label").textContent !== "Separate tracks (WAV)") fail("the row is not labelled Separate tracks (WAV)");
+    if (stemsRow.getAttribute("data-tip") !== STEMS_TIP) fail("Separate tracks has the wrong tooltip", stemsRow.getAttribute("data-tip"));
+    if (stemsRow.nextElementSibling !== projectRow) fail("Separate tracks does not sit right before Editing project");
+    pass("Separate tracks sits before Editing project in the menu, with the tooltip");
 
     const stemsFetches = (from) => fetchLog.slice(from).filter(u => u.includes("/export/stems"));
 
-    // A remote member gets a normal download.
-    app.isEngineLocal = () => false;
-    for (const el of stemsButtons) {
+    // A remote host gets a normal download.
+    {
       const savesBefore = savedFiles.length;
       const fetchesBefore = fetchLog.length;
       toasts.length = 0;
-      clickUi(el);
+      clickUi(stemsRow);
       await settle();
       const requested = stemsFetches(fetchesBefore);
       if (requested.length !== 1 || !/^\/api\/rooms\/TEST12\/export\/stems\?user_id=[^&]+&v=\d+$/.test(requested[0])) {
-        fail(`#${el.id} did not fetch the stems route once`, requested);
+        fail("Separate tracks did not fetch the stems route once", requested);
       }
-      if (savedFiles.length !== savesBefore + 1) fail(`#${el.id} did not hand the stems to the browser`);
+      if (savedFiles.length !== savesBefore + 1) fail("Separate tracks did not hand the ZIP to the browser");
       const saved = savedFiles[savedFiles.length - 1];
       if (!saved.href.startsWith("blob:") || saved.download !== "DubMate_Stems_Deku_vs_Todoroki_TEST12.zip") {
-        fail(`#${el.id} saved the stems under the wrong name`, saved);
+        fail("Separate tracks saved under the wrong name", saved);
       }
-      if (toasts[0] !== "Preparing stems…" || toasts[toasts.length - 1] !== "Stems downloaded") {
-        fail(`#${el.id} did not toast start and completion`, toasts);
-      }
-      if (el.hasAttribute("aria-busy") || el.disabled) fail(`#${el.id} was left busy`);
+      if (toasts.join("|") !== "Separate tracks downloaded") fail("Separate tracks did not say only that it finished", toasts);
+      if (stemsRow.hasAttribute("aria-busy") || stemsRow.getAttribute("aria-disabled") === "true") fail("Separate tracks was left busy");
     }
-    pass("a remote member downloads the stems ZIP with start and done toasts");
+    pass("a remote host downloads the separate tracks, told once it finished");
 
-    // While the stems are made the label says so and a second click does nothing.
+    // While the tracks are made the row says so and a second click does nothing.
     let releaseStems;
     stemsGate = new Promise((resolve) => { releaseStems = resolve; });
-    const stemsBtn = stemsButtons[0];
     const beforeBusy = fetchLog.length;
-    clickUi(stemsBtn);
+    clickUi(stemsRow);
     await settle();
-    if (stemsBtn.querySelector("span").innerText !== "Preparing…") {
-      fail("the Stems button did not read Preparing… while the stems were made", stemsBtn.querySelector("span").innerText);
+    if (stemsRow.querySelector(".save-menu-label").textContent !== "Preparing…") {
+      fail("the row did not read Preparing… while the tracks were made", stemsRow.textContent);
     }
-    clickUi(stemsBtn);
-    await app.downloadStems(stemsBtn);
+    clickUi(stemsRow);
+    await app.downloadStems(stemsRow);
     await settle();
     if (stemsFetches(beforeBusy).length !== 1) fail("a second click fetched the stems again", stemsFetches(beforeBusy));
     releaseStems();
     stemsGate = null;
     await settle();
-    // jsdom has no real innerText, so only check the busy text is gone.
-    if (stemsBtn.querySelector("span").innerText === "Preparing…" || stemsBtn.disabled) {
-      fail("the Stems button stayed busy after the stems arrived");
+    if (stemsRow.querySelector(".save-menu-label").textContent !== "Separate tracks (WAV)" || stemsRow.getAttribute("aria-disabled") === "true") {
+      fail("the row stayed busy after the tracks arrived", stemsRow.textContent);
     }
-    pass("a second click while the stems are made does nothing; the label reads Preparing…");
+    pass("a second click while the tracks are made does nothing; the row reads Preparing…");
 
     // Refusals and failures.
     const BUSY = "Someone is already getting the stems. Try again in a moment.";
     stemsFailure = { ok: false, status: 409, json: () => Promise.resolve({ detail: BUSY }) };
     toasts.length = 0;
-    clickUi(stemsBtn);
+    clickUi(stemsRow);
     await settle();
     if (toasts[toasts.length - 1] !== BUSY) fail("a 409 did not show the engine's reason", toasts);
     stemsFailure = { ok: false, status: 500, json: () => Promise.reject(new Error("not JSON")) };
     toasts.length = 0;
     const savesBeforeFail = savedFiles.length;
-    clickUi(stemsBtn);
+    clickUi(stemsRow);
     await settle();
     stemsFailure = null;
-    if (toasts[toasts.length - 1] !== "Couldn't get the stems. Try again.") fail("a 500 did not toast the stems error", toasts);
+    if (toasts[toasts.length - 1] !== "Couldn't get the separate tracks. Try again.") fail("a 500 did not toast the error", toasts);
     if (savedFiles.length !== savesBeforeFail) fail("a failed stems request still saved a file");
 
     // A download the browser couldn't hold: the body read fails with the
     // browser's own words, which must never reach the user.
-    const labelBeforeBlobFail = stemsBtn.querySelector("span").innerText;
     stemsFailure = { ...blobResponse(), blob: () => Promise.reject(new dom.window.TypeError("network error")) };
     toasts.length = 0;
     const savesBeforeBlobFail = savedFiles.length;
     const urlsBeforeBlobFail = objectUrls.created;
-    clickUi(stemsBtn);
+    clickUi(stemsRow);
     await settle();
     stemsFailure = null;
-    if (toasts[toasts.length - 1] !== "Couldn't get the stems. Try again.") fail("a failed body read did not toast the stems error", toasts);
+    if (toasts[toasts.length - 1] !== "Couldn't get the separate tracks. Try again.") fail("a failed body read did not toast the error", toasts);
     if (toasts.some(t => /network error/i.test(t))) fail("the browser's own error text reached the user", toasts);
     if (savedFiles.length !== savesBeforeBlobFail || objectUrls.created !== urlsBeforeBlobFail) {
       fail("a failed body read still saved a file");
     }
-    if (stemsBtn.disabled || stemsBtn.hasAttribute("aria-busy") || stemsBtn.dataset.downloading) {
-      fail("the Stems button stayed busy after a failed body read");
+    if (stemsRow.getAttribute("aria-disabled") === "true" || stemsRow.hasAttribute("aria-busy") || stemsRow.dataset.downloading) {
+      fail("the row stayed busy after a failed body read");
     }
-    if (stemsBtn.querySelector("span").innerText !== labelBeforeBlobFail) {
-      fail("the Stems button did not get its label back after a failed body read", stemsBtn.querySelector("span").innerText);
+    if (stemsRow.querySelector(".save-menu-label").textContent !== "Separate tracks (WAV)") {
+      fail("the row did not get its label back after a failed body read", stemsRow.textContent);
     }
-    pass("a busy refusal shows its reason and any other failure says Couldn't get the stems");
+    pass("a busy refusal shows its reason and any other failure says Couldn't get the separate tracks");
     delete app.isEngineLocal;
+    app.updateScreeningControls();
 
     // On the engine's computer the ZIP is already in the export folder.
-    for (const el of stemsButtons) {
+    {
       const savesBefore = savedFiles.length;
       const cancelledBefore = bodiesCancelled;
       const fetchesBefore = fetchLog.length;
       toasts.length = 0;
       app.exportsDirCache = undefined;
-      clickUi(el);
+      clickUi(stemsRow);
       await settle();
-      if (stemsFetches(fetchesBefore).length !== 1) fail(`#${el.id} did not ask the engine for the stems once`);
-      if (bodiesCancelled !== cancelledBefore + 1) fail(`#${el.id} did not cancel the body on the host`);
-      if (savedFiles.length !== savesBefore) fail(`#${el.id} saved a second copy of the stems on the host`);
-      if (toasts[toasts.length - 1] !== `Saved to ${EXPORTS_DIR}`) fail(`#${el.id} did not name the export folder`, toasts);
+      if (stemsFetches(fetchesBefore).length !== 1) fail("Separate tracks did not ask the engine for the stems once");
+      if (bodiesCancelled !== cancelledBefore + 1) fail("Separate tracks did not cancel the body on the host");
+      if (savedFiles.length !== savesBefore) fail("Separate tracks saved a second copy on the host");
+      if (stemsRow.querySelector(".save-menu-state").textContent !== "saved · Show in folder" || toasts.length) {
+        fail("Separate tracks did not say inline that it was saved", [stemsRow.textContent, toasts]);
+      }
     }
-    pass("on the engine's own computer, Stems names the export folder and saves no copy");
+    pass("on the engine's own computer, Separate tracks saves no copy and reads saved · Show in folder");
 
     app.lockScreeningUI(true);
-    if (!stemsButtons[0].disabled) fail("locking the theater left the toolbar Stems button enabled");
+    if (!doc.getElementById("btn-save-menu").disabled || !doc.getElementById("btn-export-video").disabled) {
+      fail("locking the theater left Save enabled");
+    }
     app.lockScreeningUI(false);
-    if (stemsButtons[0].disabled) fail("unlocking the theater left the toolbar Stems button disabled");
-    pass("locking the theater disables the toolbar Stems button");
+    if (doc.getElementById("btn-save-menu").disabled || doc.getElementById("btn-export-video").disabled) {
+      fail("unlocking the theater left Save disabled");
+    }
+    pass("locking the theater disables Save and its menu");
 
     console.log("ALL EXPORT & DOWNLOAD FEEDBACK TESTS PASSED!");
     process.exit(0);

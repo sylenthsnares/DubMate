@@ -116,7 +116,7 @@
             <path d="M8 22h8" />
           </svg>
           <span class="crumb-text">Premiere</span>
-          <span id="crumb-premiere-live" class="badge-live-dot" style="display: none;"
+          <span id="crumb-premiere-live" class="badge-live-dot badge-live-dot-amber" style="display: none;"
             aria-hidden="true"></span>
         </button>
       </nav>
@@ -1098,43 +1098,8 @@
     </section>
 
 
-    <!-- 4. FINALE SCREENING & EXPORT VIEW -->
+    <!-- 4. FINALE SCREENING & EXPORT VIEW: the video, one bar of controls, then Mix -->
     <section id="view-screening" class="view-section" aria-label="Premiere">
-      <div class="screening-header-card glass-card">
-        <div class="screening-title-row">
-          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-            <span class="theater-icon" aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <rect width="20" height="15" x="2" y="3" rx="2" />
-                <polyline points="12 18 12 22" />
-                <path d="M8 22h8" />
-              </svg>
-            </span>
-            <h2 class="screening-title">Premiere</h2>
-            <span id="screening-host-badge" class="badge-host">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
-              </svg>
-              <span>Host</span>
-            </span>
-            <span id="screening-master-badge" class="badge-master" style="display: none;">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path
-                  d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
-              </svg>
-              <span>Final video</span>
-            </span>
-          </div>
-          <button id="btn-back-booth" class="btn btn-secondary btn-sm">
-            <span>‹ Booth</span>
-          </button>
-        </div>
-        <p id="screening-status-desc" class="screening-desc">The host controls playback for everyone.</p>
-      </div>
-
       <div class="screening-theater-box">
         <div class="video-container theater-player">
           <video id="screening-video" playsinline preload="auto" aria-label="Dubbed scene"></video>
@@ -1148,207 +1113,193 @@
         </div>
       </div>
 
-      <!-- Synchronized Master Playback Controls -->
-      <div class="screening-controls-bar glass-card" role="toolbar" aria-label="Playback">
-        <button id="btn-screening-play-pause" class="btn btn-primary btn-lg" style="min-width: 160px;"
-          aria-label="Play or pause">
-          <span id="screening-play-icon">▶ Play</span>
-        </button>
-        <button id="btn-screening-replay" class="btn btn-secondary btn-lg">↺ Replay</button>
-
-        <!-- Aspect Ratio Selector Pill -->
-        <div class="aspect-ratio-toggle-group" role="radiogroup" aria-label="Video shape">
-          <button id="btn-aspect-16-9" class="btn btn-aspect active" role="radio" aria-checked="true"
-            data-tip="Landscape">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <rect width="20" height="14" x="2" y="5" rx="2" />
-            </svg>
-            <span>16:9</span>
-          </button>
-          <button id="btn-aspect-9-16" class="btn btn-aspect" role="radio" aria-checked="false"
-            data-tip="Vertical, for Shorts, Reels and TikTok. The scene sits in the middle with bars above and below.">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <rect width="14" height="20" x="5" y="2" rx="2" />
-            </svg>
-            <span>9:16</span>
-          </button>
+      <!-- The timeline under the video: a tick at each line's start in its actor's colour.
+           Click or drag to seek; the host's seek moves everyone (screening.js). -->
+      <div id="screening-timeline" class="screening-timeline">
+        <span id="screening-time-elapsed" class="screening-time">0:00</span>
+        <div id="screening-track" class="screening-track" role="slider" tabindex="0" aria-label="Position"
+          aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00 of 0:00">
+          <div class="screening-track-rail">
+            <div id="screening-track-played" class="screening-track-played"></div>
+          </div>
+          <div id="screening-track-ticks" class="screening-track-ticks" aria-hidden="true"></div>
+          <div id="screening-track-thumb" class="screening-track-thumb" aria-hidden="true"></div>
         </div>
-
-        <button id="btn-export-video" class="btn btn-success btn-lg">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" x2="12" y1="15" y2="3" />
-          </svg>
-          <span id="label-export-btn">Export video</span>
-        </button>
-
-        <button id="btn-toolbar-project-zip" type="button" class="btn btn-project-zip btn-lg"
-          data-tip="A .zip with the video without dialogue, the music track and every take as its own file, for editing in other software">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path
-              d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-            <path d="m3.3 7 8.7 5 8.7-5" />
-            <path d="M12 22V12" />
-          </svg>
-          <span id="label-toolbar-project-zip">Project files</span>
-        </button>
-        <button id="btn-toolbar-stems" type="button" class="btn btn-project-zip btn-lg"
-          data-tip="Separate WAV files for the voices and for the music and effects, plus one per character, to finish the mix in another editor. They all start with the scene.">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 10v3" />
-            <path d="M6 6v11" />
-            <path d="M10 3v18" />
-            <path d="M14 8v7" />
-            <path d="M18 5v13" />
-            <path d="M22 10v3" />
-          </svg>
-          <span>Stems</span>
-        </button>
+        <span id="screening-time-total" class="screening-time">0:00</span>
       </div>
 
-      <!-- Master Audio Stem Balance Mixer Deck -->
-      <div class="screening-stem-mixer glass-card rack-wood-frame" role="region"
-        aria-label="Mix">
-        <div class="stem-mixer-header">
-          <div class="stem-title-group">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 21v-7" />
-              <path d="M4 10V3" />
-              <path d="M12 21v-9" />
-              <path d="M12 8V3" />
-              <path d="M20 21v-5" />
-              <path d="M20 12V3" />
-              <circle cx="4" cy="14" r="2" />
-              <circle cx="12" cy="8" r="2" />
-              <circle cx="20" cy="16" r="2" />
+      <div class="screening-controls-bar" role="group" aria-label="Premiere controls">
+        <button id="btn-screening-play-pause" class="btn btn-primary btn-lg screening-play" type="button">
+          <span id="screening-play-icon" class="screening-play-icon" aria-hidden="true">
+            <svg class="icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z" />
             </svg>
-            <span>MIX</span>
-          </div>
-          <span id="val-screening-balance" class="stem-val-badge">Even</span>
-        </div>
-        <div class="stem-slider-row">
-          <span class="stem-tag stem-tag-music">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
+            <svg class="icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <rect x="6" y="4" width="4" height="16" rx="1" />
+              <rect x="14" y="4" width="4" height="16" rx="1" />
             </svg>
-            <span>Music</span>
           </span>
-          <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1" value="50"
-            aria-label="Music and voice balance" aria-valuemin="0"
-            aria-valuemax="100" aria-valuenow="50" aria-valuetext="50 percent balanced">
-          <span class="stem-tag stem-tag-vocals">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" x2="12" y1="19" y2="22" />
-            </svg>
-            <span>Voices</span>
-          </span>
-        </div>
-        <div class="stem-scale-row" aria-hidden="true">
-          <span>More music</span>
-          <span style="color: var(--primary);">● Even</span>
-          <span>More voice</span>
-        </div>
+          <span id="screening-play-label">Play</span>
+        </button>
+        <button id="btn-screening-replay" class="btn btn-secondary btn-lg" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+          </svg>
+          <span>Replay</span>
+        </button>
+        <p id="screening-status-desc" class="screening-desc">You control playback for everyone.</p>
 
-        <!-- Master Dialogue Prominence / Vocal Mix Presence Deck -->
-        <div class="presence-mixer-section"
-          style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
-          <div class="stem-mixer-header">
-            <div class="stem-title-group">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <div class="screening-save-group">
+          <span id="screening-source-label" class="screening-source is-live"
+            data-tip="What everyone hears now. Save makes the video from this mix.">
+            <span class="screening-source-dot" aria-hidden="true"></span>
+            <span id="screening-source-text">Live mix</span>
+          </span>
+
+          <!-- Save (host) or Download video (member): the main part acts, the chevron opens the menu -->
+          <div id="screening-save" class="save-split" data-state="idle">
+            <button id="btn-export-video" class="btn btn-secondary save-split-main" type="button">
+              <svg class="save-icon save-icon-save" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" x2="12" y1="15" y2="3" />
               </svg>
-              <span
-                style="font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--accent-brass);">DIALOGUE LEVEL</span>
+              <svg class="save-icon save-icon-spin" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+              <svg class="save-icon save-icon-check" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              <span id="label-export-btn">Save video</span>
+            </button>
+            <button id="btn-save-menu" class="btn btn-secondary save-split-toggle" type="button"
+              aria-haspopup="menu" aria-expanded="false" aria-controls="save-menu" aria-label="More ways to save">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            <div id="save-menu" class="save-menu" role="menu" aria-label="Save" hidden>
+              <button id="save-menu-video-169" class="save-menu-item" type="button" role="menuitem" tabindex="-1"
+                data-aspect="16:9">
+                <span class="save-menu-label">Video 16:9</span>
+                <span class="save-menu-state"></span>
+              </button>
+              <button id="save-menu-video-916" class="save-menu-item" type="button" role="menuitem" tabindex="-1"
+                data-aspect="9:16"
+                data-tip="Vertical, for Shorts, Reels and TikTok. The scene sits in the middle with bars above and below.">
+                <span class="save-menu-label">Video 9:16</span>
+                <span class="save-menu-state"></span>
+              </button>
+              <div id="save-menu-editing" class="save-menu-group" role="group" aria-labelledby="save-menu-editing-title">
+                <div id="save-menu-editing-title" class="save-menu-heading">For editing</div>
+                <button id="save-menu-stems" class="save-menu-item" type="button" role="menuitem" tabindex="-1"
+                  data-tip="Separate WAV files for the voices and for the music and effects, plus one per character, to finish the mix in another editor. They all start with the scene.">
+                  <span class="save-menu-label">Separate tracks (WAV)</span>
+                  <span class="save-menu-state"></span>
+                </button>
+                <button id="save-menu-project" class="save-menu-item" type="button" role="menuitem" tabindex="-1"
+                  data-tip="A .zip with the video without dialogue, the music track and every take as its own file, for editing in other software">
+                  <span class="save-menu-label">Editing project (.zip)</span>
+                  <span class="save-menu-state"></span>
+                </button>
+              </div>
             </div>
-            <span id="val-dialogue-presence" class="stem-val-badge" style="color: var(--accent-brass);">0.0 dB (default)</span>
-          </div>
-          <div class="stem-slider-row" style="margin-top: 4px;">
-            <span style="font-size: 11px; font-family: var(--font-mono); color: var(--foreground-muted);">-6dB</span>
-            <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5" value="0"
-              aria-label="Dialogue level (dB)" aria-valuemin="-6" aria-valuemax="8"
-              aria-valuenow="0" aria-valuetext="0.0 dB, default">
-            <span style="font-size: 11px; font-family: var(--font-mono); color: var(--foreground-muted);">+8dB</span>
-          </div>
-          <div class="presence-preset-pills" style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset active" data-presence="0">Default</button>
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="2.5">Cinematic (+2.5 dB)</button>
-            <button type="button" class="btn btn-secondary btn-xs btn-presence-preset" data-presence="5.0">Voices up (+5 dB)</button>
           </div>
         </div>
       </div>
 
-      <div id="export-progress-box" class="export-progress-box glass-card" style="display: none;" aria-live="polite">
-        <div class="export-progress-header">
-          <div id="export-status-text" class="export-status-text">Rendering…</div>
-        </div>
-        <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <div id="export-progress-fill" class="progress-fill"></div>
-        </div>
-        <div id="export-progress-steps" class="export-steps-list" aria-hidden="true">
-          <span class="step-item active" id="step-dsp">Mix audio</span>
-          <span class="step-item" id="step-mux">Make video</span>
-          <span class="step-item" id="step-ready">Ready</span>
-        </div>
-        <div id="export-download-container"
-          style="display: none; margin-top: 16px; text-align: center; gap: 12px; justify-content: center; flex-wrap: wrap;">
-          <a id="btn-download-link" href="#" class="btn btn-primary btn-lg" download>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" x2="12" y1="15" y2="3" />
+      <!-- A render that failed: why, and Try again (host only) -->
+      <div id="screening-save-error" class="screening-save-error" role="status" hidden>
+        <span id="screening-save-error-text"></span>
+        <button id="btn-save-retry" class="btn btn-ghost btn-sm" type="button">Try again</button>
+      </div>
+
+      <!-- Mix and In this dub: side by side on wide windows, stacked below that -->
+      <div class="screening-sections">
+        <!-- Mix: presets for the host, the host's choice read-only for members -->
+        <details id="screening-mix" class="screening-section screening-mix">
+          <summary class="screening-section-summary">
+            <svg class="screening-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
             </svg>
-            <span>Download 16:9</span>
-          </a>
-          <a id="btn-download-link-9-16" href="#" class="btn btn-secondary btn-lg" download>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" x2="12" y1="15" y2="3" />
+            <span class="screening-section-title">Mix</span>
+            <span id="screening-mix-summary" class="screening-section-meta">· Balanced</span>
+          </summary>
+          <div class="screening-section-body">
+            <div id="screening-mix-host">
+              <div class="tab-pill-group mix-presets" role="radiogroup" aria-label="Mix">
+                <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="true" tabindex="0"
+                  data-preset="balanced">Balanced</button>
+                <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="false" tabindex="-1"
+                  data-preset="voices">Voices forward</button>
+                <button type="button" class="tab-pill mix-preset" role="radio" aria-checked="false" tabindex="-1"
+                  data-preset="music">Music forward</button>
+              </div>
+
+              <details id="screening-fine-tune" class="screening-fine-tune">
+                <summary class="screening-fine-tune-summary">
+                  <svg class="screening-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                  <span>Fine-tune</span>
+                </summary>
+                <div class="mix-fine-row">
+                  <div class="stem-mixer-header">
+                    <span class="mix-fine-title">Music and voices</span>
+                    <span id="val-screening-balance" class="stem-val-badge">Even</span>
+                  </div>
+                  <div class="stem-slider-row">
+                    <span class="stem-tag">Music</span>
+                    <input type="range" id="slider-screening-balance" class="stem-slider" min="0" max="100" step="1"
+                      value="50" aria-label="Music and voice balance" aria-valuemin="0" aria-valuemax="100"
+                      aria-valuenow="50" aria-valuetext="50 percent">
+                    <span class="stem-tag">Voices</span>
+                  </div>
+                </div>
+                <div class="mix-fine-row">
+                  <div class="stem-mixer-header">
+                    <span class="mix-fine-title">Dialogue level</span>
+                    <span id="val-dialogue-presence" class="stem-val-badge">0.0 dB (default)</span>
+                  </div>
+                  <div class="stem-slider-row">
+                    <span class="stem-tag">-6 dB</span>
+                    <input type="range" id="slider-dialogue-presence" class="stem-slider" min="-6" max="8" step="0.5"
+                      value="0" aria-label="Dialogue level (dB)" aria-valuemin="-6" aria-valuemax="8"
+                      aria-valuenow="0" aria-valuetext="0.0 dB, default">
+                    <span class="stem-tag">+8 dB</span>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <p id="screening-mix-member" class="screening-mix-member" hidden>
+              <span id="screening-mix-member-preset" class="screening-mix-member-preset">Balanced</span>
+              <span class="screening-mix-member-desc">The host sets the mix. You hear what the video will sound like.</span>
+            </p>
+          </div>
+        </details>
+
+        <!-- In this dub: each line's actor and take; a row plays from that line (screening.js).
+             Open for the host, closed for members. -->
+        <details id="screening-lines" class="screening-section screening-lines">
+          <summary class="screening-section-summary">
+            <svg class="screening-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
             </svg>
-            <span>Download 9:16</span>
-          </a>
-          <button id="btn-download-project-zip" type="button" class="btn btn-project-zip btn-lg"
-            data-tip="A .zip with the video without dialogue, the music track and every take as its own file, for editing in other software">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path
-                d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-              <path d="m3.3 7 8.7 5 8.7-5" />
-              <path d="M12 22V12" />
-            </svg>
-            <span id="label-download-project-zip">Project files</span>
-          </button>
-          <button id="btn-download-stems" type="button" class="btn btn-project-zip btn-lg"
-            data-tip="Separate WAV files for the voices and for the music and effects, plus one per character, to finish the mix in another editor. They all start with the scene.">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 10v3" />
-              <path d="M6 6v11" />
-              <path d="M10 3v18" />
-              <path d="M14 8v7" />
-              <path d="M18 5v13" />
-              <path d="M22 10v3" />
-            </svg>
-            <span>Stems</span>
-          </button>
-        </div>
+            <span class="screening-section-title">In this dub</span>
+            <span id="screening-lines-summary" class="screening-section-meta"></span>
+          </summary>
+          <ol id="screening-lines-list" class="screening-lines-list"></ol>
+        </details>
       </div>
     </section>
 
@@ -1359,19 +1310,26 @@
   <!-- Joins, leaves and "is ready", read out once each (ui_common.js announce) -->
   <div id="sr-announcer" class="sr-only" aria-live="polite"></div>
 
-  <!-- Master Dub Video Export Rendering Modal Overlay -->
-  <div id="modal-export-rendering" class="studio-modal-overlay" style="display: none;" role="dialog" aria-modal="true"
-    aria-labelledby="export-modal-title" aria-describedby="export-modal-status-text">
+  <!-- The export modal: only the host's own Save opens it (export.js setExportModalState).
+       data-state is rendering, timeout, failed or done; the comments say which parts each shows. -->
+  <div id="modal-export-rendering" class="studio-modal-overlay export-modal" hidden role="dialog" aria-modal="true"
+    aria-labelledby="export-modal-title" aria-describedby="export-modal-status-text" data-state="rendering">
     <div class="studio-modal-card">
-      <!-- Top-Right Close Button -->
-      <button id="btn-modal-close-x" class="modal-close-btn" style="display: none;"
-        aria-label="Close">✕</button>
+      <!-- done and failed -->
+      <button id="btn-modal-close-x" class="modal-close-btn" type="button" aria-label="Close" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
 
       <div class="render-animation-container">
-        <div class="render-film-reel">
+        <!-- rendering and timeout -->
+        <div class="render-film-reel" id="export-modal-reel">
           <div class="reel-core">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-              stroke-linecap="round" stroke-linejoin="round">
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
               <path d="M12 2v4" />
               <path d="M12 18v4" />
@@ -1383,92 +1341,121 @@
           </div>
           <div class="reel-pulse-ring"></div>
         </div>
+        <!-- done -->
+        <div class="export-modal-icon is-done" id="export-modal-icon-done" hidden>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <!-- failed -->
+        <div class="export-modal-icon is-failed" id="export-modal-icon-failed" hidden>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" x2="12" y1="8" y2="12" />
+            <line x1="12" x2="12.01" y1="16" y2="16" />
+          </svg>
+        </div>
       </div>
 
       <div class="modal-header-content">
-        <div class="modal-badge-row">
-          <span class="badge-studio">EXPORT</span>
-          <span class="badge-render-live" id="export-modal-badge">RENDERING</span>
+        <!-- rendering and failed -->
+        <div class="modal-badge-row" id="export-modal-badges">
+          <span class="badge-render-live" id="export-modal-badge">SAVING</span>
         </div>
-        <h2 id="export-modal-title" class="modal-title">Rendering your dub</h2>
-        <p id="export-modal-status-text" class="modal-status-text">Mixing your takes with the scene…</p>
+        <h2 id="export-modal-title" class="modal-title" tabindex="-1">Saving your dub</h2>
+        <!-- What it is doing while saving, the reason when it failed, the facts when done. -->
+        <p id="export-modal-status-text" class="modal-status-text">Mixing your takes…</p>
       </div>
 
-      <!-- 3-Stage Progress Steps -->
-      <div class="modal-steps-container">
+      <!-- rendering: the two real steps and an indeterminate bar (no percentages) -->
+      <div class="modal-steps-container" id="export-modal-steps">
         <div class="modal-step-item active" id="modal-step-dsp">
-          <div class="step-num">1</div>
+          <div class="step-num" aria-hidden="true">1</div>
           <div class="step-info">
             <div class="step-title">Mix audio</div>
           </div>
         </div>
         <div class="step-connector" id="connector-dsp-mux"></div>
         <div class="modal-step-item" id="modal-step-mux">
-          <div class="step-num">2</div>
+          <div class="step-num" aria-hidden="true">2</div>
           <div class="step-info">
             <div class="step-title">Make video</div>
           </div>
         </div>
-        <div class="step-connector" id="connector-mux-ready"></div>
-        <div class="modal-step-item" id="modal-step-ready">
-          <div class="step-num">3</div>
-          <div class="step-info">
-            <div class="step-title">Finish</div>
-          </div>
-        </div>
       </div>
-
-      <!-- High-Precision Animated Progress Bar -->
-      <div class="modal-progress-track">
-        <div id="export-modal-progress-bar" class="modal-progress-fill" style="width: 30%;"></div>
+      <div class="modal-progress-track" id="export-modal-progress" role="progressbar" aria-label="Saving"
+        aria-valuetext="Mix audio">
+        <div id="export-modal-progress-bar" class="modal-progress-fill indeterminate"></div>
       </div>
 
       <div id="export-modal-reassurance" class="modal-reassurance-notice">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10" />
           <line x1="12" x2="12" y1="8" y2="12" />
           <line x1="12" x2="12.01" y1="16" y2="16" />
         </svg>
-        <span>Keep this window open until rendering finishes.</span>
+        <span>Keep this window open until it's done.</span>
       </div>
 
-      <!-- Where the render landed on disk. Filled from GET /api/config -> exports_dir
-           after a successful export; stays hidden if the backend does not report it. -->
-      <p id="export-saved-path" class="export-saved-path"></p>
+      <!-- done: Watch the dub, then the two formats as a pair -->
+      <div id="export-modal-actions" class="modal-actions export-modal-done" hidden>
+        <button id="btn-modal-close-view" class="btn btn-primary btn-lg export-modal-watch" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+            <path d="M7 4.5v15l12.5-7.5z" />
+          </svg>
+          <span>Watch the dub</span>
+        </button>
+        <div class="export-modal-pair">
+          <!-- the engine's computer -->
+          <button id="btn-modal-reveal" class="btn btn-secondary" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+            </svg>
+            <span>Show in folder</span>
+          </button>
+          <button id="btn-modal-make-916" class="btn btn-secondary" type="button"
+            data-tip="A tall copy for phones, with the same mix.">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="12" height="20" x="6" y="2" rx="2" />
+            </svg>
+            <span>Make 9:16 version</span>
+          </button>
+          <!-- a remote host -->
+          <a id="btn-modal-download-169" href="#" class="btn btn-secondary" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" x2="12" y1="15" y2="3" />
+            </svg>
+            <span>Download 16:9</span>
+          </a>
+          <a id="btn-modal-download-916" href="#" class="btn btn-secondary" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" x2="12" y1="15" y2="3" />
+            </svg>
+            <span>Download 9:16</span>
+          </a>
+        </div>
+      </div>
 
-      <!-- Modal Actions on Completion -->
-      <div id="export-modal-actions" class="modal-actions" style="display: none;">
-        <button id="btn-modal-close-view" class="btn btn-primary btn-lg" type="button">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <rect width="20" height="15" x="2" y="3" rx="2" />
-            <polyline points="12 18 12 22" />
-            <path d="M8 22h8" />
-          </svg>
-          <span>Watch</span>
-        </button>
-        <button id="btn-modal-dismiss" class="btn btn-ghost btn-lg" type="button">
-          <span>Close</span>
-        </button>
-        <a id="btn-modal-download-169" href="#" class="btn btn-secondary btn-lg" download>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" x2="12" y1="15" y2="3" />
-          </svg>
-          <span>Download 16:9</span>
-        </a>
-        <a id="btn-modal-download-916" href="#" class="btn btn-secondary btn-lg" download>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" x2="12" y1="15" y2="3" />
-          </svg>
-          <span>Download 9:16</span>
-        </a>
+      <!-- failed -->
+      <div id="export-modal-failed-actions" class="modal-actions" hidden>
+        <button id="btn-modal-retry" class="btn btn-primary btn-lg" type="button">Try again</button>
+        <button id="btn-modal-close-failed" class="btn btn-secondary btn-lg" type="button">Close</button>
+      </div>
+
+      <!-- timeout: it keeps saving in the background -->
+      <div id="export-modal-timeout-actions" class="modal-actions" hidden>
+        <button id="btn-modal-keep-working" class="btn btn-primary btn-lg" type="button">Keep working</button>
       </div>
     </div>
   </div>
