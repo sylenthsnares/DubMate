@@ -51,7 +51,7 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
  * Boots builder.html, runs a fake upload + processing, and waits for the editor.
  * beforeDone(w, send) runs before the final 'transcribed' message, to check stages.
  */
-async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] }, beforeDone = null) {
+async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] }, beforeDone = null, opts = {}) {
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (err) => {
     if (!/not implemented/i.test(String(err && err.message))) console.error(err);
@@ -75,6 +75,9 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
   const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   w.fetch = (url) => {
     const u = String(url);
+    // opts.fetch(url, json) answers a request first when it returns a promise.
+    const own = opts.fetch && opts.fetch(u, json);
+    if (own) return own;
     if (u === "/api/builder/upload") return json({ session_id: "sess1", duration: 10 });
     if (u.includes("/waveform")) return json({ peaks: [[-0.5, 0.5]], duration: 10 });
     return json({});
@@ -509,6 +512,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(start[0] === start[1] && start[2] !== start[1], "before the drag, C sits in its own track");
     pointer(blocks()[1], "pointerdown", 400);
     pointer(wrap, "pointermove", 150); // B moves to 0.5 s, over A
+    await tick(20); // blocks move on the next frame
     const mid = tops();
     check(app.segments[1].start === 0.5, "the drag moved B to 0.5 s");
     check(mid[0] === start[0] && mid[2] === start[2], "while dragging, the other lines keep their tracks");
@@ -527,6 +531,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(textOf(badge) === "2 tracks", "two lines at once make two tracks");
     pointer(blocks()[2], "pointerdown", 550);
     pointer(wrap, "pointermove", 200); // D to 1.5 s
+    await tick(20);
     check(textOf(badge) === "3 tracks" && new Set(tops()).size === 3, "dragging a line over two others opens a third track");
     pointer(wrap, "pointerup", 200);
 
@@ -612,8 +617,10 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     wrap.scrollTop = 0;
     pointer(blocks()[4], "pointerdown", 550, 60);
     pointer(wrap, "pointermove", 400, 60); // E to 3.5 s: still track 1
+    await tick(20);
     check(wrap.scrollTop === 0, "a drag within the visible tracks doesn't scroll");
     pointer(wrap, "pointermove", 200, 60); // E to 1.5 s: a fifth track, below the fold
+    await tick(20);
     const dragged = blocks()[4];
     const bottom = 24 + parseFloat(dragged.style.top) + parseFloat(dragged.style.height);
     check(textOf(badge) === "5 tracks" && bottom <= wrap.scrollTop + 150 && wrap.scrollTop > 0, "the dragged line's new track scrolls into view");
@@ -844,6 +851,94 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     await frames(40, 0.05);
     check(!video.paused, "seeking during a line's Play cancels its stop");
     ed.play();
+    w.close();
+  }
+
+  // (n) snappiness: blocks before the waveform, selection without a rebuild, drags once per
+  // frame, a text edit touches one label, and each track's waveform is fetched once.
+  {
+    let release = null;
+    const waveformCalls = [];
+    const ed = await bootEditor({ segments: [
+      { start: 1, end: 2, text: "A", character: "Speaker 1" },
+      { start: 3, end: 4, text: "B", character: "Speaker 2" },
+      { start: 5, end: 6, text: "C", character: "Speaker 1" },
+    ] }, null, { fetch: (u, json) => {
+      if (!u.includes("/waveform")) return null;
+      waveformCalls.push(u);
+      if (waveformCalls.length > 1) return json({ peaks: [[-0.2, 0.2]], duration: 10 });
+      // The first waveform request hangs until the test lets it answer.
+      return new Promise((r) => { release = () => r({ ok: true, status: 200, json: () => Promise.resolve({ peaks: [[-0.5, 0.5]], duration: 10 }) }); });
+    } });
+    const { w, doc, app } = ed;
+    const textOf = (el) => (typeof el.innerText === "string" ? el.innerText : el.textContent);
+    const blocks = () => Array.from(doc.querySelectorAll("#timeline-segments-overlay .builder-segment-block"));
+    const card = (i) => doc.getElementById(`cue-card-${i}`);
+    const timecode = (i) => textOf(card(i).querySelector(".cue-timecode-badge"));
+
+    check(typeof release === "function" && blocks().length === 3 && !!card(2), "the editor draws its lines while the waveform is still loading");
+    let waveDraws = 0;
+    const drawWave = app.renderWaveformCanvas;
+    app.renderWaveformCanvas = function (...args) { waveDraws++; return drawWave.apply(this, args); };
+    release();
+    await tick();
+    check(app.waveformPeaks.length === 1 && app.waveformPeaks[0][1] === 0.5 && waveDraws > 0, "the waveform is drawn when it arrives");
+
+    // Selecting a line moves the highlight; the timeline blocks stay the same nodes.
+    let fullRenders = 0;
+    const renderAll = app.renderTimelineSegments;
+    app.renderTimelineSegments = function (...args) { fullRenders++; return renderAll.apply(this, args); };
+    const first = blocks();
+    card(1).querySelector(".cue-number").click();
+    check(blocks().every((b, i) => b === first[i]) && fullRenders === 0, "selecting a line doesn't rebuild the timeline");
+    check(first[1].classList.contains("selected") && card(1).classList.contains("selected"), "the selected line's block and card are highlighted");
+    card(2).querySelector(".cue-number").click();
+    check(!first[1].classList.contains("selected") && !card(1).classList.contains("selected")
+      && first[2].classList.contains("selected") && card(2).classList.contains("selected"), "selecting another line moves the highlight");
+
+    // A text edit updates that line's block label only.
+    const ta = card(1).querySelector(".cue-text-input");
+    ta.value = "Bee";
+    ta.dispatchEvent(new w.Event("input", { bubbles: true }));
+    ta.dispatchEvent(new w.Event("change", { bubbles: true }));
+    check(fullRenders === 0 && blocks()[1] === first[1] && textOf(first[1].querySelector(".segment-block-label")) === "[Speaker 2] Bee",
+      "a text edit updates its block's label without rebuilding the timeline");
+
+    // A drag moves the line's time at once, and its block once per frame.
+    const wrap = doc.getElementById("timeline-scroll-wrap");
+    const pointer = (target, type, x, y = 50) => {
+      const ev = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+      Object.defineProperty(ev, "pointerId", { value: 1 });
+      Object.defineProperty(ev, "pointerType", { value: "mouse" });
+      Object.defineProperty(ev, "isPrimary", { value: true });
+      target.dispatchEvent(ev);
+    };
+    app.duration = 10;
+    app.pixelsPerSecond = 100;
+    renderAll.call(app);
+    const b0 = blocks()[0];
+    const code0 = timecode(0);
+    pointer(b0, "pointerdown", 150);
+    pointer(wrap, "pointermove", 200);
+    check(app.segments[0].start === 1.5, "the dragged line's time follows the pointer at once");
+    check(b0.style.left === "100px" && timecode(0) === code0, "the block and its card wait for the next frame");
+    pointer(wrap, "pointermove", 220);
+    pointer(wrap, "pointermove", 250);
+    await tick(20);
+    check(blocks()[0] === b0 && b0.style.left === "200px", "the next frame moves the same block to the latest position");
+    check(timecode(0) === `${app.formatTime(2)} → ${app.formatTime(3)}`, "the card's timecode follows in the same frame");
+    check(fullRenders === 0, "a drag doesn't rebuild the timeline while it moves");
+    pointer(wrap, "pointerup", 250);
+    check(fullRenders === 1 && !app.isDragging, "the drop packs the tracks once");
+
+    // Each track's waveform is fetched once; switching back is instant.
+    ed.toggle();
+    await tick();
+    check(waveformCalls.length === 2 && app.waveformPeaks[0][1] === 0.2, "switching to Full audio fetches its waveform");
+    ed.toggle();
+    check(app.waveformPeaks[0][1] === 0.5, "switching back shows the voice waveform at once");
+    await tick();
+    check(waveformCalls.length === 2, "switching back doesn't fetch the waveform again");
     w.close();
   }
 

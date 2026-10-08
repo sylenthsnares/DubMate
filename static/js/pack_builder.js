@@ -39,6 +39,8 @@ export class PackBuilderApp {
 
     // Waveform & Timeline Engine State
     this.waveformPeaks = [];
+    this.waveformCache = new Map(); // track -> { peaks, duration } for the open session
+    this.segmentBlocks = []; // timeline block per line index, from the last full render
     this.pixelsPerSecond = 80; // Zoom factor
     this.selectedSegmentIndex = null;
     this.activeAudioTrack = 'vocals'; // 'vocals' | 'full'
@@ -60,6 +62,7 @@ export class PackBuilderApp {
     this.dragOrigStart = 0;
     this.dragOrigEnd = 0;
     this.hasMovedPastThreshold = false;
+    this._dragFrameId = null; // a drag moves its block once per animation frame
 
     // Timeline Canvas Panning State (Grab to pan)
     this.isPanning = false;
@@ -882,6 +885,7 @@ export class PackBuilderApp {
     this.editorVideo.load();
     if (this.editorSessionId !== this.sessionId) {
       this.editorSessionId = this.sessionId;
+      this.waveformCache.clear();
       // A fallback in an earlier session doesn't carry over to this one.
       if (this.audioTrackForced) {
         this.activeAudioTrack = 'vocals';
@@ -921,31 +925,53 @@ export class PackBuilderApp {
     }
 
     this.updateCharacterPalette();
-    await this.fetchWaveformPeaks(this.activeAudioTrack || 'vocals');
-
-    const containerWidth = this.timelineScrollWrap.clientWidth || 800;
-    this.pixelsPerSecond = Math.max(40, Math.min(180, (containerWidth * 1.5) / Math.max(1, this.duration)));
-    this.updateZoomLabel();
-
+    const fitZoom = () => {
+      const containerWidth = this.timelineScrollWrap.clientWidth || 800;
+      this.pixelsPerSecond = Math.max(40, Math.min(180, (containerWidth * 1.5) / Math.max(1, this.duration)));
+      this.updateZoomLabel();
+    };
+    // Lines and tracks show at once; the waveform is drawn when its peaks arrive.
+    const durationBefore = this.duration;
+    const peaksLoaded = this.fetchWaveformPeaks(this.activeAudioTrack || 'vocals');
+    fitZoom();
     this.renderWaveformCanvas();
     this.renderTimelineSegments();
     this.renderSegmentsList();
     this.renderCharacterChips();
     this.startPlaybackLoop();
+
+    await peaksLoaded;
+    if (this.duration !== durationBefore) {
+      fitZoom();
+      this.renderTimelineSegments();
+      this.updatePlayheadPosition();
+    }
+    this.renderWaveformCanvas();
   }
 
+  /** Loads a track's waveform peaks, once per session: switching back uses the kept copy at once. */
   async fetchWaveformPeaks(track = 'vocals') {
     if (!this.sessionId) return;
+    const apply = (data) => {
+      // A later switch of track wins over a slower earlier request.
+      if (track !== (this.activeAudioTrack || 'vocals')) return;
+      this.waveformPeaks = data.peaks || [];
+      if (data.duration > 0) {
+        this.duration = data.duration;
+      }
+    };
+    if (this.waveformCache.has(track)) {
+      apply(this.waveformCache.get(track));
+      return;
+    }
+    const sessionId = this.sessionId;
     try {
-      const res = await fetch(`/api/builder/${this.sessionId}/waveform?columns=1200&track=${track}`);
+      const res = await fetch(`/api/builder/${sessionId}/waveform?columns=1200&track=${track}`);
       if (res.ok) {
         const data = await res.json();
-        // A later switch of track wins over a slower earlier request.
-        if (track !== (this.activeAudioTrack || 'vocals')) return;
-        this.waveformPeaks = data.peaks || [];
-        if (data.duration > 0) {
-          this.duration = data.duration;
-        }
+        if (sessionId !== this.editorSessionId) return; // another session opened meanwhile
+        if ((data.peaks || []).length) this.waveformCache.set(track, data);
+        apply(data);
       }
     } catch (e) {
       console.warn('Could not fetch peaks:', e);
@@ -1141,6 +1167,30 @@ export class PackBuilderApp {
     }
   }
 
+  /** The text on a line's timeline block. */
+  blockLabel(seg) {
+    return `[${seg.character}] ${seg.text || '(no words)'}`;
+  }
+
+  /** Puts a line's block at its time and track. A dragged line brings its track into view. */
+  placeBlock(block, seg, lane, laneHeight, isDragged) {
+    const blockHeight = Math.max(24, laneHeight - 8);
+    const topPos = lane * laneHeight + 4;
+    // The 24px ruler stays on top of the tracks.
+    if (isDragged) {
+      const wrap = this.timelineScrollWrap;
+      if (topPos < wrap.scrollTop) {
+        wrap.scrollTop = topPos - 4;
+      } else if (24 + topPos + blockHeight > wrap.scrollTop + wrap.clientHeight) {
+        wrap.scrollTop = 24 + topPos + blockHeight + 4 - wrap.clientHeight;
+      }
+    }
+    block.style.left = `${seg.start * this.pixelsPerSecond}px`;
+    block.style.width = `${Math.max(18, (seg.end - seg.start) * this.pixelsPerSecond)}px`;
+    block.style.top = `${topPos}px`;
+    block.style.height = `${blockHeight}px`;
+  }
+
   renderTimelineSegments() {
     const overlay = this.timelineSegmentsOverlay;
     overlay.innerHTML = '';
@@ -1157,33 +1207,15 @@ export class PackBuilderApp {
 
     this.timelineViewport.style.height = `${totalHeight}px`;
 
+    this.segmentBlocks = [];
     this.segments.forEach((seg, idx) => {
-      const left = seg.start * this.pixelsPerSecond;
-      const width = Math.max(18, (seg.end - seg.start) * this.pixelsPerSecond);
       const color = this.getCharacterColor(seg.character);
       const isSelected = idx === this.selectedSegmentIndex;
       const lane = Math.min(numLanes - 1, segmentLanes[idx] || 0);
 
-      const blockHeight = Math.max(24, laneHeight - 8);
-      const topPos = lane * laneHeight + 4;
-
-      // A dragged line moving into a track that is scrolled out of sight brings it into view
-      // (the 24px ruler stays on top of the tracks).
-      if (dragging && idx === this.dragSegmentIndex) {
-        const wrap = this.timelineScrollWrap;
-        if (topPos < wrap.scrollTop) {
-          wrap.scrollTop = topPos - 4;
-        } else if (24 + topPos + blockHeight > wrap.scrollTop + wrap.clientHeight) {
-          wrap.scrollTop = 24 + topPos + blockHeight + 4 - wrap.clientHeight;
-        }
-      }
-
       const block = document.createElement('div');
       block.className = `builder-segment-block ${isSelected ? 'selected' : ''}`;
-      block.style.left = `${left}px`;
-      block.style.width = `${width}px`;
-      block.style.top = `${topPos}px`;
-      block.style.height = `${blockHeight}px`;
+      this.placeBlock(block, seg, lane, laneHeight, dragging && idx === this.dragSegmentIndex);
       block.style.borderColor = color;
       block.style.background = `${color}28`;
 
@@ -1209,7 +1241,7 @@ export class PackBuilderApp {
 
       const label = document.createElement('div');
       label.className = 'segment-block-label';
-      label.innerText = `[${seg.character}] ${seg.text || '(no words)'}`;
+      label.innerText = this.blockLabel(seg);
 
       // Inline Delete Action Button right on the block
       const deleteBtn = document.createElement('button');
@@ -1258,6 +1290,7 @@ export class PackBuilderApp {
       });
 
       overlay.appendChild(block);
+      this.segmentBlocks[idx] = block;
     });
   }
 
@@ -1362,7 +1395,8 @@ export class PackBuilderApp {
         this.updateNonverbalBadge(idx);
       });
       textInput.addEventListener('change', () => {
-        this.renderTimelineSegments();
+        const label = this.segmentBlocks[idx]?.querySelector('.segment-block-label');
+        if (label) label.innerText = this.blockLabel(this.segments[idx]);
         this.syncSegmentsToServer();
       });
 
@@ -1553,14 +1587,16 @@ export class PackBuilderApp {
     }
   }
 
+  /** Moves the highlight to a line's block and card; nothing is rebuilt. */
   selectSegment(idx) {
     this.selectedSegmentIndex = idx;
-    this.renderTimelineSegments();
+    this.timelineSegmentsOverlay.querySelectorAll('.builder-segment-block.selected').forEach((b) => b.classList.remove('selected'));
+    if (this.segmentBlocks[idx]) this.segmentBlocks[idx].classList.add('selected');
 
-    const allCards = this.segmentsListContainer.querySelectorAll('.builder-cue-card');
-    allCards.forEach((c, i) => c.classList.toggle('selected', i === idx));
+    this.segmentsListContainer.querySelectorAll('.builder-cue-card.selected').forEach((c) => c.classList.remove('selected'));
     const targetCard = document.getElementById(`cue-card-${idx}`);
     if (targetCard) {
+      targetCard.classList.add('selected');
       targetCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }
@@ -1664,8 +1700,26 @@ export class PackBuilderApp {
       seg.end = Math.round((newStart + dur) * 50) / 50;
     }
 
-    this.renderTimelineSegments();
-    this.updateCardTimecode(this.dragSegmentIndex);
+    if (!this._dragFrameId) this._dragFrameId = requestAnimationFrame(() => this.renderDragFrame());
+  }
+
+  /**
+   * One drag frame: only the dragged block and its card's timecode move. The whole timeline is
+   * redrawn only when the drag opens or closes a track.
+   */
+  renderDragFrame() {
+    this._dragFrameId = null;
+    const idx = this.dragSegmentIndex;
+    const block = this.segmentBlocks[idx];
+    if (!this.isDragging || !this.dragLanes || !block) return;
+    const { lane, count } = this.lanesDuringDrag();
+    if (count !== this.laneCount) {
+      this.renderTimelineSegments();
+    } else {
+      const { numLanes, laneHeight } = this.getLaneDimensions();
+      this.placeBlock(block, this.segments[idx], Math.min(numLanes - 1, lane[idx]), laneHeight, true);
+    }
+    this.updateCardTimecode(idx);
   }
 
   /** Ends a drag, pan or resize. A cancelled pointer (`cancelled`) never seeks or selects. */
@@ -1710,6 +1764,8 @@ export class PackBuilderApp {
     if (this.isDragging) {
       const hadMovement = this.hasMovedPastThreshold;
       const modifiedIdx = this.dragSegmentIndex;
+      cancelAnimationFrame(this._dragFrameId);
+      this._dragFrameId = null;
       this.isDragging = false;
       this.dragSegmentIndex = null;
       this.dragType = null;
@@ -1717,9 +1773,17 @@ export class PackBuilderApp {
       document.body.style.userSelect = '';
 
       if (hadMovement) {
+        const moved = this.segments[modifiedIdx];
+        const selected = this.segments[this.selectedSegmentIndex];
         this.segments.sort((a, b) => a.start - b.start);
+        if (selected) this.selectedSegmentIndex = this.segments.indexOf(selected);
         this.renderTimelineSegments();
-        this.renderSegmentsList();
+        // The line list is rebuilt only when the line changed places in it.
+        if (this.segments[modifiedIdx] === moved) {
+          this.updateCardTimecode(modifiedIdx);
+        } else {
+          this.renderSegmentsList();
+        }
         this.syncSegmentsToServer();
       } else if (!cancelled && modifiedIdx !== null && this.segments[modifiedIdx]) {
         this.selectSegment(modifiedIdx);
