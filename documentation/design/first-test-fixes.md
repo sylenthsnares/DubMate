@@ -190,14 +190,23 @@ Found by the UI critique (premiere P0, ui-plan step 40b): the premiere's **Mix**
 ## Desktop
 
 - New `tauri/src-tauri/src/mic_permission.rs`:
-  - `pub fn auto_grant_origin(uri: &str) -> bool` is pure and unit-tested. It returns true for `http://127.0.0.1[:port]` and `http://localhost[:port]`, and for `https://` hosts equal to `trycloudflare.com` or `bkaproductions.com` or ending in `.` plus one of them. That is the same exact-or-dot-suffix rule as `ALLOWED_TUNNEL_URL_DOMAINS` / `isAllowedTunnelUrl` in `worker/src/index.ts` (verified: those two domains). A comment points to that list.
-  - Windows only: `install(webview)` adds a `PermissionRequested` handler on the main window's `CoreWebView2`. It sets `COREWEBVIEW2_PERMISSION_STATE_ALLOW` only when the kind is `COREWEBVIEW2_PERMISSION_KIND_MICROPHONE` and `auto_grant_origin(args.Uri())` is true. Every other request is left alone, so WebView2 shows its own prompt.
+  - `pub fn auto_grant_origin(uri: &str, room: Option<&str>) -> bool` is pure and unit-tested. It returns true for `http://127.0.0.1[:port]` and `http://localhost[:port]`, and for the one room tunnel the member joined: `room`, the origin the studio passed to `allow_room_origin`.
+  - `tunnel_origin(uri)` accepts only `https://` hosts equal to `trycloudflare.com` or `bkaproductions.com` or ending in `.` plus one of them, the same exact-or-dot-suffix rule as `ALLOWED_TUNNEL_URL_DOMAINS` / `isAllowedTunnelUrl` in `worker/src/index.ts` (verified: those two domains), and returns `https://host[:port]` without the default port. A comment points to that list.
+  - Tauri command `allow_room_origin(url) -> bool` keeps that origin in a process-wide `Mutex<Option<String>>`; a URL that isn't a room tunnel is refused and clears it. The studio on the local engine calls it in `joinRoom` just before going to the host's tunnel (`lobby.js` `allowRoomMic`; a no-op in a browser). It is allowed for the studio page by `capabilities/studio.json` (`allow-allow-room-origin`, generated from `build.rs`).
+  - Windows only: `install(webview)` adds a `PermissionRequested` handler on the main window's `CoreWebView2`. It sets `COREWEBVIEW2_PERMISSION_STATE_ALLOW` only when the kind is `COREWEBVIEW2_PERMISSION_KIND_MICROPHONE` and `auto_grant_origin(args.Uri(), <the joined room>)` is true. Every other request is left alone, so WebView2 shows its own prompt.
+  - Narrowed after the final review: at first any `*.trycloudflare.com` or `*.bkaproductions.com` page in the main window got the mic, and anyone can open such a tunnel. Joining another room from a host's page (no Tauri access there) or an engine older than the desktop app falls back to WebView2's prompt.
 - `main.rs` `setup` calls it under `#[cfg(windows)]` through `app.get_webview_window("main")` and `.with_webview(|w| …w.controller()…)`.
 - `Cargo.toml`: `[target.'cfg(windows)'.dependencies] webview2-com = "0.38"` and `windows = "0.61"`, the versions already in `Cargo.lock` (MIT/Apache-2.0), with only the features needed.
 - macOS: wry already grants.
   - Add `tauri/src-tauri/Info.plist` with `NSMicrophoneUsageDescription` = "DubMate records your lines with your microphone." Tauri merges it into the bundle.
   - Add `tauri/src-tauri/Entitlements.plist` with `com.apple.security.device.audio-input` = true, set as `bundle.macOS.entitlements` in `tauri.conf.json`. CI doesn't sign with an identity today, so it has no effect yet. Once the app is signed with hardened runtime, the mic needs it.
 - **How it is checked.** There is no PR build of the desktop app; `release.yml` runs on a push to main or a manual `build_only` dispatch. The executor runs `cargo test` and `cargo check` locally on Windows (`tauri/src-tauri`; toolchain and sidecars are present on the build machine). The orchestrator's `build_only` run compiles Windows and macOS before merge.
+
+### Left from the final review
+
+- `warnOnVersionMismatch`: when the member's own DubMate is closed, its `/health` check shows a network error in the console. `fetchEngineVersion` already catches it; the line is the browser's own log of a refused connection, which a page can't hide.
+- `buildJoinHandoff` sends empty device names when the mic was never allowed on the member's own DubMate, so the host's page uses the default devices. That is the intended fallback.
+- `ensureMicReady` opens and releases the mic once when the permission state is `unknown` or `prompt`. Checked in tests only; it needs a try on Safari, Firefox and Chrome's "Allow this time".
 
 ## Migration of existing data
 
@@ -225,7 +234,7 @@ Unchanged. The handoff and the meter run in the browser only, and output routing
 
 ## Risks
 
-- **Auto-granted mic on tunnel origins.** Any page that a host serves on `*.trycloudflare.com` or `*.bkaproductions.com` inside the app's main window can open the mic without a prompt. Today the member grants it once per origin anyway, and after that the page can record whenever it is open. The window reaches tunnels only through a room code or link the member chose. Browsers are unaffected.
+- **Auto-granted mic on the joined room.** The host's page for the room the member joined from the studio can open the mic without a prompt, as it could after a one-time grant. Other tunnel pages ask. Browsers are unaffected.
 - **Crafted handoff links** can set a guest's display preferences (see "Checks on arrival"), but not their id.
 - **Label matching** can pick the wrong device when two devices share a label. The meter shows which one is in use.
 - **The record analyser** adds one WebAudio source per take stream. It doesn't touch `MediaRecorder`; a JSDOM test checks that `releaseMicrophone` disconnects it.
@@ -251,7 +260,7 @@ Unchanged. The handoff and the meter run in the browser only, and output routing
 6. `GET /api/config` keeps `packs` and `pack_count` for remote callers, which `/api/packs` already makes public. `mic_sync` is withheld.
 7. **Mic tests keep a fresh stream** (`recording-timing.md` decision 2). The meter shows the test's own stream instead of sharing its stream with the test. The mic opened before the count-in is released before the take.
 8. A failed open of a busy or closing device is **retried once after 300 ms**.
-9. The desktop app **auto-grants only the microphone**, only in the main window, and only for loopback and the worker's two tunnel domains.
+9. The desktop app **auto-grants only the microphone**, only in the main window, and only for loopback and the exact room tunnel the member joined from the studio (on one of the worker's two tunnel domains).
 10. The macOS **audio-input entitlement** is added now, although it has no effect until signing.
 11. Clap sync accepts **4 claps within ±40 ms of their median**.
 12. Setup done on your own DubMate counts as done on the host's page. The browser prompt moves before the count-in.

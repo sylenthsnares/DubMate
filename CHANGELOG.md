@@ -88,7 +88,7 @@
 - **Windows `update.bat`**: the dependency and tools steps now report errors correctly.
 - **Takes From the First Take**: the Takes button shows as soon as a line has one take, so your take history is easy to find. Escape closes it.
 - **Joining Keeps Your Setup**: joining a room from your own DubMate keeps your name, colour, mic, headphones and mic sync. There's no second name prompt and no setup screen.
-- **No Mic Prompt on a Host's Page in the Desktop App**: the desktop app no longer asks for the microphone again when you join a host's room. In a browser, the question comes before your first count-in, never during it.
+- **No Mic Prompt on a Host's Page in the Desktop App**: the desktop app no longer asks for the microphone again when you join a host's room. Only the room you joined gets the mic without asking. In a browser, the question comes before your first count-in, never during it.
 - **Sound on Your Chosen Headphones**: clicks, previews, the count-in and the backing track play on the headphones you chose, even after DubMate restarts.
 - **Fairer Clap Sync**: clap sync accepts normal human timing. If it can't use your claps, it says whether it couldn't hear them or they were uneven.
 - **Louder Sync Clicks**: Sync your mic plays loud, sharp clicks that small earbuds held to the mic can get through. It first asks you to take your earbuds or headphones out and hold them right next to the mic. If the clicks aren't heard, it says to turn your volume up and hold the earbuds closer, then try again, or clap instead.

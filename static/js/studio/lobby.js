@@ -193,6 +193,18 @@ async function fetchEngineVersion(origin) {
   }
 }
 
+// In the desktop app, lets the microphone work on this room's page without a second
+// prompt (mic_permission.rs). Only this exact tunnel; no-op in a browser.
+async function allowRoomMic(origin) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return;
+  try {
+    await invoke('allow_room_origin', { url: origin });
+  } catch (e) {
+    // An older desktop app without the command: WebView2 asks for the mic instead.
+  }
+}
+
 export class LobbyMethods {
   // --- Invite / Registry Status ---
 
@@ -538,6 +550,7 @@ export class LobbyMethods {
                 target.hash = 'dm=' + buildJoinHandoff(this);
               }
               this.showToast(`Connecting to room ${cleanCode}…`);
+              await allowRoomMic(target.origin);
               this.navigateTo(target.toString());
               return;
             }

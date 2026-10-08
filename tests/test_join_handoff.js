@@ -135,7 +135,7 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
   // 1. Round trip: the member's own DubMate builds the handoff, the host's page applies it.
   let handoffUrl;
   {
-    const { app, navigations } = await boot(`${HOME}/`, {
+    const { w, app, navigations } = await boot(`${HOME}/`, {
       storage: {
         dubmate_user: JSON.stringify({ id: "u_home", name: "Ana Lúcia", color: "#123abc" }),
         dubmate_audio_setup_done: "1",
@@ -151,7 +151,12 @@ const joinedDirectly = (fetches) => fetches.includes(`/api/rooms/${ROOM}`);
       ],
     });
     app.engineMicSync = { "Other|Speakers": { latency_ms: 40, method: "claps", measured_at: 2000 } };
+    // The desktop app: the mic is allowed only on the room tunnel the studio is going to.
+    const invokes = [];
+    w.__TAURI__ = { core: { invoke: async (cmd, args) => { invokes.push({ cmd, args, navigated: navigations.length }); return true; } } };
     await app.joinRoom(ROOM);
+    const allow = invokes.find((c) => c.cmd === "allow_room_origin");
+    if (!allow || allow.args?.url !== TUNNEL || allow.navigated !== 0) fail(`room origin not allowed before leaving: ${JSON.stringify(invokes)}`);
     const target = navigations[0] && new URL(navigations[0]);
     if (!target || target.origin !== TUNNEL || target.searchParams.get("home") !== HOME) fail(`member not sent to the host: ${navigations[0]}`);
     if (!target.hash.startsWith("#dm=")) fail(`no handoff in the link: ${navigations[0]}`);
