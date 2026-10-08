@@ -11,12 +11,17 @@ fn main() {
     // has to name its own commands (capabilities/default.json).
     let manifest = tauri_build::AppManifest::new().commands(&[
         "get_engine_port",
+        "get_last_failure",
         "trigger_start_sidecars",
         "apply_update",
+        "cancel_update",
         "get_packbuilder_status",
-        "install_packbuilder",
+        "start_packbuilder_install",
+        "get_packbuilder_install",
         "remove_packbuilder",
         "allow_room_origin",
+        "open_mic_settings",
+        "open_studio_in_browser",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

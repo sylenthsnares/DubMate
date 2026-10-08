@@ -2,6 +2,8 @@
 
 Status: Implemented on fix/first-test-findings, as designed. One addition from review: joining no longer reloads forever when a room code points back to the page it is on (it says the room wasn't found). A second mic sync pass followed the owner's notes: louder clicks, a warning before them, and clap sync that refuses room noise (see "Mic sync, second pass").
 
+Later: UI pass U5b reworded the three clap failure lines to say "right on each beat" instead of "right on each click", to match the clap step's "clap on each beat you hear" (`ui-u5b-settings-launcher.md`).
+
 The owner and a co-builder tested main at `c9ca8c4` on real machines. This PR fixes what they hit: takes were hard to find, joining lost your name and audio setup, the settings screen showed the host's folders, clap sync failed, and the input meter stopped. Branch `fix/first-test-findings`. It builds on `take-model.md`, `recording-timing.md`, `calibrate-mic.md` and `sessions-and-sharing.md`. The run was unattended, so every choice the brief left open is under "Decided overnight, revisit".
 
 This is the revised version, after a claim audit of the first draft. The changes: mic tests keep recording from a fresh stream, the user id is no longer carried, `/api/packs/rescan` is redacted too, devices go through the normal apply path, and the tester's exact mic error is marked as unknown.

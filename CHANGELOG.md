@@ -33,6 +33,9 @@
 - **Keyboard Shortcuts**: press ? (or the ? button in the header) for a list of keyboard shortcuts, grouped by where they work.
 - **Share a Scene**: Share on a scene saves it as a file to send to a friend and shows where the file is. Your friend adds it with Import pack.
 - **Get This Scene**: members who joined a room from their own DubMate can download the host's scene and add it to their own scenes with Import pack.
+- **Pack Builder Installs in the Background**: in the desktop app, ticking Pack Builder no longer holds DubMate behind a 2 GB download. The studio opens straight away and a small bar in the header shows how far the install has got, with the step and the time left in its tooltip. The Pack Builder line in the menu says the same. If it doesn't install, Try again starts it again. When it's done, "Restart to finish Pack Builder" loads it, and asks first if you're in a room, because restarting disconnects everyone. If you don't restart, DubMate loads Pack Builder the next time it opens.
+- **Skip an Update**: while an update downloads, "Skip this time" opens the version you have. The update is offered again the next time DubMate opens. Updates and the Pack Builder install show the time left once the speed has settled.
+- **Open Microphone Settings**: when the desktop app can't use your mic, Audio settings has a button that opens the Windows or macOS microphone settings page.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -45,6 +48,8 @@
 - **Pinned FFmpeg**: Windows setup and desktop builds download one fixed FFmpeg build and check its checksum.
 - **Pack Builder "Voices Only"**: the switch now changes what you hear while editing lines, not just the waveform.
 - **Pack Builder Speakers by Voice**: lines are split between characters by voice. The first time, it downloads about 35 MB. Desktop installs whose Pack Builder came before this release need Pack Builder reinstalled to get it. Until then, or if the download isn't possible, speakers are guessed from pauses as before and the editor says so.
+- **Pack Builder Tracks Follow Overlapping Lines**: lines that play at the same time, like a collective gasp or people talking over each other, get their own track automatically, up to 5. Add track, Delete track and track names are gone. When the tracks don't fit, the timeline scrolls up and down: use the wheel over the track numbers, drag empty timeline, or the scrollbar.
+- **Faster Pack Builder Editor**: the editor responds faster. Lines show as soon as it opens, with the waveform following. Selecting, typing in and dragging a line no longer redraws the whole timeline, and switching between Voices only and Full audio is instant after the first time.
 - **Takes Stay With Their Lines**: takes stay on their line when a pack is rebuilt with the same timings. Rooms from earlier versions keep their takes.
 - **Invites After a Restart**: after DubMate restarts, the room code of a continued session no longer works, so Copy invite gives a direct link instead.
 - **What You Preview Is What You Export**: takes now sound exactly the same in the booth, the premiere and the exported video, including low cut and compress, which used to change only the preview.
@@ -58,6 +63,10 @@
 - **See Where You Are With the Keyboard**: buttons, the record button, scene cards, colour swatches and line chips show a clear outline when you reach them with Tab.
 - **Reduced Motion**: if your computer is set to reduce motion, pulsing and spinning animations stop. Recording and connection states still show through colour and text.
 - **Disabled Buttons Look Disabled**: buttons you can't use yet are dimmed. In Pack Builder, "Process video" no longer looks ready before you choose a video. Remove in the Remove Pack Builder confirmation is red.
+- **Audio Settings, Calmer**: the level meter shows one thing, your peak, against one target: a green band for a good level, red when it's too loud, and a hint that agrees with Check your loudest line. Status lines are grey when something isn't done yet, green when it is, amber when it needs you and red for errors. Done stays on screen in small windows. When the mic is blocked, you see only the steps for your computer (others are under "Using something else?"), and none for a missing mic. First run says "Set up your mic", without emoji.
+- **Clap Wording**: the clap step's error lines now say "beat", like the step itself.
+- **A Launcher That Looks Like DubMate**: the desktop launcher has the studio's colours, fonts and wordmark, and its fonts work offline.
+- **Honest Startup**: the launcher only says what DubMate is really doing. A slow start stays calm ("Still starting", then "Taking longer than usual" with Restart DubMate) instead of turning into an error after 15 seconds. A real failure says what went wrong and what to do: another app using DubMate's port, damaged or missing files, or the engine stopping. Details sit behind "Show details", with Copy details. The update card no longer shows the release notes.
 - **Calmer Notifications**: notifications appear at the bottom of the screen, three at most. Errors stay until you close them, and screen readers read each notification on its own.
 - **Only the Host Starts Recording**: guests see who voices each character instead of the casting dropdowns, and "Waiting for the host to start recording" instead of the Start button. If recording has already started, "Back to the booth" takes them there; during the premiere, "Back to the premiere".
 - **Casting Table**: characters are listed in natural order (Guy 2 before Guy 10), counts read "1 line" or "2 lines", and an uncast character reads "Original voice".
@@ -100,6 +109,8 @@
 - **Rebuilding a Pack**: rebuilding a pack under the same name no longer leaves old dialogue lines or the old cover behind, and stuck FFmpeg steps now time out with a clear error.
 - **Export Failures for Everyone**: every member now sees when a render fails, not just the one who started it, and a download requested while that render is still running is refused instead of serving a half-written file.
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
+- **Pack Builder Cast Row Scrolls**: with many characters, the Cast row scrolls with the mouse wheel, a trackpad, by dragging, or with the arrow keys. A fade shows which side has more.
+- **Pack Builder Play**: Play no longer repeats the start of a line. The voices wait for the video, and a line's Play stops at the end of the line.
 - **"Take Saved" Twice**: saving your own take no longer shows "Take saved" twice.
 - **Refused Changes Say Why**: when the room refuses a change, such as a guest changing the casting, a message says why and the page shows the room as it really is, instead of a change that didn't happen.
 - **Updated Notice**: the "DubMate was updated" notice has a Reload button.
