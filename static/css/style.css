@@ -4236,6 +4236,12 @@ svg {
 .toast-error .toast-close {
   flex-shrink: 0;
 }
+/* A toast's one action ("Undo"), in the amber of a next step. */
+.toast-action {
+  margin-left: 12px;
+  vertical-align: middle;
+  color: var(--primary);
+}
 
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }

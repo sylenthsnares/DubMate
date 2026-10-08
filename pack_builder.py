@@ -14,6 +14,7 @@ import json
 import time
 import datetime
 import shutil
+import tempfile
 import hashlib
 import threading
 import importlib.util
@@ -37,6 +38,10 @@ class MissingPipelineError(RuntimeError):
     of printing "pip install -r requirements_builder.txt" at someone who just
     wants to dub a clip.
     """
+
+
+class BuildCancelled(Exception):
+    """Processing was cancelled; the pipeline stops at the next stage boundary."""
 
 
 class StaleYtDlpError(RuntimeError):
@@ -114,7 +119,7 @@ class BuildProgress:
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.lock = threading.Lock()
-        self.status = "idle"  # "idle" | "extracting_audio" | "separating_stems" | "transcribing" | "slicing" | "assembling" | "transcribed" | "done" | "error"
+        self.status = "idle"  # "idle" | "queued" | "extracting_audio" | "separating_stems" | "transcribing" | "detecting_speakers" | "slicing" | "assembling" | "transcribed" | "done" | "error" | "cancelled"
         self.progress = 0.0   # 0.0 to 1.0
         self.message = "Initializing builder session..."
         self.stage = "init"
@@ -133,6 +138,11 @@ class BuildProgress:
         self.device_info: Dict[str, Any] = {}
         self.completed_at: Optional[float] = None
         self.pack_info: Optional[Dict[str, Any]] = None
+        # Stage keys this run skipped ("transcription", "speakers"), so the screen can say so.
+        self.skipped: List[str] = []
+        # Set by POST /cancel. Each /process run gets a fresh event, so cancelling the
+        # last run never cancels the next one.
+        self.cancel_requested = threading.Event()
 
     def update(self, status: str, progress: float, message: str, stage: str = "", segments: Optional[List[Dict[str, Any]]] = None, error: Optional[str] = None):
         with self.lock:
@@ -165,6 +175,7 @@ class BuildProgress:
                 "device_info": self.device_info,
                 "completed_at": self.completed_at,
                 "pack_info": self.pack_info,
+                "skipped": list(self.skipped),
             }
 
 
@@ -1206,11 +1217,13 @@ def _speaker_turns_child(vocals_wav: str, folder: str) -> int:
     return 0
 
 
-def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None,
+                       cancel: Optional[threading.Event] = None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
     """
     Runs _speaker_turns_child in the same interpreter and returns (turns, notice) like
     detect_speaker_turns. A non-zero exit (a native abort included), a timeout, or output
     that isn't a list of turns all return (None, SPEAKER_NOTICE_FAILED).
+    Setting `cancel` stops the child and raises BuildCancelled.
     """
     paths = [BASE_DIR] + [os.path.abspath(p) if p else os.getcwd() for p in sys.path]
     paths = list(dict.fromkeys(paths))
@@ -1233,6 +1246,17 @@ def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[
     timer = threading.Timer(SPEAKER_TIMEOUT_S, _stop)
     timer.daemon = True
     timer.start()
+
+    cancelled = threading.Event()
+    if cancel is not None:
+        def _watch_cancel() -> None:
+            while not cancel.wait(0.25):
+                if proc.poll() is not None:
+                    return
+            cancelled.set()
+            proc.kill()
+
+        threading.Thread(target=_watch_cancel, daemon=True).start()
     turns_json, tail = None, []
     try:
         for line in proc.stdout:
@@ -1256,6 +1280,8 @@ def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[
             proc.wait()
         proc.stdout.close()
 
+    if cancelled.is_set():
+        raise BuildCancelled()
     if timed_out.is_set():
         print(f"[PackBuilder] Speaker detection took longer than {SPEAKER_TIMEOUT_S} s, guessing from pauses.")
         return None, SPEAKER_NOTICE_FAILED
@@ -1276,13 +1302,15 @@ def _run_speaker_child(vocals_wav: str, folder: str, on_progress=None) -> Tuple[
     return turns, ""
 
 
-def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
+def detect_speaker_turns(vocals_wav: str, on_progress=None,
+                         cancel: Optional[threading.Event] = None) -> Tuple[Optional[List[Tuple[float, float, int]]], str]:
     """
     Finds who speaks when on the voice stem: ([(start, end, speaker_id), ...] by start, "").
     On any failure the turns are None and the notice says speakers were guessed from pauses.
     on_progress(fraction, message) runs 0.88-0.90 while downloading (first time only, with
     the download message) and 0.90-0.98 while detecting (message "").
     The models download here; detection itself runs in a child process (_run_speaker_child).
+    Setting `cancel` stops the child and raises BuildCancelled.
     """
     try:
         if not _speaker_package_present():
@@ -1294,7 +1322,9 @@ def detect_speaker_turns(vocals_wav: str, on_progress=None) -> Tuple[Optional[Li
 
         if on_progress:
             on_progress(0.90, "")
-        return _run_speaker_child(vocals_wav, _speaker_models_dir(), on_progress)
+        return _run_speaker_child(vocals_wav, _speaker_models_dir(), on_progress, cancel)
+    except BuildCancelled:
+        raise
     except Exception as ex:
         print(f"[PackBuilder] Speaker detection failed, guessing from pauses: {ex}")
         return None, SPEAKER_NOTICE_FAILED
@@ -1461,10 +1491,14 @@ def assemble_pack(
     line_slices: List[Dict[str, Any]],
     cover_image_path: Optional[str] = None,
     authors: Optional[List[str]] = None,
-    subtitle: Optional[str] = None
+    subtitle: Optional[str] = None,
+    folder_name: Optional[str] = None,
 ) -> str:
     """
-    Assembles a complete, compliant DubMate scene pack inside `Packs/<pack_name>`.
+    Assembles a complete, compliant DubMate scene pack. A new pack goes in a free
+    `Packs/<pack_name>` folder ('<pack_name> 2'... when taken: it never replaces another
+    pack). folder_name rebuilds the pack in `Packs/<folder_name>` (Build again, also under
+    a new title), keeping that pack until the new build is complete. Returns its folder.
     Generates:
     - `dub_video.mp4`
     - `_backing_track.wav`
@@ -1476,23 +1510,120 @@ def assemble_pack(
     - `icon.png` (if provided)
     """
     safe_title = pack_name.strip() or "Custom Dub Scene"
-    folder_name = pack_loader.safe_folder_name(safe_title, "Custom_Pack")
-    
     target_base = pack_loader.PACKS_DIRS[0]
     os.makedirs(target_base, exist_ok=True)
-    pack_dir = os.path.join(target_base, folder_name)
-    os.makedirs(pack_dir, exist_ok=True)
+    if folder_name:
+        folder_name = os.path.basename(folder_name)
 
-    # Rebuilding under an existing pack name must not leave the previous build's line
-    # slices or icon behind: load_pack would pick stale slices up as extra lines.
-    for existing in os.listdir(pack_dir):
-        existing_path = os.path.join(pack_dir, existing)
-        if not os.path.isfile(existing_path):
+    # The pack is written into a hidden staging folder next to its place (the scan skips
+    # dot folders) and only then put in place: a build that fails midway leaves the pack
+    # that was there untouched, and nothing of the old build's slices or icon remains.
+    pack_dir = staging = None
+    try:
+        staging = tempfile.mkdtemp(prefix=".building-", dir=target_base)
+        os.chmod(staging, 0o755)  # mkdtemp makes it private (0700); a pack folder isn't
+        _write_pack_files(staging, safe_title, video_source_path, backing_source_path,
+                          line_slices, cover_image_path, authors, subtitle)
+        with _SWAP_LOCK:
+            pack_loader.restore_replaced_packs()  # a pack a crashed rebuild left aside
+            if folder_name:
+                pack_dir = os.path.join(target_base, folder_name)
+                _replace_pack_folder(staging, pack_dir)
+            else:
+                pack_dir = _move_to_free_folder(staging, target_base,
+                                                pack_loader.safe_folder_name(safe_title, "Custom_Pack"))
+        staging = None
+    finally:
+        if staging:
+            shutil.rmtree(staging, ignore_errors=True)
+    return pack_dir
+
+
+# One build at a time moves packs in or out, so restoring a pack set aside by a crash
+# never takes the place of another build's pack mid-swap.
+_SWAP_LOCK = threading.Lock()
+
+PACK_IN_USE_MESSAGE = "The pack is in use, so it wasn't replaced. Close it in DubMate, then build again."
+
+
+def _rename_with_retry(src: str, dst: str, attempts: int = 10) -> None:
+    """os.rename, retried for a moment: on Windows an antivirus scan or a file being
+    served briefly holds a folder, and renaming it fails until that ends."""
+    for i in range(attempts):
+        try:
+            os.rename(src, dst)
+            return
+        except FileExistsError:
+            raise
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.2)
+
+
+def _move_to_free_folder(staging: str, target_base: str, base_name: str) -> str:
+    """Moves a new pack into Packs/<base_name>, or '<base_name> 2', '<base_name> 3'...
+    when that name is taken, so a new pack never replaces a different one. The pack id is
+    the folder name, so it is not shared with a pack in another packs folder either."""
+    taken = set()
+    for base in pack_loader.PACKS_DIRS:
+        try:
+            taken.update(name.lower() for name in os.listdir(base))
+        except OSError:
+            pass
+    for n in range(1, 1000):
+        name = base_name if n == 1 else f"{base_name} {n}"
+        if name.lower() in taken:
             continue
-        low = existing.lower()
-        is_stale_slice = low.endswith(pack_loader.AUDIO_EXTS) and pack_loader.timestamp_from_filename(existing) is not None
-        if is_stale_slice or low.startswith("icon."):
-            os.remove(existing_path)
+        dest = os.path.join(target_base, name)
+        try:
+            # Fails if the name was taken meanwhile (on Linux, unless that folder is empty).
+            _rename_with_retry(staging, dest)
+            return dest
+        except OSError:
+            if os.path.exists(dest):
+                continue
+            raise
+    raise RuntimeError("Couldn't find a free folder name for the pack. Give it another title.")
+
+
+def _replace_pack_folder(staging: str, pack_dir: str) -> None:
+    """Swaps a rebuilt pack in for the one at pack_dir, keeping the old one until the new
+    one is in place. If the old pack can't be moved (open files on Windows), it stays as
+    it was and PACK_IN_USE_MESSAGE is raised. The old pack waits in
+    '.replaced-<8 hex>-<folder name>' (see pack_loader.restore_replaced_packs)."""
+    if not os.path.exists(pack_dir):
+        _rename_with_retry(staging, pack_dir)
+        return
+    parent = os.path.dirname(pack_dir)
+    old = os.path.join(parent, f"{pack_loader.REPLACED_PACK_PREFIX}{os.urandom(4).hex()}-{os.path.basename(pack_dir)}")
+    try:
+        _rename_with_retry(pack_dir, old)
+    except PermissionError:
+        raise RuntimeError(PACK_IN_USE_MESSAGE)
+    try:
+        _rename_with_retry(staging, pack_dir)
+    except BaseException as ex:  # Ctrl+C too: the old pack goes back
+        try:
+            _rename_with_retry(old, pack_dir)
+        except Exception:
+            raise RuntimeError("The new pack couldn't be put in place, and the old one couldn't be "
+                               f"put back. The old pack is safe in {old}.") from ex
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def _write_pack_files(
+    pack_dir: str,
+    safe_title: str,
+    video_source_path: str,
+    backing_source_path: str,
+    line_slices: List[Dict[str, Any]],
+    cover_image_path: Optional[str],
+    authors: Optional[List[str]],
+    subtitle: Optional[str],
+) -> None:
+    """Writes every file of a pack into pack_dir (see assemble_pack)."""
 
     # 1. Copy / Transcode Video to dub_video.mp4
     target_video = os.path.join(pack_dir, "dub_video.mp4")
@@ -1566,5 +1697,3 @@ def assemble_pack(
 
     with open(os.path.join(pack_dir, "dub_subs.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(dub_subs_lines) + "\n")
-
-    return pack_dir
