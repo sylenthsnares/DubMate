@@ -8,7 +8,7 @@
  *    never uses --foreground-dim, which is about 3.3:1 on cards. --foreground-dim
  *    is for dividers, borders and decoration only.
  *  - one keyboard focus style (2px solid --accent-brass outline, offset 2px),
- *  - the looping pulses stop under prefers-reduced-motion,
+ *  - the looping pulses (and the line card's fade-in) stop under prefers-reduced-motion,
  *  - .btn:disabled looks disabled, and .btn-danger exists and is used by the
  *    Remove Pack Builder confirm.
  *
@@ -178,7 +178,7 @@ function checkReducedMotion(file, blocks, css, names) {
 }
 checkReducedMotion("static/css/style.css", styleBlocks, styleCss,
   ["pulse-halo", "pulse-recording", "connection-pulse", "spinFilmReel", "pulseReelRing"]);
-checkReducedMotion("static/css/builder.css", builderBlocks, builderCss, ["pulse-halo"]);
+checkReducedMotion("static/css/builder.css", builderBlocks, builderCss, ["pulse-halo", "cue-card-in"]);
 
 // Disabled buttons and the danger variant.
 const disabled = styleBlocks.find((b) => selectorList(b).includes(".btn:disabled"));

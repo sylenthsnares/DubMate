@@ -2290,7 +2290,7 @@ export class PackBuilderApp {
       + '<div class="cue-card-tools">'
       + (canTranscribe ? button('btn-secondary btn-whisper-cue', 'transcribe', ICON_MIC, 'Transcribe', ' data-tip="Fill in this line&#39;s text from the audio"') : '')
       + button('btn-secondary btn-romaji-cue', 'romaji', ICON_GLOBE, 'Romaji', ` data-tip="Convert this line to romaji"${this.romajiApplies(seg) ? '' : ' hidden'}`)
-      + button('btn-ghost btn-delete-cue', 'delete', ICON_TRASH, 'Delete')
+      + button('btn-ghost btn-delete-cue', 'delete', ICON_TRASH, 'Delete', ' data-tip="Delete this line"')
       + '</div>'
       + '</div>';
   }
@@ -2830,11 +2830,13 @@ export class PackBuilderApp {
       }
       // In the next frame, with that frame's layout, so the click or key that selected
       // doesn't wait for one: the line moves back to where it was (a card above it may
-      // have closed), then the whole card scrolls into view.
+      // have closed), then the whole card scrolls into view. The card's own margin above
+      // it isn't a move: the list doesn't scroll for it.
       cancelAnimationFrame(this._scrollRowFrame);
       this._scrollRowFrame = requestAnimationFrame(() => {
         if (!target.isConnected) return; // the list was drawn again meanwhile
-        list.scrollTop += target.getBoundingClientRect().top - topBefore;
+        const margin = opened ? parseFloat(getComputedStyle(target).marginTop) || 0 : 0;
+        list.scrollTop += target.getBoundingClientRect().top - topBefore - margin;
         const block = target.offsetHeight > list.clientHeight ? 'start' : 'nearest';
         target.scrollIntoView({ behavior: scrollBehavior(), block });
       });

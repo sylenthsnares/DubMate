@@ -1737,11 +1737,16 @@ body.resizing-timeline * {
 
 /* Rows stack in block flow: a change in one row then lays out that row, where a flex
    column would measure every row again (about 3x the time with 40 lines). The padding
-   leaves room for a row's focus ring. */
+   leaves room for a row's focus ring. The list is a size container: the card's text is
+   capped by the list's height (cqh) and the card narrows in a narrow column. Its size
+   comes from the column (flex: 1), not from its rows. pack_builder.js keeps the clicked
+   line in place itself, so the browser's scroll anchoring is off. */
 .segments-list-container {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
+  container-type: size;
   margin: 0 -4px;
   padding: 4px;
 }
@@ -1767,152 +1772,6 @@ body.resizing-timeline * {
   color: var(--foreground-muted);
 }
 
-/* One line per row: dot, number, character, text, actions, timecode. Rows divide with
-   a 1px line; the selected one gets the amber border and wash. */
-.builder-line-row {
-  display: grid;
-  grid-template-columns: 8px 22px 140px minmax(0, 1fr) auto auto;
-  align-items: start;
-  column-gap: 8px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  cursor: pointer;
-  scroll-margin: 4px;
-  transition: background 120ms ease;
-}
-
-.builder-line-row:hover {
-  background: rgba(30, 24, 19, 0.9);
-}
-
-.builder-line-row.selected {
-  background: rgba(217, 119, 6, 0.08);
-  box-shadow: inset 0 0 0 1px var(--primary);
-}
-
-.cue-dot {
-  width: 8px;
-  height: 8px;
-  margin-top: 11px;
-  border-radius: 50%;
-}
-
-.cue-number {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 30px;
-  text-align: right;
-  color: var(--foreground-muted);
-}
-
-.builder-line-row.selected .cue-number {
-  color: var(--foreground);
-}
-
-.cue-text-cell {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* Unselected: one line of plain text that fades at the right edge. */
-.builder-line-row .cue-text-input {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  min-height: 30px;
-  padding: 6px 8px;
-  font-size: 12.5px;
-  line-height: 16px;
-  color: var(--foreground);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  resize: none;
-  white-space: pre;
-  overflow: hidden;
-  cursor: pointer;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-}
-
-/* Selected: the whole text as a field, up to 4 lines, then it scrolls. */
-.builder-line-row.selected .cue-text-input,
-.builder-line-row .cue-text-input:focus {
-  field-sizing: content;
-  height: auto;
-  max-height: 78px;
-  white-space: pre-wrap;
-  overflow-y: auto;
-  cursor: text;
-  background: rgba(15, 12, 9, 0.85);
-  border-color: var(--border-wood);
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
-.builder-line-row .cue-text-input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
-}
-
-/* "No words" stands in for the empty text, so the cue placeholder waits for selection. */
-.builder-line-row:not(.selected) .cue-nonverbal-badge:not([hidden]) + .cue-text-input::placeholder {
-  color: transparent;
-}
-
-.cue-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 30px;
-}
-
-/* Play shows on hover (its place is kept, so the text doesn't shift); the selected row shows
-   every action that applies. */
-.line-action {
-  display: none;
-  width: 26px;
-  height: 26px;
-  min-height: 26px;
-  padding: 0;
-}
-
-.line-action.btn-preview-cue {
-  display: inline-flex;
-  visibility: hidden;
-}
-
-.builder-line-row:hover .line-action.btn-preview-cue,
-.builder-line-row.selected .line-action {
-  display: inline-flex;
-  visibility: visible;
-}
-
-.line-action.btn-delete-cue:hover {
-  color: var(--white);
-  background: var(--accent-red);
-}
-
-.cue-nonverbal-badge {
-  flex-shrink: 0;
-  margin-top: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 14px;
-  color: var(--foreground-muted);
-  border: 1px solid currentColor;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  cursor: help;
-}
-
-.cue-nonverbal-badge[hidden] {
-  display: none;
-}
-
 .editor-notice {
   margin: 0 0 8px;
   padding: 6px 10px;
@@ -1932,73 +1791,300 @@ body.resizing-timeline * {
   background: rgba(220, 38, 38, 0.12);
 }
 
+/* A line at rest: dot, number, character, one line of text, start time, Play. Rows divide
+   with a 1px line. Every row has a 1px border (transparent but the divider) so the card's
+   amber border fades in without moving anything. */
+.builder-line-row {
+  display: grid;
+  grid-template-columns: 8px 24px 140px minmax(0, 1fr) auto 28px;
+  align-items: center;
+  column-gap: 8px;
+  min-height: 40px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-bottom-color: var(--border-subtle);
+  cursor: pointer;
+  scroll-margin: 4px;
+  transition: background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.builder-line-row:hover {
+  background-color: var(--secondary);
+}
+
+.cue-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cue-number {
+  flex-shrink: 0;
+  width: 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+  color: var(--foreground-muted);
+}
+
+.cue-char-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--foreground);
+}
+
+.cue-text-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* One line of text that fades at the right edge. */
+.cue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--foreground);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
 .cue-timecode-badge {
-  min-width: 48px;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
-  line-height: 30px;
-  text-align: right;
   white-space: nowrap;
   color: var(--foreground-muted);
 }
 
-.builder-line-row.selected .cue-timecode-badge {
+/* A row's Play: its place is kept at rest, so nothing shifts when it shows on hover or focus. */
+.line-action {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  visibility: hidden;
+}
+
+.builder-line-row:hover .line-action,
+.builder-line-row:focus-within .line-action {
+  visibility: visible;
+}
+
+/* Touch screens have no hover: Play always shows. */
+@media (hover: none) {
+  .line-action {
+    visibility: visible;
+  }
+}
+
+.cue-nonverbal-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  color: var(--foreground-muted);
+  border: 1px solid currentColor;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  cursor: help;
+}
+
+.cue-nonverbal-badge[hidden] {
+  display: none;
+}
+
+/* The selected line: a card with its character, its whole text, its times and labelled
+   buttons. Amber border, an amber wash and an offset shadow lift it off the list. */
+.builder-line-row.selected {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 10px 12px;
+  background-color: color-mix(in srgb, var(--primary) 7%, var(--card-header));
+  border-color: var(--primary);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  cursor: default;
+}
+
+/* The header, text and footer fade in and settle; the layout itself changes at once. */
+.builder-line-row.selected > * {
+  animation: cue-card-in var(--duration-fast) var(--ease-out);
+}
+
+@keyframes cue-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .builder-line-row {
+    transition: none;
+  }
+
+  .builder-line-row.selected > * {
+    animation: none;
+  }
+}
+
+.cue-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+}
+
+.builder-line-row.selected .cue-number {
+  color: var(--foreground);
+}
+
+.cue-card-head .cue-timecode-badge {
+  margin-left: auto;
   color: var(--accent-brass);
+}
+
+.cue-card-head .btn-preview-cue {
+  flex-shrink: 0;
+}
+
+.cue-char-select,
+.cue-char-input.form-input {
+  flex: 0 1 160px;
+  min-width: 104px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+}
+
+.cue-char-select {
+  font-weight: 700;
+  color: var(--foreground);
+  background: var(--input);
+  border: 1px solid var(--border-wood);
+  cursor: pointer;
 }
 
 .cue-char-select[hidden] {
   display: none;
 }
 
-/* "+ New character…" in a row: a name field in the select's place. */
-.cue-char-input.form-input {
-  width: 100%;
-  height: 30px;
-  padding: 0 6px;
-  font-size: 12px;
+/* The text and the buttons line up under the character select (dot, number and two gaps in). */
+.builder-line-row.selected .cue-text-cell,
+.cue-card-foot {
+  padding-left: 48px;
 }
 
-.cue-char-select {
-  width: 100%;
-  height: 30px;
-  padding: 0 6px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--foreground);
-  background: rgba(18, 14, 11, 0.9);
-  border: 1px solid var(--border-wood);
+.builder-line-row.selected .cue-text-cell {
+  align-items: flex-start;
+}
+
+.builder-line-row.selected .cue-nonverbal-badge {
+  margin-top: 8px;
+}
+
+/* The whole text, sized to it: up to 10 lines or the room the card has in the list, then it scrolls. */
+.cue-text-input.form-input {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  min-height: 32px;
+  max-height: min(212px, calc(100cqh - 114px));
+  padding: 5px 10px;
+  font-size: 14px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  border-color: var(--border-wood);
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  resize: none;
+  overflow-y: auto;
+  field-sizing: content;
 }
 
-/* The selects of rows at rest read as names, with no arrow; the field shows on hover and selection. */
-.builder-line-row:not(.selected):not(:hover) .cue-char-select:not(:focus) {
-  background: transparent;
-  border-color: transparent;
-  appearance: none;
-  -webkit-appearance: none;
+.cue-text-input.form-input:focus {
+  border-color: var(--primary);
 }
 
-/* Narrow windows (a Lines column under about 640px): a smaller select, and the selected
-   row puts its actions and times under the text, so the text keeps its width. */
-@media (max-width: 1180px) {
+/* Set start and Set end at the left; Transcribe, Romaji and Delete at the right. The
+   footer wraps rather than clip a button. */
+.cue-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cue-card-marks,
+.cue-card-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cue-card-tools {
+  margin-left: auto;
+}
+
+.builder-line-row.selected .btn-sm {
+  gap: 6px;
+}
+
+.btn-icon {
+  display: inline-flex;
+}
+
+.btn-delete-cue:hover {
+  color: var(--white);
+  background: var(--accent-red);
+}
+
+/* A narrow Lines column (960x680): a narrower name and select, the text and buttons use the
+   card's whole width, and Delete keeps its icon (its name stays for screen readers), so the
+   footer fits on one line unless Romaji is there too. */
+@container (max-width: 519px) {
   .builder-line-row {
-    grid-template-columns: 8px 22px 112px minmax(0, 1fr) auto auto;
+    grid-template-columns: 8px 24px 112px minmax(0, 1fr) auto 28px;
   }
 
-  .builder-line-row.selected .cue-text-cell {
-    grid-column: 4 / -1;
+  .cue-char-select,
+  .cue-char-input.form-input {
+    flex-basis: 140px;
   }
 
-  .builder-line-row.selected .cue-actions {
-    grid-column: 4;
-    grid-row: 2;
+  .builder-line-row.selected .cue-text-cell,
+  .cue-card-foot {
+    padding-left: 0;
   }
 
-  .builder-line-row.selected .cue-timecode-badge {
-    grid-column: 5 / -1;
-    grid-row: 2;
+  .btn-delete-cue {
+    width: 32px;
+    padding: 0;
+  }
+
+  .btn-delete-cue .btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
 }
 
