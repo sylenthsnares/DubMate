@@ -59,7 +59,7 @@ typography:
     fontWeight: 700
   caption:
     fontFamily: "Newsreader, Georgia, serif"
-    fontSize: "15px"
+    fontSize: "22px"
     fontWeight: 500
     lineHeight: 1.3
   mono:
@@ -76,6 +76,12 @@ rounded:
   lg: "12px"
   xl: "16px"
   full: "9999px"
+spacing:
+  space-1: "4px"
+  space-2: "8px"
+  space-3: "12px"
+  space-4: "16px"
+  space-5: "24px"
 components:
   button-primary:
     backgroundColor: "{colors.amber}"
@@ -164,7 +170,7 @@ A warm darkroom palette: espresso and walnut surfaces, ivory text, brass trim, a
 - **Body** (500 to 600, 13px): buttons, toasts and most interface text. Form inputs use 14px.
 - **Body Small** (500, 12px): sentences, meta lines and hints.
 - **Label** (700, 11px, often uppercase with 0.5 to 1.2px tracking, in brass): section labels and badges.
-- **Caption** (Newsreader 500, 15px, line-height 1.3): the subtitle line on the video stage.
+- **Caption** (Newsreader 500, 22px, line-height 1.3): the subtitle line on the booth's prompter, centred under the video.
 - **Mono** (700, 11px): timecodes, readouts and badges with numbers. Room codes use 16px.
 
 ### Named Rules
@@ -172,7 +178,7 @@ A warm darkroom palette: espresso and walnut surfaces, ivory text, brass trim, a
 
 ## Layout
 
-The studio is one page of screens (choose a scene, lobby, booth, premiere) under a fixed header. Panels sit on an 8px rhythm with 16 to 20px of padding (`.panel-header` is 16px 20px). Every screen works from 1440x900 down to 960x680, the desktop window minimum. When space runs short, a panel scrolls inside itself rather than pushing controls off screen.
+The studio is one page of screens (choose a scene, lobby, booth, premiere) under a fixed header. Panels sit on an 8px rhythm with 16 to 20px of padding (`.panel-header` is 16px 20px). Layout spacing comes from one scale, the `--space-*` tokens (4, 8, 12, 16, 24): 8 inside a group, 12 between groups and as every card's inner gutter, 16 between columns and around the page, 24 only between page-level regions. The booth uses nothing else. Every screen works from 1440x900 down to 960x680, the desktop window minimum. When space runs short, a panel scrolls inside itself rather than pushing controls off screen.
 
 ## Elevation & Depth
 

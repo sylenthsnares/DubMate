@@ -68,6 +68,15 @@
   --radius-xl: 16px;
   --radius-full: 9999px;
 
+  /* Spacing scale (layout only). 8 inside a group, 12 between groups and for every
+     card's inner gutter, 16 between the columns and around the page, 24 between
+     page-level regions. Button, chip and badge insides keep their own padding. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
   /* Typography Stacks */
   --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-serif: 'Newsreader', Georgia, serif;
@@ -2008,8 +2017,9 @@ body::after {
 /* ------------------------------------------------------------- */
 
 .app-container:has(#view-booth.active) {
-  padding: 10px 16px 10px;
-  height: calc(100vh - 50px - var(--hud-height, 34px));
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  /* The header only: the booth has no cast strip (its bar says who's here). */
+  height: calc(100vh - 50px);
   min-height: 0;
   max-height: 100vh;
   display: flex;
@@ -2029,19 +2039,24 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
-  margin-bottom: 10px;
-  min-height: 38px;
-  flex-wrap: wrap;
-  gap: 8px;
+  padding: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-3);
+  min-height: 44px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
+/* Line 1 of 4, the line chips, My lines. The chips scroll sideways, so a long scene
+   never pushes Mark ready or Start premiere out of the bar. */
 .stage-info-group {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 1 1 0;
+  min-width: 0;
+}
+.stage-info-group > :not(.timeline-chips-box) {
+  flex-shrink: 0;
 }
 
 .line-progress-badge {
@@ -2069,7 +2084,12 @@ body::after {
 .stage-action-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+/* The who's-here slot takes no room until the presence stack fills it */
+.booth-presence:empty {
+  display: none;
 }
 
 /* Redesigned Mark Ready Toggle Button */
@@ -2123,7 +2143,7 @@ body::after {
 .booth-layout {
   display: grid;
   grid-template-columns: 1fr 340px;
-  gap: 12px;
+  gap: var(--space-4);
   align-items: stretch;
   flex: 1 1 0;
   min-height: 0;
@@ -2133,7 +2153,7 @@ body::after {
 @media (min-width: 1550px) {
   .booth-layout {
     grid-template-columns: 1fr 360px;
-    gap: 14px;
+    gap: var(--space-4);
   }
 }
 
@@ -2147,10 +2167,9 @@ body::after {
 .stage-main-col {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   min-height: 0;
   height: 100%;
-  padding-right: 2px;
   overflow: hidden;
 }
 
@@ -2267,10 +2286,15 @@ body.resizing .video-container {
   letter-spacing: 1px;
 }
 
-/* Subtitle Prompter Card & Vertical Splitter Resizer (Dark Brown Theme with Gold Outline Glow) */
+/* The prompter: one row. The character on the left, the line centred on the video's axis
+   (wrapping inside at most 70% of the card), the line's length on the right. */
 .caption-card {
   position: relative;
-  padding: 6px 14px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) fit-content(70%) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background-color: var(--panel-deep);
   background-image: radial-gradient(ellipse at 50% 25%, rgba(217, 119, 6, 0.08) 0%, transparent 75%);
   border: 1.5px solid rgba(204, 164, 88, 0.45);
@@ -2286,11 +2310,15 @@ body.resizing .video-container {
 }
 
 .prompter-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 8px;
-  margin: -6px -14px 2px;
   cursor: ns-resize;
   user-select: none;
   touch-action: none;
@@ -2321,18 +2349,23 @@ body.resizing .resize-grip-pill {
 }
 
 .caption-char {
+  justify-self: start;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
   letter-spacing: 1.2px;
-  margin-bottom: 2px;
   text-transform: uppercase;
 }
 
 .caption-text {
+  min-width: 0;
+  overflow-wrap: break-word;
   font-family: var(--font-serif);
-  font-size: 15px;
+  font-size: 22px;
   font-weight: 500;
   line-height: 1.3;
   color: #fffaf2;
@@ -2340,8 +2373,12 @@ body.resizing .resize-grip-pill {
 }
 
 /* Dual Waveform Panel & Track Sync Controls (Dark Brown Theme with Gold Outline Glow) */
+.caption-time {
+  justify-self: end;
+}
+
 .waveform-panel {
-  padding: 6px 12px 8px;
+  padding: var(--space-2) var(--space-3);
   background-color: #14100c;
   background-image: radial-gradient(ellipse at 50% 0%, rgba(204, 164, 88, 0.06) 0%, transparent 60%);
   border: 1.5px solid rgba(204, 164, 88, 0.45);
@@ -2353,13 +2390,13 @@ body.resizing .resize-grip-pill {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 .legend-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .legend-dot {
@@ -2408,8 +2445,8 @@ body.resizing .resize-grip-pill {
 .nudge-preset-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -2488,28 +2525,25 @@ body.resizing .resize-grip-pill {
   white-space: nowrap;
 }
 
-/* Timeline Strip Chips (Dark Brown Theme with Gold Outline Glow) */
-.timeline-chips-wrapper {
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-
+/* The line chips, in the booth bar after "Line 1 of 4" */
 .timeline-chips-box {
-  padding: 6px 8px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
   overflow-x: auto;
-  background-color: var(--panel-deep);
-  border: 1px solid rgba(204, 164, 88, 0.35);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 0 14px rgba(204, 164, 88, 0.15), 0 4px 12px rgba(0, 0, 0, 0.6);
+  overflow-y: hidden;
+}
+/* A thin bar, so a scrolling strip still fits the booth bar's height */
+.timeline-chips-box::-webkit-scrollbar {
+  height: 4px;
 }
 
 .chip-item {
   flex-shrink: 0;
   min-width: 38px;
-  height: 32px;
+  height: 28px;
   padding: 0 10px;
   background: var(--input);
   border: 1px solid var(--border-wood);
@@ -2530,7 +2564,6 @@ body.resizing .resize-grip-pill {
   background: var(--secondary);
   border-color: var(--primary);
   color: var(--foreground);
-  transform: translateY(-1px);
 }
 .chip-item.active {
   background: var(--secondary);
@@ -2575,7 +2608,7 @@ body.resizing .resize-grip-pill {
 .booth-controls {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: var(--space-3);
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -2588,14 +2621,14 @@ body.resizing .resize-grip-pill {
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .booth-column-scroll > * {
   flex-shrink: 0;
 }
 
 .booth-controls .panel-header-sm {
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   font-size: 11px;
   font-weight: 800;
   color: var(--accent-brass);
@@ -2606,22 +2639,22 @@ body.resizing .resize-grip-pill {
 
 /* Row 1: the record deck */
 .record-deck-body {
-  padding: 12px 14px 14px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .record-deck-main {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-3);
 }
 
 .record-track-tag {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
@@ -2785,24 +2818,25 @@ body.resizing .resize-grip-pill {
   outline-offset: 2px;
 }
 
-/* The mic-sync advice, under the transport */
+/* The mic-sync advice under the transport: one unboxed line on the deck's content edge */
 .mic-sync-hint {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  padding: 8px 10px;
-  background: var(--input);
-  border: 1px solid var(--border-wood);
-  border-radius: var(--radius-md);
+  gap: var(--space-2);
+  padding: 0;
+  background: none;
+  border: 0;
 }
 .mic-sync-hint-text {
-  flex: 1 1 100%;
+  flex: 1 1 0;
+  min-width: 0;
   font-size: 12px;
   color: var(--foreground);
 }
+.mic-sync-hint .btn {
+  flex-shrink: 0;
+}
 .mic-sync-hint-close {
-  margin-left: auto;
   font-size: 14px;
 }
 
@@ -2835,22 +2869,22 @@ body.resizing .resize-grip-pill {
   background: var(--input);
 }
 .takes-card-body {
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .takes-empty,
 .takes-hint {
   margin: 0;
-  padding: 2px 4px;
+  padding: 0;
   font-size: 12px;
   color: var(--foreground-muted);
 }
 .takes-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .takes-list:empty {
   display: none;
@@ -3038,15 +3072,15 @@ body.resizing .resize-grip-pill {
 
 /* Monitor: one row for the backing level, one for the two switches */
 .monitor-strip {
-  padding: 10px 14px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .monitor-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .monitor-label {
   min-width: 56px;
@@ -3120,10 +3154,10 @@ body.resizing .resize-grip-pill {
 }
 /* Voice card: preset chips, then For and Level */
 .voice-main {
-  padding: 10px 12px 12px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   position: relative;
 }
 
@@ -3353,7 +3387,7 @@ svg {
 /* Row 3: line navigation, pinned */
 .booth-nav-group {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .booth-nav-group .btn {
   height: 36px;
@@ -3372,8 +3406,8 @@ svg {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--card);
   border: 1.5px solid rgba(204, 164, 88, 0.42);
   border-radius: var(--radius-md);
@@ -3786,16 +3820,16 @@ svg {
     height: 64px;
   }
   .record-deck-body {
-    padding: 8px 12px 10px;
-    gap: 8px;
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
   }
   .booth-controls,
   .booth-column-scroll {
-    gap: 8px;
+    gap: var(--space-2);
   }
   .monitor-strip {
-    padding: 8px 12px;
-    gap: 6px;
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
   }
 }
 
@@ -5040,7 +5074,7 @@ svg {
 }
 
 .voice-effects-note {
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   font-size: 12px;
   line-height: 1.4;
   color: var(--foreground-muted);
@@ -5056,7 +5090,7 @@ svg {
 .voice-presets {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
   position: relative;
   z-index: 3;
 }
@@ -5120,7 +5154,7 @@ span.voice-chip {
 .voice-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   min-height: 32px;
 }
 .voice-row-label {
@@ -5143,8 +5177,8 @@ span.voice-chip {
 .voice-scope-ask {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-wood);
   border-radius: var(--radius-md);
   background: var(--input);
@@ -5157,7 +5191,7 @@ span.voice-chip {
 .voice-scope-ask-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .voice-scope-status {
   margin: 0;
@@ -5171,7 +5205,7 @@ span.voice-chip {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
 }
 .voice-level-take .btn-auto-match {
   margin-left: auto;
@@ -5203,8 +5237,8 @@ span.voice-chip {
 .voice-fx {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
 .voice-fx:last-child {
@@ -5213,7 +5247,7 @@ span.voice-chip {
 .voice-fx-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
@@ -5235,7 +5269,7 @@ span.voice-chip {
 .voice-fx-dials {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 8px;
+  gap: var(--space-2);
 }
 .voice-rack .dsp-channel-readout {
   padding: 1px 4px;
@@ -5271,13 +5305,13 @@ span.voice-chip {
 .booth-controls.rack-open .record-deck-body {
   flex-direction: row;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
 }
 .booth-controls.rack-open .record-deck-main {
   flex: 1;
   min-width: 0;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .booth-controls.rack-open .btn-big-record {
   width: 40px;
