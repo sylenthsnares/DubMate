@@ -41,6 +41,9 @@ const HEALTH_POLL_MS = 500;
 let enginePort = 8000;
 let startedAt = Date.now();
 let engineHealthy = false;
+// True while Rust moves a 1.x install's files to the DubMate data folder. A copy across
+// drives can take minutes; that isn't a slow engine.
+let movingFiles = false;
 // Inside the desktop app, entry waits for `update-status` so a pending update is never
 // skipped by accident.
 let updateCheckPending = false;
@@ -92,7 +95,7 @@ async function engineAnswers() {
 function renderElapsed() {
   if (isEntering || isUpdating || failureShown) return;
   const elapsed = Date.now() - startedAt;
-  const waiting = !engineHealthy;
+  const waiting = !engineHealthy && !movingFiles;
   if (waiting && elapsed >= NO_ANSWER_AFTER_MS) {
     showEngineFailure({
       title: "DubMate didn't start",
@@ -104,14 +107,15 @@ function renderElapsed() {
   let words = "";
   if (waiting && elapsed >= VERY_SLOW_AFTER_MS) words = "Taking longer than usual";
   else if (waiting && elapsed >= SLOW_AFTER_MS) words = "Still starting";
-  if (words) {
+  else if (movingFiles) words = "This happens once";
+  if (words && elapsed >= SLOW_AFTER_MS) {
     // Only the count is mono.
     const count = document.createElement("span");
     count.className = "mono";
     count.textContent = String(Math.floor(elapsed / 1000));
     detailText.replaceChildren(`${words} · `, count, " s");
   } else {
-    detailText.textContent = "";
+    detailText.textContent = words;
   }
   btnRestartSlow.hidden = !(waiting && elapsed >= VERY_SLOW_AFTER_MS);
 }
@@ -398,6 +402,13 @@ async function listenToRust() {
 
   listen("startup-progress", (event) => {
     if (!isEntering && typeof event.payload === "string") statusText.textContent = event.payload;
+  });
+
+  // The engine's start is counted from the end of the move.
+  listen("moving-files", (event) => {
+    movingFiles = event.payload === true;
+    startedAt = Date.now();
+    renderElapsed();
   });
 
   listen("server-ready", (event) => {

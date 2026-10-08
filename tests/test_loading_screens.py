@@ -140,7 +140,7 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         self.assertNotIn("maxAttempts", js)
         self.assertIn("NO_ANSWER_AFTER_MS = 3 * 60 * 1000", js)
         # The launcher's half of the Rust contract (U5b 39a, 39b).
-        for name in ("update-status", "update-progress", "update-stage", "update-complete"):
+        for name in ("update-status", "update-progress", "update-stage", "update-complete", "moving-files"):
             self.assertIn(f'"{name}"', js, name)
         for cmd in ("cancel_update", "start_packbuilder_install", "get_packbuilder_status",
                     "open_studio_in_browser", "trigger_start_sidecars", "apply_update"):
@@ -169,6 +169,8 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         rs = _rust_source()
         self.assertIn('emit("server-error"', rs)
         self.assertIn('emit("startup-progress"', rs)
+        # The one-time move out of a 1.x install folder isn't counted as a slow start.
+        self.assertIn('emit("moving-files"', rs)
         self.assertIn('emit("server-ready"', rs)
         self.assertIn('"-u"', rs)
 

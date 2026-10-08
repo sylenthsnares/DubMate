@@ -224,6 +224,31 @@ function deferredUpdate() {
     t.close();
   }
 
+  console.log("\n  [+] Launcher: moving files out of a 1.x install folder isn't a slow start");
+  {
+    const t = await boot();
+    await t.emit("startup-progress", "Moving your DubMate files to their new folder");
+    await t.emit("moving-files", true);
+    check("it says what is happening",
+      t.text("status-text") === "Moving your DubMate files to their new folder", t.text("status-text"));
+    check("and that it happens once", t.text("detail-text") === "This happens once", t.text("detail-text"));
+    await t.clock.advance(30 * 1000);
+    check("counting from 8 s, without calling it slow",
+      t.text("detail-text") === "This happens once · 30 s", t.text("detail-text"));
+    check("no Restart while files move", !t.visible("btn-restart-slow"));
+    await t.clock.advance(200 * 1000);
+    check("no red card however long the copy takes", !t.visible("error-box") && t.visible("splash"));
+
+    await t.emit("moving-files", false);
+    await t.emit("startup-progress", "Starting the engine");
+    check("the engine's start counts from the end of the move", t.text("detail-text") === "", t.text("detail-text"));
+    await t.clock.advance(8000);
+    check("with the usual marks", t.text("detail-text") === "Still starting · 8 s", t.text("detail-text"));
+    await t.clock.advance(17 * 1000);
+    check("and Restart from 25 s again", t.visible("btn-restart-slow"));
+    t.close();
+  }
+
   console.log("\n  [+] Launcher: real failures from Rust");
   const KINDS = [
     { kind: "port_in_use", title: "Another app is using DubMate's port",
