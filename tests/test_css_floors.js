@@ -224,10 +224,10 @@ if (!/@media \(max-width: 1279px\) \{\s*\.app-header\.in-room \.logo-title,\s*\.
   fail("in a room below 1280px the logo should drop to its icon");
 }
 
-// Sideways scrollers keep the studio's scrollbar. In Chromium/WebView2 a scrollbar-width or
-// scrollbar-color on an element switches ::-webkit-scrollbar off and brings back the default
-// grey bar (the line chips under the takes had it), so those two only appear in the
-// Firefox-only @supports not selector(::-webkit-scrollbar) block.
+// Scrollers keep the studio's scrollbar, sideways and up-and-down. In Chromium/WebView2 a
+// scrollbar-width or scrollbar-color on an element switches ::-webkit-scrollbar off and brings
+// back the default grey bar (the line chips under the takes had it, and the lobby's casting
+// card), so those two only appear in the Firefox-only @supports not selector(::-webkit-scrollbar) block.
 const FIREFOX_ONLY = /@supports\s+not\s+selector\(::-webkit-scrollbar\)\s*\{/g;
 function firefoxOnlySelectors(css) {
   const text = stripComments(css);
@@ -247,12 +247,12 @@ function firefoxOnlySelectors(css) {
 if (!/::-webkit-scrollbar\s*\{[^}]*height\s*:\s*8px/.test(stripComments(styleCss))) fail("style.css lost its shared ::-webkit-scrollbar rule");
 const firefoxOnly = firefoxOnlySelectors(styleCss);
 for (const b of cssBlocks(firefoxOnly.outside)) {
-  if (!/overflow(-x)?\s*:\s*(auto|scroll)/.test(b.body)) continue;
+  if (!/overflow(-[xy])?\s*:\s*(auto|scroll)/.test(b.body)) continue;
   if (/scrollbar-(width|color)\s*:/.test(b.body)) {
-    fail(`style.css:${b.line} ${b.selector}: a sideways scroller sets scrollbar-width/color outside the Firefox-only block; Chromium then draws the default bar`);
+    fail(`style.css:${b.line} ${b.selector}: a scroller sets scrollbar-width/color outside the Firefox-only block; Chromium then draws the default bar`);
   }
 }
-for (const sel of [".timeline-chips-box", ".cast-activity-list"]) {
+for (const sel of [".timeline-chips-box", ".cast-activity-list", ".panel-casting"]) {
   if (!firefoxOnly.out.has(sel)) fail(`${sel} needs the studio scrollbar colours in the Firefox-only @supports block`);
 }
 
@@ -270,4 +270,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`PASS: ${checkedSizes} font sizes at or above ${FLOOR_PX}px (${EXEMPT.length} exempt), no text meta on --foreground-dim`);
-console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled, sideways scrollers on the studio scrollbar`);
+console.log(`PASS: ${focusRules} :focus-visible rules on the brass outline, looping pulses stop under reduced motion, disabled and danger buttons styled, scrollers on the studio scrollbar`);

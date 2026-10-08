@@ -160,13 +160,14 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3e3328;
 }
-/* Firefox draws no ::-webkit-scrollbar, so the sideways strips (the line chips, the cast)
-   get the same thin bar and colours there. Only there: in Chromium/WebView2 a
+/* Firefox draws no ::-webkit-scrollbar, so the strips (the line chips, the cast) and the
+   lobby's casting card get the same thin bar and colours there. Only there: in Chromium/WebView2 a
    scrollbar-width or scrollbar-color on an element switches the rules above off and
    brings back the default grey bar. */
 @supports not selector(::-webkit-scrollbar) {
   .timeline-chips-box,
-  .cast-activity-list {
+  .cast-activity-list,
+  .panel-casting {
     scrollbar-width: thin;
     scrollbar-color: var(--panel-raised) var(--background-darker);
   }
@@ -1962,7 +1963,6 @@ body::after {
 .panel-casting {
   max-height: 480px;
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 
 .casting-table {
