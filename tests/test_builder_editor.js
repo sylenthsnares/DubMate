@@ -482,7 +482,7 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(!doc.getElementById("btn-add-audio-track"), "there is no Add track button");
     check(textOf(badge) === "3 tracks", "three lines at once make the badge read '3 tracks'");
     check(badge.getAttribute("data-tip") === TIP, "the track badge explains automatic tracks in a tooltip");
-    check(!!column && column.getAttribute("data-tip") === TIP, "the track column carries the same tooltip");
+    check(!!column && !column.hasAttribute("data-tip"), "the track column has no tooltip of its own, so scrolling over it stays quiet");
     check(new Set(tops().slice(0, 3)).size === 3, "three overlapping lines sit in three different tracks");
     check(tops()[3] === tops()[0], "a later line that overlaps nothing goes back to the first track");
     check(headers().map(textOf).join(",") === "A1,A2,A3", "the track column shows A1 to A3");
@@ -722,6 +722,13 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     check(left === max, "End goes to the last chip");
     key("Home");
     check(left === 0, "Home goes to the first chip");
+    // The arrows scroll the row only: the editor's own arrow shortcuts don't also move the video.
+    ed.video.currentTime = 3;
+    key("ArrowRight");
+    check(left === 120 && ed.video.currentTime === 3, "ArrowRight on the Cast row doesn't move the video");
+    const shiftLeft = new w.KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true, cancelable: true });
+    list.dispatchEvent(shiftLeft);
+    check(left === 0 && ed.video.currentTime === 3, "Shift+ArrowLeft on the Cast row doesn't move the video");
 
     // Adding a character scrolls its chip into view.
     const seen = [];
@@ -940,6 +947,55 @@ async function bootEditor(transcribed = { segments: [{ start: 1, end: 2, text: "
     await tick();
     check(waveformCalls.length === 2, "switching back doesn't fetch the waveform again");
     w.close();
+  }
+
+  // (o) a drop that reorders other lines rebuilds the line list, so each card edits its own line.
+  {
+    const ed = await bootEditor();
+    const { w, doc, app } = ed;
+    const pointer = (target, type, x, y = 50) => {
+      const ev = new w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+      Object.defineProperty(ev, "pointerId", { value: 1 });
+      Object.defineProperty(ev, "pointerType", { value: "mouse" });
+      Object.defineProperty(ev, "isPrimary", { value: true });
+      target.dispatchEvent(ev);
+    };
+    app.duration = 10;
+    app.pixelsPerSecond = 100;
+    // Mark In can leave the list out of order: A's neighbour C now starts first.
+    app.segments = [
+      { start: 1, end: 2, text: "A", character: "Speaker 1" },
+      { start: 0.2, end: 0.8, text: "C", character: "Speaker 1" },
+      { start: 3, end: 4, text: "B", character: "Speaker 1" },
+    ];
+    app.renderTimelineSegments();
+    app.renderSegmentsList();
+    const blockB = doc.querySelectorAll("#timeline-segments-overlay .builder-segment-block")[2];
+    const wrap = doc.getElementById("timeline-scroll-wrap");
+    pointer(blockB, "pointerdown", 350);
+    pointer(wrap, "pointermove", 360);
+    pointer(wrap, "pointerup", 360);
+    check(app.segments.map((s) => s.text).join(",") === "C,A,B" && app.segments[2].start === 3.1, "the drop sorts the lines by time");
+    const ta = doc.getElementById("cue-card-0").querySelector(".cue-text-input");
+    check(ta.value === "C", "the first card shows the line that now comes first");
+    ta.value = "edited";
+    ta.dispatchEvent(new w.Event("input", { bubbles: true }));
+    check(app.segments.map((s) => s.text).join(",") === "edited,A,B", "editing a card changes its own line");
+    w.close();
+  }
+
+  // (p) processing the same session again shows the new waveform, not the kept one.
+  {
+    let peak = 0.5;
+    const ed = await bootEditor(undefined, null, { fetch: (u, json) => (
+      u.includes("/waveform") ? json({ peaks: [[-peak, peak]], duration: 10 }) : null) });
+    const { app } = ed;
+    check(app.waveformPeaks[0][1] === 0.5, "the editor shows the session's waveform");
+    peak = 0.3;
+    app.openEditor({ segments: [{ start: 1, end: 2, text: "Hi", character: "Speaker 1" }] });
+    await tick(50);
+    check(app.waveformPeaks[0][1] === 0.3, "after processing again the editor fetches the new waveform");
+    ed.w.close();
   }
 
   console.log("All Pack Builder editor playback and timeline checks passed.");

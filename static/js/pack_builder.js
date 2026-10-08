@@ -471,7 +471,8 @@ export class PackBuilderApp {
 
   initKeyboardShortcuts() {
     window.addEventListener('keydown', (e) => {
-      if (isDialogOpen()) return;
+      // A focused control that already handled the key (the Cast row's arrows) keeps it.
+      if (isDialogOpen() || e.defaultPrevented) return;
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
         return;
@@ -883,9 +884,10 @@ export class PackBuilderApp {
   async setupEditorView() {
     this.editorVideo.src = `/api/builder/${this.sessionId}/video`;
     this.editorVideo.load();
+    // The editor opens after every processing run, which may have rewritten the tracks.
+    this.waveformCache.clear();
     if (this.editorSessionId !== this.sessionId) {
       this.editorSessionId = this.sessionId;
-      this.waveformCache.clear();
       // A fallback in an earlier session doesn't carry over to this one.
       if (this.audioTrackForced) {
         this.activeAudioTrack = 'vocals';
@@ -1773,13 +1775,13 @@ export class PackBuilderApp {
       document.body.style.userSelect = '';
 
       if (hadMovement) {
-        const moved = this.segments[modifiedIdx];
+        const before = this.segments.slice();
         const selected = this.segments[this.selectedSegmentIndex];
         this.segments.sort((a, b) => a.start - b.start);
         if (selected) this.selectedSegmentIndex = this.segments.indexOf(selected);
         this.renderTimelineSegments();
-        // The line list is rebuilt only when the line changed places in it.
-        if (this.segments[modifiedIdx] === moved) {
+        // The cards edit lines by index, so the list is rebuilt whenever any line changed places.
+        if (this.segments.every((seg, i) => seg === before[i])) {
           this.updateCardTimecode(modifiedIdx);
         } else {
           this.renderSegmentsList();
@@ -2031,6 +2033,9 @@ export class PackBuilderApp {
     this.isDragging = false;
     this.dragSegmentIndex = null;
     this.dragType = null;
+    this.dragLanes = null;
+    cancelAnimationFrame(this._dragFrameId);
+    this._dragFrameId = null;
     this.segments.splice(idx, 1);
     this.selectedSegmentIndex = null;
     this.renderTimelineSegments();

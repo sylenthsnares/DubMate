@@ -100,7 +100,8 @@ rest. The likely costs are:
   "3 tracks"), with the tooltip "Lines that overlap get their own track. A line's character
   decides who voices it."
 - **Track column:** narrows from 165 px to about 44 px and shows only the number badge (A1 to A5).
-  The column carries the same tooltip. The timeline gains about 120 px of width.
+  The tooltip sits on the badge only, so scrolling over the column stays quiet. The timeline
+  gains about 120 px of width.
 - Waveform drawing is unchanged (full waveform in track 1, faint copies in the others).
 
 ### The timeline scrolls vertically (1)
