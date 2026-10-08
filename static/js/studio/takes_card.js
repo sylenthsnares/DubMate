@@ -26,7 +26,7 @@ export class TakesCardMethods {
     });
     // A delete still waiting on its Undo goes out when the page closes.
     window.addEventListener('pagehide', () => this.flushPendingDelete({ keepalive: true }));
-    // Closing the page loses a take still saving: ask first.
+    // Closing the page loses a take still saving or waiting to upload: ask first.
     window.addEventListener('beforeunload', (e) => {
       if (!this.hasUnsavedTakes()) return;
       e.preventDefault();
@@ -34,9 +34,11 @@ export class TakesCardMethods {
     });
   }
 
-  /** A take is still saving (in any room: its upload goes on after you leave). */
+  /** A take is still saving (in any room: its upload goes on after you leave), or one in
+   *  this room is waiting to upload. */
   hasUnsavedTakes() {
-    return Object.keys(this.savingLines).length > 0;
+    return Object.keys(this.savingLines).length > 0
+      || Object.values(this.pendingUploads).some((list) => list.some((p) => p.fields.roomId === this.roomState?.room_id));
   }
 
   /** One of the current line's takes by ID. */
@@ -54,6 +56,7 @@ export class TakesCardMethods {
     const pending = line && this.pendingDelete?.lineId === line.line_id ? this.pendingDelete : null;
     // A take saving on this line: a row of its own, and the other rows can't change meanwhile.
     const saving = line ? this.savingTake(line) : null;
+    const waiting = this.waitingTakes(line);
 
     // Keyboard focus on a row stays on that take's row through the redraw.
     const active = document.activeElement;
@@ -64,7 +67,7 @@ export class TakesCardMethods {
     const live = takes.filter((t) => t.take_id !== pending?.takeId);
     if (this.takesCardTitle) this.takesCardTitle.textContent = live.length ? `TAKES · ${live.length}` : 'TAKES';
     if (this.takesEmpty) {
-      this.takesEmpty.hidden = takes.length > 0 || !!saving;
+      this.takesEmpty.hidden = takes.length > 0 || !!saving || waiting.length > 0;
       this.takesEmpty.textContent = mine ? 'No takes yet. Press Space to record.' : 'No takes yet.';
     }
     if (this.takesHint) this.takesHint.hidden = !(mine && live.length === 1);
@@ -78,6 +81,7 @@ export class TakesCardMethods {
       if (Number.isFinite(t.timing_score) && t.timing_score > 0 && (!best || t.timing_score >= best.timing_score)) best = t;
     }
     if (saving) this.takesList.appendChild(this.savingTakeRow(saving));
+    for (const entry of waiting) this.takesList.appendChild(this.waitingTakeRow(entry, { locked: !!saving }));
     for (const take of [...takes].reverse()) {
       this.takesList.appendChild(take.take_id === pending?.takeId
         ? this.deletedTakeRow(take)
@@ -127,31 +131,37 @@ export class TakesCardMethods {
       use.addEventListener('click', () => this.pickTake(take));
     }
 
+    const items = [{ label: 'Play this take', key: 'P', onClick: () => this.playHistoryTake(take, radio) }];
+    if (mine) items.push({ label: 'Delete take', key: 'Del', onClick: () => this.deleteTake(take), disabled: locked });
+    this.appendTakeMenu(row, `Take ${take.number}`, items);
+    return row;
+  }
+
+  /** A row's ⋯ button and its menu: [{ label, key, onClick, disabled }]. */
+  appendTakeMenu(row, name, items) {
     const more = row.appendChild(takeEl('button', 'btn btn-ghost btn-xs take-more', '⋯'));
     more.type = 'button';
     more.setAttribute('aria-haspopup', 'menu');
     more.setAttribute('aria-expanded', 'false');
-    more.setAttribute('aria-label', `More for take ${take.number}`);
+    more.setAttribute('aria-label', `More for ${name.toLowerCase()}`);
     // The menu opens in the row's flow, under it, so the scrolling column never clips it.
     const menu = row.appendChild(takeEl('div', 'take-menu'));
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', `Take ${take.number}`);
+    menu.setAttribute('aria-label', name);
     menu.hidden = true;
-    const item = (label, key, onClick, disabled = false) => {
+    for (const { label, key, onClick, disabled = false } of items) {
       const b = menu.appendChild(takeEl('button', 'take-menu-item'));
       b.type = 'button';
       b.disabled = disabled;
       b.setAttribute('role', 'menuitem');
       b.tabIndex = -1;
       b.appendChild(takeEl('span', 'take-menu-label', label));
-      b.appendChild(takeEl('kbd', 'take-menu-key', key)).setAttribute('aria-hidden', 'true');
+      if (key) b.appendChild(takeEl('kbd', 'take-menu-key', key)).setAttribute('aria-hidden', 'true');
       b.addEventListener('click', () => {
         this.closeTakeMenu();
         onClick();
       });
-    };
-    item('Play this take', 'P', () => this.playHistoryTake(take, radio));
-    if (mine) item('Delete take', 'Del', () => this.deleteTake(take), locked);
+    }
     more.addEventListener('click', () => {
       if (this.openTakeMenu?.menu === menu) this.closeTakeMenu();
       else this.openTakesMenu({ row, more, menu });
@@ -171,7 +181,6 @@ export class TakesCardMethods {
         this.closeTakeMenu();
       }
     });
-    return row;
   }
 
   /** "Take 4 · Saving… cleaning up noise" while the take uploads and is cleaned. */
@@ -180,6 +189,21 @@ export class TakesCardMethods {
     row.appendChild(takeEl('span', 'take-pending-spin spinning')).setAttribute('aria-hidden', 'true');
     row.appendChild(takeEl('span', 'take-pending-text',
       `Take ${saving.number} · ${saving.noiseReduction ? 'Saving… cleaning up noise' : 'Saving…'}`));
+    return row;
+  }
+
+  /** "Take · waiting to upload | Retry | ⋯ (Discard take)" for a take whose upload failed. */
+  waitingTakeRow(entry, { locked }) {
+    const row = takeEl('div', 'take-row is-pending is-waiting');
+    row.appendChild(takeEl('span', 'take-pending-text', 'Take · waiting to upload'));
+    const retry = row.appendChild(takeEl('button', 'btn btn-secondary btn-xs take-retry', 'Retry'));
+    retry.type = 'button';
+    retry.dataset.tip = 'Uploads it now. It also tries again by itself when you\'re back online.';
+    retry.disabled = locked;
+    retry.addEventListener('click', () => this.retryWaitingTake(entry));
+    this.appendTakeMenu(row, 'Take waiting to upload', [
+      { label: 'Discard take', onClick: () => this.discardWaitingTake(entry) },
+    ]);
     return row;
   }
 

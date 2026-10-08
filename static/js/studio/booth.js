@@ -461,11 +461,12 @@ export class BoothMethods {
 
       chip.type = 'button';
       const saving = !!this.savingTake(l);
+      const waiting = !saving && this.waitingTakes(l).length > 0;
       chip.className = `chip-item ${isActive ? 'active' : ''} ${count ? 'done' : ''} ${isMyLine ? 'my-line' : ''}${saving ? ' is-saving' : ''}`;
       if (isActive) chip.setAttribute('aria-current', 'step');
       // The tooltip says the same as the label, so it isn't read twice.
       const name = `Line ${idx + 1}, ${l.character}, ${count ? `recorded, ${plural(count, 'take')}` : 'not recorded'}`
-        + (saving ? ', saving a take' : '');
+        + (saving ? ', saving a take' : '') + (waiting ? ', a take waiting to upload' : '');
       chip.setAttribute('aria-label', name);
       chip.dataset.tip = name;
       const num = document.createElement('span');
@@ -481,10 +482,10 @@ export class BoothMethods {
         n.textContent = plural(count, 'take');
         chip.append(tick, n);
       }
-      if (saving) {
+      if (saving || waiting) {
         const mark = document.createElement('span');
         mark.className = 'chip-saving';
-        mark.textContent = 'saving';
+        mark.textContent = saving ? 'saving' : 'waiting';
         chip.appendChild(mark);
       }
 
@@ -1182,9 +1183,13 @@ export class BoothMethods {
       }
       data = await res.json();
     } catch (err) {
+      // Never thrown away: the take waits in memory, in its Takes card with Retry, and goes
+      // up again when the room is back.
+      console.warn('[DubMate] Take upload failed:', err);
+      (this.pendingUploads[f.lineId] ||= []).push({ fields: f, blob, recordedBuffer });
       this.setLineSaving(f, false);
       if (this.roomState?.room_id === f.roomId) {
-        this.showToast(this.friendlyError(err, "That take didn't save. Record it again."));
+        this.showToast(`Take ${f.number} on line ${lineIndex + 1} is waiting to upload`);
       }
       return;
     }
@@ -1218,6 +1223,40 @@ export class BoothMethods {
     } else {
       this.renderLineSaveState(f.lineId);
     }
+  }
+
+  /** This line's takes waiting to upload (in this room). */
+  waitingTakes(line) {
+    return (line && this.pendingUploads[line.line_id] || []).filter((p) => p.fields.roomId === this.roomState?.room_id);
+  }
+
+  /** Uploads a waiting take again, with the fields it was recorded with. */
+  retryWaitingTake(entry) {
+    const f = entry.fields;
+    const list = this.pendingUploads[f.lineId] || [];
+    if (!list.includes(entry) || this.savingLines[f.lineId] || this.roomState?.room_id !== f.roomId) return null;
+    list.splice(list.indexOf(entry), 1);
+    if (!list.length) delete this.pendingUploads[f.lineId];
+    const index = this.roomState.pack.lines.findIndex((l) => l.line_id === f.lineId);
+    f.number = this.nextTakeNumber(this.roomState.pack.lines[index]);
+    return this.uploadTake(index, entry.blob, entry.recordedBuffer, f);
+  }
+
+  /** Back online: each line's waiting takes go up again, one after another. */
+  async retryWaitingTakes() {
+    await Promise.all(Object.keys(this.pendingUploads).map(async (lineId) => {
+      for (const entry of [...this.pendingUploads[lineId]]) await this.retryWaitingTake(entry);
+    }));
+  }
+
+  discardWaitingTake(entry) {
+    const lineId = entry.fields.lineId;
+    const list = this.pendingUploads[lineId] || [];
+    if (!list.includes(entry)) return;
+    list.splice(list.indexOf(entry), 1);
+    if (!list.length) delete this.pendingUploads[lineId];
+    announce('Take discarded');
+    this.renderLineSaveState(lineId);
   }
 
   stepLine(delta) {

@@ -440,6 +440,9 @@ class DubMateApp {
     // Takes save in the background, one line at a time: line_id -> the take's upload fields.
     // Only that line is locked (its record button, Voice and Takes).
     this.savingLines = {};
+    // Takes whose upload failed, kept in memory until they upload or are discarded:
+    // line_id -> [{ fields, blob, recordedBuffer }]. Retried when the room is back.
+    this.pendingUploads = {};
     // setInterval id of exportFinalVideo's status poll, so export_failed can stop it.
     this.exportPollInterval = null;
 
@@ -927,7 +930,11 @@ class DubMateApp {
     this.socket.on('connection_state', (data) => {
       const wasLost = !!this._connectionLost;
       this.renderConnectionState(data.payload || {});
+      const open = data.payload?.state === 'open';
+      // Offline, takes can't upload: the take lane dims. Back, the waiting ones go up again.
+      this.waveform.setTakeLaneDimmed(!open);
       if (this.roomState) this.updateRecordButtonUI();
+      if (open) this.retryWaitingTakes();
       // The engine's join forgets where you were and whether you were ready, and while
       // it had given up those changes weren't sent. Say them again once it is back,
       // after the join and the queued changes (both go out right after this event).

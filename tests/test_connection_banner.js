@@ -8,7 +8,8 @@
  *  - "Some changes from the last minute didn't reach the room." after the offline
  *    queue overflowed, and the same line as a toast once the room is back,
  *  - screen readers hear lost, back and gave up once each, not every rewrite,
- *  - the stale-tab notice has a Reload button.
+ *  - the stale-tab notice has a Reload button,
+ *  - the booth's take lane dims while the room is away (takes wait to upload).
  */
 const jsdom = require("jsdom");
 const fs = require("fs");
@@ -126,6 +127,7 @@ async function boot() {
   check(banner.classList.contains("has-short") && short.textContent === "Reconnecting…"
     && short.getAttribute("data-tip") === `${LOST} ${LOST_TIP}`, "narrow windows get 'Reconnecting…' with the full sentence in its tip", short.getAttribute("data-tip"));
   check(said.length === 1 && said[0] === LOST, "the drop is read out once", said);
+  check(app.waveform.takeLaneDimmed, "the booth's take lane dims while the room is away");
 
   action.click();
   check(retries === 1, "Retry now calls retryNow()");
@@ -163,6 +165,7 @@ async function boot() {
   check(text.innerText === "Back online" && banner.classList.contains("is-recovered"), "back reads 'Back online'", text.innerText);
   check(!shown(action) && !shown(leave) && !banner.hasAttribute("data-tip"), "back hides the buttons and the tip");
   check(said.length === 3 && said[2] === "Back online", "back is read out once", said);
+  check(!app.waveform.takeLaneDimmed, "and is back to full brightness once it's back");
 
   // The queue overflowed: the pill says so, and the toast stays after recovery.
   setState("reconnecting", { retryInMs: 2000, attempt: 1 });

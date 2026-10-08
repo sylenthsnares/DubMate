@@ -256,6 +256,75 @@ function beforeUnloadBlocked(env) {
     console.log("PASS: line 2 records while line 1 saves; replies and echoes don't move you; saving shows per line");
   }
 
+  // 5. A failed upload is kept, retried when the room is back, and dropped by Discard.
+  {
+    app.roomState = room();
+    await app.loadBoothLine(0);
+    app.recordState = "recording";
+    env.toasts.length = 0;
+    const first = app.finishRecording();
+    await tick();
+    const lost = env.uploads.shift();
+    lost.reject(new TypeError("Failed to fetch"));
+    await first;
+    await tick();
+    if (app.savingLines.t1000) fail("still saving after the upload failed");
+    if ((app.pendingUploads.t1000 || []).length !== 1) fail("the failed take wasn't kept");
+    if (env.toasts.some((t) => /record it again/i.test(t))) fail(`asked to record again: ${env.toasts}`);
+    let rows = pendingRows(env);
+    if (rows.length !== 1 || !text(rows[0]).startsWith("Take · waiting to upload")) fail(`waiting row: ${rows.map(text)}`);
+    if (!rows[0].querySelector(".take-retry")) fail("no Retry on the waiting row");
+    if (!beforeUnloadBlocked(env)) fail("leaving the page isn't guarded while a take waits");
+    if (!/waiting/.test(chip(env, 0).getAttribute("aria-label"))) fail(`chip name while waiting: ${chip(env, 0).getAttribute("aria-label")}`);
+
+    // Offline: the take lane dims; back 'open': the kept take goes up again with its own fields.
+    app.socket.connectionState = "reconnecting";
+    app.socket.emit("connection_state", { type: "connection_state", payload: { state: "reconnecting" } });
+    await tick();
+    if (!app.waveform.takeLaneDimmed) fail("the take lane isn't dimmed while offline");
+    if (env.uploads.length) fail("retried while still offline");
+    app.socket.connectionState = "open";
+    app.socket.emit("connection_state", { type: "connection_state", payload: { state: "open" } });
+    await tick();
+    if (app.waveform.takeLaneDimmed) fail("the take lane stays dimmed once back");
+    if (env.uploads.length !== 1) fail("the kept take wasn't retried on 'open'");
+    const retried = env.uploads[0].body;
+    if (retried.get("noise_reduction") !== lost.body.get("noise_reduction") || retried.get("offset_ms") !== lost.body.get("offset_ms")
+        || retried.get("gain_db") !== lost.body.get("gain_db")) fail("the retry didn't send the fields kept with the take");
+    if (!app.savingLines.t1000 || (app.pendingUploads.t1000 || []).length) fail("the retrying take isn't shown as saving");
+    answerUpload(env, "t1000", 1);
+    await tick();
+    if ((app.pendingUploads.t1000 || []).length || app.savingLines.t1000) fail("the retried take is still waiting");
+    if (text($(env, "takes-card-title")) !== "TAKES · 1") fail(`card after the retry: ${text($(env, "takes-card-title"))}`);
+
+    // Retry by hand, then Discard from the ⋯ menu.
+    app.recordState = "recording";
+    const third = app.finishRecording();
+    await tick();
+    env.uploads.shift().resolve({ ok: false, status: 500, json: () => Promise.resolve({}) });
+    await third;
+    await tick();
+    rows = pendingRows(env);
+    if (rows.length !== 1) fail("a server error didn't keep the take");
+    rows[0].querySelector(".take-retry").click();
+    await tick();
+    if (env.uploads.length !== 1) fail("Retry didn't upload the kept take");
+    env.uploads.shift().reject(new TypeError("Failed to fetch"));
+    await tick();
+    rows = pendingRows(env);
+    if (rows.length !== 1) fail("the take isn't kept after a failed retry");
+    rows[0].querySelector(".take-more").click();
+    const discard = [...rows[0].querySelectorAll('[role="menuitem"]')].find((b) => /Discard/.test(text(b)));
+    if (!discard) fail("no Discard in the waiting take's menu");
+    const before = env.calls.length;
+    discard.click();
+    await tick();
+    if ((app.pendingUploads.t1000 || []).length || pendingRows(env).length) fail("Discard kept the take");
+    if (env.calls.length !== before) fail("Discard sent a request");
+    if (beforeUnloadBlocked(env)) fail("leaving the page is still guarded after Discard");
+    console.log("PASS: a failed take is kept, retried on 'open' and by Retry, dropped by Discard, and guards leaving");
+  }
+
   console.log("PASS: test_background_save");
   process.exit(0);
 })();
