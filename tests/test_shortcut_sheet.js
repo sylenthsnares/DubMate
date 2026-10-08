@@ -195,6 +195,15 @@ const VERIFY = {
     press(env, eventInit(combo));
     return calls.length === 1;
   },
+  "rec-cancel": (env, combo) => {
+    showView(env, "booth");
+    blur(env);
+    const calls = spy(env.app, "cancelCurrentCountdown");
+    env.app.recordState = "countdown";
+    press(env, eventInit(combo));
+    env.app.recordState = "idle";
+    return calls.length === 1;
+  },
   "rec-nudge": (env, combo) => nudgeBy(env, combo, -25),
   "rec-nudge-later": (env, combo) => nudgeBy(env, combo, 25),
   "rec-nudge-big": (env, combo, i) => nudgeBy(env, combo, i === 0 ? -100 : 100),

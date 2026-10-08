@@ -559,7 +559,9 @@ class DubMateApp {
     initTooltips();
     initShortcutSheet({
       opener: document.getElementById('btn-shortcuts'),
-      isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport,
+      // Mid-take the sheet would sit over the take, and Space couldn't stop it.
+      isBlocked: () => this.isAudioSettingsOpen() || this.isRenderingExport
+        || this.recordState === 'countdown' || this.recordState === 'recording',
       getView: () => this.currentView,
     });
 
@@ -868,7 +870,8 @@ class DubMateApp {
     this.initRoomCheckEvents();
 
     // Studio & Screening Keyboard Shortcuts
-    // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift most layouts report { / }.
+    // Booth: Space (Record), Esc (cancel the count-in), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift
+    // most layouts report { / }.
     // T (the take in the dub), A (switch Original/Take), , and . (previous/next line), E (All
     // effects; Esc closes it); the Takes card handles its own arrows, P, Enter and Delete
     // (takes_card.js).
@@ -886,6 +889,13 @@ class DubMateApp {
         }
         if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
           this.closeExportModal();
+          return;
+        }
+        // Esc cancels the count-in. While recording it does nothing: a stray Esc never loses a take.
+        if (this.views.booth.classList.contains('active')
+            && (this.recordState === 'countdown' || this.recordState === 'recording')) {
+          e.preventDefault();
+          if (this.recordState === 'countdown') this.cancelCurrentCountdown();
           return;
         }
         // The inline questions (For's wider scope, Done with lines left) answer Esc as Cancel.
@@ -931,7 +941,8 @@ class DubMateApp {
       if (this.views.booth.classList.contains('active')) {
         // A take's timing doesn't change while its line saves (the nudges are locked too).
         const lineSaving = !!this.savingTake(this.roomState?.pack?.lines?.[this.currentLineIndex]);
-        // Counting in or recording, the single-letter keys would stop the take and lose it.
+        // Counting in or recording, the single-letter keys would stop the take and lose it,
+        // and the timing row is inert.
         const taking = this.recordState === 'countdown' || this.recordState === 'recording';
         if (e.code === 'Space') {
           // Space presses a focused ▶, ⋯, Undo or answer button instead of recording.
@@ -941,11 +952,11 @@ class DubMateApp {
         } else if (e.key === '[' || e.key === '{') {
           e.preventDefault();
           const delta = e.shiftKey ? -100 : -25;
-          if (!lineSaving) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+          if (!lineSaving && !taking) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
         } else if (e.key === ']' || e.key === '}') {
           e.preventDefault();
           const delta = e.shiftKey ? 100 : 25;
-          if (!lineSaving) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+          if (!lineSaving && !taking) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
         } else if (!taking && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('.analog-dial-wrapper')) {
           const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
           const action = { t: () => this.focusPickedTake(), a: () => this.switchTransportSide(),
