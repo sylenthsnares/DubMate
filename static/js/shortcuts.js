@@ -28,6 +28,7 @@ export const SHORTCUT_GROUPS = [
       { id: 'takes-play', keys: [['P']], label: 'In the takes: play this take' },
       { id: 'takes-use', keys: [['Enter']], label: 'In the takes: use this take in the dub' },
       { id: 'takes-delete', keys: [['Delete']], label: 'In the takes: delete this take (you can undo)' },
+      { id: 'rack-toggle', keys: [['E']], label: 'Open or close all effects' },
     ],
   },
   {

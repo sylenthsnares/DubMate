@@ -252,6 +252,13 @@ const VERIFY = {
     press(env, eventInit(combo));
     return calls.length === 1 && calls[0][0].take_id === "a1";
   },
+  "rack-toggle": (env, combo) => {
+    showView(env, "booth");
+    blur(env);
+    const calls = spy(env.app, "toggleAllEffects");
+    press(env, eventInit(combo));
+    return calls.length === 1;
+  },
   "watch-play": (env, combo) => {
     showView(env, "screening");
     blur(env);
