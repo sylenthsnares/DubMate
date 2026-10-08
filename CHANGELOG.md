@@ -75,6 +75,12 @@
 - **Line Chips**: each chip shows its line's number in the scene and how many takes it has.
 - **Recording Feedback**: while you record, the video shows "● REC" with the time left and the waveform draws your voice as it comes in. Every take shows where the line ends.
 - **Keep Going While a Take Saves**: saving a take no longer blocks the booth. Go to the next line and record it while the last take saves; only the line that is saving waits, and its chip says "saving". "Take saved" shows only for a line you've moved away from.
+- **Calmer Booth**: the picture gets more of the screen (39% of a 1440×900 window, up from 27%; 26% at 1280×720, up from 15%). One bar above it holds the line chips, who's here, Mark ready and Start premiere. The line reads larger, centred under the picture, with its length beside it. The booth's gaps all come from one spacing scale.
+- **Who's Here**: in the booth the cast strip gives way to a row of avatars in the bar. Point at it or Tab to it to see each person's line, how many of their lines are recorded, and who is ready.
+- **Takes Rows**: ▶ plays a take. Clicking a row, or Enter, puts that take in the dub, and the row says "Use this take" when you point at it or reach it with Tab. Someone else's take shows their avatar.
+- **Level in All Effects**: the Level dial moved to All effects. The Voice card sums it up, for example "level matched · noise cleanup on".
+- **Next When It Counts**: Next line turns amber once the line has a take, and Start premiere once everyone is ready. Before the first take the timing row waits, since there is nothing to move. The ±100 ms buttons are gone; Shift with [ or ] still moves a take 100 ms.
+- **Recording Focus**: during the count-in and while you record, everything but the record button, the picture, the line and the waveform dims and can't be clicked, the header included. Esc cancels the count-in. While you record Esc does nothing, so a stray key never loses a take. Saving a take dims nothing.
 - **Takes Kept When the Upload Fails**: a take that couldn't upload stays in its Takes list as "waiting to upload" with Retry, and uploads by itself when you're back online. Closing the page asks first while a take is waiting or saving.
 - **Done on Your Last Line**: Done marks you ready, or asks first when some of your lines have no take. The host's one main button is "Start premiere" with how many people are ready; a guest whose lines all have takes gets "All recorded · Mark ready".
 
@@ -104,6 +110,7 @@
 - **Pack Builder Step Tips**: the tips on the step buttons no longer say the arrow keys move 1 second.
 - **Pack Builder Cast Row Scrolls**: with many characters, the Cast row scrolls with the mouse wheel, a trackpad, by dragging, or with the arrow keys. A fade shows which side has more.
 - **Pack Builder Play**: Play no longer repeats the start of a line. The voices wait for the video, and a line's Play stops at the end of the line.
+- **A Mic That Fails as the Take Starts**: if the microphone couldn't open when the count-in ended, the booth stayed stuck in recording. It now says why and shows NO MIC.
 - **"Take Saved" Twice**: saving your own take no longer shows "Take saved" twice.
 - **Refused Changes Say Why**: when the room refuses a change, such as a guest changing the casting, a message says why and the page shows the room as it really is, instead of a change that didn't happen.
 - **Updated Notice**: the "DubMate was updated" notice has a Reload button.
