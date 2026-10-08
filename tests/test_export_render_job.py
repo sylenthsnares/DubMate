@@ -165,6 +165,39 @@ class TestRestart(RenderJobCase):
         self.assertEqual(self._types("export_ready"), [])
 
 
+class TestSteps(RenderJobCase):
+
+    def test_status_says_which_step_runs(self):
+        # The modal's Mix audio / Make video strip follows these, not the POST's reply.
+        mixing = threading.Event()
+        mixed = threading.Event()
+        self.addCleanup(mixing.set)
+        self.gate.clear()
+
+        def render(*args, **kwargs):
+            self.rendering.set()
+            self.assertTrue(mixing.wait(10))
+            kwargs["on_audio_mixed"]()
+            mixed.set()
+            self._render(*args, **kwargs)
+
+        def status():
+            return self.client.get(f"/api/rooms/{self.ROOM}/export/status?aspect_ratio=16:9").json()
+
+        with mock.patch.object(audio_processor, "export_dub_video", side_effect=render):
+            res = self.client.post(f"/api/rooms/{self.ROOM}/export?user_id={HOST}")
+            self.assertEqual(res.json()["status"], "processing", res.text)
+            self.assertTrue(self.rendering.wait(10))
+            self.assertEqual(status(), {"status": "processing", "aspect_ratio": "16:9", "step": "mix"})
+            mixing.set()
+            self.assertTrue(mixed.wait(10))
+            self.assertEqual(status()["step"], "video")
+            self.gate.set()
+            self._finish(self.room.export_tasks["16:9"])
+        self.assertEqual(status()["status"], "ready")
+        self.assertNotIn("step", status())
+
+
 class TestInvalidated(RenderJobCase):
 
     def test_sent_only_when_something_was_dropped(self):
@@ -187,6 +220,22 @@ class TestInvalidated(RenderJobCase):
         self._settle()
         self.assertEqual(self._types("export_invalidated"), [{}, {}])
         self.assertEqual(self.room.export_status["16:9"], "processing")
+
+    def test_a_drag_during_a_render_sends_one_message(self):
+        # Every step of a slider drag invalidates; while one message is still on its way,
+        # the next steps don't queue more full-state broadcasts.
+        self.room.export_status["16:9"] = "processing"
+
+        def drag():
+            for _ in range(5):
+                self.room.invalidate_exports()
+
+        self._call(drag)
+        self._settle()
+        self.assertEqual(self._types("export_invalidated"), [{}])
+        self._call(self.room.invalidate_exports)
+        self._settle()
+        self.assertEqual(self._types("export_invalidated"), [{}, {}])
 
     def test_no_loop_no_message(self):
         self.room.exported_video_path = self.room.export_out_path("16:9")

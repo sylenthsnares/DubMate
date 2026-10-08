@@ -210,6 +210,31 @@ async function boot() {
   if (keySeek("ArrowRight", 1, doc.body, { ctrlKey: true }).length) fail("Ctrl+Right seeked");
   console.log("PASS: Left/Right move 5 s and , / . jump between line starts, not from fields or presets");
 
+  // Space plays for everyone only from the video, the timeline or the page; a focused
+  // control (a section, a preset, a row, Save) gets its own Space.
+  const space = (target) => {
+    sent.length = 0;
+    const ev = new w.KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true });
+    target.dispatchEvent(ev);
+    return sent.filter((m) => m.type === "screening_control" && m.payload.action !== "seek").length;
+  };
+  paused = true;
+  if (space(doc.body) !== 1) fail("Space on the page did not play");
+  if (space(track) !== 1) fail("Space on the timeline did not play");
+  const spaceTargets = {
+    "the Mix summary": doc.querySelector("#screening-mix > summary"),
+    "a Mix preset": doc.querySelector("#screening-mix .mix-preset"),
+    "In this dub's summary": doc.querySelector("#screening-lines > summary"),
+    "a row": doc.querySelector(".screening-line-seek"),
+    "Save": $("btn-export-video"),
+    "the Save chevron": $("btn-save-menu"),
+  };
+  for (const [name, el] of Object.entries(spaceTargets)) {
+    if (!el) fail(`no ${name} to press Space on`);
+    if (space(el)) fail(`Space on ${name} played the premiere for everyone`);
+  }
+  console.log("PASS: Space on a focused control is the control's; elsewhere it plays");
+
   // --- In this dub (host) ------------------------------------------------------------------
   const list = $("screening-lines");
   if (!list || list.tagName !== "DETAILS" || !list.open) fail("In this dub is not an open disclosure for the host");
@@ -219,7 +244,7 @@ async function boot() {
   const rowText = (i) => norm(rows()[i]);
   if (rows().length !== 3) fail(`${rows().length} rows`);
   const status = (i) => rows()[i].querySelector(".screening-line-status");
-  if (!/#1/.test(rowText(0)) || !/Ana/.test(rowText(0)) || !/Ben/.test(rowText(0)) || norm(status(0)) !== "Take 3 of 3") fail(`row 1: ${rowText(0)}`);
+  if (!/#1/.test(rowText(0)) || !/Ana/.test(rowText(0)) || !/Ben/.test(rowText(0)) || norm(status(0)) !== "Take 3") fail(`row 1: ${rowText(0)}`);
   if (!/Cat/.test(rowText(1)) || !/Tani/.test(rowText(1)) || norm(status(1)) !== "Original voice · Unrecorded") fail(`row 2: ${rowText(1)}`);
   if (!status(1).classList.contains("is-original") || status(0).classList.contains("is-original")) fail("the original-voice status is not dimmed (or a take is)");
   if (!/Dan/.test(rowText(2)) || !/Unassigned/.test(rowText(2))) fail(`row 3: ${rowText(2)}`);
@@ -228,7 +253,9 @@ async function boot() {
   // Change take only where this user can record the line (the host is cast as Cat).
   const change = (i) => rows()[i].querySelector(".screening-line-change");
   if (change(0) || !change(1) || change(2)) fail(`Change take on rows ${rows().map((r, i) => (change(i) ? i + 1 : "")).join("")}`);
-  if (!change(1).classList.contains("btn-ghost") || !change(1).classList.contains("btn-xs") || norm(change(1)) !== "Change take") fail(`Change take: ${change(1).className}`);
+  // Cat has no takes yet: there is nothing to change, so the button says Record.
+  if (!change(1).classList.contains("btn-ghost") || !change(1).classList.contains("btn-xs") || norm(change(1)) !== "Record"
+      || change(1).getAttribute("aria-label") !== "Record line 2") fail(`Record: ${change(1).className} ${norm(change(1))}`);
   // A row click seeks (the host sends it).
   sent.length = 0;
   rows()[2].querySelector(".screening-line-seek").click();
@@ -257,10 +284,28 @@ async function boot() {
   // --- It follows takes and casting while the premiere is open --------------------------------
   const takesB = { ...app.roomState.takes, b: { picked: "b1", next_number: 2, takes: [take("b1", 1, "u1")] } };
   deliver("take_picked", { line_index: 1, take_id: "b1" }, { takes: takesB });
-  if (summary() !== "In this dub · 3 lines · 1 uses the original voice" || norm(status(1)) !== "Take 1 of 1") fail(`after take_picked: ${summary()} / ${norm(status(1))}`);
+  if (summary() !== "In this dub · 3 lines · 1 uses the original voice" || norm(status(1)) !== "Take 1") fail(`after take_picked: ${summary()} / ${norm(status(1))}`);
+  if (norm(change(1)) !== "Change take" || change(1).getAttribute("aria-label") !== "Change take for line 2") fail(`with a take: ${norm(change(1))}`);
+  // Take numbers stay the takes' own after a deletion ("Take 5", never "Take 5 of 3").
+  const takesA = { ...app.roomState.takes, a: { picked: "a3", next_number: 4, takes: [take("a3", 3, "u2")] } };
+  deliver("take_deleted", { line_index: 0, take_id: "a1" }, { takes: takesA });
+  if (norm(status(0)) !== "Take 3") fail(`after a deletion: ${norm(status(0))}`);
   deliver("role_assigned", { character: "Dan", user_ids: ["u2"] }, { role_assignments: { Ana: ["u2"], Cat: ["u1"], Dan: ["u2"] } });
   if (!/Ben/.test(rowText(2)) || timeline.querySelectorAll(".screening-tick")[2].style.backgroundColor !== colour("#4ade80")) fail(`after role_assigned: ${rowText(2)}`);
-  console.log("PASS: the list and ticks follow take and casting changes");
+  // Someone joins and is cast: the row names them once their join arrives.
+  deliver("role_assigned", { character: "Dan", user_ids: ["u3"] }, { role_assignments: { Ana: ["u2"], Cat: ["u1"], Dan: ["u3"] } });
+  if (!/Unassigned/.test(rowText(2))) fail(`cast before their join: ${rowText(2)}`);
+  deliver("user_joined", { user_id: "u3" }, { users: { ...app.roomState.users, u3: { id: "u3", name: "Cleo", color: "#60a5fa", is_online: true } } });
+  if (!/Cleo/.test(rowText(2)) || timeline.querySelectorAll(".screening-tick")[2].style.backgroundColor !== colour("#60a5fa")) fail(`after user_joined: ${rowText(2)}`);
+
+  // Someone else records while a row or its button has the focus: the focus stays on it.
+  rows()[1].querySelector(".screening-line-seek").focus();
+  deliver("take_recorded", { line_index: 2, user_id: "u3" }, { takes: { ...app.roomState.takes } });
+  if (doc.activeElement !== rows()[1].querySelector(".screening-line-seek")) fail(`a re-render dropped the row's focus to ${doc.activeElement && doc.activeElement.tagName}`);
+  change(1).focus();
+  deliver("take_picked", { line_index: 1, take_id: "b1" }, { takes: { ...app.roomState.takes } });
+  if (doc.activeElement !== change(1)) fail(`a re-render dropped Change take's focus to ${doc.activeElement && doc.activeElement.tagName}`);
+  console.log("PASS: the list and ticks follow take, casting and join changes, and keep the focus");
 
   // --- A member: closed list, local seeks ------------------------------------------------------
   app.user = { id: "u2", name: "Ben" };

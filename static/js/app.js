@@ -38,8 +38,10 @@ const CONNECTION_COPY = {
   failedTip: "If Try again gets through, it sends what changed while it was reconnecting, and whether you're ready. Other changes made now aren't saved.",
 };
 
-// The room messages that change the premiere's In this dub list and timeline ticks.
-const PREMIERE_LINE_EVENTS = ['take_recorded', 'take_picked', 'take_deleted', 'role_assigned'];
+// The room messages that change the premiere's In this dub list and timeline ticks (a join
+// or a status update brings an actor's name and colour).
+const PREMIERE_LINE_EVENTS = ['take_recorded', 'take_picked', 'take_deleted', 'role_assigned', 'user_joined',
+  'user_status_updated'];
 
 class DubMateApp {
   constructor() {
@@ -958,6 +960,9 @@ class DubMateApp {
         }
       } else if (this.views.screening.classList.contains('active')) {
         if (e.code === 'Space') {
+          // A focused control gets its own Space (a section opens, a preset is picked, a
+          // button is pressed); only the video, the timeline and the page play for everyone.
+          if (e.target.closest?.('button, summary, a, [role="radio"], [role="menuitem"]')) return;
           e.preventDefault();
           this.handleScreeningPlayPause();
         } else if (e.code === 'KeyR' || e.key === 'r' || e.key === 'R') {
@@ -1203,9 +1208,14 @@ class DubMateApp {
     this.socket.on('export_started', (data) => {
       this.applyIncomingState(data);
       const aspect = data.payload?.aspect_ratio === '9:16' ? '9:16' : '16:9';
-      // A restart (the mix changed mid-render) stays in Saving….
+      // A restart (the mix changed mid-render) stays in Saving…; this client's modal goes
+      // back to mixing, which the engine does again.
       this.setExportState(aspect, 'processing');
       delete this.exportFailures[aspect];
+      if (this.exportModalAspect === aspect && this.modalExportRendering?.dataset.state === 'rendering'
+          && this.isExportModalOpen()) {
+        this.updateExportModalStep(1, 'Mixing your takes…');
+      }
       this.updateScreeningControls();
     });
 
@@ -1255,10 +1265,10 @@ class DubMateApp {
 
     this.socket.on('cleanup_refreshed', (data) => this.onCleanupRefreshed(data));
 
-    // The host's own change comes back as an echo; applying it could move the slider
-    // back mid-drag under lag, so only someone else's change applies here.
+    // This tab's own change comes back as an echo; applying it could move the slider back
+    // mid-drag under lag, so it is skipped. Another tab's applies, even the same host's.
     this.socket.on('dialogue_presence_sync', (data) => {
-      if (data.payload?.triggered_by === this.user?.id) return;
+      if (data.payload?.client_id === this.renderClientId()) return;
       const pres = parseFloat(data.payload?.presence_db ?? 0.0);
       this.masterDialoguePresence = pres;
       this.renderPresenceUI(pres);
@@ -1267,7 +1277,7 @@ class DubMateApp {
     });
 
     this.socket.on('mix_balance_sync', (data) => {
-      if (data.payload?.triggered_by === this.user?.id) return;
+      if (data.payload?.client_id === this.renderClientId()) return;
       const balance = Number(data.payload?.balance ?? 50);
       if (this.roomState) this.roomState.master_mix_balance = balance;
       this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);

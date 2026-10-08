@@ -1238,11 +1238,6 @@
                       aria-valuenow="50" aria-valuetext="50 percent">
                     <span class="stem-tag">Voices</span>
                   </div>
-                  <div class="stem-scale-row" aria-hidden="true">
-                    <span>More music</span>
-                    <span>Even</span>
-                    <span>More voice</span>
-                  </div>
                 </div>
                 <div class="mix-fine-row">
                   <div class="stem-mixer-header">
@@ -1342,7 +1337,6 @@
       <div class="modal-header-content">
         <!-- rendering and failed -->
         <div class="modal-badge-row" id="export-modal-badges">
-          <span class="badge-studio">EXPORT</span>
           <span class="badge-render-live" id="export-modal-badge">SAVING</span>
         </div>
         <h2 id="export-modal-title" class="modal-title" tabindex="-1">Saving your dub</h2>
@@ -1353,14 +1347,14 @@
       <!-- rendering: the two real steps and an indeterminate bar (no percentages) -->
       <div class="modal-steps-container" id="export-modal-steps">
         <div class="modal-step-item active" id="modal-step-dsp">
-          <div class="step-num">1</div>
+          <div class="step-num" aria-hidden="true">1</div>
           <div class="step-info">
             <div class="step-title">Mix audio</div>
           </div>
         </div>
         <div class="step-connector" id="connector-dsp-mux"></div>
         <div class="modal-step-item" id="modal-step-mux">
-          <div class="step-num">2</div>
+          <div class="step-num" aria-hidden="true">2</div>
           <div class="step-info">
             <div class="step-title">Make video</div>
           </div>

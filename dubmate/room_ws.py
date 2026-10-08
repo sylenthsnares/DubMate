@@ -152,11 +152,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                 except (TypeError, ValueError) as ex:
                     print(f"[WS] {room_id}/{user_id} ignored bad presence_db: {ex!r}")
                     continue
-                room.master_dialogue_presence_db = max(-12.0, min(12.0, presence_db))
-                room.invalidate_exports()
+                presence_db = max(-12.0, min(12.0, presence_db))
+                # The level it already has (a preset clicked again) keeps the saved video.
+                if presence_db != room.master_dialogue_presence_db:
+                    room.master_dialogue_presence_db = presence_db
+                    room.invalidate_exports()
+                # client_id: the tab that sent it, which ignores its own echo (a host may
+                # have the premiere open in two windows).
                 await room.broadcast("dialogue_presence_sync", {
                     "presence_db": room.master_dialogue_presence_db,
-                    "triggered_by": user_id
+                    "triggered_by": user_id,
+                    "client_id": str(payload.get("client_id") or "")[:64],
                 })
 
             elif msg_type == "set_mix_balance":
@@ -170,11 +176,14 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                     continue
                 if balance != balance:  # NaN
                     continue
-                room.master_mix_balance = max(0.0, min(100.0, balance))
-                room.invalidate_exports()
+                balance = max(0.0, min(100.0, balance))
+                if balance != room.master_mix_balance:
+                    room.master_mix_balance = balance
+                    room.invalidate_exports()
                 await room.broadcast("mix_balance_sync", {
                     "balance": room.master_mix_balance,
-                    "triggered_by": user_id
+                    "triggered_by": user_id,
+                    "client_id": str(payload.get("client_id") or "")[:64],
                 })
 
             elif msg_type == "ping":

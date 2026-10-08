@@ -983,9 +983,14 @@ async def _render_export(room, aspect_ratio: str) -> None:
     (room.export_generation), the result is thrown away and the scene is rendered again, so a
     video that doesn't match what the room hears is never offered as ready."""
     started = {"aspect_ratio": aspect_ratio}
+
+    def audio_mixed():   # from the render's thread: the step is now the video
+        room.export_steps[aspect_ratio] = "video"
+
     try:
         while True:
             room.export_status[aspect_ratio] = "processing"
+            room.export_steps[aspect_ratio] = "mix"
             await room.broadcast("export_started", started)
             await _wait_for_cleanup_refresh(room)
             generation = room.export_generation
@@ -998,6 +1003,7 @@ async def _render_export(room, aspect_ratio: str) -> None:
                 aspect_ratio=aspect_ratio,
                 master_dialogue_presence_db=room.master_dialogue_presence_db,
                 mix_balance=room.master_mix_balance,
+                on_audio_mixed=audio_mixed,
             )
             if room.export_generation == generation:
                 break
@@ -1016,6 +1022,8 @@ async def _render_export(room, aspect_ratio: str) -> None:
         room.export_status[aspect_ratio] = f"failed: {ex}"
         print(f"[ExportError] Error rendering {room.room_id} ({aspect_ratio}): {ex}")
         await room.broadcast("export_failed", {"aspect_ratio": aspect_ratio, "error": str(ex)})
+    finally:
+        room.export_steps.pop(aspect_ratio, None)
 
 
 @router.get("/api/rooms/{room_id}/export/status")
@@ -1027,10 +1035,11 @@ async def get_export_status(room_id: str, aspect_ratio: str = "16:9"):
         return {"status": "ready", **room.export_ready_payload(aspect_ratio)}
 
     status = room.export_status.get(aspect_ratio, "idle")
-    return {
-        "status": status,
-        "aspect_ratio": aspect_ratio,
-    }
+    body = {"status": status, "aspect_ratio": aspect_ratio}
+    # A running render's step: "mix" (the takes and the audio), then "video" (the encode).
+    if status == "processing" and room.export_steps.get(aspect_ratio):
+        body["step"] = room.export_steps[aspect_ratio]
+    return body
 
 
 @router.get("/api/rooms/{room_id}/export/video")

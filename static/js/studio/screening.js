@@ -57,7 +57,8 @@ export class ScreeningMethods {
       });
       this.screeningVideo.addEventListener('pause', () => {
         this.renderScreeningPlayState(false);
-        if (!this.isUsingExportedVideo) {
+        // Leaving the premiere pauses it too; the booth's playback is not the premiere's to stop.
+        if (!this.isUsingExportedVideo && this.isScreeningShown()) {
           this.audio.stopAllPlayback();
           this.stopScreeningSyncMonitor();
         }
@@ -145,6 +146,12 @@ export class ScreeningMethods {
     this.preloadScreeningAudio();
   }
 
+  /** The premiere is the screen in view (the theater's sources are only set there: setting one
+   *  stops every playing sound, the booth's take and record stream included). */
+  isScreeningShown() {
+    return !!this.views?.screening?.classList.contains('active');
+  }
+
   applyExportedVideoToTheater(directUrl = null, { position = 0 } = {}) {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = true;
@@ -162,9 +169,10 @@ export class ScreeningMethods {
   /**
    * A finished 16:9 video: it goes into the theater now if it is paused, or at the next
    * pause if the live mix is playing (never mid-play). Either way the position stays.
+   * Off the premiere nothing changes here; setupScreeningView puts it in on the way back.
    */
   offerExportedVideo(videoUrl = null) {
-    if (!this.roomState || !this.screeningVideo || this.isUsingExportedVideo) return;
+    if (!this.roomState || !this.screeningVideo || this.isUsingExportedVideo || !this.isScreeningShown()) return;
     if (!this.screeningVideo.paused) {
       this.pendingExportSwap = videoUrl || true;
       return;
@@ -211,7 +219,9 @@ export class ScreeningMethods {
     const live = !this.isUsingExportedVideo;
     this.screeningSourceLabel.classList.toggle('is-live', live);
     this.screeningSourceText.textContent = live ? 'Live mix' : 'Final video';
-    if (live) this.screeningSourceLabel.setAttribute('data-tip', 'What everyone hears now. Save makes the video from this mix.');
+    // Members have no Save, so their tip doesn't mention it.
+    const tip = this.isHost({ allowDummy: true }) ? 'What everyone hears now. Save makes the video from this mix.' : 'What everyone hears now.';
+    if (live) this.screeningSourceLabel.setAttribute('data-tip', tip);
     else this.screeningSourceLabel.removeAttribute('data-tip');
   }
 
@@ -356,7 +366,8 @@ export class ScreeningMethods {
       this.dropStaleExport();
       if (this.roomState) this.roomState.master_mix_balance = this.screeningBalance;
       if (this.socket && this.isHost({ allowDummy: true })) {
-        this.socket.send('set_mix_balance', { balance: this.screeningBalance });
+        // client_id: this tab ignores its own echo (app.js), another window of the host's doesn't.
+        this.socket.send('set_mix_balance', { balance: this.screeningBalance, client_id: this.renderClientId() });
       }
     }
   }
@@ -364,7 +375,9 @@ export class ScreeningMethods {
   /**
    * The mix or a take changed, so a saved video is out of date: the theater plays the live
    * mix (from the same spot, still playing if it was) and Save reads "Mix changed · Save
-   * again" until a new one is made. A render still running keeps its Saving….
+   * again" until a new one is made. A render still running keeps its Saving…. Off the
+   * premiere only the flag goes (a take changed in the booth); setupScreeningView sets the
+   * theater on the way back.
    */
   dropStaleExport() {
     if (this.exportState('16:9') === 'ready') this.exportStale = true;
@@ -375,10 +388,11 @@ export class ScreeningMethods {
         if (exports[aspect] === 'ready') exports[aspect] = 'idle';
       }
       this.roomState.exports = exports;
+      this.roomState.export_video_url = null;
     }
     this.pendingExportSwap = null;
     this.editingSaved = { stems: false, project: false };
-    if (this.isUsingExportedVideo && this.screeningVideo) {
+    if (this.isUsingExportedVideo && this.screeningVideo && this.isScreeningShown()) {
       const playing = !this.screeningVideo.paused;
       const position = this.screeningVideo.currentTime || 0;
       this.applyLiveMixToTheater({ position });
@@ -429,7 +443,8 @@ export class ScreeningMethods {
   /** A preset sets both the balance and the dialogue level, for the whole room. */
   applyMixPreset(id) {
     const preset = MIX_PRESETS.find((p) => p.id === id);
-    if (!preset || !this.isHost({ allowDummy: true })) return;
+    // The preset already checked changes nothing, so the saved video stays.
+    if (!preset || !this.isHost({ allowDummy: true }) || this.currentMixPreset()?.id === id) return;
     if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = preset.presence;
     this.setMasterDialoguePresence(preset.presence);
     this.setScreeningBalance(preset.balance, { share: true });
@@ -447,7 +462,8 @@ export class ScreeningMethods {
     // The room's level is the host's; a member's change stays in their own preview.
     if (this.socket && this.isHost({ allowDummy: true })) {
       this.socket.send('set_dialogue_presence', {
-        presence_db: this.masterDialoguePresence
+        presence_db: this.masterDialoguePresence,
+        client_id: this.renderClientId(),
       });
     }
   }
@@ -601,14 +617,19 @@ export class ScreeningMethods {
   }
 
   /**
-   * In this dub: each line's actor and take ("Take 3 of 5", or the original voice). A row
-   * click seeks there, and Change take shows where this user may pick the take. The summary
-   * counts the lines that use the original voice. The timeline's ticks follow the same casting.
+   * In this dub: each line's actor and take ("Take 3", the number the TAKES card shows, or
+   * the original voice). A row click seeks there, and Change take (Record on a line with no
+   * takes yet) shows where this user may pick the take. The summary counts the lines that
+   * use the original voice. The timeline's ticks follow the same casting. A rebuild keeps
+   * the keyboard focus on the same row's button.
    */
   renderPremiereLines() {
     if (!this.roomState) return;
     this.renderPremiereTimeline();
     if (!this.screeningLinesList) return;
+    const focused = this.screeningLinesList.contains(document.activeElement) ? document.activeElement : null;
+    const focusRow = focused ? [...this.screeningLinesList.children].indexOf(focused.closest('.screening-line')) : -1;
+    const focusChange = !!focused?.classList.contains('screening-line-change');
     const lines = this.roomState.pack?.lines || [];
     const takes = this.roomState.takes;
     const span = (cls, text) => {
@@ -631,7 +652,7 @@ export class ScreeningMethods {
       const dot = span('screening-line-dot', '');
       this.paintLineMark(dot, actor);
       const status = span('screening-line-status',
-        take ? `Take ${take.number} of ${lineTakes(takes, line).length}` : 'Original voice · Unrecorded');
+        take ? `Take ${take.number}` : 'Original voice · Unrecorded');
       status.classList.toggle('is-original', !take);
       const speaker = span('screening-line-speaker', actor ? actor.name : 'Unassigned');
       seek.append(dot, span('screening-line-num', `#${index + 1}`), span('screening-line-char', line.character),
@@ -643,14 +664,19 @@ export class ScreeningMethods {
         const change = document.createElement('button');
         change.type = 'button';
         change.className = 'btn btn-ghost btn-xs screening-line-change';
-        change.textContent = 'Change take';
-        change.setAttribute('aria-label', `Change take for line ${index + 1}`);
+        const hasTakes = lineTakes(takes, line).length > 0;
+        change.textContent = hasTakes ? 'Change take' : 'Record';
+        change.setAttribute('aria-label', hasTakes ? `Change take for line ${index + 1}` : `Record line ${index + 1}`);
         change.addEventListener('click', () => this.changePremiereTake(index));
         row.appendChild(change);
       }
       return row;
     });
     this.screeningLinesList.replaceChildren(...rows);
+    if (rows[focusRow]) {
+      (focusChange && rows[focusRow].querySelector('.screening-line-change')
+        || rows[focusRow].querySelector('.screening-line-seek')).focus();
+    }
     this.screeningLinesList.classList.toggle('has-change', rows.some((r) => r.childElementCount > 1));
     const originals = original ? ` · ${original} ${original === 1 ? 'uses' : 'use'} the original voice` : '';
     this.screeningLinesSummary.textContent = `· ${plural(lines.length, 'line')}${originals}`;

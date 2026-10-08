@@ -134,6 +134,34 @@ class TestRoomBalance(MixRoomCase):
         self.assertEqual(syncs[0]["payload"]["balance"], 80)
         self.assertEqual(self.room.to_state_dict()["master_mix_balance"], 80)
 
+    def test_the_same_value_keeps_the_saved_video(self):
+        # Clicking the preset that is already checked must not throw the finished video away.
+        path = os.path.join(self.cache, "kept.mp4")
+        with open(path, "wb") as f:
+            f.write(b"\0" * 2048)
+        self.room.exported_video_path = path
+        generation = self.room.export_generation
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+            self._join(ws, "Host")
+            _barrier(ws)
+            ws.send_json({"type": "set_mix_balance", "payload": {"balance": 50}})
+            ws.send_json({"type": "set_dialogue_presence", "payload": {"presence_db": 0.0}})
+            frames = self._frames_until_pong(ws)
+        self.assertEqual(self.room.ready_export_path("16:9"), path)
+        self.assertEqual(self.room.export_generation, generation)
+        self.assertFalse(any(f.get("type") == "export_invalidated" for f in frames), frames)
+
+    def test_the_echo_names_the_tab_that_sent_it(self):
+        # A host with the premiere open in two windows: only the sending tab ignores the echo.
+        with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as ws:
+            self._join(ws, "Host")
+            _barrier(ws)
+            ws.send_json({"type": "set_mix_balance", "payload": {"balance": 70, "client_id": "tab-a"}})
+            ws.send_json({"type": "set_dialogue_presence", "payload": {"presence_db": 2.5, "client_id": "tab-a"}})
+            frames = self._frames_until_pong(ws)
+        echoes = [f for f in frames if f.get("type") in ("mix_balance_sync", "dialogue_presence_sync")]
+        self.assertEqual([f["payload"]["client_id"] for f in echoes], ["tab-a", "tab-a"], frames)
+
     def test_member_is_refused(self):
         with self.client.websocket_connect(f"/ws/{self.ROOM}/{HOST}") as host_ws:
             self._join(host_ws, "Host")

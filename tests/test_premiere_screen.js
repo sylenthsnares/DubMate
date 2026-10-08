@@ -206,6 +206,25 @@ async function boot(url, calls) {
   if (video.muted) fail("the final video plays muted");
   console.log("PASS: a finished video waits for the next pause and keeps the position");
 
+  // --- Off the premiere, a dropped or finished video never stops the booth's playback -------
+  // (setTheaterSource stops every playing node: the booth's take and its record stream too.)
+  app.showView("booth");
+  let stops = 0;
+  const realStop = app.audio.stopAllPlayback.bind(app.audio);
+  app.audio.stopAllPlayback = () => { stops += 1; realStop(); };
+  deliver("export_invalidated", {}, { exports: { "16:9": "idle", "9:16": "idle" }, has_export: false });
+  if (stops) fail(`export_invalidated in the booth stopped playback ${stops} time(s)`);
+  if (app.isUsingExportedVideo) fail("the dropped video is still marked as the theater's");
+  deliver("export_ready", readyPayload("16:9"), { exports: { "16:9": "ready", "9:16": "idle" }, has_export: true,
+    export_video_url: "/api/rooms/R1/export/video?aspect_ratio=16:9" });
+  if (stops) fail(`export_ready in the booth stopped playback ${stops} time(s)`);
+  if (app.isUsingExportedVideo || app.pendingExportSwap) fail("a video finished in the booth was put into the theater");
+  app.audio.stopAllPlayback = realStop;
+  app.showView("screening");
+  await app.setupScreeningView();
+  if (!app.isUsingExportedVideo || norm($("screening-source-label")) !== "Final video") fail("back on the premiere, the finished video is not in the theater");
+  console.log("PASS: off the premiere, a dropped or finished video leaves the booth's playback alone");
+
   // --- The 9:16 row renders on demand, inline ------------------------------------------
   chevron.click();
   if (chevron.getAttribute("aria-expanded") !== "true" || menu.hidden) fail("the chevron did not open the menu");
@@ -258,6 +277,12 @@ async function boot(url, calls) {
   if (summary() !== "Mix · Balanced") fail(`host summary: ${summary()}`);
   const presets = [...mix.querySelectorAll('[role="radiogroup"] [role="radio"]')];
   if (presets.map(norm).join("|") !== "Balanced|Voices forward|Music forward") fail(`presets: ${presets.map(norm)}`);
+  // The preset already checked: nothing changes, the saved video stays.
+  sent.length = 0;
+  presets[0].click();
+  presets[1].dispatchEvent(new w.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+  if (sent.some((m) => m.type === "set_mix_balance" || m.type === "set_dialogue_presence")) fail(`the checked preset sent the mix: ${JSON.stringify(sent)}`);
+  if (label() !== "Saved" || !app.isUsingExportedVideo) fail(`the checked preset dropped the saved video: "${label()}"`);
   sent.length = 0;
   presets[1].click();
   if (!sent.some((m) => m.type === "set_mix_balance" && m.payload.balance === 65)) fail(`Voices forward balance: ${JSON.stringify(sent)}`);
@@ -270,17 +295,23 @@ async function boot(url, calls) {
   if ($("slider-screening-balance").closest("details") !== $("screening-fine-tune")) fail("the sliders are not inside Fine-tune");
   console.log("PASS: a Mix preset sends the balance and the dialogue level; anything else reads Custom");
 
-  // --- The host's own echo is ignored; another's change applies ---------------------------
+  // --- This tab's own echo is ignored; another tab's change applies -------------------------
+  const tab = app.renderClientId();
+  sent.length = 0;
   app.setScreeningBalance(80, { share: true });
-  deliver("mix_balance_sync", { balance: 70, triggered_by: "u1" });
-  if (app.screeningBalance !== 80 || $("slider-screening-balance").value !== "80") fail(`the host's echo moved the slider to ${app.screeningBalance}`);
   app.setMasterDialoguePresence(4);
-  deliver("dialogue_presence_sync", { presence_db: 2.5, triggered_by: "u1" });
-  if (app.masterDialoguePresence !== 4) fail(`the host's echo moved the level to ${app.masterDialoguePresence}`);
-  deliver("mix_balance_sync", { balance: 35, triggered_by: "u9" });
-  deliver("dialogue_presence_sync", { presence_db: 0, triggered_by: "u9" });
-  if (app.screeningBalance !== 35 || summary() !== "Mix · Music forward") fail(`another's change: ${app.screeningBalance} ${summary()}`);
-  console.log("PASS: the host's own mix echo is ignored; another change applies and updates the summary");
+  if (!sent.filter((m) => m.type === "set_mix_balance" || m.type === "set_dialogue_presence").every((m) => m.payload.client_id === tab)) {
+    fail(`the mix was sent without this tab's id: ${JSON.stringify(sent)}`);
+  }
+  deliver("mix_balance_sync", { balance: 70, triggered_by: "u1", client_id: tab });
+  if (app.screeningBalance !== 80 || $("slider-screening-balance").value !== "80") fail(`this tab's echo moved the slider to ${app.screeningBalance}`);
+  deliver("dialogue_presence_sync", { presence_db: 2.5, triggered_by: "u1", client_id: tab });
+  if (app.masterDialoguePresence !== 4) fail(`this tab's echo moved the level to ${app.masterDialoguePresence}`);
+  // The same host in a second window: its change applies here.
+  deliver("mix_balance_sync", { balance: 35, triggered_by: "u1", client_id: "other-window" });
+  deliver("dialogue_presence_sync", { presence_db: 0, triggered_by: "u1", client_id: "other-window" });
+  if (app.screeningBalance !== 35 || summary() !== "Mix · Music forward") fail(`another window's change: ${app.screeningBalance} ${summary()}`);
+  console.log("PASS: this tab's own mix echo is ignored; another window's change applies and updates the summary");
 
   // --- A member: Download, the host's mix read-only, no host controls -------------------
   app.user = { id: "u2", name: "Ben" };
@@ -292,6 +323,8 @@ async function boot(url, calls) {
   if (main.getAttribute("data-tip") !== "The host hasn't saved the video yet.") fail(`member tooltip: ${main.getAttribute("data-tip")}`);
   if (norm($("screening-status-desc")) !== "The host is saving the video…") fail(`member status while saving: ${norm($("screening-status-desc"))}`);
   if (summary() !== "Mix · Voices forward · set by the host") fail(`member summary: ${summary()}`);
+  // Members have no Save: their Live mix tip doesn't send them to one.
+  if ($("screening-source-label").getAttribute("data-tip") !== "What everyone hears now.") fail(`member Live mix tip: ${$("screening-source-label").getAttribute("data-tip")}`);
   if (isShown($("slider-screening-balance")) || isShown($("slider-dialogue-presence")) || presets.some(isShown)) fail("a member sees the mix controls");
   const memberLine = $("screening-mix-member");
   if (!isShown(memberLine) || !/The host sets the mix\. You hear what the video will sound like\./.test(norm(memberLine)) || !/Voices forward/.test(norm(memberLine))) {

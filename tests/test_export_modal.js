@@ -166,12 +166,32 @@ const readyPoll = (aspect) => ({
   modal.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
   if (!isOpen()) fail("a backdrop click closed the modal while rendering");
 
+  // The engine's "processing" reply only says the render started: still mixing.
   releasePost();
   engine.postGate = null;
   await tick(5);
-  if (norm($("export-modal-status-text")) !== "Making the video…") fail(`status once processing: ${norm($("export-modal-status-text"))}`);
-  if (track.getAttribute("aria-valuetext") !== "Make video") fail(`progressbar step: ${track.getAttribute("aria-valuetext")}`);
-  if (!$("modal-step-mux").classList.contains("active") || !$("modal-step-dsp").classList.contains("completed")) fail("the step strip did not move to Make video");
+  const onStep = (name) => track.getAttribute("aria-valuetext") === name
+    && $(name === "Mix audio" ? "modal-step-dsp" : "modal-step-mux").classList.contains("active");
+  if (norm($("export-modal-status-text")) !== "Mixing your takes…" || !onStep("Mix audio") || $("modal-step-dsp").classList.contains("completed")) {
+    fail(`the reply to the POST marked the mix done: ${norm($("export-modal-status-text"))} ${track.getAttribute("aria-valuetext")}`);
+  }
+  // The engine says when the audio is mixed and the video is being made.
+  engine.poll = { status: "processing", aspect_ratio: "16:9", step: "video" };
+  await pollTick();
+  if (norm($("export-modal-status-text")) !== "Making the video…") fail(`status once the engine makes the video: ${norm($("export-modal-status-text"))}`);
+  if (!onStep("Make video") || !$("modal-step-dsp").classList.contains("completed")) fail("the step strip did not move to Make video");
+  // The mix changed mid-render: the engine starts over, and so does the strip.
+  const deliverEarly = (type, payload) => {
+    const data = { type, payload, state: { ...app.roomState } };
+    app.socket.emit(type, data);
+    app.socket.emit("*", data);
+  };
+  deliverEarly("export_started", { aspect_ratio: "16:9", restarted: true });
+  if (norm($("export-modal-status-text")) !== "Mixing your takes…" || !onStep("Mix audio")) fail(`a restart did not go back to Mix audio: ${norm($("export-modal-status-text"))}`);
+  engine.poll = { status: "processing", aspect_ratio: "16:9", step: "video" };
+  await pollTick();
+  if (!onStep("Make video")) fail("the restarted render's video step did not show");
+  engine.poll = { status: "processing" };
   esc();
   if (!isOpen()) fail("Esc closed the modal while making the video");
   console.log("PASS: rendering says what it does, its bar is a named progressbar, and Esc and the backdrop do nothing");
@@ -182,7 +202,7 @@ const readyPoll = (aspect) => ({
   for (const id of ["export-modal-badge", "modal-step-dsp", "export-modal-progress-bar", "export-modal-reassurance"]) {
     if (isShown($(id))) fail(`#${id} still shows after the timeout`);
   }
-  if (norm($("export-modal-status-text")) !== "Still saving. Long scenes take a few minutes. The video shows up here when it's done.") {
+  if (norm($("export-modal-status-text")) !== "Still saving. Long scenes take a few minutes. Save reads Saved when it's done.") {
     fail(`timeout line: ${norm($("export-modal-status-text"))}`);
   }
   if (visibleLabels().join("|") !== "Keep working") fail(`timeout actions: ${visibleLabels()}`);
@@ -207,6 +227,7 @@ const readyPoll = (aspect) => ({
     if (isShown(modal.querySelector(".render-film-reel")) || !isShown($("export-modal-icon-failed"))) fail(`${where}: the reel still spins instead of the alert icon`);
     if (!$("export-modal-icon-failed").querySelector("svg")) fail(`${where}: the alert icon is not an SVG`);
     if (norm($("export-modal-title")) !== "The export didn't finish") fail(`${where}: title ${norm($("export-modal-title"))}`);
+    if (norm($("export-modal-badges")) !== "FAILED") fail(`${where}: badges ${norm($("export-modal-badges"))}`);
     if (visibleLabels().join("|") !== "Try again|Close") fail(`${where}: actions ${visibleLabels()}`);
     if (!visibleButtons().find((b) => norm(b) === "Try again").classList.contains("btn-primary")) fail(`${where}: Try again is not the primary`);
     if (!visibleButtons().find((b) => norm(b) === "Close").classList.contains("btn-secondary")) fail(`${where}: Close is not secondary`);
@@ -256,6 +277,7 @@ const readyPoll = (aspect) => ({
   await tick(5);
   if (!calls.some((c) => c.method === "POST" && /aspect_ratio=9:16/.test(c.url))) fail(`Try again lost the 9:16 format: ${JSON.stringify(calls)}`);
   if (norm($("export-modal-title")) !== "Saving your dub") fail("Try again did not go back to saving");
+  if (doc.activeElement !== $("export-modal-title")) fail(`Try again left the focus on ${doc.activeElement && doc.activeElement.id}`);
   console.log("PASS: a failure shows FAILED, the reason, Try again for the same format and Close, with no Watch, Download or toast");
 
   // --- Done (engine's computer) ----------------------------------------------------------
@@ -328,7 +350,8 @@ const readyPoll = (aspect) => ({
   await tick(5);
   if (!calls.some((c) => c.method === "POST" && /aspect_ratio=9:16/.test(c.url))) fail(`Make 9:16 version: ${JSON.stringify(calls)}`);
   if (!isOpen() || norm($("export-modal-title")) !== "Saving your dub" || isShown($("btn-modal-close-x"))) fail("Make 9:16 version did not go back to saving in the modal");
-  if (!modal.contains(doc.activeElement)) fail("focus left the modal when 9:16 started");
+  // The clicked button is hidden now; a browser would drop its focus to the page.
+  if (doc.activeElement !== $("export-modal-title")) fail(`focus is not on the title when 9:16 started: ${doc.activeElement && doc.activeElement.id}`);
   esc();
   if (!isOpen()) fail("Esc closed the modal while 9:16 was saving");
   engine.poll = readyPoll("9:16");
@@ -359,6 +382,8 @@ const readyPoll = (aspect) => ({
   if (!r.calls.some((c) => c.method === "POST" && /aspect_ratio=9:16/.test(c.url))) fail(`remote Download 9:16 did not make it first: ${JSON.stringify(r.calls)}`);
   if (r.calls.some((c) => c.url.includes("/export/download"))) fail("remote Download 9:16 downloaded a video that isn't saved");
   if (norm($r("export-modal-title")) !== "Saving your dub") fail("remote Download 9:16 did not show the saving state");
+  // Closing a remote host's window doesn't stop the engine's render.
+  if (isShown($r("export-modal-reassurance"))) fail("a remote host is told to keep the window open");
   // When it lands, it downloads.
   r.engine.poll = readyPoll("9:16");
   r.calls.length = 0;

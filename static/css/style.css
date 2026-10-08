@@ -4050,15 +4050,6 @@ svg {
   cursor: pointer;
 }
 
-.stem-scale-row {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--foreground-muted);
-  margin-top: 4px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .save-icon-spin,
   .save-menu-bar::after,

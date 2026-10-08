@@ -80,11 +80,11 @@ The Save control is a split button with a fixed min-width of 208px, so a label c
 Open the modal through `openDialog()`, which gets a new `canClose` option. While rendering, `canClose()` is false, so Esc and the backdrop do nothing. Focus moves in, and on close it returns to the Save control. The modal keeps its `hidden` attribute and `.is-open` class instead of `style.display`.
 
 - **Rendering:**
-  - Title "Saving your dub". Status: "Mixing your takes…" while the POST is out, then "Making the video…" once the engine replies `processing`.
+  - Title "Saving your dub". Status: "Mixing your takes…" until the engine's status poll reports `step: "video"` (the audio is mixed and ffmpeg is encoding), then "Making the video…". A restart (`export_started` while the modal saves) goes back to "Mixing your takes…".
   - The step strip has two real steps, Mix audio and Make video ("Finish" goes), with the indeterminate bar `.modal-progress-fill.indeterminate`. The track is `role="progressbar"` with `aria-valuetext` set to the step name, and no `aria-valuenow`.
   - The reel spins (and is static under reduced motion).
-  - "Keep this window open until it's done." shows only on this client.
-- **After the 3-minute poll window:** the badge, strip and bar are hidden, the line reads "Still saving. Long scenes take a few minutes. The video shows up here when it's done.", and the only action is "Keep working" (primary), which closes the modal. Polling continues as today.
+  - "Keep this window open until it's done." shows only on this client, and only on the engine's computer (closing DubMate there stops the render; a remote host's window doesn't).
+- **After the 3-minute poll window:** the badge, strip and bar are hidden, the line reads "Still saving. Long scenes take a few minutes. Save reads Saved when it's done.", and the only action is "Keep working" (primary), which closes the modal. Polling continues as today.
 - **Failed:**
   - A red badge "FAILED", a static alert icon (the reel is hidden), the title "The export didn't finish", and the friendly reason (`friendlyError`).
   - Actions: "Try again" (primary), which re-runs the same aspect, and "Close".
@@ -116,9 +116,9 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
 
 - The summary reads "In this dub · 5 lines", plus "· 2 use the original voice" when any line has no take.
 - Rows are compact (about 36px) in a list with `max-height: 240px`. It scrolls with the app's themed scrollbar: the global `::-webkit-scrollbar` rules. Don't set `scrollbar-width` or `scrollbar-color` on it, because in Chromium that brings back the grey bar (see `317da5b`).
-- Each row has the tick-colour dot, `#n`, the character, the speaker (actor name or "Unassigned"), and either "Take 3 of 5" or a dimmed "Original voice · Unrecorded" (dim, but at `--foreground-muted`, never `--foreground-dim`).
+- Each row has the tick-colour dot, `#n`, the character, the speaker (actor name or "Unassigned"), and either "Take 3" or a dimmed "Original voice · Unrecorded" (dim, but at `--foreground-muted`, never `--foreground-dim`).
 - A row click seeks to the line's start, using the same path as the timeline.
-- "Change take" (`btn-ghost btn-xs`) appears only where `canRecordLine(line)` is true. It runs `showView('booth')` and `loadBoothLine(index)`, broadcasts the location, and focuses `#card-takes`.
+- "Change take" (`btn-ghost btn-xs`; "Record" on a line with no takes yet) appears only where `canRecordLine(line)` is true. It runs `showView('booth')` and `loadBoothLine(index)`, broadcasts the location, and focuses `#card-takes`.
 
 ### 6. An honest premiere mix (40b) and the follow-ups
 
@@ -141,7 +141,11 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
 
 **`GET /export/download` never renders, for anyone.** With no finished file it answers 409 "The host hasn't saved this video yet." (and 409 "Export still rendering" while processing, as now). Renders start only through host-only `POST /export` and `launch_premiere`. The remote host's on-demand formats go `POST /export`, then wait for ready, then download.
 
-**Echoes are ignored.** The `mix_balance_sync` and `dialogue_presence_sync` handlers return early when `payload.triggered_by === this.user.id`. On a member, a sync updates the read-only summary.
+**Echoes are ignored.** `set_mix_balance` and `set_dialogue_presence` carry the tab's `client_id` (`renderClientId()`), and the engine echoes it. The `mix_balance_sync` and `dialogue_presence_sync` handlers return early when it is this tab's, so a host's second window still follows. On a member, a sync updates the read-only summary.
+
+**The same value changes nothing.** `set_mix_balance` and `set_dialogue_presence` invalidate only when the value changes, and a click on the checked preset sends nothing, so it never drops a saved video.
+
+**Off the premiere the theater is left alone.** `dropStaleExport` and `offerExportedVideo` only clear the flags when the premiere isn't the view (a take changed in the booth); `setupScreeningView` sets the theater on the way back. Setting a source stops every playing sound, the booth's included.
 
 **New: `POST /api/rooms/{room_id}/export/reveal`** (Show in folder; step 36's endpoint doesn't exist yet).
 - Body: `{kind: "video", aspect_ratio}`, `{kind: "stems"}` or `{kind: "project"}`.
@@ -197,7 +201,7 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
    - Anything else reads "Custom".
 5. **The 16:9/9:16 toggle is removed.** "Save video" saves 16:9, the scene's shape, and 9:16 lives in the Save menu.
 6. **The title card and "‹ Booth" go;** the breadcrumb is the way back. The Host badge is replaced by the status line.
-7. **The step strip has two real steps** with an indeterminate bar. "Finish" is dropped because nothing reports it.
+7. **The step strip has two real steps** with an indeterminate bar, driven by the engine: `GET /export/status` reports `step` "mix" (the takes and `render_dub_mix`) or "video" (the ffmpeg encode, after `export_dub_video`'s `on_audio_mixed`). "Finish" is dropped because nothing reports it.
 8. **Show in folder uses a new local-only, host-only reveal endpoint** for the videos, separate tracks and editing project, because step 36's endpoint hasn't been built.
 9. **40c's "Start premiere says how many lines use original voices" is deferred.** The button lives in the booth, which this PR mustn't touch. In this dub's summary carries the count instead.
 10. **A swap to the MP4 at a pause keeps the paused position.** It doesn't rewind.
@@ -208,17 +212,21 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
 15. **When the mix changes while the saved video plays, playback carries on** with the live mix, from the same spot.
 16. **The failed modal hides the step strip and the bar too,** not only the reel. A stopped bar would read as progress.
 17. **A failed or refused Save marks that format failed,** so Save shows "The video didn't save: {reason}" with Try again after the modal closes. The modal's reason drops a trailing "Try again." because a Try again button sits under it.
-18. **The timeout state has no close X** ("Keep working" is the only action); Esc still closes it. A video that lands after "Keep working" doesn't reopen the modal; Save reads "Saved".
+18. **The timeout state has no close X** ("Keep working" is the only action); Esc still closes it. A video that lands after "Keep working" doesn't reopen the modal; Save reads "Saved", which the timeout line says.
 19. **A remote host's "Download 9:16" for a format that isn't saved** makes it in the modal and downloads it as soon as it is ready.
-20. **While saving, focus sits on the modal's title** (there is nothing to press). Done moves it to "Watch the dub", failed to "Try again", timeout to "Keep working".
+20. **While saving, focus sits on the modal's title** (there is nothing to press), every time it enters saving, including from Try again and Make 9:16 version (the pressed button is hidden). Done moves it to "Watch the dub", failed to "Try again", timeout to "Keep working".
 21. **Under reduced motion the indeterminate bars stand still at full width** (the modal's and the Save menu's "Making…"), so a parked bar never reads as a percentage.
 22. **A click on (or within 5px of) a timeline tick seeks to that line's start exactly,** not to the pixel under the pointer.
 23. **`,` just after a line's start (within 0.25 s) goes to the line before,** so pressing it while playing walks back instead of sticking on the current line. `.` after the last line does nothing.
 24. **The elapsed and total times both round to the second,** so the end reads "0:06 of 0:06".
 25. **A paused host's seek moves their own thumb at once** (the room's echo sets the same spot). While playing, the host's video moves when the echo arrives, so playback and the live mix restart together for everyone.
 26. **"Change take" focuses the take in the dub inside TAKES** (the card itself is not focusable, and the booth markup stays as it is). A line with no takes yet opens in the booth without moving focus.
-27. **A row's "Take 3 of 5" uses the take's own number,** the one the TAKES card shows, out of the takes the line has now.
+27. **A row's "Take 3" uses the take's own number,** the one the TAKES card shows. "of 5" went: after a deletion it could read "Take 5 of 3".
 28. **The Mix and In this dub sit side by side from 1200px wide,** stacked below that. Rows keep a fixed status column, and a Change take column only when some row has one, so the statuses line up.
+29. **Space on a focused control is the control's** (a summary opens, a preset is picked, a row seeks, Save saves). Only the video, the timeline and the page play for everyone.
+30. **A member's Live mix tip reads "What everyone hears now."** Members have no Save.
+31. **"Mix changed · Save again" stays after a take change** (the plan's label). It reads slightly wide there; renaming it is left to the owner.
+32. **In this dub keeps the focus across a rebuild** (someone records), on the same row's button, and follows joins and status updates for names and colours.
 
 ## Hands-on checks (the owner, with a friend on a tunnel)
 

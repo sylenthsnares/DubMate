@@ -85,8 +85,11 @@ class Room:
         # outlives the request or socket that started it. export_generation goes up whenever
         # the takes or the mix change; a render that ends on an older generation starts over.
         self.export_tasks: Dict[str, asyncio.Task] = {}
+        # What a running render is doing ("mix", then "video"), for the export modal's steps.
+        self.export_steps: Dict[str, str] = {}
         self.export_generation: int = 0
         self._invalidated_task: Optional[asyncio.Task] = None
+        self._invalidated_queued: bool = False
         self.sockets: Set[WebSocket] = set()
         self._save_dirty: bool = False
         self._save_task: Optional[asyncio.Task] = None
@@ -230,7 +233,16 @@ class Room:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return
-            self._invalidated_task = loop.create_task(self.broadcast("export_invalidated", {}))
+            # A slider drag invalidates on every step; a message that hasn't read the state
+            # yet says it for all of them.
+            if not self._invalidated_queued:
+                self._invalidated_queued = True
+                self._invalidated_task = loop.create_task(self._send_invalidated())
+
+    async def _send_invalidated(self):
+        # Cleared before broadcast reads the state, so a later drop sends its own message.
+        self._invalidated_queued = False
+        await self.broadcast("export_invalidated", {})
 
     def cancel_export_renders(self) -> List[asyncio.Task]:
         """Cancels the running video renders of a room being removed; returns them. Safe from

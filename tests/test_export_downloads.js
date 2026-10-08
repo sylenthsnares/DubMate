@@ -558,6 +558,27 @@ try {
     }
     pass("on the engine's own computer, Save and the done modal show the video in its folder and save no copy");
 
+    // A member in a second tab on the host's computer has no Show in folder: their
+    // Download video is a real download, not "Already saved to <folder>" with no file.
+    {
+      const hostId = app.roomState.host_id;
+      app.roomState.host_id = "someone-else";
+      app.updateScreeningControls();
+      const savesBefore = savedFiles.length;
+      const methodsBefore = methodLog.length;
+      toasts.length = 0;
+      clickUi(doc.getElementById("btn-export-video"));
+      await settle();
+      const calls = methodLog.slice(methodsBefore);
+      if (!calls.some(c => /\/export\/download\?aspect_ratio=16(:|%3A)9/.test(c)) || savedFiles.length !== savesBefore + 1) {
+        fail("an engine-local member's Download video saved no file", { calls, toasts });
+      }
+      if (toastsMatching(/Already saved/).length) fail("an engine-local member was told the video is already saved", toasts);
+      app.roomState.host_id = hostId;
+      app.updateScreeningControls();
+    }
+    pass("a member on the engine's computer downloads the video");
+
     // A format that was never rendered is rendered into the export folder, once,
     // through the normal render route (Make 9:16 version) -- still no browser copy.
     app.roomState.exports = { "16:9": "ready", "9:16": "idle" };

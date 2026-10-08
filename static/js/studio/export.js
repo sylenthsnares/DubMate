@@ -380,8 +380,10 @@ export class ExportMethods {
         canClose: () => !this.isRenderingExport,
       });
     }
-    // Nothing to press while it saves: the title holds the focus, inside the modal.
-    if (!this.modalExportRendering.contains(document.activeElement)) this.exportModalTitle?.focus();
+    // Nothing to press while it saves: the title holds the focus, inside the modal. Always,
+    // since the button just pressed (Try again, Make 9:16 version) is hidden now and a
+    // browser drops its focus to the page.
+    this.exportModalTitle?.focus();
   }
 
   /** Shows the parts of the modal that belong to this state, and its title. */
@@ -396,7 +398,8 @@ export class ExportMethods {
     show(this.exportModalBadges, state === 'rendering' || state === 'failed');
     show(this.exportModalSteps, state === 'rendering');
     show(this.exportModalProgress, state === 'rendering');
-    show(this.exportModalReassurance, state === 'rendering');
+    // Closing DubMate on the engine's computer stops the render; a remote host's window doesn't.
+    show(this.exportModalReassurance, state === 'rendering' && this.isEngineLocal());
     show(this.btnModalCloseX, state === 'done' || state === 'failed');
     show(this.exportModalActions, state === 'done');
     show(this.exportModalFailedActions, state === 'failed');
@@ -412,7 +415,8 @@ export class ExportMethods {
     this.exportModalStatusText?.removeAttribute('title');
   }
 
-  /** Step 1 (Mix audio) while the request is out, step 2 (Make video) once the engine renders. */
+  /** Step 1 (Mix audio) until the engine says the audio is mixed (its status poll's step),
+   *  then step 2 (Make video). A restart goes back to step 1. */
   updateExportModalStep(step, statusText) {
     if (this.exportModalStatusText) this.exportModalStatusText.textContent = statusText;
     if (this.modalStepDsp) this.modalStepDsp.className = `modal-step-item ${step > 1 ? 'completed' : 'active'}`;
@@ -553,8 +557,8 @@ export class ExportMethods {
       this.setExportState(aspectRatio, 'processing');
       this.updateScreeningControls();
 
-      // The engine renders in the background; poll until it is ready.
-      this.updateExportModalStep(2, 'Making the video…');
+      // The engine renders in the background; poll until it is ready. "processing" only
+      // says it started: the steps follow the poll's step (mix, then video).
 
       const pollUrl = `/api/rooms/${this.roomState.room_id}/export/status?aspect_ratio=${aspectRatio}`;
       let attempts = 0;
@@ -582,6 +586,9 @@ export class ExportMethods {
             }
             if (String(pollData.status).startsWith('failed')) {
               failure = pollData.status;
+            } else if (pollData.step && this.modalExportRendering?.dataset.state === 'rendering') {
+              if (pollData.step === 'video') this.updateExportModalStep(2, 'Making the video…');
+              else this.updateExportModalStep(1, 'Mixing your takes…');
             }
           }
         } catch (e) {
@@ -602,7 +609,7 @@ export class ExportMethods {
           if (this.isExportModalOpen()) {
             this.setExportModalState('timeout');
             this.exportModalStatusText.textContent =
-              "Still saving. Long scenes take a few minutes. The video shows up here when it's done.";
+              "Still saving. Long scenes take a few minutes. Save reads Saved when it's done.";
             this.btnModalKeepWorking?.focus();
           }
         }
@@ -741,7 +748,8 @@ export class ExportMethods {
    */
   async downloadExportVideo(aspectRatio, control) {
     const roomId = this.roomState?.room_id;
-    if (this.isEngineLocal()) {
+    // A member in a second tab on this computer gets a normal download (the folder is the host's).
+    if (this.isEngineLocal() && this.isHost({ allowDummy: true })) {
       if (!roomId) {
         this.showToast('Render the dubbed video first.');
         return false;
