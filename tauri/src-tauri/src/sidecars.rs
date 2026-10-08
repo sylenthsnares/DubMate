@@ -12,7 +12,8 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{
-    ai_packages_dir, find_app_py, find_bundled_tools_dir, find_python_exe, install_root_dir,
+    ai_packages_dir, find_app_py, find_bundled_tools_dir, find_python_exe, is_dev_run,
+    legacy_items_present, user_data_root, DATA_DIR_ENV,
 };
 use crate::state::SharedState;
 
@@ -230,6 +231,7 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
     let mut spawn_error = "The Python runtime was not found.".to_string();
     if let Some(py_exe) = find_python_exe(&app) {
         println!("[DubMate] Launching Python from: {:?}", py_exe);
+        move_legacy_files(&app, &py_exe, app_py_path.parent().unwrap_or(&app_py_path)).await;
         let _ = app.emit("startup-progress", "Starting the engine");
 
         let port = find_available_port(DEFAULT_ENGINE_PORT);
@@ -271,21 +273,39 @@ pub(crate) async fn start_sidecars(app: tauri::AppHandle) {
     start_tunnel(&app, engine_port);
 }
 
-/// Spawns the Python engine directly from `py_exe` on `port`: environment, process,
-/// stdout/stderr log pipes and the exit watcher that reports a crash to the UI.
-fn spawn_engine(
-    app: &tauri::AppHandle,
-    app_py_path: &Path,
-    py_exe: &Path,
-    port: u16,
-) -> Result<EngineWatch, String> {
-    let app_dir = app_py_path.parent().unwrap_or(app_py_path);
+/// What a 1.x install kept in its install folder (rooms, takes, Pack Builder) moves to the
+/// DubMate data folder once, before the engine opens any of it. Across drives that copies
+/// gigabytes, so there is no time limit. Whatever fails stays where it was and keeps
+/// working (`resolve_user_item` falls back to it), so the outcome only goes to the log.
+async fn move_legacy_files(app: &tauri::AppHandle, py_exe: &Path, app_dir: &Path) {
+    if !legacy_items_present(app) {
+        return;
+    }
+    let _ = app.emit("startup-progress", "Moving your DubMate files to their new folder");
+    // Tells the splash not to count this against the engine's start.
+    let _ = app.emit("moving-files", true);
+    let mut cmd = python_command(app, py_exe, app_dir);
+    cmd.args(["-u", "-m", "dubmate.data_home", "--migrate", "--copy", "--packbuilder"]);
+    match tauri::async_runtime::spawn_blocking(move || cmd.output()).await {
+        Ok(Ok(out)) => {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                println!("[Python] {}", line);
+            }
+            for line in String::from_utf8_lossy(&out.stderr).lines() {
+                eprintln!("[Python ERR] {}", line);
+            }
+        }
+        Ok(Err(e)) => eprintln!("[DubMate] Could not run the move to the data folder: {}", e),
+        Err(e) => eprintln!("[DubMate] The move to the data folder stopped: {}", e),
+    }
+    let _ = app.emit("moving-files", false);
+}
 
+/// The bundled Python, run from `app_dir` with the engine's environment. The engine and
+/// the one-time move both use it, so they agree on every folder.
+fn python_command(app: &tauri::AppHandle, py_exe: &Path, app_dir: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new(py_exe);
-    cmd.current_dir(app_dir)
-        .arg("-u")
-        .arg(app_py_path)
-        .env("DUBMATE_PORT", port.to_string());
+    cmd.current_dir(app_dir);
 
     // Add adjacent site-packages and app_dir to PYTHONPATH and set PYTHONHOME
     if let Some(py_dir) = py_exe.parent() {
@@ -295,14 +315,20 @@ fn spawn_engine(
         if site_pkgs.is_dir() {
             pypath.push(site_pkgs);
         }
-        // Optional Pack Builder AI pipeline, installed inside the application
-        // directory so it stays on whichever drive the user installed to.
-        if let Some(ai) = ai_packages_dir(&install_root_dir(app)) {
+        // Optional Pack Builder AI pipeline, in the DubMate data folder (or where 1.x
+        // put it, until it has moved).
+        if let Some(ai) = ai_packages_dir(app) {
             pypath.push(ai);
         }
         if let Ok(joined) = std::env::join_paths(pypath) {
             cmd.env("PYTHONPATH", joined);
         }
+    }
+
+    // The engine keeps rooms and caches here. A dev run leaves it to the engine, which
+    // then uses the repo's data folder as a source install does.
+    if !is_dev_run() {
+        cmd.env(DATA_DIR_ENV, user_data_root(app));
     }
 
     // Shared registry key, baked in at compile time from the CI secret so it is
@@ -324,6 +350,22 @@ fn spawn_engine(
     }
 
     hide_console(&mut cmd);
+    cmd
+}
+
+/// Spawns the Python engine directly from `py_exe` on `port`: process, stdout/stderr log
+/// pipes and the exit watcher that reports a crash to the UI.
+fn spawn_engine(
+    app: &tauri::AppHandle,
+    app_py_path: &Path,
+    py_exe: &Path,
+    port: u16,
+) -> Result<EngineWatch, String> {
+    let app_dir = app_py_path.parent().unwrap_or(app_py_path);
+    let mut cmd = python_command(app, py_exe, app_dir);
+    cmd.arg("-u")
+        .arg(app_py_path)
+        .env("DUBMATE_PORT", port.to_string());
 
     cmd.stdout(std::process::Stdio::piped())
        .stderr(std::process::Stdio::piped());

@@ -223,12 +223,22 @@ pub fn get_app_install_dir(app: &tauri::AppHandle) -> PathBuf {
     PathBuf::from(".")
 }
 
-/// Name of the directory holding the optional Pack Builder AI dependencies. It sits inside
-/// the application directory on purpose: installing DubMate to X:\ must not push ~2 GB of
-/// PyTorch onto C:\.
+/// Name of the directory holding the optional Pack Builder AI dependencies. It lives in the
+/// DubMate data folder (`user_data_root`), so no reinstall or uninstall deletes it by
+/// default; 1.x kept it in the install folder, and `resolve_user_item` still finds it there
+/// until it has been moved.
 pub(crate) const AI_PACKAGES_DIR: &str = "ai-packages";
 /// Written by the NSIS installer when the user ticks the Pack Builder option.
 pub(crate) const PACKBUILDER_OPTIN_MARKER: &str = "packbuilder.optin";
+/// Rooms, takes, saved videos and caches. The engine owns what is inside.
+pub(crate) const DATA_DIR: &str = "data";
+/// What the DubMate data folder holds, under the names the install folder used, so moving
+/// each one out of a 1.x install folder is a single rename.
+const USER_ITEMS: [&str; 3] = [DATA_DIR, AI_PACKAGES_DIR, PACKBUILDER_OPTIN_MARKER];
+/// Overrides the DubMate data folder. The launcher also sets it for the engine, so both
+/// always agree on the folder.
+pub(crate) const DATA_DIR_ENV: &str = "DUBMATE_DATA_DIR";
+const APP_DATA_FOLDER: &str = "DubMate";
 /// Written by us only after pip exits cleanly, so a half-finished download is not
 /// mistaken for a usable install.
 pub(crate) const AI_COMPLETE_MARKER: &str = ".install-complete";
@@ -282,9 +292,142 @@ pub(crate) fn install_root_dir(app: &tauri::AppHandle) -> PathBuf {
     get_app_install_dir(app)
 }
 
-/// Resolves the AI package directory if it exists, for injection into PYTHONPATH.
-pub fn ai_packages_dir(app_dir: &Path) -> Option<PathBuf> {
-    let p = app_dir.join(AI_PACKAGES_DIR);
+/// The system whose folder layout `user_data_root_for` follows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum TargetOs {
+    Windows,
+    MacOs,
+    Other,
+}
+
+impl TargetOs {
+    pub(crate) const CURRENT: TargetOs = if cfg!(windows) {
+        TargetOs::Windows
+    } else if cfg!(target_os = "macos") {
+        TargetOs::MacOs
+    } else {
+        TargetOs::Other
+    };
+}
+
+/// The per-user DubMate folder, the same table as `user_data_root` in
+/// dubmate/data_home.py: `DUBMATE_DATA_DIR` if set, else `%LOCALAPPDATA%\DubMate` on
+/// Windows, `~/Library/Application Support/DubMate` on macOS, the XDG data folder
+/// elsewhere. Pure, so every layout can be checked on any computer.
+pub(crate) fn user_data_root_for(
+    os: TargetOs,
+    env: impl Fn(&str) -> Option<String>,
+    home: &Path,
+) -> PathBuf {
+    let var = |name: &str| env(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    if let Some(dir) = var(DATA_DIR_ENV) {
+        return PathBuf::from(dir);
+    }
+    let base = match os {
+        TargetOs::Windows => var("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Local")),
+        TargetOs::MacOs => home.join("Library").join("Application Support"),
+        TargetOs::Other => var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local").join("share")),
+    };
+    base.join(APP_DATA_FOLDER)
+}
+
+/// True for a `cargo run`/`tauri dev` build, which keeps today's behaviour: everything in
+/// the repo, nothing to move.
+pub(crate) fn is_dev_run() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(is_cargo_target_dir))
+        .unwrap_or(false)
+}
+
+/// Where this computer's DubMate data lives (see `user_data_root_for`). A dev run keeps
+/// it in the repo, as the engine does for a source install.
+pub(crate) fn user_data_root(app: &tauri::AppHandle) -> PathBuf {
+    if is_dev_run() && std::env::var_os(DATA_DIR_ENV).is_none() {
+        return install_root_dir(app);
+    }
+    let home = app.path().home_dir().unwrap_or_default();
+    user_data_root_for(TargetOs::CURRENT, |name| std::env::var(name).ok(), &home)
+}
+
+/// Every place `name` can be, the new one first, then where 1.x kept it (the same order
+/// as `legacy_locations` in dubmate/data_home.py). `exe_dir` is the launcher's folder and
+/// `app_dir` the folder holding app.py. 1.x kept `data` only in the folder above
+/// `resources` (the install folder on Windows, `Contents` on macOS), and Pack Builder's
+/// files beside the launcher, in that folder, or beside app.py.
+fn item_places(name: &str, new_root: &Path, exe_dir: &Path, app_dir: &Path) -> Vec<PathBuf> {
+    let above_resources = match (app_dir.file_name(), app_dir.parent()) {
+        (Some(folder), Some(parent)) if folder.eq_ignore_ascii_case("resources") => parent,
+        _ => app_dir,
+    };
+    let old_roots = if name == DATA_DIR {
+        vec![above_resources]
+    } else {
+        vec![exe_dir, above_resources, app_dir]
+    };
+    let mut places = vec![new_root.join(name)];
+    for root in old_roots {
+        let place = root.join(name);
+        if !places.contains(&place) {
+            places.push(place);
+        }
+    }
+    places
+}
+
+/// The existence rule, identical to `resolve` in dubmate/data_home.py: the new place
+/// unless it is missing and an old place has the item. A move that failed keeps using
+/// the old place, a finished one uses the new place, and when both exist the new one wins.
+fn first_existing(places: &[PathBuf]) -> PathBuf {
+    places
+        .iter()
+        .find(|p| p.exists())
+        .unwrap_or(&places[0])
+        .clone()
+}
+
+/// True when something is still where 1.x kept it and nothing has replaced it yet, i.e.
+/// when the one-time move has work to do.
+fn has_items_to_move(new_root: &Path, exe_dir: &Path, app_dir: &Path) -> bool {
+    USER_ITEMS.iter().any(|name| {
+        let places = item_places(name, new_root, exe_dir, app_dir);
+        first_existing(&places) != places[0]
+    })
+}
+
+/// Every place `name` can be on this computer, the new one first. A dev run has only one.
+pub(crate) fn user_item_places(app: &tauri::AppHandle, name: &str) -> Vec<PathBuf> {
+    let root = user_data_root(app);
+    if is_dev_run() {
+        return vec![root.join(name)];
+    }
+    item_places(name, &root, &install_root_dir(app), &get_app_install_dir(app))
+}
+
+/// Where `name` (`ai-packages`, `packbuilder.optin`) is: the DubMate data folder, or the
+/// install folder while 1.x's copy there hasn't been moved.
+pub(crate) fn resolve_user_item(app: &tauri::AppHandle, name: &str) -> PathBuf {
+    first_existing(&user_item_places(app, name))
+}
+
+/// True when a 1.x install folder still holds data or Pack Builder to move. Cheap: it
+/// only checks whether a few paths exist.
+pub(crate) fn legacy_items_present(app: &tauri::AppHandle) -> bool {
+    !is_dev_run()
+        && has_items_to_move(
+            &user_data_root(app),
+            &install_root_dir(app),
+            &get_app_install_dir(app),
+        )
+}
+
+/// The Pack Builder folder if it is there, for the engine's PYTHONPATH.
+pub fn ai_packages_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let p = resolve_user_item(app, AI_PACKAGES_DIR);
     if p.is_dir() {
         Some(p)
     } else {
@@ -324,5 +467,145 @@ mod tests {
         assert!(!is_cargo_target_dir(Path::new("/Targets/DubMate")));
         assert!(!is_cargo_target_dir(Path::new("/apps/target-practice/DubMate")));
         assert!(!is_cargo_target_dir(Path::new("/apps/target/DubMate")));
+    }
+
+    /// An environment holding only `vars`.
+    fn env_of(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let vars: Vec<(String, String)> =
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn windows_keeps_data_in_local_app_data() {
+        let home = Path::new(r"C:\Users\a");
+        let local = r"C:\Users\a\AppData\Local";
+        assert_eq!(
+            user_data_root_for(TargetOs::Windows, env_of(&[("LOCALAPPDATA", local)]), home),
+            PathBuf::from(local).join("DubMate")
+        );
+        // An empty variable falls back to the usual place under the profile.
+        assert_eq!(
+            user_data_root_for(TargetOs::Windows, env_of(&[("LOCALAPPDATA", "  ")]), home),
+            home.join("AppData").join("Local").join("DubMate")
+        );
+    }
+
+    #[test]
+    fn macos_keeps_data_in_application_support() {
+        let home = Path::new("/Users/a");
+        assert_eq!(
+            user_data_root_for(TargetOs::MacOs, env_of(&[("LOCALAPPDATA", "ignored")]), home),
+            home.join("Library").join("Application Support").join("DubMate")
+        );
+    }
+
+    #[test]
+    fn other_systems_use_the_xdg_data_folder() {
+        let home = Path::new("/home/a");
+        assert_eq!(
+            user_data_root_for(TargetOs::Other, env_of(&[]), home),
+            home.join(".local").join("share").join("DubMate")
+        );
+        assert_eq!(
+            user_data_root_for(TargetOs::Other, env_of(&[("XDG_DATA_HOME", "/data/a")]), home),
+            PathBuf::from("/data/a").join("DubMate")
+        );
+    }
+
+    #[test]
+    fn dubmate_data_dir_wins_everywhere() {
+        let home = Path::new("/home/a");
+        for os in [TargetOs::Windows, TargetOs::MacOs, TargetOs::Other] {
+            let env = env_of(&[(DATA_DIR_ENV, "/elsewhere/DM"), ("LOCALAPPDATA", "C:/x")]);
+            assert_eq!(user_data_root_for(os, env, home), PathBuf::from("/elsewhere/DM"), "{os:?}");
+        }
+    }
+
+    /// A fresh, empty folder for one test.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dubmate-paths-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A 1.x Windows install: `<inst>\DubMate.exe`, `<inst>\resources\app.py`, with data,
+    /// Pack Builder and its opt-in beside the executable. Returns (new root, exe dir, app dir).
+    fn windows_install(base: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let inst = base.join("DubMate Studio");
+        std::fs::create_dir_all(inst.join("resources")).unwrap();
+        std::fs::create_dir_all(inst.join("data").join("rooms")).unwrap();
+        std::fs::create_dir_all(inst.join(AI_PACKAGES_DIR).join("torch")).unwrap();
+        std::fs::write(inst.join(PACKBUILDER_OPTIN_MARKER), b"").unwrap();
+        (base.join("Local").join("DubMate"), inst.clone(), inst.join("resources"))
+    }
+
+    #[test]
+    fn a_windows_install_folder_is_used_until_its_files_have_moved() {
+        let base = scratch("win");
+        let (root, exe_dir, app_dir) = windows_install(&base);
+        let places = |name| item_places(name, &root, &exe_dir, &app_dir);
+
+        assert_eq!(first_existing(&places(AI_PACKAGES_DIR)), exe_dir.join(AI_PACKAGES_DIR));
+        assert_eq!(first_existing(&places(DATA_DIR)), exe_dir.join(DATA_DIR));
+        assert_eq!(
+            first_existing(&places(PACKBUILDER_OPTIN_MARKER)),
+            exe_dir.join(PACKBUILDER_OPTIN_MARKER)
+        );
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir));
+
+        // Once something is in the new place, the new place wins, even if the old copy stays.
+        std::fs::create_dir_all(root.join(AI_PACKAGES_DIR)).unwrap();
+        assert_eq!(first_existing(&places(AI_PACKAGES_DIR)), root.join(AI_PACKAGES_DIR));
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir), "data and the opt-in still wait");
+
+        for name in [DATA_DIR, PACKBUILDER_OPTIN_MARKER] {
+            std::fs::rename(exe_dir.join(name), root.join(name)).unwrap();
+        }
+        assert!(!has_items_to_move(&root, &exe_dir, &app_dir), "nothing left to move");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_macos_bundle_is_searched_where_1x_kept_each_item() {
+        let base = scratch("mac");
+        let contents = base.join("DubMate.app").join("Contents");
+        let exe_dir = contents.join("MacOS");
+        let res = contents.join("Resources");
+        let app_dir = res.join("resources");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let root = base.join("Library").join("Application Support").join("DubMate");
+        let places = |name| item_places(name, &root, &exe_dir, &app_dir);
+
+        assert!(!has_items_to_move(&root, &exe_dir, &app_dir), "a fresh install has nothing to move");
+
+        // Data sat above the staged `resources` folder, Pack Builder beside the launcher.
+        std::fs::create_dir_all(res.join(DATA_DIR).join("rooms")).unwrap();
+        std::fs::create_dir_all(exe_dir.join(AI_PACKAGES_DIR)).unwrap();
+        assert_eq!(first_existing(&places(DATA_DIR)), res.join(DATA_DIR));
+        assert_eq!(first_existing(&places(AI_PACKAGES_DIR)), exe_dir.join(AI_PACKAGES_DIR));
+        assert!(has_items_to_move(&root, &exe_dir, &app_dir));
+        // `data` beside the launcher was never 1.x's; it isn't picked up.
+        assert!(!places(DATA_DIR).contains(&exe_dir.join(DATA_DIR)));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn nothing_anywhere_means_the_new_place() {
+        let base = scratch("fresh");
+        let (root, exe_dir, app_dir) = (base.join("new"), base.join("inst"), base.join("inst").join("resources"));
+        for name in USER_ITEMS {
+            let places = item_places(name, &root, &exe_dir, &app_dir);
+            assert_eq!(places[0], root.join(name));
+            assert_eq!(first_existing(&places), root.join(name));
+            let mut unique = places.clone();
+            unique.sort();
+            unique.dedup();
+            assert_eq!(unique.len(), places.len(), "{name}: no place twice");
+        }
+        assert!(!has_items_to_move(&root, &exe_dir, &app_dir));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
