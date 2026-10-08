@@ -12,7 +12,7 @@
 - **Pack Builder Touch and Pen**: the timeline works with touch and pen.
 - **Pack Builder Lines Without Words**: grunts, efforts, screams and laughs the transcript skipped become lines to record, marked "No words".
 - **Pack Builder Notices**: the editor now shows processing notices, such as when voices couldn't be fully separated.
-- **Take History**: recording a line again keeps every take. Open Takes to listen to them and choose the one used in the dub. Picks and deletes show up for everyone in the room.
+- **Take History**: recording a line again keeps every take. The booth's Takes list lets you listen to them and choose the one used in the dub. Picks and deletes show up for everyone in the room.
 - **Sync Your Mic**: sync your mic once in Audio settings and new takes start in time.
 - **Takes Line Up Automatically**: takes now line up with the original line automatically. Use [ and ] to adjust; Auto goes back.
 - **Fitted Takes**: takes that run a little fast or slow are fitted to the line. Original speed undoes it.
@@ -64,6 +64,17 @@
 - **Calmer Cast Strip**: in the lobby the cast strip shows who is here and their roles. Someone with several characters shows "2 roles", with the names in a tooltip. Screen readers hear each join, leave and "is ready" once.
 - **Reconnecting**: when the connection drops, the header says "Lost the room. Reconnecting…" with Retry now. If a room on someone else's DubMate can't be reached after about a minute, or the host has closed it, it stops trying and offers Try again or Leave room; on your own DubMate it keeps trying until DubMate is back. Changes that couldn't be sent are reported instead of lost silently, and the room hears where you are and whether you're ready again once you're back. The header's Leave stays in view in a window 960px wide.
 - **Shortcut Sheet by Screen**: the ? sheet shows the keys for the screen you're on first, then the ones that work everywhere, with the other screens' keys one click away.
+- **Booth Right Side**: it now reads in the order you work: Record, Takes, Voice, then what you hear, with Prev and Next always at the bottom. Everything can be reached in a 1280×720 window; the middle scrolls when it has to. The record button and its badge say what happens next (READY, COUNT-IN, REC, SAVING, NO MIC, OFFLINE). Original and Take sit side by side, and while one plays the other switches what you hear in place. The mic sync advice is a hint under them instead of a notification.
+- **Takes List**: every take of the line is listed, newest first, with its length, who recorded it when it wasn't you, and its sync in words (Tight, Good or Loose). The green row is in the dub; Use puts another take there. Deleting a take gives you 6 seconds to undo it instead of asking first.
+- **Voice Before the First Take**: the four sounds can be picked before you record, and the next take uses the one you picked. "For" chooses whether a sound is for this take, all of a character's lines, or, for the host, every line, and asks before changing more than one take. Level shows "Matched" while the take sits at its scene-matched level.
+- **All Effects in the Booth**: All effects opens the full rack in the right side of the booth instead of a small box. Effects that are off fold to one row, and dials have plain names, such as Cut below, Silence below and Tame S above.
+- **Dials and the Mouse Wheel**: the mouse wheel turns a dial only after you click it or Tab to it; otherwise the page scrolls. Turning a dial no longer switches its effect on.
+- **Booth Keys**: T goes to your takes (arrows to move, P to play, Enter to use, Delete to delete), A switches between the original and your take, comma and period move between lines, and E opens All effects. They're all in the ? sheet.
+- **Line Chips**: each chip shows its line's number in the scene and how many takes it has.
+- **Recording Feedback**: while you record, the video shows "● REC" with the time left and the waveform draws your voice as it comes in. Every take shows where the line ends.
+- **Keep Going While a Take Saves**: saving a take no longer blocks the booth. Go to the next line and record it while the last take saves; only the line that is saving waits, and its chip says "saving". "Take saved" shows only for a line you've moved away from.
+- **Takes Kept When the Upload Fails**: a take that couldn't upload stays in its Takes list as "waiting to upload" with Retry, and uploads by itself when you're back online. Closing the page asks first while a take is waiting or saving.
+- **Done on Your Last Line**: Done marks you ready, or asks first when some of your lines have no take. The host's one main button is "Start premiere" with how many people are ready; a guest whose lines all have takes gets "All recorded · Mark ready".
 
 ### Removed
 - **Studio (Synced Prompter) Mode**: the lobby's Studio mode card is gone. It never synced lines, so it behaved exactly like the booth.
@@ -99,7 +110,7 @@
 - **Pack Import Safety**: archive entries disguised under `__MACOSX` names are now checked like every other file.
 - **Desktop Install Paths**: installing under a folder whose path merely contains "target" (for example `D:\Targets\DubMate`) no longer confuses the app's install-folder detection.
 - **Windows `update.bat`**: the dependency and tools steps now report errors correctly.
-- **Takes From the First Take**: the Takes button shows as soon as a line has one take, so your take history is easy to find. Escape closes it.
+- **Takes From the First Take**: the booth lists your takes from the first one, so your take history is easy to find.
 - **Joining Keeps Your Setup**: joining a room from your own DubMate keeps your name, colour, mic, headphones and mic sync. There's no second name prompt and no setup screen.
 - **No Mic Prompt on a Host's Page in the Desktop App**: the desktop app no longer asks for the microphone again when you join a host's room. Only the room you joined gets the mic without asking. In a browser, the question comes before your first count-in, never during it.
 - **Sound on Your Chosen Headphones**: clicks, previews, the count-in and the backing track play on the headphones you chose, even after DubMate restarts.

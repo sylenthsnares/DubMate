@@ -103,7 +103,7 @@ All of this goes into one PR.
      - Tighten `POST /api/config`, `POST /api/rooms` and pack import against LAN callers. `POST /api/config` is done: it is now refused for LAN callers (`design/first-test-fixes.md`). `POST /api/rooms` and pack import stay open.
 7. **UI pass.** Refine the existing look (`style.css` is the source of truth), not a redesign. The plan, with the owner's decisions, is `design/ui-plan.md`.
    - U1: readability and accessibility floors (done, `design/ui-u1-floors.md`). Text floors, focus ring, reduced motion, disabled and danger buttons, toasts, refused changes, guests in the lobby, the cast strip, the reconnecting pill and the `?` sheet by screen.
-   - U2: the booth's right column.
+   - U2: the booth's right column (done, `design/ui-u2-booth.md`). Record, Takes, Voice with For, the Monitor strip and Prev/Next in one column; All effects as the column's page; focus-only knob wheel; the booth keys; live recording feedback; takes saving in the background and kept when the upload fails. Hands-on recheck still needed: a real mic, a trackpad, the desktop app at 1280×720, and pulling the network during a save.
    - U3: the lobby.
    - U4: the landing page and joining.
    - U5: polish.
