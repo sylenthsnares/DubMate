@@ -356,6 +356,20 @@ The label is in the body font. The green dot and the inline `borderColor` writes
   - `tests/test_toasts.js`: the action toast.
   - `tests/test_shortcut_sheet.js`: the new items are pressed and checked.
 
+**Group D, measured.** `dm_pw/pbfix_perf.js`, 40 lines at 1440x900, two sets of 5 fresh pages each, with "before D" served from this branch at group C's last commit on a second engine the same afternoon.
+
+| Metric (ms) | before D | after D |
+|---|---:|---:|
+| Select a line: click handler | 1.5 / 1.4 | 1.4 / 1.4 |
+| Keystroke: `input` handler | 0.4 / 0.3 | 0.2 / 0.2 |
+| Text commit: `change` handler | 1.3 / 1.2 | 1.6 / 1.9 |
+| Drop: `pointerup` handler | 19.1 / 18.9 | 19.6 / 21.3 |
+| Editor open: first blocks / waveform | 46 / 78, 59 / 95 | 57 / 99, 44 / 78 |
+| Long tasks during select | 0 | 0 |
+
+- A text commit and a drop now keep an undo step: a copy of the lines (40 small objects), well under 1 ms. Selection and typing take none.
+- Nothing on select, drag or typing re-renders the list; undo, a rename, a merge and a character delete do, as they are rare.
+
 Every group runs `python tests/run_all_tests.py`.
 
 ## Before-shots and dev scripts (not committed)
@@ -407,6 +421,17 @@ Every group runs `python tests/run_all_tests.py`.
     - Below 1180px wide the select narrows to 112px, and the selected row puts its actions and times under the text, so the text keeps its width.
     - With no lines the column is a note, not an empty list (`role="list"` comes off).
     - Start and End, the buttons and their keys, act only on the selected line, and update its row in place. Transcribe's toast says the same "Select a line first".
+
+20. **Never losing work** (built in group D):
+    - Process gets no history entry. While it runs the URL names the session with `step=upload`, so Back from the editor lands on Video, and a reload follows the engine's status.
+    - The stepper is plain text while processing runs, so nothing jumps away from a run.
+    - An engine session that was uploaded but never processed (`idle`) opens Video like `cancelled`. A build in progress (`slicing`, `assembling`) opens the lines like `done`.
+    - The video's name is kept in `sessionStorage` with the pack name and language, so Video shows it after a reload.
+    - The inline questions ("Replace your 17 lines with a new pass?", and for Change "…with a new video?" with "Change video") use a red button, since the lines can't come back, and focus their Cancel.
+    - A failed save takes `#editor-notice` in the error colours until it goes through, then the processing notice (if any) returns.
+    - A toast's Undo after later changes undoes back to before its own change, the later ones too. A toast waits while hovered or focused, then shows its full time again.
+    - The Pack details are filled in once per session, so going back and forth keeps your edits and "Build again" builds what you see.
+    - The menu's Studio link asks like Exit. Record it now opens the studio without asking.
 
 ## Hands-on checks for the owner
 
