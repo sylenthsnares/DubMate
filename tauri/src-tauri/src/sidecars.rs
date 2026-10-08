@@ -106,7 +106,7 @@ struct EngineWatch {
 }
 
 /// Serialises sidecar startup. `start_sidecars` is reachable from app setup, the
-/// Retry button, apply_update and the Pack Builder install/remove commands; two
+/// Restart buttons (trigger_start_sidecars), apply_update and remove_packbuilder; two
 /// overlapping runs would each spawn an engine while `python_pid` only remembers
 /// the last, leaving the other orphaned and holding the port.
 static SIDECAR_START_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
