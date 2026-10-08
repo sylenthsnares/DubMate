@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "studio",
-  "description": "Lets the studio page, served by the engine on this computer, show and remove Pack Builder in its settings, and let the microphone work on the room it joins.",
+  "description": "Lets the studio page, served by the engine on this computer, show Pack Builder's background install and restart DubMate to finish it, remove Pack Builder, open the system's microphone settings, and let the microphone work on the room it joins.",
   "windows": ["main"],
   "local": false,
   "remote": {
@@ -9,8 +9,12 @@
   },
   "permissions": [
     "allow-get-engine-port",
+    "allow-trigger-start-sidecars",
     "allow-get-packbuilder-status",
+    "allow-start-packbuilder-install",
+    "allow-get-packbuilder-install",
     "allow-remove-packbuilder",
+    "allow-open-mic-settings",
     "allow-allow-room-origin"
   ]
 }
