@@ -199,6 +199,45 @@ const indexHtml = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
 const removeBtn = indexHtml.match(/<button[^>]*id="btn-confirm-remove-packbuilder"[^>]*>/);
 if (!removeBtn || !/class="[^"]*\bbtn-danger\b/.test(removeBtn[0])) fail("#btn-confirm-remove-packbuilder should be a .btn-danger");
 
+// Audio settings (U5b): Done stays in reach in a sticky footer over the card's background,
+// the status lines have one class per state, and none of the meter's text is dim.
+const footer = styleBlocks.find((b) => b.selector === ".audio-settings-footer");
+if (!footer) fail("style.css has no .audio-settings-footer rule");
+else {
+  for (const decl of [/position\s*:\s*sticky/, /bottom\s*:\s*0/, /background\s*:/, /border-top\s*:\s*1px solid/]) {
+    if (!decl.test(footer.body)) fail(`.audio-settings-footer is missing ${decl}`);
+  }
+}
+// A focused control scrolled into view must stop above the footer, not behind it.
+const setupCard = styleBlocks.find((b) => b.selector === ".audio-setup-card");
+const scrollPad = setupCard && setupCard.body.match(/scroll-padding-bottom\s*:\s*(\d+)px/);
+if (!scrollPad || Number(scrollPad[1]) < 72) fail(".audio-setup-card needs scroll-padding-bottom of at least the footer's height (72px)");
+const doneRow = indexHtml.match(/<div class="([^"]*)">\s*<button id="btn-audio-settings-done"/);
+if (!doneRow || !/\baudio-settings-footer\b/.test(doneRow[1])) fail("Done is not inside .audio-settings-footer");
+const STATUS_COLOURS = {
+  ".status-text.is-pending": "--foreground-muted",
+  ".status-text.is-done": "--accent-green-light",
+  ".status-text.is-attention": "--primary-hover",
+  ".status-text.is-error": "--accent-red-soft",
+};
+const statusBase = styleBlocks.find((b) => b.selector === ".status-text");
+if (!statusBase || !/font-size\s*:\s*12px/.test(statusBase.body) || !/font-weight\s*:\s*500/.test(statusBase.body)) {
+  fail(".status-text should be 12px, weight 500");
+}
+for (const [sel, token] of Object.entries(STATUS_COLOURS)) {
+  const b = styleBlocks.find((x) => x.selector === sel);
+  if (!b || !new RegExp(`(^|[^-\\w])color\\s*:\\s*var\\(${token}\\)`).test(b.body)) fail(`${sel} should be coloured var(${token})`);
+}
+const doneIcon = styleBlocks.find((b) => b.selector === ".status-text.is-done::before");
+if (!doneIcon || !/(^|[^-\w])mask\s*:/.test(doneIcon.body) || !/content\s*:\s*""/.test(doneIcon.body)) {
+  fail(".status-text.is-done::before should draw the check with a CSS mask, not a glyph");
+}
+for (const b of styleBlocks) {
+  if (/\.(level-meter|level-zone)/.test(b.selector) && usesDimText(b.body)) {
+    fail(`style.css:${b.line} ${b.selector}: meter text uses --foreground-dim`);
+  }
+}
+
 // The header's Leave stays in the window at 960px (measured in Chromium for the PR):
 // the two sides never shrink, only the pill's sentence does; while the pill asks for
 // attention the invite code and name step aside; in a room below 1280px the logo is

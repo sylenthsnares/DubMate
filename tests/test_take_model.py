@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import unittest
 import zipfile
 from unittest import mock
 
+import anyio
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -275,6 +277,14 @@ class RoomCase(unittest.TestCase):
     def _read(self, path):
         with open(path, "rb") as f:
             return f.read()
+
+    def _one_event_loop(self, client):
+        """Runs every request and socket of `client` on one event loop for the rest of the test,
+        so a background task (a refresh, an export render) outlives the request that starts it."""
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        client.portal = stack.enter_context(anyio.from_thread.start_blocking_portal("asyncio"))
+        stack.callback(setattr, client, "portal", None)
 
     def _room(self):
         room = rooms.Room(self.ROOM, self.pack, "hostT", "Host", "#7c5cff")

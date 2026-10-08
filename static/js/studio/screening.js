@@ -1,10 +1,20 @@
 // studio/screening.js - Premiere screening theater: theater source, stem preload,
-// balance/presence mix, host-synced playback and the sample-accurate audio schedule.
+// balance/presence mix, host-synced playback and the sample-accurate audio schedule,
+// the timeline under the video and the In this dub list.
 // Before the exported video is ready, each picked take plays the engine's render of its
 // voice chain (no browser effects); the theater switches to the exported video when ready.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
-import { pickedTake } from './takes.js';
+import { pickedTake, lineTakes } from './takes.js';
 import { resolveChain, levelGain } from './voice.js';
+import { clockTime } from './export.js';
+import { plural } from '../ui_common.js';
+
+/** The Mix presets: balance (0 more music, 50 even, 100 more voice) and dialogue level in dB. */
+const MIX_PRESETS = [
+  { id: 'balanced', name: 'Balanced', balance: 50, presence: 0 },
+  { id: 'voices', name: 'Voices forward', balance: 65, presence: 2.5 },
+  { id: 'music', name: 'Music forward', balance: 35, presence: 0 },
+];
 
 export class ScreeningMethods {
   initScreeningEvents() {
@@ -22,13 +32,16 @@ export class ScreeningMethods {
       });
     }
 
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const pres = parseFloat(e.currentTarget.dataset.presence || '0');
-        if (this.sliderDialoguePresence) {
-          this.sliderDialoguePresence.value = pres;
-        }
-        this.setMasterDialoguePresence(pres);
+    // Mix presets: a radio group, arrow keys move and choose (host only; members see none).
+    this.mixPresetButtons.forEach((btn, i) => {
+      btn.addEventListener('click', () => this.applyMixPreset(btn.dataset.preset));
+      btn.addEventListener('keydown', (e) => {
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        const next = this.mixPresetButtons[(i + step + this.mixPresetButtons.length) % this.mixPresetButtons.length];
+        this.applyMixPreset(next.dataset.preset);
+        next.focus();
       });
     });
 
@@ -36,50 +49,80 @@ export class ScreeningMethods {
     this.btnScreeningPlayPause.addEventListener('click', () => this.handleScreeningPlayPause());
     this.btnScreeningReplay.addEventListener('click', () => this.handleScreeningReplay());
 
-    // Screening Video State Listeners
-    if (this.btnAspect169 && this.btnAspect916) {
-      this.btnAspect169.addEventListener('click', () => {
-        this.selectedAspectRatio = '16:9';
-        this.btnAspect169.classList.add('active');
-        this.btnAspect169.setAttribute('aria-checked', 'true');
-        this.btnAspect916.classList.remove('active');
-        this.btnAspect916.setAttribute('aria-checked', 'false');
-        document.querySelector('.theater-player')?.classList.remove('shorts-mode');
-        this.showToast("Video shape: 16:9 landscape");
-      });
-
-      this.btnAspect916.addEventListener('click', () => {
-        this.selectedAspectRatio = '9:16';
-        this.btnAspect916.classList.add('active');
-        this.btnAspect916.setAttribute('aria-checked', 'true');
-        this.btnAspect169.classList.remove('active');
-        this.btnAspect169.setAttribute('aria-checked', 'false');
-        document.querySelector('.theater-player')?.classList.add('shorts-mode');
-        this.showToast("Video shape: 9:16 vertical");
-      });
-    }
-
     if (this.screeningVideo) {
       this.screeningVideo.addEventListener('ended', () => {
-        this.pauseScreeningPlayback();
+        // Rewound first, so a finished video waiting for this pause starts from 0:00.
         this.screeningVideo.currentTime = 0;
+        this.pauseScreeningPlayback();
       });
       this.screeningVideo.addEventListener('pause', () => {
-        if (this.screeningPlayIcon) {
-          this.screeningPlayIcon.innerText = '▶ Play';
-        }
-        if (!this.isUsingExportedVideo) {
+        this.renderScreeningPlayState(false);
+        // Leaving the premiere pauses it too; the booth's playback is not the premiere's to stop.
+        if (!this.isUsingExportedVideo && this.isScreeningShown()) {
           this.audio.stopAllPlayback();
           this.stopScreeningSyncMonitor();
         }
       });
+      // The timeline follows the video: timeupdate, and every frame while it plays.
+      this.screeningVideo.addEventListener('timeupdate', () => this.renderPremierePosition());
+      this.screeningVideo.addEventListener('play', () => this.startPremiereClock());
+      this.screeningVideo.addEventListener('durationchange', () => this.renderPremiereTimeline());
     }
+
+    this.initPremiereTimeline();
+  }
+
+  /**
+   * The timeline: a click or a drag seeks when let go (until then only the thumb and the
+   * time move); a click on a tick seeks to its line's start. Home and End go to either end;
+   * the arrows and , / . are the premiere's keys (app.js).
+   */
+  initPremiereTimeline() {
+    const track = this.screeningTrack;
+    if (!track) return;
+    const timeAt = (e) => {
+      const r = track.getBoundingClientRect();
+      const share = r.width > 0 ? (e.clientX - r.left) / r.width : 0;
+      return Math.max(0, Math.min(1, share)) * this.premiereDuration();
+    };
+    track.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !this.roomState) return;
+      e.preventDefault();
+      track.focus();
+      try { track.setPointerCapture(e.pointerId); } catch (err) { }
+      const tick = e.target.closest?.('.screening-tick');
+      this.premiereDragTime = tick ? Number(tick.dataset.start) : timeAt(e);
+      this.renderPremierePosition(this.premiereDragTime);
+    });
+    track.addEventListener('pointermove', (e) => {
+      if (this.premiereDragTime === null) return;
+      this.premiereDragTime = timeAt(e);
+      this.renderPremierePosition(this.premiereDragTime);
+    });
+    track.addEventListener('pointerup', () => {
+      if (this.premiereDragTime === null) return;
+      const t = this.premiereDragTime;
+      this.premiereDragTime = null;
+      this.seekPremiere(t);
+    });
+    track.addEventListener('pointercancel', () => {
+      this.premiereDragTime = null;
+      this.renderPremierePosition();
+    });
+    track.addEventListener('keydown', (e) => {
+      if (e.key !== 'Home' && e.key !== 'End') return;
+      e.preventDefault();
+      this.seekPremiere(e.key === 'Home' ? 0 : this.premiereDuration());
+    });
   }
 
   // --- Finale Screening & Host Sync Logic ---
 
   async setupScreeningView() {
     if (!this.roomState) return;
+    // Files saved for editing on an earlier visit may predate a take changed since.
+    this.editingSaved = { stems: false, project: false };
+    this.pendingExportSwap = null;
 
     const presenceVal = parseFloat(this.roomState.master_dialogue_presence_db ?? 0.0);
     this.masterDialoguePresence = presenceVal;
@@ -87,62 +130,106 @@ export class ScreeningMethods {
     const balance = Number(this.roomState.master_mix_balance ?? 50);
     this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);
 
-    if (this.roomState.has_export && (this.roomState.export_video_url || this.roomState.download_url)) {
+    if (this.exportState('16:9') === 'ready') {
       this.applyExportedVideoToTheater();
     } else {
       this.applyLiveMixToTheater();
     }
 
     this.updateScreeningControls();
+    // In this dub starts open for the host, who picks the takes, and closed for members.
+    if (this.screeningLines) this.screeningLines.open = this.isHost({ allowDummy: true });
+    this.premiereDragTime = null;
+    this.renderPremiereLines();
 
     // Preload screening audio in parallel non-blocking queue
     this.preloadScreeningAudio();
   }
 
-  applyExportedVideoToTheater(directUrl = null) {
+  /** The premiere is the screen in view (the theater's sources are only set there: setting one
+   *  stops every playing sound, the booth's take and record stream included). */
+  isScreeningShown() {
+    return !!this.views?.screening?.classList.contains('active');
+  }
+
+  applyExportedVideoToTheater(directUrl = null, { position = 0 } = {}) {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = true;
     const videoUrl = directUrl || this.roomState.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-    this.setTheaterSource(videoUrl, { muted: false });
+    this.setTheaterSource(videoUrl, { muted: false, position });
   }
 
-  applyLiveMixToTheater() {
+  applyLiveMixToTheater({ position = 0 } = {}) {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = false;
     // The live mix plays the stems through Web Audio, so the pack video stays silent.
-    this.setTheaterSource(this.roomState.pack.video_url, { muted: true });
+    this.setTheaterSource(this.roomState.pack.video_url, { muted: true, position });
   }
 
   /**
-   * Points the theater at a video, rewinds it, and sets audio + master badge.
+   * A finished 16:9 video: it goes into the theater now if it is paused, or at the next
+   * pause if the live mix is playing (never mid-play). Either way the position stays.
+   * Off the premiere nothing changes here; setupScreeningView puts it in on the way back.
+   */
+  offerExportedVideo(videoUrl = null) {
+    if (!this.roomState || !this.screeningVideo || this.isUsingExportedVideo || !this.isScreeningShown()) return;
+    if (!this.screeningVideo.paused) {
+      this.pendingExportSwap = videoUrl || true;
+      return;
+    }
+    this.applyExportedVideoToTheater(videoUrl, { position: this.screeningVideo.currentTime || 0 });
+    this.updateScreeningControls();
+  }
+
+  swapPendingExport() {
+    if (!this.pendingExportSwap) return;
+    const videoUrl = typeof this.pendingExportSwap === 'string' ? this.pendingExportSwap : null;
+    this.pendingExportSwap = null;
+    this.applyExportedVideoToTheater(videoUrl, { position: this.screeningVideo.currentTime || 0 });
+    this.updateScreeningControls();
+  }
+
+  /**
+   * Points the theater at a video at a position (0:00 by default), and sets its audio.
    * Unmuted means the source carries the finished mix (the exported video).
    */
-  setTheaterSource(url, { muted }) {
+  setTheaterSource(url, { muted, position = 0 }) {
     this.audio.stopAllPlayback();
     this.stopScreeningSyncMonitor();
 
     if (!this.screeningVideo.src.endsWith(url) && this.screeningVideo.getAttribute('src') !== url) {
       this.screeningVideo.src = url;
     }
-    try {
-      if (this.screeningVideo.readyState >= 1) {
-        this.screeningVideo.currentTime = 0;
-      } else {
-        this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) { }
-        }, { once: true });
-      }
-    } catch (e) { }
+    const seek = () => {
+      try { this.screeningVideo.currentTime = position; } catch (e) { }
+    };
+    if (this.screeningVideo.readyState >= 1) seek();
+    else this.screeningVideo.addEventListener('loadedmetadata', seek, { once: true });
 
     this.screeningVideo.muted = muted;
     this.screeningVideo.volume = muted ? 0 : 1.0;
 
-    if (this.screeningMasterBadge) {
-      this.screeningMasterBadge.style.display = muted ? 'none' : 'inline-flex';
-    }
-    if (this.screeningPlayIcon) {
-      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play' : '⏸ Pause';
-    }
+    this.renderSourceLabel();
+    this.renderScreeningPlayState(!this.screeningVideo.paused);
+  }
+
+  /** "Live mix" (amber dot) while the theater plays the stems, "Final video" for the saved MP4. */
+  renderSourceLabel() {
+    if (!this.screeningSourceLabel) return;
+    const live = !this.isUsingExportedVideo;
+    this.screeningSourceLabel.classList.toggle('is-live', live);
+    this.screeningSourceText.textContent = live ? 'Live mix' : 'Final video';
+    // Members have no Save, so their tip doesn't mention it.
+    const tip = this.isHost({ allowDummy: true }) ? 'What everyone hears now. Save makes the video from this mix.' : 'What everyone hears now.';
+    if (live) this.screeningSourceLabel.setAttribute('data-tip', tip);
+    else this.screeningSourceLabel.removeAttribute('data-tip');
+  }
+
+  /** Play or Pause on the one primary button (the SVG icon follows .is-playing). */
+  renderScreeningPlayState(playing) {
+    if (!this.btnScreeningPlayPause) return;
+    this.btnScreeningPlayPause.classList.toggle('is-playing', playing);
+    if (this.screeningPlayLabel) this.screeningPlayLabel.textContent = playing ? 'Pause' : 'Play';
   }
 
   /** Where the premiere keeps a picked take's render: its audio and its resolved chain. */
@@ -265,6 +352,7 @@ export class ScreeningMethods {
       this.sliderScreeningBalance.setAttribute('aria-valuenow', this.screeningBalance);
       this.sliderScreeningBalance.setAttribute('aria-valuetext', `${this.screeningBalance} percent`);
     }
+    this.renderMixSummary();
 
     const { backingGain, vocalGain } = this.getScreeningStemGains();
     if (this.screeningBackingGainNode && this.audio.ctx) {
@@ -278,29 +366,88 @@ export class ScreeningMethods {
       this.dropStaleExport();
       if (this.roomState) this.roomState.master_mix_balance = this.screeningBalance;
       if (this.socket && this.isHost({ allowDummy: true })) {
-        this.socket.send('set_mix_balance', { balance: this.screeningBalance });
+        // client_id: this tab ignores its own echo (app.js), another window of the host's doesn't.
+        this.socket.send('set_mix_balance', { balance: this.screeningBalance, client_id: this.renderClientId() });
       }
     }
   }
 
-  /** The mix changed, so the final video is out of date: play the live mix until a new one is made. */
+  /**
+   * The mix or a take changed, so a saved video is out of date: the theater plays the live
+   * mix (from the same spot, still playing if it was) and Save reads "Mix changed · Save
+   * again" until a new one is made. A render still running keeps its Saving…. Off the
+   * premiere only the flag goes (a take changed in the booth); setupScreeningView sets the
+   * theater on the way back.
+   */
   dropStaleExport() {
-    if (this.roomState) this.roomState.has_export = false;
-    if (this.isUsingExportedVideo) this.applyLiveMixToTheater();
+    if (this.exportState('16:9') === 'ready') this.exportStale = true;
+    if (this.roomState) {
+      this.roomState.has_export = false;
+      const exports = { ...(this.roomState.exports || {}) };
+      for (const aspect of Object.keys(exports)) {
+        if (exports[aspect] === 'ready') exports[aspect] = 'idle';
+      }
+      this.roomState.exports = exports;
+      this.roomState.export_video_url = null;
+    }
+    this.pendingExportSwap = null;
+    this.editingSaved = { stems: false, project: false };
+    if (this.isUsingExportedVideo && this.screeningVideo && this.isScreeningShown()) {
+      const playing = !this.screeningVideo.paused;
+      const position = this.screeningVideo.currentTime || 0;
+      this.applyLiveMixToTheater({ position });
+      if (playing) this.startScreeningPlayback(position);
+    }
     this.isUsingExportedVideo = false;
-    if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
+    this.updateScreeningControls();
   }
 
-  /** Presence label and preset highlight (and the slider, unless it is the source). */
+  /** The Fine-tune level readout (dB only there) and the slider, unless it is the source. */
   renderPresenceUI(db, { syncSlider = true } = {}) {
     if (syncSlider && this.sliderDialoguePresence) this.sliderDialoguePresence.value = db;
-    if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (db === 0) ? '0.0 dB (default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
+    const readout = (db === 0) ? '0.0 dB (default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
+    if (this.valDialoguePresence) this.valDialoguePresence.textContent = readout;
+    if (this.sliderDialoguePresence) {
+      this.sliderDialoguePresence.setAttribute('aria-valuenow', db);
+      this.sliderDialoguePresence.setAttribute('aria-valuetext', readout);
     }
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      const btnVal = parseFloat(btn.dataset.presence || '0');
-      btn.classList.toggle('active', Math.abs(btnVal - db) < 0.1);
+    this.renderMixSummary();
+  }
+
+  /** The preset the room's mix matches, or null (Custom). */
+  currentMixPreset() {
+    const presence = this.masterDialoguePresence || 0;
+    return MIX_PRESETS.find((p) => p.balance === Math.round(this.screeningBalance)
+      && Math.abs(p.presence - presence) < 0.05) || null;
+  }
+
+  /** "Mix · Voices forward" (members: "· set by the host"), and which preset is checked. */
+  renderMixSummary() {
+    const preset = this.currentMixPreset();
+    const name = preset ? preset.name : 'Custom';
+    const host = this.isHost({ allowDummy: true });
+    if (this.screeningMixSummary) this.screeningMixSummary.textContent = host ? `· ${name}` : `· ${name} · set by the host`;
+    if (this.screeningMixMemberPreset) this.screeningMixMemberPreset.textContent = name;
+    const buttons = this.mixPresetButtons || [];
+    buttons.forEach((btn) => {
+      const checked = !!preset && btn.dataset.preset === preset.id;
+      btn.setAttribute('aria-checked', String(checked));
+      btn.classList.toggle('active', checked);
+      btn.tabIndex = -1;
     });
+    // One tab stop: the checked preset, or the first when the mix is Custom.
+    const stop = buttons.find((btn) => btn.getAttribute('aria-checked') === 'true') || buttons[0];
+    if (stop) stop.tabIndex = 0;
+  }
+
+  /** A preset sets both the balance and the dialogue level, for the whole room. */
+  applyMixPreset(id) {
+    const preset = MIX_PRESETS.find((p) => p.id === id);
+    // The preset already checked changes nothing, so the saved video stays.
+    if (!preset || !this.isHost({ allowDummy: true }) || this.currentMixPreset()?.id === id) return;
+    if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = preset.presence;
+    this.setMasterDialoguePresence(preset.presence);
+    this.setScreeningBalance(preset.balance, { share: true });
   }
 
   setMasterDialoguePresence(val) {
@@ -315,7 +462,8 @@ export class ScreeningMethods {
     // The room's level is the host's; a member's change stays in their own preview.
     if (this.socket && this.isHost({ allowDummy: true })) {
       this.socket.send('set_dialogue_presence', {
-        presence_db: this.masterDialoguePresence
+        presence_db: this.masterDialoguePresence,
+        client_id: this.renderClientId(),
       });
     }
   }
@@ -349,13 +497,199 @@ export class ScreeningMethods {
     }
   }
 
+  /**
+   * The status line, the failure line, the Mix (presets for the host, read-only for
+   * members), the source label and Save, from the room's state.
+   */
   updateScreeningControls() {
     if (!this.roomState) return;
     const isHost = this.isHost({ allowDummy: true });
-    this.screeningHostBadge.style.display = isHost ? 'inline-block' : 'none';
-    this.screeningStatusDesc.innerText = isHost
-      ? "You control playback for everyone."
-      : "The host controls playback. Space or Replay plays it just for you.";
+    const state = this.exportState('16:9');
+    const failure = state === 'failed' ? (this.exportFailures['16:9'] || 'Something went wrong.') : null;
+    let status = 'The host controls playback. Space or Replay plays it just for you.';
+    if (isHost) status = 'You control playback for everyone.';
+    else if (state === 'processing') status = 'The host is saving the video…';
+    else if (failure) status = `The video didn't save: ${failure}`;
+    this.screeningStatusDesc.textContent = status;
+    if (this.screeningSaveError) {
+      this.screeningSaveError.hidden = !(isHost && failure);
+      if (isHost && failure) this.screeningSaveErrorText.textContent = `The video didn't save: ${failure}`;
+    }
+    if (this.screeningMixHost) this.screeningMixHost.hidden = !isHost;
+    if (this.screeningMixMember) this.screeningMixMember.hidden = isHost;
+    this.renderMixSummary();
+    this.renderSourceLabel();
+    this.renderSaveControl();
+  }
+
+  /** The scene's length: the theater's video once it knows, else the pack's. */
+  premiereDuration() {
+    const d = this.screeningVideo?.duration;
+    if (Number.isFinite(d) && d > 0) return d;
+    return Number(this.roomState?.pack?.duration) || 0;
+  }
+
+  /** A line's first cast actor (their colour marks the line), or null when unassigned. */
+  premiereLineActor(line) {
+    const uid = (this.roomState?.role_assignments?.[line.character] || [])[0];
+    return (uid && this.roomState.users?.[uid]) || null;
+  }
+
+  /** A tick or a row's dot in its actor's colour; muted when nobody is cast. */
+  paintLineMark(el, actor) {
+    if (actor?.color) el.style.backgroundColor = actor.color;
+    else el.classList.add('is-unassigned');
+  }
+
+  /** The ticks at each line's start, the total time, then the position. */
+  renderPremiereTimeline() {
+    if (!this.screeningTrack || !this.roomState) return;
+    const duration = this.premiereDuration();
+    const ticks = (this.roomState.pack?.lines || []).map((line) => {
+      const tick = document.createElement('span');
+      tick.className = 'screening-tick';
+      tick.dataset.start = line.start;
+      tick.style.left = `${duration > 0 ? Math.min(100, (line.start / duration) * 100) : 0}%`;
+      this.paintLineMark(tick, this.premiereLineActor(line));
+      return tick;
+    });
+    this.screeningTrackTicks.replaceChildren(...ticks);
+    this.screeningTimeTotal.textContent = clockTime(duration);
+    this.screeningTrack.setAttribute('aria-valuemax', String(Math.round(duration * 10) / 10));
+    this.renderPremierePosition();
+  }
+
+  /** The thumb, the played part and the elapsed time at t (the video's time by default;
+   *  a drag in progress owns them until it is let go). */
+  renderPremierePosition(t = null) {
+    if (!this.screeningTrack) return;
+    if (t === null) {
+      if (this.premiereDragTime !== null) return;
+      t = this.screeningVideo?.currentTime || 0;
+    }
+    const duration = this.premiereDuration();
+    const at = Math.max(0, Math.min(duration, t));
+    const share = duration > 0 ? (at / duration) * 100 : 0;
+    this.screeningTrackPlayed.style.width = `${share}%`;
+    this.screeningTrackThumb.style.left = `${share}%`;
+    this.screeningTimeElapsed.textContent = clockTime(at);
+    this.screeningTrack.setAttribute('aria-valuenow', String(Math.round(at * 10) / 10));
+    this.screeningTrack.setAttribute('aria-valuetext', `${clockTime(at)} of ${clockTime(duration)}`);
+  }
+
+  /** Moves the timeline every frame while the theater plays (timeupdate is only ~4 a second). */
+  startPremiereClock() {
+    cancelAnimationFrame(this.premiereClockRaf);
+    const step = () => {
+      this.renderPremierePosition();
+      this.premiereClockRaf = this.screeningVideo.paused ? null : requestAnimationFrame(step);
+    };
+    this.premiereClockRaf = requestAnimationFrame(step);
+  }
+
+  /**
+   * The one seek for the timeline, the keys and In this dub. The host's moves everyone
+   * (playback carries on from there if it was playing: handleIncomingScreeningSync); a
+   * member's stays on this page.
+   */
+  seekPremiere(t) {
+    if (!this.roomState || !this.screeningVideo) return;
+    const duration = this.premiereDuration();
+    const at = Math.max(0, duration > 0 ? Math.min(duration, Number(t) || 0) : Number(t) || 0);
+    this.renderPremierePosition(at);
+    if (this.isHost({ allowDummy: true })) {
+      // Paused, the thumb stays where it was let go while the room answers.
+      if (this.screeningVideo.paused) this.screeningVideo.currentTime = at;
+      this.socket.send('screening_control', { action: 'seek', timestamp: at });
+      return;
+    }
+    this.screeningVideo.currentTime = at;
+    if (!this.screeningVideo.paused) this.startScreeningPlayback(at);
+  }
+
+  /** , and . : the previous or next line's start. Just after a start, , goes to the one before. */
+  stepPremiereLine(dir) {
+    const t = this.screeningVideo?.currentTime || 0;
+    const starts = (this.roomState?.pack?.lines || []).map((l) => Number(l.start))
+      .filter(Number.isFinite).sort((a, b) => a - b);
+    const target = dir < 0 ? starts.filter((s) => s < t - 0.25).pop() : starts.find((s) => s > t + 0.05);
+    if (target !== undefined) this.seekPremiere(target);
+  }
+
+  /**
+   * In this dub: each line's actor and take ("Take 3", the number the TAKES card shows, or
+   * the original voice). A row click seeks there, and Change take (Record on a line with no
+   * takes yet) shows where this user may pick the take. The summary counts the lines that
+   * use the original voice. The timeline's ticks follow the same casting. A rebuild keeps
+   * the keyboard focus on the same row's button.
+   */
+  renderPremiereLines() {
+    if (!this.roomState) return;
+    this.renderPremiereTimeline();
+    if (!this.screeningLinesList) return;
+    const focused = this.screeningLinesList.contains(document.activeElement) ? document.activeElement : null;
+    const focusRow = focused ? [...this.screeningLinesList.children].indexOf(focused.closest('.screening-line')) : -1;
+    const focusChange = !!focused?.classList.contains('screening-line-change');
+    const lines = this.roomState.pack?.lines || [];
+    const takes = this.roomState.takes;
+    const span = (cls, text) => {
+      const el = document.createElement('span');
+      el.className = cls;
+      el.textContent = text;
+      return el;
+    };
+    let original = 0;
+    const rows = lines.map((line, index) => {
+      const take = pickedTake(takes, line);
+      if (!take) original += 1;
+      const actor = this.premiereLineActor(line);
+      const row = document.createElement('li');
+      row.className = 'screening-line';
+
+      const seek = document.createElement('button');
+      seek.type = 'button';
+      seek.className = 'screening-line-seek';
+      const dot = span('screening-line-dot', '');
+      this.paintLineMark(dot, actor);
+      const status = span('screening-line-status',
+        take ? `Take ${take.number}` : 'Original voice · Unrecorded');
+      status.classList.toggle('is-original', !take);
+      const speaker = span('screening-line-speaker', actor ? actor.name : 'Unassigned');
+      seek.append(dot, span('screening-line-num', `#${index + 1}`), span('screening-line-char', line.character),
+        speaker, status);
+      seek.addEventListener('click', () => this.seekPremiere(line.start));
+      row.appendChild(seek);
+
+      if (this.canRecordLine(line)) {
+        const change = document.createElement('button');
+        change.type = 'button';
+        change.className = 'btn btn-ghost btn-xs screening-line-change';
+        const hasTakes = lineTakes(takes, line).length > 0;
+        change.textContent = hasTakes ? 'Change take' : 'Record';
+        change.setAttribute('aria-label', hasTakes ? `Change take for line ${index + 1}` : `Record line ${index + 1}`);
+        change.addEventListener('click', () => this.changePremiereTake(index));
+        row.appendChild(change);
+      }
+      return row;
+    });
+    this.screeningLinesList.replaceChildren(...rows);
+    if (rows[focusRow]) {
+      (focusChange && rows[focusRow].querySelector('.screening-line-change')
+        || rows[focusRow].querySelector('.screening-line-seek')).focus();
+    }
+    this.screeningLinesList.classList.toggle('has-change', rows.some((r) => r.childElementCount > 1));
+    const originals = original ? ` · ${original} ${original === 1 ? 'uses' : 'use'} the original voice` : '';
+    this.screeningLinesSummary.textContent = `· ${plural(lines.length, 'line')}${originals}`;
+  }
+
+  /** Change take: that line in the booth, with the take in the dub focused in TAKES. */
+  async changePremiereTake(index) {
+    this.showView('booth');
+    const loading = this.loadBoothLine(index);
+    this.broadcastMyStatus('booth');
+    await loading;
+    const radios = [...document.querySelectorAll('#card-takes [role="radio"]')];
+    (radios.find((r) => r.getAttribute('aria-checked') === 'true') || radios[0])?.focus();
   }
 
   async handleScreeningPlayPause() {
@@ -417,7 +751,7 @@ export class ScreeningMethods {
     this.stopScreeningSyncMonitor();
     this.audio.stopAllPlayback();
 
-    this.screeningPlayIcon.innerText = '⏸ Pause';
+    this.renderScreeningPlayState(true);
 
     if (this.isUsingExportedVideo) {
       // Using Master Rendered MP4: native embedded audio is 100% in hardware sync
@@ -463,11 +797,13 @@ export class ScreeningMethods {
 
   pauseScreeningPlayback() {
     this.stopScreeningSyncMonitor();
-    this.screeningPlayIcon.innerText = '▶ Play';
+    this.renderScreeningPlayState(false);
     this.screeningVideo.pause();
     if (!this.isUsingExportedVideo) {
       this.audio.stopAllPlayback();
     }
+    // A video saved while the live mix played goes in now, at this spot.
+    this.swapPendingExport();
   }
 
   startScreeningSyncMonitor(startTime, audioCtxStart) {

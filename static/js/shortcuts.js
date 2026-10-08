@@ -35,6 +35,8 @@ export const SHORTCUT_GROUPS = [
     id: 'watching', title: 'Premiere', page: 'studio', view: 'screening', items: [
       { id: 'watch-play', keys: [['Space']], label: 'Play or pause' },
       { id: 'watch-replay', keys: [['R']], label: 'Replay from the start' },
+      { id: 'watch-seek', keys: [['←'], ['→']], label: 'Back or forward 5 seconds' },
+      { id: 'watch-line', keys: [[','], ['.']], label: 'Previous or next line' },
     ],
   },
   {

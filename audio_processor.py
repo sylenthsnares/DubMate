@@ -19,7 +19,7 @@ import tempfile
 import threading
 import subprocess
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple, Union
+from typing import Callable, Dict, List, Optional, Any, Tuple, Union
 
 from pack_loader import get_ffmpeg_path, get_deep_filter_path, get_h264_encoder_args, cpu_h264_args, CACHE_DIR, PackInfo
 from pack_loader import compute_waveform_peaks  # re-exported: app.py and tests use audio_processor.compute_waveform_peaks
@@ -1855,14 +1855,18 @@ def export_dub_video(
     aspect_ratio: str = "16:9",
     master_dialogue_presence_db: float = 0.0,
     mix_balance: float = MIX_BALANCE_EVEN,
+    on_audio_mixed: Optional[Callable[[], None]] = None,
 ) -> str:
-    """Combines final mixed audio with scene video into a high quality MP4 (16:9 or 9:16 letterboxed)."""
+    """Combines final mixed audio with scene video into a high quality MP4 (16:9 or 9:16 letterboxed).
+    on_audio_mixed is called once the audio is mixed, before the video is encoded."""
     pack.ensure_web_ready()
     fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
         render_dub_mix(pack, takes_dict, tmp_wav, master_dialogue_presence_db=master_dialogue_presence_db,
                        mix_balance=mix_balance)
+        if on_audio_mixed:
+            on_audio_mixed()
 
         ffmpeg = get_ffmpeg_path()
         os.makedirs(os.path.dirname(os.path.abspath(output_mp4)), exist_ok=True)
