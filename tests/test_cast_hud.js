@@ -3,9 +3,9 @@
  *
  * The cast strip and the hidden live region (UI pass U1, step 6):
  *  - the strip is not a live region; one hidden #sr-announcer is,
- *  - in the lobby the strip shows who is here and their roles, without progress or ready counts,
  *  - at the premiere the progress and the ready summary show as before,
- *  - in the booth the strip is hidden (2.0 layout pass: the booth bar says who's here),
+ *  - in the booth and the lobby the strip is hidden: the shared who's-here stack says who
+ *    is here (the booth bar, and the lobby's title row since the 2.0 join flow),
  *  - several characters read "2 roles", with the names in a tooltip that opens on keyboard focus,
  *  - joins, leaves and "is ready" by others are read out once each; a repeated status is not.
  */
@@ -123,13 +123,21 @@ const hiddenEl = (el) => !el || el.hidden;
     app.showView("booth");
     check(bar.style.display === "none", "in the booth the cast strip is hidden", bar.style.display);
 
+    // The lobby hides it too: its title row holds the same who's-here stack as the booth.
     app.showView("lobby");
-    check(bar.style.display === "flex", "in the lobby the cast strip shows", bar.style.display);
-    check(hiddenEl(summary), "in the lobby the ready summary is hidden");
-    check(doc.querySelectorAll(".actor-hud-progress").length === 0, "in the lobby no progress shows");
-    check(!/\d+\/\d+/.test(doc.getElementById("cast-activity-list").textContent), "in the lobby the strip has no counts");
+    check(bar.style.display === "none", "in the lobby the cast strip is hidden", bar.style.display);
+    const stack = doc.querySelector("#view-lobby .lobby-title-row #lobby-presence .presence-stack");
+    check(stack && stack.querySelectorAll(".avatar").length === 2, "the lobby's title row shows the who's-here stack");
+    check(/Who's here: Tani, Mika/.test(stack.getAttribute("aria-label") || ""), "the stack names who's here", stack && stack.getAttribute("aria-label"));
+    stack.focus();
+    app.renderCastActivityHUD();
+    check(doc.activeElement === stack, "an update keeps keyboard focus on the lobby's stack");
+
+    // Back at the premiere the strip shows each person's roles.
+    app.showView("screening");
+    check(bar.style.display === "flex", "at the premiere the cast strip shows", bar.style.display);
     const tani = chipFor(doc, "Tani");
-    check(tani && tani.querySelector(".actor-hud-avatar") && tani.querySelector(".actor-hud-status-badge"), "in the lobby names, colour and the location badge stay");
+    check(tani && tani.querySelector(".actor-hud-avatar") && tani.querySelector(".actor-hud-status-badge"), "the strip keeps names, colour and the location badge");
 
     // Two characters: "2 roles", names in a focusable tooltip.
     const roles = tani.querySelector(".actor-hud-char");

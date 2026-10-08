@@ -216,6 +216,22 @@ C4: the mic card's clicks are counted where they happen (in the lobby), and the 
 - The "You" card stays in view (sticky) while the scenes scroll; the scene bar sticks to the bottom of the window (`overflow: clip` on the panel keeps it sticky).
 - The hero's accent is solid amber (no gradient text) and scene cards no longer lift on hover. The `.tab-pill` styles went with the tabs (nothing else used them), and DESIGN.md's segmented-tabs entry with them.
 
+### Decided while building G3 (the lobby), revisit
+
+- "Copy invite link" toasts "Invite link copied." whether it copied the public link or the direct one (it never copies a bare code now, so "copied instead" no longer applies). With neither, it copies this page's `?room=` link: "Invite link copied. It works on your network only for now."
+- The header room pill keeps its dashed "code not live yet" look in the lobby, but there it is plain text (no role, no tab stop, no tooltip). On the other room screens Enter and Space now copy too (it was a `role=button` that only answered clicks).
+- The mic card's button is amber for a friend only while the room is still in the lobby; once recording or the premiere is on, "Back to the booth ›" / "Back to the premiere ›" is the view's amber and the card's button is secondary.
+- The level meter keeps running during the sync step, so the clicks and claps show on it; it closes when the card collapses, when the lobby is left, and while Audio settings is open (that dialog's meter has the mic then). It falls back slowly so a short word reads.
+- An allowed mic whose device pair is already synced (on the host's computer, or brought along by a member) goes straight to "Mic set · <mic> · Change". Allowed but unsynced starts at the device step, not at Allow.
+- "Skip sync" lasts for the tab (sessionStorage), like the old launch dialog's "Skip for now".
+- Each character's name is a button: clicking it pins the preview (`aria-pressed`), so keyboard users can preview any row, including someone else's character.
+- After a pick or Give back redraws a row, keyboard focus stays in that row (on Give back, else I'll voice, else the name).
+- For friends, an offline voice reads "Tani (offline)" in the Voiced by cell; the host's select options say "(offline)" too.
+- The preview poster keeps the whole frame (letterboxed, at most 34% of the window's height). Below 1100 px the preview and the mic card sit side by side under the casting card, and the page scrolls instead of the card.
+- "Cast evenly" toasts "Characters shared out evenly." when the room confirms.
+- The waiting line reads "Tani starts the recording" ("The host starts the recording" before the host's name is known).
+- G2 follow-up: leaving to You left keeps the logo menu inert; the booth's recording focus had been giving it back as the view changed.
+
 ## Hands-on checks (owner, in the morning)
 
 1. First run as a host: does the landing read "who, what, go"? Pick a scene with the keyboard and press Enter.

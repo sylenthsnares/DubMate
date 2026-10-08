@@ -24,7 +24,7 @@ const MAX_CLICK_SPREAD_MS = 20;
 // The clicks play at full level, so they must not be in anyone's ears.
 const CLICKS_COPY = 'The clicks are loud. Take out your earbuds or headphones and hold them right next to the mic.';
 const CLAP_COPY = 'Put your headphones back on, then clap on each beat you hear.';
-const PANEL_COPY = {
+export const PANEL_COPY = {
   ready: CLICKS_COPY,
   listening: CLICKS_COPY,
   clicksFailed: "DubMate couldn't hear the clicks. Turn your computer's volume up, hold your earbuds closer to the mic and try again.",
@@ -37,7 +37,7 @@ const PANEL_COPY = {
 const ERROR_STEPS = new Set(['clicksFailed', 'failedQuiet', 'failedUneven', 'failedNoisy']);
 const CLAP_FAILED_STEP = { quiet: 'failedQuiet', noisy: 'failedNoisy', uneven: 'failedUneven' };
 const CLICK_STEPS = new Set(['ready', 'listening', 'clicksFailed']);
-const START_LABEL = { ready: 'Play clicks', listening: 'Listening…', clicksFailed: 'Try again' };
+export const START_LABEL = { ready: 'Play clicks', listening: 'Listening…', clicksFailed: 'Try again' };
 
 function webStorage(name) {
   try {
@@ -200,6 +200,8 @@ export class MicSyncMethods {
    */
   showMicSyncPanel(step) {
     this.micSyncStep = step;
+    // The lobby's mic card runs the same steps and shows them too (mic_card.js).
+    this.renderMicCard?.();
     if (!this.micSyncPanel) return;
     this.micSyncPanel.style.display = step ? 'block' : 'none';
     this.micSyncPanel.classList.toggle('is-error', ERROR_STEPS.has(step));

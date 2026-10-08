@@ -499,6 +499,17 @@ body::after {
   border-color: var(--primary);
   background: var(--secondary);
 }
+/* In the lobby the pill only shows the code: the title row's Copy invite link copies. */
+.room-badge.is-code-only {
+  cursor: default;
+}
+.room-badge.is-code-only:hover {
+  border-color: var(--border-wood);
+  background: var(--card);
+}
+.room-badge.is-code-only svg {
+  display: none;
+}
 
 /* Connection pill. Amber while it is connecting or trying to get the room back;
    red only once it has given up (red means recording elsewhere, so it is kept
@@ -1906,21 +1917,18 @@ body::after {
 /* 2. CASTING BOARD & LOBBY                                      */
 /* ------------------------------------------------------------- */
 
-.lobby-header-card {
-  padding: 20px 24px;
-  margin-bottom: 24px;
+/* Title row, no card: the scene, its one meta line, who's here, the invite and the next step. */
+.lobby-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+  margin-bottom: var(--space-5);
 }
-
-.lobby-badge-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+.lobby-title-group {
+  min-width: 0;
 }
 
 .badge-studio {
@@ -1937,32 +1945,73 @@ body::after {
 .lobby-pack-title {
   font-size: 20px;
   font-weight: 800;
+  line-height: 1.25;
   color: var(--foreground);
-  margin-bottom: 4px;
+  overflow-wrap: anywhere;
 }
 
-.lobby-desc {
+.lobby-meta {
+  margin-top: var(--space-1);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--foreground-muted);
 }
 
 .lobby-action-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
+.lobby-action-group [hidden] {
+  display: none;
+}
+.lobby-presence:empty {
+  display: none;
+}
+.lobby-here-count {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+/* A friend's line where the host has Start recording. */
+.lobby-waiting {
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
 
+/* The casting card and the rail. Below 1100px the rail drops under the card. */
 .lobby-layout {
   display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 39vw, 560px);
+  gap: var(--space-5);
   align-items: start;
 }
 
 .panel-casting {
-  max-height: 480px;
+  /* The card grows with its rows and scrolls inside itself only when the window is too short. */
+  max-height: calc(100vh - 170px);
   overflow-y: auto;
+}
+
+.casting-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--card-header);
+}
+.casting-head [hidden] {
+  display: none;
+}
+.casting-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
 }
 
 .casting-table {
@@ -1975,7 +2024,7 @@ body::after {
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
   background: var(--card-header);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1985,19 +2034,48 @@ body::after {
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
+.casting-table th.casting-col-lines,
+.casting-table td.casting-col-lines {
+  text-align: right;
+  white-space: nowrap;
+}
 
 .casting-table td {
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-4);
+  height: 52px;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 13px;
 }
 .casting-table tr:hover td {
   background: rgba(244, 237, 228, 0.02);
 }
+/* The row the scene preview shows: a tint, no coloured side stripe. */
+.casting-table tr.is-selected td {
+  background: var(--secondary);
+}
+
+/* The character's name pins the preview to its row. */
+.cast-char {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.cast-char:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
 
 .cast-select {
   height: 34px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   background: var(--input);
   border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
@@ -2007,45 +2085,53 @@ body::after {
   outline: none;
   cursor: pointer;
   width: 100%;
+  max-width: 280px;
   min-width: 0;
 }
 .cast-select:focus {
   border-color: var(--primary);
 }
 
-.actor-color-dot {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.actor-color-dot.unassigned {
-  box-shadow: inset 0 0 0 1px var(--foreground-dim);
-}
-
-/* Casting rows: the character, its line count, and who voices it. */
-.char-badge-cell {
+/* Voiced by: the person's avatar (an empty ring for the original voice), then their name or the select. */
+.cast-assign-cell {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
+  min-height: 34px;
 }
-.char-badge {
+.cast-voice-body {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.avatar.avatar-empty {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--foreground-dim);
+}
+.avatar.is-offline {
+  opacity: 0.45;
+}
+.cast-actor-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--foreground);
+  overflow-wrap: anywhere;
 }
-.your-role-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(204, 164, 88, 0.12);
-  color: var(--accent-brass);
-  border: 1px solid rgba(204, 164, 88, 0.3);
-  border-radius: var(--radius-sm);
+.cast-actor-name.unassigned {
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+/* "I'll voice X" sits at the end of the cell; Give back right after "You". */
+.cast-claim {
+  margin-left: auto;
   white-space: nowrap;
 }
+.cast-give-back {
+  white-space: nowrap;
+}
+
 .char-line-count {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -2053,152 +2139,163 @@ body::after {
   color: var(--foreground-muted);
   white-space: nowrap;
 }
-.cast-assign-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-}
-.cast-actor-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-.cast-actor-name.unassigned {
-  font-weight: 500;
+
+.casting-note {
+  padding: var(--space-3) var(--space-4);
+  font-size: 12px;
   color: var(--foreground-muted);
 }
-.casting-table tr.assigned-to-me td {
-  background: rgba(204, 164, 88, 0.05);
-}
-
-/* Guests see who runs the room instead of its controls. */
-.lobby-action-group [hidden] {
+.casting-note[hidden] {
   display: none;
 }
-.lobby-waiting {
-  font-size: 13px;
-  color: var(--foreground-muted);
-  max-width: 280px;
-}
 
-.lobby-sidebar {
+/* The rail: the scene preview, then the mic card. */
+.lobby-rail {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-}
-
-.lobby-noise-box {
-  padding: 12px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  transition: border-color var(--duration-fast);
-}
-.lobby-noise-box:hover {
-  border-color: var(--border-wood);
-}
-.lobby-noise-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-.lobby-noise-title-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.lobby-noise-icon {
-  font-size: 14px;
-}
-.lobby-noise-title {
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--foreground);
-}
-.lobby-noise-desc {
-  font-size: 12px;
-  color: var(--foreground-muted);
-  line-height: 1.4;
-  margin: 0;
-}
-
-.lobby-cast-list {
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.lobby-user-item {
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 12px 5px 5px;
-}
-.lobby-user-who {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
-.lobby-user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.user-you-tag,
-.tag-host {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-wood);
-  background: var(--secondary);
-  color: var(--foreground-muted);
-}
-.tag-host {
-  border-color: rgba(217, 119, 6, 0.35);
-  background: rgba(217, 119, 6, 0.12);
-  color: var(--primary-hover);
-}
-.cast-status-pill {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-.cast-status-pill.online {
-  color: var(--foreground);
-}
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.dot-online {
-  background: var(--accent-green-bright);
-}
-.dot-offline {
-  box-shadow: inset 0 0 0 1px var(--foreground-dim);
-}
 
-.badge-online {
+.scene-preview-poster {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  /* Shorter on short windows, so the mic card under it stays in reach. */
+  max-height: 34vh;
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+}
+.scene-preview-poster video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.scene-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+.scene-preview-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--accent-teal);
-  border-radius: var(--radius-sm);
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent-brass);
 }
+.scene-preview-text {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--foreground);
+  overflow-wrap: break-word;
+}
+.scene-preview-text:empty {
+  display: none;
+}
+.scene-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.scene-preview-actions [hidden] {
+  display: none;
+}
+.scene-preview-time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground-muted);
+}
+.scene-preview-get {
+  margin-left: auto;
+}
+
+/* Check your mic: one step at a time, then one line. */
+.mic-card {
+  padding: var(--space-4);
+}
+.mic-card-steps,
+.mic-card-step,
+.mic-card-devices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.mic-card [hidden] {
+  display: none;
+}
+.mic-card-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.mic-card-lede {
+  margin-top: calc(-1 * var(--space-2));
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+.mic-card-devices .form-label {
+  margin-bottom: calc(-1 * var(--space-2));
+}
+.mic-card-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.mic-card-error {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--accent-red-soft);
+}
+.mic-card-hint,
+.mic-card-sync-copy {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+.mic-card-hint.is-error {
+  color: var(--accent-red-soft);
+}
+.mic-card-skip,
+.mic-card-done .btn-link-sm {
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.mic-card-done .btn-link-sm {
+  padding: 2px 4px;
+  margin-left: -4px;
+  color: var(--foreground);
+}
+.mic-card-done {
+  font-size: 13px;
+  color: var(--foreground-muted);
+}
+
+/* Below 1100px the rail goes under the casting card, the preview and the mic card side
+   by side, and the page scrolls instead of the card. */
+@media (max-width: 1099px) {
+  .lobby-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .panel-casting {
+    max-height: none;
+  }
+  .lobby-rail {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+  }
+}
+
 
 /* ------------------------------------------------------------- */
 /* 3. RECORDING BOOTH VIEW (IN-FRAME ZERO-SCROLL STUDIO DAW)     */
@@ -4260,8 +4357,7 @@ body.no-home-chrome .logo-with-dropdown {
 /* ------------------------------------------------------------- */
 
 @media (max-width: 900px) {
-  .landing-grid,
-  .lobby-layout {
+  .landing-grid {
     grid-template-columns: 1fr;
   }
 

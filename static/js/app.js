@@ -11,6 +11,7 @@ import { ScreeningMethods } from './studio/screening.js';
 import { BoothMethods } from './studio/booth.js';
 import { VoiceRackMethods } from './studio/voice_rack.js';
 import { MicSyncMethods } from './studio/mic_sync.js';
+import { MicCardMethods } from './studio/mic_card.js';
 import { RoomCheckMethods } from './studio/room_check.js';
 import { PackMethods } from './studio/packs.js';
 import { SessionMethods } from './studio/sessions.js';
@@ -277,10 +278,15 @@ class DubMateApp {
 
     // Lobby elements
     this.lobbyPackTitle = document.getElementById('lobby-pack-title');
-    this.lobbyLineCount = document.getElementById('lobby-line-count');
+    this.lobbyMeta = document.getElementById('lobby-meta');
+    this.lobbyPresence = document.getElementById('lobby-presence');
+    this.lobbyHereCount = document.getElementById('lobby-here-count');
     this.castingTbody = document.getElementById('casting-tbody');
-    this.lobbyCastList = document.getElementById('lobby-cast-list');
-    this.castOnlineCount = document.getElementById('cast-online-count');
+    this.castingTitle = document.getElementById('casting-title');
+    this.castingFreeNote = document.getElementById('casting-free-note');
+    this.btnCastEvenly = document.getElementById('btn-cast-evenly');
+    this.scenePreviewVideo = document.getElementById('scene-preview-video');
+    this.btnPlayLine = document.getElementById('btn-play-line');
     this.btnStartSession = document.getElementById('btn-start-session');
     this.btnBackToBooth = document.getElementById('btn-back-to-booth');
     this.btnBackToPremiere = document.getElementById('btn-back-to-premiere');
@@ -346,7 +352,6 @@ class DubMateApp {
     this.valGain = document.getElementById('val-gain');
 
     // Studio Noise Reduction Elements
-    this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
     this.checkNoiseReduction = document.getElementById('check-noise-reduction');
 
     // Audio Device Setup Panel Elements
@@ -704,7 +709,17 @@ class DubMateApp {
 
     this.btnCopyInvite.addEventListener('click', () => this.copyRoomLink());
     if (this.btnGetScene) this.btnGetScene.addEventListener('click', () => this.getThisScene());
-    this.headerRoomBadge.addEventListener('click', () => this.copyRoomLink());
+    // The room pill copies the invite on the room screens; in the lobby it only shows the code.
+    const copyFromBadge = () => {
+      if (!this.headerRoomBadge.classList.contains('is-code-only')) this.copyRoomLink();
+    };
+    this.headerRoomBadge.addEventListener('click', copyFromBadge);
+    this.headerRoomBadge.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      copyFromBadge();
+    });
+    this.initLobbyEvents();
 
     this.btnStartSession.addEventListener('click', () => {
       // Only the host sees Start (renderLobbyState) and moves everyone. The check stays
@@ -854,10 +869,6 @@ class DubMateApp {
       this.setNoiseReduction(e.target.checked);
     };
 
-    if (this.checkLobbyNoiseReduction) {
-      this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
-      this.checkLobbyNoiseReduction.addEventListener('change', onNoiseToggleChange);
-    }
     if (this.checkNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
       this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
@@ -865,6 +876,7 @@ class DubMateApp {
 
     this.initAudioSettingsEvents();
     this.initMicSyncEvents();
+    this.initMicCardEvents();
     this.initVoiceRackEvents();
     this.initTakesCardEvents();
     this.initRoomCheckEvents();
@@ -1073,6 +1085,10 @@ class DubMateApp {
         this.renderCastActivityHUD();
         this.updateScreeningControls();
       }
+    });
+
+    this.socket.on('cast_evenly', (data) => {
+      if (data?.payload?.triggered_by === this.user.id) this.showToast('Characters shared out evenly.');
     });
 
     this.socket.on('user_status_updated', (data) => {
@@ -1464,7 +1480,7 @@ class DubMateApp {
 
     // First-run audio setup / remembered device routing. Deliberately not
     // awaited so a slow permissions query cannot stall the router.
-    this.initAudioSetupOnBoot().catch((err) => {
+    this.initAudioSetupOnBoot().then(() => this.renderMicCard()).catch((err) => {
       console.warn('[DubMate] Audio setup bootstrap failed:', err);
     });
 
@@ -1503,13 +1519,14 @@ class DubMateApp {
     // own: Audio, ? and the logo menu would open the host's settings and home screen.
     const noHome = (viewName === 'join' || viewName === 'left') && !this.hasHomeEngine();
     document.body.classList.toggle('no-home-chrome', noHome);
-    document.getElementById('logo-dropdown-container')?.toggleAttribute('inert', noHome);
     // Who you are shows everywhere but the join card, where you are choosing it.
     if (this.headerUserPill) this.headerUserPill.style.display = viewName === 'join' ? 'none' : 'inline-flex';
     document.body.classList.remove('resizing');
     if (viewName !== 'booth') this.flushPendingDelete();
     this.currentView = viewName;
     this.cancelCurrentCountdown();
+    // After the count-in is cancelled: ending a take gives the logo menu back (booth.js).
+    document.getElementById('logo-dropdown-container')?.toggleAttribute('inert', noHome);
     this.stopScreeningSyncMonitor();
     Object.keys(this.views).forEach((k) => {
       this.views[k].classList.toggle('active', k === viewName);
@@ -1521,6 +1538,9 @@ class DubMateApp {
     if (this.screeningVideo) {
       this.screeningVideo.pause();
     }
+    if (viewName !== 'lobby') this.stopLinePreview();
+    // The room pill is the copy control everywhere but the lobby (its title row has one).
+    this.applyShareStatusToBadge();
 
     if (viewName === 'lobby') {
       this.renderLobbyState();
@@ -1533,9 +1553,9 @@ class DubMateApp {
     const inRoom = viewName !== 'landing' && !!this.roomState;
     document.querySelector('.app-header')?.classList.toggle('in-room', inRoom);
     if (this.castActivityBar) {
-      // The booth bar says who's here, so the booth has no cast strip.
-      this.castActivityBar.style.display = (viewName === 'landing' || viewName === 'booth' || !this.roomState) ? 'none' : 'flex';
-      // The strip shows progress and ready counts everywhere but the lobby.
+      // The booth bar and the lobby's title row say who's here, so they have no cast strip.
+      const strip = this.roomState && !['landing', 'booth', 'lobby'].includes(viewName);
+      this.castActivityBar.style.display = strip ? 'flex' : 'none';
       if (this.roomState) this.renderCastActivityHUD();
     }
     if (this.studioBreadcrumbs) {
@@ -1862,7 +1882,7 @@ class DubMateApp {
   }
 }
 
-mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
+mixin(DubMateApp, AudioSetupMethods, ExportMethods, ScreeningMethods, BoothMethods, TakesCardMethods, VoiceRackMethods, MicSyncMethods, MicCardMethods, RoomCheckMethods, PackMethods, LobbyMethods, SessionMethods);
 
 // Instantiate on DOM ready
 if (document.readyState === 'loading') {

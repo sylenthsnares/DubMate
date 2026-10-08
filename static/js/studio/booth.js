@@ -255,7 +255,6 @@ export class BoothMethods {
     this.setNudgeValue(take ? (take.offset_ms || 0) : 0, false);
     const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
     if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
-    if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
     const gainDb = take ? (parseFloat(take.gain_db) || 0) : 0;
     this.sliderGain.value = gainDb;
     this.valGain.textContent = this.gainText(gainDb);
@@ -923,9 +922,6 @@ export class BoothMethods {
     this.applyNoiseReduction = !!enabled;
     localStorage.setItem('dubmate_noise_reduction', this.applyNoiseReduction);
 
-    if (this.checkLobbyNoiseReduction && this.checkLobbyNoiseReduction.checked !== this.applyNoiseReduction) {
-      this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
-    }
     if (this.checkNoiseReduction && this.checkNoiseReduction.checked !== this.applyNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
     }

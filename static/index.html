@@ -455,33 +455,19 @@
 
     <!-- 2. ROOM CASTING LOBBY VIEW -->
     <section id="view-lobby" class="view-section" aria-label="Lobby">
-      <div class="lobby-header-card glass-card">
+      <!-- Title row (no card): the scene, who's here, the one invite control and the next step -->
+      <div class="lobby-title-row">
         <div class="lobby-title-group">
-          <div class="lobby-badge-row">
-            <span id="lobby-line-count" class="char-tag">0 lines</span>
-          </div>
-          <h2 id="lobby-pack-title" class="lobby-pack-title">Scene Title</h2>
-          <p class="lobby-desc">Give each character an actor. One actor can voice several characters.</p>
+          <h2 id="lobby-pack-title" class="lobby-pack-title">Scene</h2>
+          <p id="lobby-meta" class="lobby-meta"></p>
         </div>
         <div class="lobby-action-group">
-          <button id="btn-copy-invite" class="btn btn-secondary" data-tip="Copies the room code, or a direct link if the code isn't ready yet">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-            </svg>
-            <span>Copy invite</span>
-          </button>
-          <button id="btn-get-scene" class="btn btn-secondary" type="button" data-tip="Download this scene to add to your own DubMate" hidden>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" x2="12" y1="15" y2="3" />
-            </svg>
-            <span>Get this scene</span>
-          </button>
-          <button id="btn-start-session" class="btn btn-primary btn-lg">
+          <!-- Who's here: filled by the shared presence stack (presence.js), as in the booth -->
+          <div id="lobby-presence" class="lobby-presence"></div>
+          <span id="lobby-here-count" class="lobby-here-count"></span>
+          <button id="btn-copy-invite" class="btn btn-secondary" type="button"
+            data-tip="Friends open it in DubMate or in any browser">Copy invite link</button>
+          <button id="btn-start-session" class="btn btn-primary btn-lg" type="button">
             <span>Start recording ›</span>
           </button>
           <p id="lobby-waiting" class="lobby-waiting" role="status" hidden></p>
@@ -495,84 +481,111 @@
       </div>
 
       <div class="lobby-layout">
-        <!-- Character Casting Table -->
+        <!-- Who voices each character. The host casts with the selects; friends pick free ones. -->
         <div class="glass-card panel-casting">
-          <div class="panel-header">
-            <span class="panel-icon" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            </span>
-            <h3 class="panel-title">Casting</h3>
+          <div class="casting-head">
+            <h3 id="casting-title" class="casting-title">Who voices who</h3>
+            <button id="btn-cast-evenly" class="btn btn-secondary btn-sm" type="button" hidden
+              data-tip="Gives every character a voice, sharing the lines out between everyone here">Cast evenly</button>
           </div>
-          <table class="casting-table">
+          <table class="casting-table" aria-labelledby="casting-title">
             <thead>
               <tr>
                 <th scope="col">Character</th>
-                <th scope="col">Lines</th>
-                <th scope="col">Actor</th>
+                <th scope="col">Voiced by</th>
+                <th scope="col" class="casting-col-lines">Lines</th>
               </tr>
             </thead>
             <tbody id="casting-tbody">
               <!-- Cast rows populated dynamically -->
             </tbody>
           </table>
+          <p id="casting-free-note" class="casting-note" hidden></p>
         </div>
 
-        <!-- Right: Noise Reduction & Connected Cast -->
-        <div class="lobby-sidebar">
-          <div class="glass-card">
-            <div style="padding: 16px;">
-              <!-- Lobby Noise Reduction Switch -->
-              <div class="lobby-noise-box">
-                <div class="lobby-noise-header">
-                  <div class="lobby-noise-title-group">
-                    <span class="lobby-noise-icon" aria-hidden="true">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                        <line x1="12" x2="12" y1="19" y2="22" />
-                      </svg>
-                    </span>
-                    <span class="lobby-noise-title">Noise reduction</span>
-                  </div>
-                  <input type="checkbox" id="check-lobby-noise-reduction" checked class="switch-checkbox"
-                    aria-label="Noise reduction"
-                    data-tip="Removes hiss, fan hum and room noise from your takes. Your original recording is kept, so you can turn this off later.">
-                </div>
+        <!-- Right rail: who a character is (the hovered or chosen row), then the mic check -->
+        <div class="lobby-rail">
+          <div id="scene-preview" class="glass-card scene-preview" role="region" aria-label="Scene preview">
+            <div class="scene-preview-poster">
+              <video id="scene-preview-video" preload="metadata" muted playsinline></video>
+            </div>
+            <div class="scene-preview-body">
+              <p id="scene-preview-label" class="scene-preview-label"></p>
+              <p id="scene-preview-text" class="scene-preview-text"></p>
+              <div class="scene-preview-actions">
+                <button id="btn-play-line" class="btn btn-secondary btn-sm" type="button">▶ Play this line</button>
+                <span id="scene-preview-time" class="scene-preview-time"></span>
+                <button id="btn-get-scene" class="btn btn-ghost btn-sm scene-preview-get" type="button"
+                  data-tip="Download this scene to add to your own DubMate" hidden>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" x2="12" y1="15" y2="3" />
+                  </svg>
+                  <span>Get this scene</span>
+                </button>
               </div>
             </div>
           </div>
 
-          <div class="glass-card">
-            <div class="panel-header" style="justify-content: space-between;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="panel-icon" aria-hidden="true">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
-                </span>
-                <h3 class="panel-title">Cast</h3>
+          <!-- Check your mic: device, level and sync while friends join (studio/mic_card.js).
+               Collapses to one line once the mic is set. -->
+          <div id="mic-card" class="glass-card mic-card" role="region" aria-label="Your mic">
+            <div id="mic-card-steps" class="mic-card-steps">
+              <h3 class="mic-card-title">Check your mic</h3>
+              <p class="mic-card-lede">About a minute. Friends can't hear it.</p>
+
+              <div id="mic-card-step-mic" class="mic-card-step">
+                <p id="mic-card-error" class="mic-card-error" role="alert" hidden></p>
+                <div class="mic-card-row">
+                  <button id="btn-mic-card-allow" class="btn btn-secondary mic-card-action" type="button">Allow microphone</button>
+                  <button id="btn-mic-card-settings" class="btn btn-secondary" type="button" hidden>Open Audio settings</button>
+                </div>
+                <div id="mic-card-devices" class="mic-card-devices" hidden>
+                  <label class="form-label" for="mic-card-input">Microphone</label>
+                  <select id="mic-card-input" class="form-input device-select"></select>
+                  <div id="mic-card-output-row" class="mic-card-devices">
+                    <label class="form-label" for="mic-card-output">Headphones</label>
+                    <select id="mic-card-output" class="form-input device-select"></select>
+                  </div>
+                  <div class="mic-card-row">
+                    <button id="btn-mic-card-devices-next" class="btn btn-secondary mic-card-action" type="button">Next</button>
+                  </div>
+                </div>
               </div>
-              <span id="cast-online-count" class="badge-online">1 online</span>
+
+              <!-- The level, live while checking it and while syncing -->
+              <div id="mic-card-meter" class="level-meter-track mic-card-meter" role="meter" aria-label="Microphone level"
+                aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" hidden>
+                <div id="mic-card-meter-mask" class="level-meter-mask"></div>
+              </div>
+
+              <div id="mic-card-step-level" class="mic-card-step" hidden>
+                <p id="mic-card-level-hint" class="mic-card-hint">Say your loudest line. Aim for the amber zone.</p>
+                <div class="mic-card-row">
+                  <button id="btn-mic-card-level-next" class="btn btn-secondary mic-card-action" type="button">Next</button>
+                </div>
+              </div>
+
+              <div id="mic-card-step-sync" class="mic-card-step" hidden>
+                <p id="mic-card-sync-copy" class="mic-card-sync-copy" role="status" aria-live="polite"></p>
+                <div class="mic-card-row">
+                  <button id="btn-mic-card-clicks" class="btn btn-secondary mic-card-action" type="button"
+                    data-tip="Lines your takes up with the video on their own">Play clicks</button>
+                  <button id="btn-mic-card-clapping" class="btn btn-secondary mic-card-action" type="button" hidden>Start clapping</button>
+                  <button id="btn-mic-card-clap-instead" class="btn btn-secondary" type="button" hidden>Clap instead</button>
+                  <button id="btn-mic-card-skip" class="btn-link-sm mic-card-skip" type="button">Skip sync</button>
+                </div>
+              </div>
             </div>
-            <div id="lobby-cast-list" class="lobby-cast-list">
-              <!-- Cast pills rendered here -->
-            </div>
+
+            <p id="mic-card-done" class="mic-card-done" hidden><span id="mic-card-done-text"></span> · <button
+                id="btn-mic-card-change" class="btn-link-sm" type="button" data-tip="Opens Audio settings">Change</button></p>
           </div>
         </div>
       </div>
     </section>
-
 
     <!-- 3. RECORDING BOOTH & STUDIO VIEW -->
     <section id="view-booth" class="view-section" aria-label="Booth" style="position: relative;">

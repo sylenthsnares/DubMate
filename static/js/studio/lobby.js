@@ -1,10 +1,11 @@
-// studio/lobby.js - Rooms: invite/share status, creating and joining a room, casting,
-// the cast activity HUD and ready states. Also the member's home-origin helpers.
+// studio/lobby.js - Rooms: invite/share status, creating and joining a room, the lobby
+// (who's here, casting, the scene preview), the cast activity HUD and ready states. Also
+// the member's home-origin helpers.
 // These methods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { escapeHtml, plural, setFieldError } from '../ui_common.js';
 import { takeCount } from './takes.js';
 import { MIC_SYNC_KEY, deviceLabel, validEntry } from './mic_sync.js';
-import { avatarHtml } from './presence.js';
+import { avatarHtml, avatarEl, renderPresenceStack } from './presence.js';
 import { IDENTITY_COLORS, normalizeColor, cleanName, renderColorPicker } from '../identity.js';
 
 // Public room registry (Cloudflare worker) used to resolve rooms hosted elsewhere.
@@ -14,6 +15,26 @@ const REGISTRY_BASE = 'https://dubmate.bkaproductions.com';
 export const FIRST_ROOM_KEY = 'dubmate_first_room_done';
 
 const ROOM_CODE_RE = /^[A-Za-z0-9-]{3,16}$/;
+
+// sessionStorage prefix: "Tani's room gave you Old Man" was shown for this room in this tab.
+const CAST_NOTICE_KEY = 'dubmate_cast_notice_';
+
+/** "0:08" for a time in seconds. */
+function clockTime(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** A character's lines, in scene order. */
+function linesOf(pack, character) {
+  return (pack?.lines || []).filter((l) => l.character === character);
+}
+
+/** The casting table's order: natural, ignoring case ("Guy 2" before "Guy 10"). */
+function castingOrder(pack) {
+  return [...(pack?.characters || [])]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
 
 /**
  * What a "Room code or invite link" field holds: { code } for a code, a registry
@@ -263,12 +284,27 @@ export class LobbyMethods {
     }
   }
 
+  /**
+   * The header's room pill. In the lobby it only shows the code (the title row's Copy
+   * invite link copies, one control per view); on the other room screens it is the copy
+   * control, saying why when the code doesn't work yet.
+   */
   applyShareStatusToBadge() {
+    const badge = this.headerRoomBadge;
+    if (!badge) return;
     const share = this.roomShare;
-    if (!this.headerRoomBadge || !share) return;
-    this.headerRoomBadge.classList.toggle('room-badge-unpublished', !share.code_is_live);
-    this.headerRoomBadge.dataset.tip = share.code_is_live
-      ? 'Click to copy the room code'
+    badge.classList.toggle('room-badge-unpublished', !!share && !share.code_is_live);
+    const codeOnly = this.currentView === 'lobby';
+    badge.classList.toggle('is-code-only', codeOnly);
+    if (codeOnly) {
+      for (const attr of ['role', 'tabindex', 'aria-label', 'data-tip']) badge.removeAttribute(attr);
+      return;
+    }
+    badge.setAttribute('role', 'button');
+    badge.setAttribute('tabindex', '0');
+    badge.setAttribute('aria-label', 'Copy invite link');
+    badge.dataset.tip = !share || share.code_is_live
+      ? 'Copy invite link'
       : `${share.message || "Your room code isn't ready yet."} Click to copy an invite link.`;
   }
 
@@ -302,8 +338,8 @@ export class LobbyMethods {
             this.showToast(share.message);
           } else {
             this.showToast(share.direct_url
-              ? "Your room code isn't ready yet. Use Copy invite to share a direct link."
-              : 'Your room code only works on your network for now.');
+              ? "Your room code isn't ready yet. Copy invite link gives a link that works now."
+              : 'Your room only works on your network for now.');
           }
         }
       }
@@ -319,26 +355,24 @@ export class LobbyMethods {
     }
   }
 
+  /**
+   * Copy invite link: always a link a friend can open. The public /join/CODE link once the
+   * code works, else the direct tunnel link, else this page's ?room= link, which only
+   * works on this network.
+   */
   async copyRoomLink() {
     const code = this.roomState?.room_id || '';
     if (!code) return;
 
     const share = (await this.refreshRoomShare()) || this.roomShare;
-
-    // Prefer the short code once it actually resolves. When it does not, fall back
-    // to the direct tunnel link so the session is still shareable rather than the
-    // host copying a code that nobody can redeem.
-    let text = code;
-    let message = `Room code ${code} copied`;
-    if (share && !share.code_is_live) {
-      if (share.direct_url) {
-        text = share.direct_url;
-        message = share.state === 'not_published'
-          ? 'Invite link copied.'
-          : "Room code isn't ready yet, so the invite link was copied instead.";
-      } else {
-        message = `Room code ${code} copied. It only works on your network for now.`;
-      }
+    let text = `${window.location.origin}/?room=${encodeURIComponent(code)}`;
+    let message = 'Invite link copied. It works on your network only for now.';
+    if (share?.code_is_live && share.join_url) {
+      text = share.join_url;
+      message = 'Invite link copied.';
+    } else if (share?.direct_url) {
+      text = share.direct_url;
+      message = 'Invite link copied.';
     }
 
     try {
@@ -849,10 +883,10 @@ export class LobbyMethods {
   renderCastActivityHUD() {
     if (!this.roomState) return;
     this.renderBoothToolbar();
+    // The lobby has no strip: its title row holds the who's-here stack, as the booth bar does.
+    if (this.currentView === 'lobby') this.renderLobbyTitleRow();
     if (!this.castActivityList) return;
     const users = Object.values(this.roomState.users || {}).filter(u => u.is_online);
-    // The lobby is for casting: who is here and their roles, without progress or ready counts.
-    const inLobby = this.currentView === 'lobby';
 
     let readyCount = 0;
     const chips = users.map((u) => {
@@ -883,7 +917,7 @@ export class LobbyMethods {
         <div class="actor-hud-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
         <span class="actor-hud-name" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}${u.id === this.user.id ? ' (You)' : ''}</span>
         <span class="actor-hud-char" ${charTip}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 3px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(charText)}</span>
-        ${inLobby ? '' : `<span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>`}
+        <span class="actor-hud-progress">${completedTakes}/${totalAssigned} (${pct}%)</span>
         <span class="actor-hud-status-badge ${u.is_ready ? 'badge-ready' : (u.location === 'screening' ? 'badge-screening' : 'badge-recording')}">
           ${u.is_ready ? '✓ Ready' : loc}
         </span>
@@ -897,25 +931,83 @@ export class LobbyMethods {
 
     if (this.premiereStatusSummary) {
       this.premiereStatusSummary.textContent = `${readyCount}/${users.length} ready`;
-      this.premiereStatusSummary.hidden = inLobby;
     }
   }
 
-  // --- Room & Lobby Logic ---
+  // --- The lobby ---
+
+  /** Hover, focus and clicks in the casting table, the preview's Play, and Cast evenly. */
+  initLobbyEvents() {
+    const tbody = this.castingTbody;
+    if (tbody) {
+      const rowOf = (el) => el?.closest?.('tr[data-character]');
+      tbody.addEventListener('mouseover', (e) => {
+        const char = rowOf(e.target)?.dataset.character || null;
+        if (char && char !== this.lobbyHoverChar) {
+          this.lobbyHoverChar = char;
+          this.renderScenePreview();
+        }
+      });
+      tbody.addEventListener('mouseleave', () => {
+        this.lobbyHoverChar = null;
+        this.renderScenePreview();
+      });
+      tbody.addEventListener('focusin', (e) => {
+        this.lobbyFocusChar = rowOf(e.target)?.dataset.character || null;
+        this.renderScenePreview();
+      });
+      tbody.addEventListener('focusout', (e) => {
+        if (tbody.contains(e.relatedTarget)) return;
+        this.lobbyFocusChar = null;
+        this.renderScenePreview();
+      });
+      tbody.addEventListener('click', (e) => {
+        const char = rowOf(e.target)?.dataset.character;
+        if (!char) return;
+        // A friend's pick is only sent: the room answers with its state, or a refusal
+        // (an error toast) when someone was quicker.
+        if (e.target.closest('.cast-claim')) this.socket.assignRole(char, [this.user.id]);
+        else if (e.target.closest('.cast-give-back')) this.socket.assignRole(char, []);
+        this.lobbyPinnedChar = char;
+        this.renderScenePreview();
+      });
+    }
+    this.btnCastEvenly?.addEventListener('click', () => this.socket.castEvenly());
+    this.btnPlayLine?.addEventListener('click', () => this.toggleLinePreview());
+    const video = this.scenePreviewVideo;
+    if (video) {
+      video.addEventListener('timeupdate', () => this.checkLinePreviewEnd());
+      video.addEventListener('ended', () => this.stopLinePreview());
+    }
+  }
+
+  /** The title row: the scene, one meta line, who's here. */
+  renderLobbyTitleRow() {
+    const room = this.roomState;
+    if (!room) return;
+    const pack = room.pack || {};
+    const lines = pack.lines || [];
+    if (this.lobbyPackTitle) this.lobbyPackTitle.textContent = pack.name || pack.id || 'Scene';
+    const seconds = Math.round(pack.duration || (lines.length ? lines[lines.length - 1].end : 0));
+    if (this.lobbyMeta) {
+      this.lobbyMeta.textContent = `${plural(pack.line_count ?? lines.length, 'line')} · ${plural((pack.characters || []).length, 'character')} · ${seconds} s`;
+    }
+    renderPresenceStack(this.lobbyPresence, { users: room.users, roomState: room, selfId: this.user.id });
+    const here = Object.values(room.users || {}).filter((u) => u && u.is_online).length;
+    if (this.lobbyHereCount) this.lobbyHereCount.textContent = here ? `${here} here` : '';
+  }
 
   renderLobbyState() {
     if (!this.roomState) return;
-
-    if (this.lobbyPackTitle) this.lobbyPackTitle.innerText = this.roomState.pack.name;
-    if (this.lobbyLineCount) this.lobbyLineCount.textContent = plural(this.roomState.pack.line_count, 'line');
+    this.renderLobbyTitleRow();
     if (this.btnGetScene) {
       // Members who came from their own DubMate can take the scene home with them.
       const home = getHomeOrigin();
       this.btnGetScene.hidden = !(home && home !== window.location.origin && !this.isHost());
     }
 
-    // Only the host starts recording and casts. Guests wait for the host, or go back
-    // to the booth if recording has already started, or to the premiere once it's on.
+    // Only the host starts recording and casts by hand. Friends wait for the host, or go
+    // back to the booth if recording has already started, or to the premiere once it's on.
     const runsRoom = this.isHost({ allowDummy: true });
     const recording = this.roomState.status === 'recording';
     const screening = this.roomState.status === 'screening';
@@ -925,161 +1017,250 @@ export class LobbyMethods {
     if (this.lobbyWaiting) {
       const waiting = !runsRoom && this.roomState.status === 'lobby';
       this.lobbyWaiting.hidden = !waiting;
-      const hostName = this.roomState.users?.[this.roomState.host_id]?.name || 'the host';
-      this.lobbyWaiting.textContent = waiting ? `Waiting for ${hostName} to start recording` : '';
+      const hostName = this.roomState.users?.[this.roomState.host_id]?.name || 'The host';
+      this.lobbyWaiting.textContent = waiting ? `${hostName} starts the recording` : '';
     }
+    if (this.btnCastEvenly) this.btnCastEvenly.hidden = !runsRoom;
+    if (this.castingTitle) this.castingTitle.textContent = runsRoom ? 'Who voices who' : "Pick who you'll voice";
 
-    const users = Object.values(this.roomState.users || {});
-    if (this.castOnlineCount) this.castOnlineCount.innerText = `${users.filter(u => u.is_online).length} online`;
+    this.renderCastingRows(runsRoom);
+    this.renderScenePreview();
+    this.showAutoCastNotice(runsRoom);
+    this.renderMicCard();
+  }
 
-    // Only update lobby cast list if user list changed
-    const userSummary = users.map(u => `${u.id}:${u.name}:${u.is_online}:${u.color}`).join('|');
-    if (this._lastUserSummary !== userSummary) {
-      this._lastUserSummary = userSummary;
-      if (this.lobbyCastList) {
-        this.lobbyCastList.innerHTML = users.map(u => `
-          <div class="user-pill lobby-user-item">
-            <div class="lobby-user-who">
-              <div class="user-avatar" style="background: ${escapeHtml(u.color)};">${escapeHtml(u.name.charAt(0).toUpperCase())}</div>
-              <span class="lobby-user-name">${escapeHtml(u.name)}</span>
-              ${u.id === this.user.id ? '<span class="user-you-tag">You</span>' : ''}
-              ${u.id === this.roomState.host_id ? '<span class="tag-host">Host</span>' : ''}
-            </div>
-            <span class="cast-status-pill ${u.is_online ? 'online' : 'offline'}">
-              <span class="status-dot ${u.is_online ? 'dot-online' : 'dot-offline'}" aria-hidden="true"></span>
-              <span>${u.is_online ? 'Online' : 'Offline'}</span>
-            </span>
-          </div>
-        `).join('');
-      }
-    }
-
+  /**
+   * The casting table. Rows are rebuilt only when the people or who may cast change;
+   * otherwise each row is updated in place, so an open select survives room updates.
+   */
+  renderCastingRows(runsRoom) {
     if (!this.castingTbody) return;
+    const room = this.roomState;
+    const me = this.user.id;
+    const users = Object.values(room.users || {});
+    const characters = castingOrder(room.pack);
+    const nameOf = (u) => `${u.name}${u.is_online ? '' : ' (offline)'}`;
 
-    const charCounts = {};
-    this.roomState.pack.lines.forEach(l => {
-      charCounts[l.character] = (charCounts[l.character] || 0) + 1;
-    });
-    const characters = [...this.roomState.pack.characters]
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-    const actorName = (u) => (u ? `${u.name}${u.id === this.user.id ? ' (You)' : ''}` : 'Original voice');
+    const shape = `${runsRoom}|${users.map((u) => `${u.id}:${u.name}:${u.is_online}:${u.color}`).join('|')}|${characters.join('\u0001')}`;
+    if (shape !== this._lastCastingShape || this.castingTbody.rows.length !== characters.length) {
+      this._lastCastingShape = shape;
+      this.castingTbody.replaceChildren(...characters.map((char) => this.buildCastingRow(char, runsRoom, users)));
+    }
 
-    // Rebuild when the users change, or when this person gains or loses the selects.
-    const optionsSummary = `${runsRoom}|${userSummary}`;
-    const usersChanged = (this._lastUserOptionsSummary !== optionsSummary);
-    this._lastUserOptionsSummary = optionsSummary;
+    const focusRow = document.activeElement?.closest?.('#casting-tbody tr');
+    let free = 0;
+    for (const tr of this.castingTbody.rows) {
+      const char = tr.dataset.character;
+      const ids = room.role_assignments?.[char] || [];
+      const voices = ids.map((id) => room.users?.[id]).filter(Boolean);
+      if (!ids.length) free += 1;
+      tr.classList.toggle('assigned-to-me', ids.includes(me));
 
-    // Check if table rows already exist for all characters
-    const existingRows = Array.from(this.castingTbody.querySelectorAll('tr[data-character]'));
-    if (existingRows.length === characters.length && !usersChanged) {
-      // IN-PLACE UPDATE: Do not recreate DOM elements to avoid closing active <select> dropdowns
-      characters.forEach((char) => {
-        const tr = existingRows.find(row => row.dataset.character === char);
-        if (!tr) return;
-
-        const assignedIds = this.roomState.role_assignments[char] || [];
-        const assignedUser = users.find(u => assignedIds.includes(u.id));
-        const isAssignedToMe = assignedIds.includes(this.user.id);
-        const targetVal = assignedUser ? assignedUser.id : '';
-
-        tr.classList.toggle('assigned-to-me', isAssignedToMe);
-        const roleBadge = tr.querySelector('.your-role-badge');
-        if (isAssignedToMe && !roleBadge) {
-          const badgeCell = tr.querySelector('.char-badge-cell');
-          if (badgeCell) {
-            const span = document.createElement('span');
-            span.className = 'your-role-badge';
-            span.textContent = 'Your role';
-            badgeCell.appendChild(span);
+      // The voice's avatar: an empty ring for the original voice, dimmed when they left.
+      const voice = voices[0] || null;
+      const slot = tr.querySelector('.cast-avatar-slot');
+      const avatarKey = voice ? `${voice.id}:${voice.name}:${voice.color}:${voice.is_online}` : '';
+      if (slot.dataset.key !== avatarKey) {
+        slot.dataset.key = avatarKey;
+        let avatar;
+        if (!voice) {
+          avatar = document.createElement('span');
+          avatar.className = 'avatar avatar-empty';
+          avatar.setAttribute('aria-hidden', 'true');
+        } else {
+          avatar = avatarEl(voice, 28);
+          if (!voice.is_online) {
+            avatar.classList.add('is-offline');
+            avatar.removeAttribute('aria-hidden');
+            avatar.setAttribute('role', 'img');
+            avatar.setAttribute('aria-label', nameOf(voice));
+            avatar.dataset.tip = nameOf(voice);
           }
-        } else if (!isAssignedToMe && roleBadge) {
-          roleBadge.remove();
         }
+        slot.replaceChildren(avatar);
+      }
 
-        const dot = tr.querySelector('.actor-color-dot');
-        if (dot) {
-          dot.className = `actor-color-dot ${assignedUser ? 'active' : 'unassigned'}`;
-          dot.style.backgroundColor = assignedUser ? assignedUser.color : 'transparent';
-          dot.title = actorName(assignedUser);
+      const body = tr.querySelector('.cast-voice-body');
+      const select = body.querySelector('.cast-select');
+      if (select) {
+        const value = voice ? voice.id : '';
+        if (select.value !== value && document.activeElement !== select) select.value = value;
+      } else {
+        // A friend: who voices it, "You" with Give back, or a free character to pick.
+        const key = `${ids.join(',')}|${avatarKey}`;
+        if (body.dataset.key !== key) {
+          body.dataset.key = key;
+          const safeChar = escapeHtml(char);
+          if (!ids.length) {
+            body.innerHTML = `<span class="cast-actor-name unassigned">Original voice</span>
+              <button type="button" class="btn btn-secondary btn-sm cast-claim">I'll voice ${safeChar}</button>`;
+          } else if (ids.length === 1 && ids[0] === me) {
+            body.innerHTML = `<span class="cast-actor-name">You</span>
+              <button type="button" class="btn btn-ghost btn-sm cast-give-back" aria-label="Give back ${safeChar}"
+                data-tip="Back to the original voice, so someone else can take it">Give back</button>`;
+          } else {
+            const names = voices.map((u) => (u.id === me ? 'You' : nameOf(u)));
+            body.innerHTML = `<span class="cast-actor-name">${escapeHtml(names.join(', ') || 'Someone who left')}</span>`;
+          }
         }
+      }
 
-        const name = tr.querySelector('.cast-actor-name');
-        if (name) {
-          name.textContent = actorName(assignedUser);
-          name.classList.toggle('unassigned', !assignedUser);
-        }
+      // Lines, then progress once anyone has recorded one of them.
+      const lines = linesOf(room.pack, char);
+      const recorded = lines.filter((l) => takeCount(room.takes, l) > 0).length;
+      tr.querySelector('.char-line-count').textContent = recorded
+        ? `${recorded} of ${lines.length} recorded`
+        : plural(lines.length, 'line');
+    }
 
-        const select = tr.querySelector('.cast-select');
-        if (select && select.value !== targetVal && document.activeElement !== select) {
-          select.value = targetVal;
-        }
-      });
+    // A pick or Give back that was focused was redrawn: keep focus in its row.
+    if (focusRow?.isConnected && !focusRow.contains(document.activeElement)) {
+      (focusRow.querySelector('.cast-give-back') || focusRow.querySelector('.cast-claim') || focusRow.querySelector('.cast-char'))?.focus();
+    }
+
+    if (this.castingFreeNote) {
+      this.castingFreeNote.hidden = free === 0;
+      this.castingFreeNote.textContent = free === 1
+        ? '1 character keeps the original voice.'
+        : `${free} characters keep the original voice.`;
+    }
+  }
+
+  /** One casting row: the character (a button that pins the preview), the voice, the lines. */
+  buildCastingRow(char, runsRoom, users) {
+    const me = this.user.id;
+    const tr = document.createElement('tr');
+    tr.dataset.character = char;
+    const select = runsRoom
+      ? `<select class="cast-select" aria-label="Who voices ${escapeHtml(char)}">
+          <option value="">Original voice</option>
+          ${users.map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(`${u.name}${u.id === me ? ' (you)' : ''}${u.is_online ? '' : ' (offline)'}`)}</option>`).join('')}
+        </select>`
+      : '';
+    tr.innerHTML = `
+      <td><button type="button" class="cast-char" aria-pressed="false">${escapeHtml(char)}</button></td>
+      <td>
+        <div class="cast-assign-cell">
+          <span class="cast-avatar-slot"></span>
+          <span class="cast-voice-body">${select}</span>
+        </div>
+      </td>
+      <td class="casting-col-lines"><span class="char-line-count"></span></td>
+    `;
+    // Only the host casts by hand, and only the host draws the change before the room
+    // answers. A refusal comes back as an error and the room's real state is reloaded.
+    tr.querySelector('.cast-select')?.addEventListener('change', (e) => {
+      const newIds = e.target.value ? [e.target.value] : [];
+      if (this.roomState?.role_assignments) {
+        this.roomState.role_assignments[char] = newIds;
+        this.renderLobbyState();
+        this.renderCastActivityHUD();
+      }
+      this.socket.assignRole(char, newIds);
+    });
+    return tr;
+  }
+
+  /** "Tani's room gave you Old Man": once per room, for a friend the room cast on joining. */
+  showAutoCastNotice(runsRoom) {
+    const cast = this.autoCastNotice;
+    if (!cast) return;
+    this.autoCastNotice = null;
+    const room = this.roomState;
+    if (runsRoom || !(room.role_assignments?.[cast] || []).includes(this.user.id)) return;
+    const key = CAST_NOTICE_KEY + room.room_id;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch (e) { }
+    const host = room.users?.[room.host_id]?.name;
+    this.showToast(`${host ? `${host}'s room` : 'The room'} gave you ${cast}. Pick another in the list if you like.`);
+  }
+
+  // --- Scene preview (the lobby's rail) ---
+
+  /** The row the preview shows: hovered, else focused, else clicked, else your first character. */
+  lobbyPreviewChar() {
+    const room = this.roomState;
+    const characters = castingOrder(room?.pack);
+    for (const char of [this.lobbyHoverChar, this.lobbyFocusChar, this.lobbyPinnedChar]) {
+      if (char && characters.includes(char)) return char;
+    }
+    const mine = characters.find((c) => (room.role_assignments?.[c] || []).includes(this.user.id));
+    return mine || characters[0] || null;
+  }
+
+  /** The video at the character's first line, the line itself, and Play this line. */
+  renderScenePreview() {
+    const room = this.roomState;
+    const video = this.scenePreviewVideo;
+    if (!room || !video) return;
+    const char = this.lobbyPreviewChar();
+    for (const tr of this.castingTbody?.rows || []) {
+      tr.classList.toggle('is-selected', tr.dataset.character === char);
+      tr.querySelector('.cast-char')?.setAttribute('aria-pressed', String(tr.dataset.character === this.lobbyPinnedChar));
+    }
+
+    const src = room.pack?.video_url || '';
+    const newVideo = (video.getAttribute('src') || '') !== src;
+    if (newVideo) {
+      this.stopLinePreview();
+      if (src) video.setAttribute('src', src);
+      else video.removeAttribute('src');
+    }
+    const lines = linesOf(room.pack, char);
+    const line = lines[0];
+    const caption = (line?.caption || line?.text || '').trim();
+    document.getElementById('scene-preview-label').textContent = char ? `${char} · ${plural(lines.length, 'line')}` : '';
+    document.getElementById('scene-preview-text').textContent = caption ? `“${caption}”` : '';
+    document.getElementById('scene-preview-time').textContent = line ? clockTime(line.start) : '';
+    if (this.btnPlayLine) this.btnPlayLine.hidden = !line || !src;
+
+    if (newVideo || char !== this.previewShownChar) {
+      this.previewShownChar = char;
+      this.stopLinePreview();
+      if (line && src) video.currentTime = Number(line.start) || 0;
+    }
+  }
+
+  /** Play this line: the scene's video from the line's start to its end, with its sound. */
+  toggleLinePreview() {
+    if (this.linePreview) {
+      this.stopLinePreview();
       return;
     }
+    const video = this.scenePreviewVideo;
+    const line = linesOf(this.roomState?.pack, this.lobbyPreviewChar())[0];
+    if (!video || !line) return;
+    this.linePreview = { start: Number(line.start) || 0, end: Number(line.end) || 0 };
+    video.currentTime = this.linePreview.start;
+    video.muted = false;
+    if (this.btnPlayLine) this.btnPlayLine.textContent = '■ Stop';
+    Promise.resolve(video.play()).catch(() => this.stopLinePreview());
+    // timeupdate fires about 4 times a second; a frame loop stops it on the line's end.
+    const watch = () => {
+      if (!this.linePreview) return;
+      this.checkLinePreviewEnd();
+      if (this.linePreview && typeof requestAnimationFrame === 'function') requestAnimationFrame(watch);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(watch);
+  }
 
-    // FULL REBUILD (Initial render or when user list changes)
-    this.castingTbody.innerHTML = '';
-    characters.forEach((char) => {
-      const assignedIds = this.roomState.role_assignments[char] || [];
-      const assignedUser = users.find(u => assignedIds.includes(u.id));
-      const isAssignedToMe = assignedIds.includes(this.user.id);
-      const safeCharId = char.replace(/\s+/g, '-').toLowerCase();
+  checkLinePreviewEnd() {
+    if (this.linePreview && this.scenePreviewVideo.currentTime >= this.linePreview.end) this.stopLinePreview();
+  }
 
-      const tr = document.createElement('tr');
-      tr.setAttribute('data-character', char);
-      if (isAssignedToMe) {
-        tr.classList.add('assigned-to-me');
-      }
-
-      const actor = runsRoom
-        ? `<select class="cast-select"
-                    id="cast-select-${escapeHtml(safeCharId)}"
-                    data-char="${escapeHtml(char)}"
-                    aria-label="Assign actor for ${escapeHtml(char)}">
-              <option value="">Original voice</option>
-              ${users.map(u => `
-                <option value="${escapeHtml(u.id)}" ${assignedIds.includes(u.id) ? 'selected' : ''}>
-                  ${escapeHtml(actorName(u))}
-                </option>
-              `).join('')}
-            </select>`
-        : `<span class="cast-actor-name${assignedUser ? '' : ' unassigned'}">${escapeHtml(actorName(assignedUser))}</span>`;
-
-      tr.innerHTML = `
-        <td>
-          <div class="char-badge-cell">
-            <span class="char-badge">${escapeHtml(char)}</span>
-            ${isAssignedToMe ? '<span class="your-role-badge">Your role</span>' : ''}
-          </div>
-        </td>
-        <td><span class="char-line-count">${plural(charCounts[char] || 0, 'line')}</span></td>
-        <td>
-          <div class="cast-assign-cell">
-            <span class="actor-color-dot ${assignedUser ? 'active' : 'unassigned'}"
-                  style="background-color: ${assignedUser ? escapeHtml(assignedUser.color) : 'transparent'};"
-                  title="${escapeHtml(actorName(assignedUser))}"
-                  aria-hidden="true"></span>
-            ${actor}
-          </div>
-        </td>
-      `;
-
-      // Only the host casts, and only the host draws the change before the room answers.
-      // A refusal comes back as an error and the room's real state is reloaded.
-      const select = tr.querySelector('.cast-select');
-      if (select) {
-        select.addEventListener('change', (e) => {
-          const val = e.target.value;
-          const newIds = val ? [val] : [];
-          if (this.roomState && this.roomState.role_assignments) {
-            this.roomState.role_assignments[char] = newIds;
-            this.renderCastActivityHUD();
-          }
-          this.socket.assignRole(char, newIds);
-        });
-      }
-
-      this.castingTbody.appendChild(tr);
-    });
+  /** Stops Play this line, back at the line's start and muted. */
+  stopLinePreview() {
+    const playing = this.linePreview;
+    this.linePreview = null;
+    const video = this.scenePreviewVideo;
+    if (!video) return;
+    if (playing) {
+      video.pause();
+      video.currentTime = playing.start;
+    }
+    video.muted = true;
+    if (this.btnPlayLine) this.btnPlayLine.textContent = '▶ Play this line';
   }
 }

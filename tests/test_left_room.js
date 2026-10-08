@@ -233,11 +233,40 @@ async function leave(w, app) {
 
     share = { ...share, state: "waiting", message: "Getting your room code ready." };
     await app.copyRoomLink();
-    if (toasts[toasts.length - 1] !== "Room code isn't ready yet, so the invite link was copied instead.") {
-      fail(`waiting toast changed: ${toasts[toasts.length - 1]}`);
+    if (copied !== direct || toasts[toasts.length - 1] !== "Invite link copied.") {
+      fail(`waiting: copied ${copied}, toast ${toasts[toasts.length - 1]}`);
     }
+
+    // Copy invite link is always a link: the public one once the code works...
+    share = { ...share, code_is_live: true, state: "registered", join_url: "https://dubmate.bkaproductions.com/join/DUB-AB12" };
+    await app.copyRoomLink();
+    if (copied !== share.join_url || toasts[toasts.length - 1] !== "Invite link copied.") fail(`live code copied ${copied}`);
+    if (app.headerRoomBadge.dataset.tip !== "Copy invite link") fail(`live badge tooltip: ${app.headerRoomBadge.dataset.tip}`);
+    // ...and this page's link, for this network only, when there is no other.
+    share = { ...share, code_is_live: false, join_url: "", direct_url: "", state: "tunnel_unavailable" };
+    await app.copyRoomLink();
+    if (copied !== "http://127.0.0.1:8123/?room=DUB-AB12") fail(`no tunnel copied ${copied}`);
+    if (toasts[toasts.length - 1] !== "Invite link copied. It works on your network only for now.") fail(`no tunnel toast: ${toasts[toasts.length - 1]}`);
+
+    // In the lobby the pill only shows the code (the title row copies); elsewhere it copies.
+    const badge = app.headerRoomBadge;
+    app.showView("lobby");
+    if (!badge.classList.contains("is-code-only") || badge.hasAttribute("role") || badge.hasAttribute("tabindex") || badge.dataset.tip) {
+      fail("the lobby's room pill is still a control");
+    }
+    copied = null;
+    badge.click();
+    await tick(10);
+    if (copied !== null) fail("the lobby's room pill copied");
+    app.showView("booth");
+    if (badge.classList.contains("is-code-only") || badge.getAttribute("role") !== "button" || badge.getAttribute("aria-label") !== "Copy invite link") {
+      fail("the booth's room pill is not the copy control");
+    }
+    badge.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick(10);
+    if (copied !== "http://127.0.0.1:8123/?room=DUB-AB12") fail(`Enter on the pill copied ${copied}`);
   }
-  console.log("PASS: Copy invite in a continued session copies the direct link");
+  console.log("PASS: Copy invite link always copies a link; the lobby's room pill only shows the code");
 
   console.log("ALL P22 LEFT ROOM TESTS PASSED");
   process.exit(0);
