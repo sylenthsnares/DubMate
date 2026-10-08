@@ -277,7 +277,7 @@ export function initAllKnobs() {
   const dials = [];
   
   const dialConfigs = [
-    { id: 'slider-gain', size: 40, ticks: 11 },
+    { id: 'slider-gain', size: 36, ticks: 11 },
   ];
   const inputs = dialConfigs.map((cfg) => [document.getElementById(cfg.id), cfg]);
   // The Voice rack's dials say their size in data-knob-size.

@@ -3007,10 +3007,8 @@ body.resizing .resize-grip-pill {
   padding: 0;
   overflow: hidden;
   flex: 0 0 auto;
-  min-height: 148px;
   display: flex;
   flex-direction: column;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Universal VOX Amplifier Faceplate Header */
@@ -3038,25 +3036,7 @@ body.resizing .resize-grip-pill {
   stroke: var(--accent-brass) !important;
   opacity: 0.9 !important;
 }
-.amp-advanced-btn {
-  color: var(--accent-brass) !important;
-  opacity: 0.9;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 2px 6px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(204, 164, 88, 0.3);
-  border-radius: var(--radius-sm);
-  transition: all var(--duration-fast);
-}
-.amp-advanced-btn:hover {
-  background: rgba(204, 164, 88, 0.25) !important;
-  color: var(--white) !important;
-}
-
-/* Voice panel: preset chips, then Level and the output meter */
+/* Voice card: preset chips, then For and Level */
 .voice-main {
   padding: 10px 12px 12px;
   display: flex;
@@ -3075,20 +3055,17 @@ body.resizing .resize-grip-pill {
 }
 
 .dsp-channel-title {
-  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 800;
-  color: var(--foreground-ivory); /* VOX vintage ivory screen-print */
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  font-weight: 600;
+  color: var(--foreground-ivory);
+  white-space: nowrap;
 }
 
 .dsp-channel-readout {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 800;
-  color: var(--accent-brass); /* VOX vintage gold */
+  color: var(--foreground-ivory);
   background: #0f0c09;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
@@ -3240,29 +3217,6 @@ svg {
   background: var(--foreground);
   border-radius: 1px;
   box-shadow: 0 0 3px rgba(255, 255, 255, 0.8);
-}
-
-/* All effects: opens in the Voice card; the column's middle scrolls, not the rack */
-.advanced-rack-box {
-  display: none;
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--border-wood);
-}
-.advanced-rack-box.open {
-  display: block;
-}
-
-.advanced-rack-inner {
-  padding: 10px 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.advanced-rack-box .form-label {
-  color: #e5ded4;
-  font-size: 11.5px;
-  font-weight: 600;
 }
 
 .switch-checkbox {
@@ -5118,58 +5072,215 @@ span.voice-chip {
   cursor: default;
 }
 
-.voice-level-row {
+/* Header: "VOICE" and "All effects › · 4 on"; with the rack open, "‹ Back · VOICE · Custom · 4 on" */
+.voice-card-title {
   display: flex;
   align-items: center;
-  gap: 12px;
-  position: relative;
-  z-index: 3;
+  gap: 8px;
 }
-.voice-level-row .dsp-dial-channel {
-  flex: 0 0 auto;
-  min-width: 96px;
+.voice-all-effects,
+.voice-back {
+  min-height: 28px;
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+  text-shadow: none;
 }
-
-.voice-meter {
-  flex: 1 1 auto;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: #0f0c09;
-  border: 1px solid var(--border-panel);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
+.voice-on-count {
+  color: var(--foreground-muted);
+  font-weight: 500;
 }
-.voice-meter-fill {
-  width: 0;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent-brass) 0%, var(--primary) 85%, #dc2626 100%);
+.voice-page-summary {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--primary);
 }
 
+/* "For" and "Level": a label column, then the control */
+.voice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+.voice-row-label {
+  flex: 0 0 40px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+}
+.voice-scope-select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 30px;
+  padding-left: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background-position: right 10px center;
+}
+.voice-scope-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  background: var(--input);
+}
+.voice-scope-ask-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground);
+}
+.voice-scope-ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.voice-scope-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-teal);
+}
+
+.voice-level-take {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.voice-level-take .btn-auto-match {
+  margin-left: auto;
+}
+.voice-level-matched {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-teal);
+  white-space: nowrap;
+}
+.voice-level-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+}
+
+/* All effects: the column's page, on the plain card surface. An effect that's on shows its
+   dials; one that's off is a single row: switch, name, "off". */
+.voice-rack {
+  display: none;
+  flex-direction: column;
+  background: var(--card);
+  border-top: 1px solid var(--border-wood);
+}
+.voice-rack.open {
+  display: flex;
+}
 .voice-fx {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed rgba(204, 164, 88, 0.25);
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.voice-fx:last-child {
+  border-bottom: none;
 }
 .voice-fx-head {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  align-self: flex-start;
-  font-size: 11.5px;
+  gap: 10px;
+  font-size: 13px;
   font-weight: 600;
-  color: #e5ded4;
+  color: var(--foreground);
   cursor: pointer;
+}
+.voice-fx.is-off .voice-fx-head {
+  color: var(--foreground-muted);
+}
+.voice-fx.is-off .voice-fx-head::after {
+  content: 'off';
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+}
+.voice-fx.is-off .voice-fx-dials,
+.voice-fx.is-off .voice-tone-curve {
+  display: none;
 }
 .voice-fx-dials {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: 6px 8px;
 }
-.voice-fx.is-off .voice-fx-dials,
-.voice-fx.is-off .voice-tone-curve {
-  opacity: 0.55;
+.voice-rack .dsp-channel-readout {
+  padding: 1px 4px;
+}
+/* A 36-40px dial inside a 44px hit area */
+.voice-rack .analog-dial-wrapper,
+.voice-level-take .analog-dial-wrapper {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+.voice-rack .switch-checkbox {
+  width: 40px;
+  height: 22px;
+}
+.voice-rack .switch-checkbox::before {
+  width: 16px;
+  height: 16px;
+}
+.voice-rack .switch-checkbox:checked::before {
+  transform: translateX(18px);
+}
+
+/* With the rack open the column is the voice page: Takes, Monitor and the presets hide,
+   and the record deck shrinks to one row (Space still records). */
+.booth-controls.rack-open #card-takes,
+.booth-controls.rack-open #card-studio-monitoring,
+.booth-controls.rack-open .mic-sync-hint,
+.booth-controls.rack-open .voice-presets,
+.booth-controls.rack-open #btn-play-orig {
+  display: none;
+}
+.booth-controls.rack-open .record-deck-body {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+}
+.booth-controls.rack-open .record-deck-main {
+  flex: 1;
+  min-width: 0;
+  gap: 10px;
+}
+.booth-controls.rack-open .btn-big-record {
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+  border-width: 3px;
+}
+.booth-controls.rack-open .record-halo-ring {
+  width: 52px;
+  height: 52px;
+}
+.booth-controls.rack-open .record-status-label {
+  font-size: 13px;
+}
+.booth-controls.rack-open .transport-seg {
+  display: flex;
+  flex: 0 0 auto;
+}
+.booth-controls.rack-open #btn-preview-take {
+  border-left: none;
+  border-radius: var(--radius-md);
+  padding: 0 12px;
 }
 
 .voice-tone-curve {
@@ -5179,12 +5290,6 @@ span.voice-chip {
   background: #0f0c09;
   border: 1px solid var(--border-panel);
   border-radius: var(--radius-sm);
-}
-
-.voice-apply-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 /* Under reduced motion the dot stays still (the media query below also stops it). */

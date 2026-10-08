@@ -837,8 +837,9 @@ class DubMateApp {
 
     // Studio & Screening Keyboard Shortcuts
     // Booth: Space (Record), [ / ] (Micro-Nudge ±25ms/±100ms). With Shift most layouts report { / }.
-    // T (the take in the dub), A (switch Original/Take), , and . (previous/next line); the
-    // Takes card handles its own arrows, P, Enter and Delete (takes_card.js).
+    // T (the take in the dub), A (switch Original/Take), , and . (previous/next line), E (All
+    // effects; Esc closes it); the Takes card handles its own arrows, P, Enter and Delete
+    // (takes_card.js).
     // The list the user sees is SHORTCUT_GROUPS in shortcuts.js; keep the two in step.
     // Screening: Space (Play/Pause), KeyR (Replay / Seek to 0:00)
     window.addEventListener('keydown', (e) => {
@@ -853,6 +854,13 @@ class DubMateApp {
         }
         if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
           this.closeExportModal();
+          return;
+        }
+        // All effects closes from anywhere in the booth but an open list or a text field.
+        if (this.views.booth.classList.contains('active') && this.isAllEffectsOpen()
+            && !['SELECT', 'TEXTAREA'].includes(e.target.tagName) && !e.target.isContentEditable) {
+          e.preventDefault();
+          this.toggleAllEffects(false);
           return;
         }
       }
@@ -892,7 +900,7 @@ class DubMateApp {
         } else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('.analog-dial-wrapper')) {
           const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
           const action = { t: () => this.focusPickedTake(), a: () => this.switchTransportSide(),
-            ',': () => this.stepLine(-1), '.': () => this.stepLine(1) }[key];
+            ',': () => this.stepLine(-1), '.': () => this.stepLine(1), e: () => this.toggleAllEffects() }[key];
           if (action) {
             e.preventDefault();
             action();

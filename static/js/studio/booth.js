@@ -671,7 +671,6 @@ export class BoothMethods {
         }
       },
     });
-    this.startVoiceMeter();
   }
 
   /** A = the take, B = the original, swapped in place while the take's preview plays. */
@@ -1080,6 +1079,9 @@ export class BoothMethods {
   }
 
   async finishRecording() {
+    // The line and the sound picked for its next take, as they are when recording stops.
+    const lineIndex = this.currentLineIndex;
+    const chain = this.pendingNextTakeChain?.[this.roomState.pack.lines[lineIndex].line_id] || null;
     this.waveform.setPlayhead(-1);
     if (this.recordingTimeout) {
       clearTimeout(this.recordingTimeout);
@@ -1102,10 +1104,12 @@ export class BoothMethods {
     }
 
     const currentTakeBlob = res.blob;
-    await this.uploadTake(this.currentLineIndex, currentTakeBlob, res.audioBuffer, this.recordingGuideVoice);
+    await this.uploadTake(lineIndex, currentTakeBlob, res.audioBuffer, this.recordingGuideVoice, chain);
   }
 
-  async uploadTake(lineIndex, blob, recordedBuffer = null, guideVoice = false) {
+  /** `chain`: the sound picked for this line before it had a take, or null to keep the
+   *  sound of the take it replaces in the dub. */
+  async uploadTake(lineIndex, blob, recordedBuffer = null, guideVoice = false, chain = null) {
     // A synced setup starts the take its measured delay earlier; otherwise it
     // inherits the slider (the picked take's timing) as before.
     await this.updateAudioDeviceList();
@@ -1126,7 +1130,8 @@ export class BoothMethods {
     formData.append('file', blob, `take_${lineIndex}.webm`);
     formData.append('user_id', this.user.id);
     formData.append('user_name', this.user.name);
-    // No sound settings: the engine gives the new take the sound of the take it replaces.
+    // Without a chain the engine gives the new take the sound of the take it replaces.
+    if (chain) formData.append('chain', JSON.stringify(chain));
     formData.append('offset_ms', offsetMs);
     formData.append('gain_db', gain);
     formData.append('noise_reduction', this.applyNoiseReduction ? 'true' : 'false');
@@ -1147,6 +1152,8 @@ export class BoothMethods {
         throw new Error(`Server returned status ${res.status}`);
       }
       const data = await res.json();
+      // The take has the picked sound now; a sound picked while it saved stays for the next one.
+      if (chain && this.pendingNextTakeChain[lineId] === chain) delete this.pendingNextTakeChain[lineId];
       if (data.line) {
         if (!this.roomState.takes) this.roomState.takes = {};
         this.roomState.takes[lineId] = data.line;

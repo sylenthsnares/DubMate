@@ -17,6 +17,8 @@ So Low Cut, Decay and Pre-delay change only the preview (`update_take_params` an
 
 ## What changes for the user
 
+**Since UI pass U2** (`ui-u2-booth.md`, "VOICE card" and "All effects"): the Voice card shows on every line you can record, before the first take too (a preset then goes with the take's upload as `chain`). The two "Use on…" buttons and their `confirm()` became the card's **For** select (This take / All of NAME's lines / Every line, host only), which starts where the sound comes from, sends edits there and asks inline before widening. The output meter is gone. All effects is the column's page; a dial on an effect that's off no longer switches it on. The rest of this section is the rack as first built.
+
 | Behaviour | Where | Disclosure level |
 |---|---|---|
 | A **Voice** panel replaces "Voice effects". It shows four presets, **Clean**, **Warm**, **Radio** and **Monster**, as chips, plus the **Level** dial with its Auto/Matched badge and a small output meter. Picking a preset changes the take's sound. Editing anything in the full rack shows a **Custom** chip. | Booth | Default |

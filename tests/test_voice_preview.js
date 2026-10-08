@@ -472,6 +472,8 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     if (!pitchDial.disabled || !lowcutSwitch.disabled
         || !pitchDial.closest(".dsp-dial-channel").classList.contains("ui-interaction-locked")) fail("effect controls still on");
     if (app.sliderGain.disabled) fail("Level turned off with the effects");
+    const pitchKnob = pitchDial.closest(".analog-dial-wrapper");
+    if (!pitchKnob || pitchKnob.getAttribute("aria-disabled") !== "true" || pitchKnob.tabIndex !== -1) fail("a locked dial is still in the tab order");
     if (app.voiceEffectsNote.style.display === "none" || app.voiceEffectsNote.textContent !== message) fail(`note: ${app.voiceEffectsNote.textContent}`);
     app.stopBoothPlayback();
 
@@ -480,6 +482,7 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
     await app.loadBoothLine(0);
     await tick(200);
     if (pitchDial.disabled || app.voiceEffectsNote.style.display !== "none") fail("controls not back once effects are installed");
+    if (pitchKnob.hasAttribute("aria-disabled") || pitchKnob.tabIndex !== 0) fail("the dial stayed locked once effects are installed");
 
     // Noise reduction swaps the take's audio: the old render is dropped, a new one is
     // asked for, and Preview plays it (never the render of the audio before the swap).
@@ -498,8 +501,33 @@ const chainB = { v: 1, preset: null, nodes: { pitch: { on: true, mix: 1, semiton
       app.stopBoothPlayback();
     }
 
+    // The sound comes from Ana's: For starts there; an edit is heard on the take at once
+    // (rendered through the edited chain) and saved as Ana's sound, not the take's.
+    {
+      delete app.takeForLine(0).chain;   // the noise swap above replaced the take object
+      app.roomState.voice.characters = { Ana: FIXTURE.presets.monster };
+      renderReply = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ url: "/api/rooms/R1/renders/00000000000000e1.wav" }) });
+      await app.loadBoothLine(0);
+      await tick(200);
+      const scope = w.document.getElementById("voice-scope");
+      if (scope.value !== "character") fail(`For on Ana's sound: ${scope.value}`);
+      const before = calls.length;
+      pitchDial.value = "-5";
+      pitchDial.dispatchEvent(new w.Event("input"));
+      await tick(200);
+      const renders = calls.slice(before).filter((c) => /\/render$/.test(c.url)).map((c) => JSON.parse(c.body));
+      if (renders.length !== 1 || renders[0].chain.nodes.pitch.semitones !== -5) fail(`render on Ana's sound: ${JSON.stringify(renders)}`);
+      pitchDial.dispatchEvent(new w.Event("change"));
+      await tick(10);
+      const puts = calls.slice(before).filter((c) => c.method === "PUT");
+      const body = puts[0] && JSON.parse(puts[0].body);
+      if (puts.length !== 1 || puts[0].url !== "/api/rooms/R1/voice" || body.scope !== "character" || body.character !== "Ana"
+          || body.chain.nodes.pitch.semitones !== -5) fail(`Ana's sound save: ${JSON.stringify(puts)}`);
+      if ("chain" in app.takeForLine(0)) fail("the take got a sound of its own");
+    }
+
     if (errors.length) fail(`console errors: ${errors.join("\n")}`);
-    console.log("PASS: Preview waits for the take's render and plays it; without voice effects it plays the take as recorded");
+    console.log("PASS: Preview waits for the take's render and plays it; without voice effects it plays the take as recorded; edits follow For");
   }
 
   console.log("ALL VOICE PREVIEW TESTS PASSED");

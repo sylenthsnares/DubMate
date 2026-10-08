@@ -182,7 +182,8 @@ const clickAuto = (env) => env.w.document.querySelector(".btn-nudge-reset").clic
     const put = env.calls.find((c) => c.method === "PUT" && c.url === "/api/rooms/R1/lines/t1000/takes/p1/chain");
     if (!put) fail("pitch change did not save the take's sound");
     const body = JSON.parse(put.body);
-    if (body.user_id !== "u1" || body.chain?.nodes?.pitch?.on !== true || body.chain.nodes.pitch.semitones !== 2) {
+    // The dial sets the shift; it doesn't switch Pitch on (that's its switch's job).
+    if (body.user_id !== "u1" || body.chain?.nodes?.pitch?.on !== false || body.chain.nodes.pitch.semitones !== 2) {
       fail(`pitch change saved ${put.body}`);
     }
     if (env.sent.length !== sentBefore) fail(`pitch change sent timing: ${JSON.stringify(env.sent.slice(sentBefore))}`);
