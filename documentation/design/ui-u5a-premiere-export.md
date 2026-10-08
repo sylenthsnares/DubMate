@@ -203,6 +203,9 @@ The summary reads "Mix · Balanced" for the host, and "Mix · Balanced · set by
 10. **A swap to the MP4 at a pause keeps the paused position.** It doesn't rewind.
 11. **A saved video's main click:** Show in folder for the engine-local host, Download for a remote host.
 12. **"Change take" follows `canRecordLine`,** so it never offers a pick the server would refuse.
+13. **Save is 252px wide,** above the 208px minimum, because "Mix changed · Save again" needs it. A narrower button grew with that label and moved the row.
+14. **Downloads started from the Save menu don't toast when they start.** The row reads "Preparing…" instead. A browser download still toasts when it finishes, and a failure still toasts its reason.
+15. **When the mix changes while the saved video plays, playback carries on** with the live mix, from the same spot.
 
 ## Hands-on checks (the owner, with a friend on a tunnel)
 

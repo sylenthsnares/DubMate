@@ -261,6 +261,9 @@ export function initTooltips(root = document) {
     if (e.key === 'Escape' && current) hide();
   });
   root.addEventListener('pointerdown', hide);
+  // A control pressed from the keyboard keeps its focus, so its tip would stay up over
+  // what it opened (Audio settings).
+  root.addEventListener('click', hide);
   root.defaultView.addEventListener('scroll', hide, true);
 }
 

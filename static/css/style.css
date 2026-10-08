@@ -448,6 +448,11 @@ body::after {
   box-shadow: 0 0 6px var(--accent-red);
   animation: pulse-dot 1.5s infinite;
 }
+/* The premiere is live, not recording: amber, never red */
+.badge-live-dot-amber {
+  background: var(--primary);
+  box-shadow: 0 0 6px var(--accent-amber-glow);
+}
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -3448,59 +3453,12 @@ svg {
 /* 4. FINALE SCREENING THEATER & EXPORT                          */
 /* ------------------------------------------------------------- */
 
-.screening-header-card {
-  padding: 12px 18px;
-  margin-bottom: 12px;
-}
-
-.screening-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 4px;
-}
-
-.theater-icon {
-  font-size: 20px;
-}
-
-.screening-title {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--foreground);
-}
-
-.badge-host {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(217, 119, 6, 0.15);
-  color: var(--primary);
-  border: 1px solid var(--primary);
-  border-radius: var(--radius-sm);
-}
-
-.badge-master {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--accent-teal);
-  border: 1px solid var(--accent-teal);
-  border-radius: var(--radius-sm);
-}
-
-.screening-desc {
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
+/* The premiere: the video owns the screen. Under it sit the timeline, one slim bar of
+   controls (Play/Pause, Replay, the status line, then the source label and Save) and
+   the Mix disclosure. */
 
 .screening-theater-box {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .theater-player {
@@ -3509,65 +3467,373 @@ svg {
   margin: 0 auto;
 }
 
+/* Beats the booth's .video-container rules, including its max-height: 720px one, on
+   specificity: the theater is as wide as its 16:9 height allows, never wider than the view. */
+#view-screening .theater-player {
+  height: clamp(280px, 62vh, 760px);
+  max-height: none;
+  width: auto;
+  max-width: 100%;
+  flex: none;
+}
+#view-screening .theater-player.video-expanded {
+  height: min(82vh, 900px) !important;
+  max-height: none !important;
+}
+
+.screening-timeline:empty {
+  display: none;
+}
+
 .screening-controls-bar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 10px 16px;
-  gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.aspect-ratio-toggle-group {
-  display: flex;
-  padding: 2px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  gap: 2px;
-}
-
-.btn-aspect {
-  padding: 5px 10px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--foreground-muted);
-  font-family: var(--font-sans);
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--duration-fast);
-}
-.btn-aspect.active {
-  background: var(--secondary);
-  color: var(--foreground);
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: var(--card);
   border: 1px solid var(--border-wood);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
 
-/* Master Stem Balance Deck */
-.screening-stem-mixer {
-  padding: 12px 16px;
-  margin-bottom: 12px;
+.screening-play {
+  min-width: 132px;
+}
+.screening-play-icon {
+  display: inline-flex;
+}
+.screening-play .icon-pause,
+.screening-play.is-playing .icon-play {
+  display: none;
+}
+.screening-play.is-playing .icon-pause {
+  display: block;
+}
+
+.screening-desc {
+  flex: 1 1 200px;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--foreground-muted);
+}
+
+.screening-save-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+/* "Live mix" (amber dot) while the theater plays the stems; plain "Final video" for the MP4 */
+.screening-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.screening-source-dot {
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.screening-source.is-live {
+  color: var(--foreground);
+  cursor: help;
+}
+.screening-source.is-live .screening-source-dot {
+  display: block;
+}
+
+/* Save: a split button with a fixed width, so a label change never shifts the row */
+/* Wide enough for its longest label, "Mix changed · Save again" */
+.save-split {
+  position: relative;
+  display: inline-flex;
+  min-width: 208px;
+  width: 252px;
+}
+.save-split-main {
+  flex: 1;
+  justify-content: flex-start;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  white-space: nowrap;
+}
+.save-split-toggle {
+  padding: 8px 10px;
+  border-left-width: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+/* The focus ring draws over the neighbouring half */
+.save-split-main:focus-visible,
+.save-split-toggle:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.save-split-toggle[aria-expanded="true"] {
+  background: var(--secondary-hover);
+}
+.save-icon {
+  display: none;
+  flex-shrink: 0;
+}
+.save-split[data-state="idle"] .save-icon-save,
+.save-split[data-state="stale"] .save-icon-save,
+.save-split[data-state="member"] .save-icon-save,
+.save-split[data-state="processing"] .save-icon-spin,
+.save-split[data-state="ready"] .save-icon-check {
+  display: block;
+}
+.save-icon-spin {
+  animation: spin 0.9s linear infinite;
+}
+.save-split[data-state="ready"] .save-icon-check {
+  color: var(--accent-brass);
+}
+/* Saving… is busy, not broken: it stays readable on the control surface. */
+.save-split[data-state="processing"] .save-split-main[aria-disabled="true"] {
+  background: var(--secondary);
+  color: var(--foreground-muted);
+  border-color: var(--border-wood);
+  cursor: progress;
+}
+
+/* The menu opens upward, over the video, so it never runs off the bottom of the window */
+.save-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 60;
+  min-width: 292px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--popover);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+.save-menu[hidden] {
+  display: none;
+}
+.save-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.save-menu-group[hidden] {
+  display: none;
+}
+.save-menu-heading {
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent-brass);
+}
+.save-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.save-menu-item:hover,
+.save-menu-item:focus {
+  background: var(--secondary);
+}
+.save-menu-item:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.save-menu-item[aria-disabled="true"] {
+  cursor: default;
+}
+.save-menu-item[aria-disabled="true"]:not([aria-busy]) .save-menu-label {
+  color: var(--foreground-muted);
+}
+.save-menu-state {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+.save-menu-state:empty {
+  display: none;
+}
+/* Making…: a small indeterminate bar along the row's foot */
+.save-menu-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--input);
+  overflow: hidden;
+}
+.save-menu-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: indeterminateBar 1.6s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+}
+
+/* A render that failed: why, and Try again */
+.screening-save-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 10px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--accent-red-soft);
+}
+.screening-save-error[hidden] {
+  display: none;
+}
+
+/* Mix (and later In this dub): a closed disclosure under the controls */
+.screening-section {
+  margin-bottom: 10px;
+  background: var(--card);
+  border: 1px solid var(--border-wood);
+  border-radius: var(--radius-lg);
+}
+.screening-section-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-lg);
+}
+.screening-section-summary::-webkit-details-marker {
+  display: none;
+}
+.screening-section-summary:hover {
+  background: var(--muted);
+}
+.screening-section-summary:focus-visible,
+.screening-fine-tune-summary:focus-visible,
+#screening-mix .tab-pill:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+.screening-section-chevron {
+  color: var(--foreground-muted);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.screening-section[open] > .screening-section-summary .screening-section-chevron {
+  transform: rotate(90deg);
+}
+.screening-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.screening-section-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+}
+.screening-section-body {
+  padding: 4px 14px 14px;
+}
+
+.mix-presets {
+  max-width: 460px;
+  margin-bottom: 10px;
+}
+
+.screening-fine-tune-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.screening-fine-tune-summary:hover,
+.screening-fine-tune[open] > .screening-fine-tune-summary {
+  color: var(--foreground);
+}
+.screening-fine-tune-summary::-webkit-details-marker {
+  display: none;
+}
+.screening-fine-tune[open] > .screening-fine-tune-summary .screening-section-chevron {
+  transform: rotate(90deg);
+}
+.mix-fine-row {
+  margin-top: 12px;
+}
+.mix-fine-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.screening-mix-member {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.screening-mix-member[hidden] {
+  display: none;
+}
+.screening-mix-member-preset {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.screening-mix-member-desc {
+  font-size: 12px;
+  color: var(--foreground-muted);
 }
 
 .stem-mixer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.stem-title-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-brass);
+  margin-bottom: 6px;
 }
 
 .stem-val-badge {
@@ -3579,6 +3845,7 @@ svg {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .stem-slider-row {
@@ -3610,56 +3877,16 @@ svg {
   margin-top: 4px;
 }
 
-/* Export Progress Box */
-.export-progress-box {
-  padding: 24px;
-  text-align: center;
-}
-
-.export-progress-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.export-status-text {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--foreground);
-}
-
-.progress-bar {
-  width: 100%;
-  height: 8px;
-  background: var(--input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-
-.progress-fill {
-  width: 0%;
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), var(--primary-hover));
-  border-radius: var(--radius-full);
-  transition: width 200ms ease;
-}
-
-.export-steps-list {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--foreground-muted);
-}
-.step-item.active {
-  color: var(--primary);
-  font-weight: 700;
+@media (prefers-reduced-motion: reduce) {
+  .save-icon-spin,
+  .save-menu-bar::after,
+  .badge-live-dot {
+    animation: none;
+  }
+  .save-menu-bar::after {
+    width: 100%;
+    opacity: 0.6;
+  }
 }
 
 /* Toasts: bottom centre, newest at the bottom, at most 3 (ui_common.js showToast).
@@ -4220,32 +4447,6 @@ svg {
   border-color: var(--primary) !important;
   color: var(--white) !important;
   box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
-}
-
-.btn-presence-preset {
-  padding: 3px 9px !important;
-  font-size: 11px !important;
-  font-family: var(--font-mono);
-  font-weight: 600;
-  border-radius: 9999px !important;
-  background: rgba(22, 18, 14, 0.7) !important;
-  border: 1px solid var(--border-wood) !important;
-  color: var(--foreground-muted) !important;
-  transition: all 160ms var(--ease-out);
-  cursor: pointer;
-}
-
-.btn-presence-preset:hover {
-  border-color: var(--accent-brass) !important;
-  color: var(--foreground) !important;
-  background: rgba(35, 29, 23, 0.9) !important;
-}
-
-.btn-presence-preset.active {
-  background: rgba(217, 119, 6, 0.22) !important;
-  border-color: var(--primary) !important;
-  color: var(--primary) !important;
-  box-shadow: 0 0 10px rgba(217, 119, 6, 0.3) !important;
 }
 
 /* ------------------------------------------------------------- */

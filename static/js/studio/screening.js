@@ -6,6 +6,13 @@
 import { pickedTake } from './takes.js';
 import { resolveChain, levelGain } from './voice.js';
 
+/** The Mix presets: balance (0 more music, 50 even, 100 more voice) and dialogue level in dB. */
+const MIX_PRESETS = [
+  { id: 'balanced', name: 'Balanced', balance: 50, presence: 0 },
+  { id: 'voices', name: 'Voices forward', balance: 65, presence: 2.5 },
+  { id: 'music', name: 'Music forward', balance: 35, presence: 0 },
+];
+
 export class ScreeningMethods {
   initScreeningEvents() {
     // Screening Master Stem Balance Slider
@@ -22,13 +29,16 @@ export class ScreeningMethods {
       });
     }
 
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const pres = parseFloat(e.currentTarget.dataset.presence || '0');
-        if (this.sliderDialoguePresence) {
-          this.sliderDialoguePresence.value = pres;
-        }
-        this.setMasterDialoguePresence(pres);
+    // Mix presets: a radio group, arrow keys move and choose (host only; members see none).
+    this.mixPresetButtons.forEach((btn, i) => {
+      btn.addEventListener('click', () => this.applyMixPreset(btn.dataset.preset));
+      btn.addEventListener('keydown', (e) => {
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        const next = this.mixPresetButtons[(i + step + this.mixPresetButtons.length) % this.mixPresetButtons.length];
+        this.applyMixPreset(next.dataset.preset);
+        next.focus();
       });
     });
 
@@ -36,38 +46,14 @@ export class ScreeningMethods {
     this.btnScreeningPlayPause.addEventListener('click', () => this.handleScreeningPlayPause());
     this.btnScreeningReplay.addEventListener('click', () => this.handleScreeningReplay());
 
-    // Screening Video State Listeners
-    if (this.btnAspect169 && this.btnAspect916) {
-      this.btnAspect169.addEventListener('click', () => {
-        this.selectedAspectRatio = '16:9';
-        this.btnAspect169.classList.add('active');
-        this.btnAspect169.setAttribute('aria-checked', 'true');
-        this.btnAspect916.classList.remove('active');
-        this.btnAspect916.setAttribute('aria-checked', 'false');
-        document.querySelector('.theater-player')?.classList.remove('shorts-mode');
-        this.showToast("Video shape: 16:9 landscape");
-      });
-
-      this.btnAspect916.addEventListener('click', () => {
-        this.selectedAspectRatio = '9:16';
-        this.btnAspect916.classList.add('active');
-        this.btnAspect916.setAttribute('aria-checked', 'true');
-        this.btnAspect169.classList.remove('active');
-        this.btnAspect169.setAttribute('aria-checked', 'false');
-        document.querySelector('.theater-player')?.classList.add('shorts-mode');
-        this.showToast("Video shape: 9:16 vertical");
-      });
-    }
-
     if (this.screeningVideo) {
       this.screeningVideo.addEventListener('ended', () => {
-        this.pauseScreeningPlayback();
+        // Rewound first, so a finished video waiting for this pause starts from 0:00.
         this.screeningVideo.currentTime = 0;
+        this.pauseScreeningPlayback();
       });
       this.screeningVideo.addEventListener('pause', () => {
-        if (this.screeningPlayIcon) {
-          this.screeningPlayIcon.innerText = '▶ Play';
-        }
+        this.renderScreeningPlayState(false);
         if (!this.isUsingExportedVideo) {
           this.audio.stopAllPlayback();
           this.stopScreeningSyncMonitor();
@@ -80,6 +66,9 @@ export class ScreeningMethods {
 
   async setupScreeningView() {
     if (!this.roomState) return;
+    // Files saved for editing on an earlier visit may predate a take changed since.
+    this.editingSaved = { stems: false, project: false };
+    this.pendingExportSwap = null;
 
     const presenceVal = parseFloat(this.roomState.master_dialogue_presence_db ?? 0.0);
     this.masterDialoguePresence = presenceVal;
@@ -87,7 +76,7 @@ export class ScreeningMethods {
     const balance = Number(this.roomState.master_mix_balance ?? 50);
     this.setScreeningBalance(Number.isFinite(balance) ? Math.round(balance) : 50);
 
-    if (this.roomState.has_export && (this.roomState.export_video_url || this.roomState.download_url)) {
+    if (this.exportState('16:9') === 'ready') {
       this.applyExportedVideoToTheater();
     } else {
       this.applyLiveMixToTheater();
@@ -99,50 +88,81 @@ export class ScreeningMethods {
     this.preloadScreeningAudio();
   }
 
-  applyExportedVideoToTheater(directUrl = null) {
+  applyExportedVideoToTheater(directUrl = null, { position = 0 } = {}) {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = true;
     const videoUrl = directUrl || this.roomState.export_video_url || `/api/rooms/${this.roomState.room_id}/export/video?v=${Date.now()}`;
-    this.setTheaterSource(videoUrl, { muted: false });
+    this.setTheaterSource(videoUrl, { muted: false, position });
   }
 
-  applyLiveMixToTheater() {
+  applyLiveMixToTheater({ position = 0 } = {}) {
     if (!this.roomState || !this.screeningVideo) return;
     this.isUsingExportedVideo = false;
     // The live mix plays the stems through Web Audio, so the pack video stays silent.
-    this.setTheaterSource(this.roomState.pack.video_url, { muted: true });
+    this.setTheaterSource(this.roomState.pack.video_url, { muted: true, position });
   }
 
   /**
-   * Points the theater at a video, rewinds it, and sets audio + master badge.
+   * A finished 16:9 video: it goes into the theater now if it is paused, or at the next
+   * pause if the live mix is playing (never mid-play). Either way the position stays.
+   */
+  offerExportedVideo(videoUrl = null) {
+    if (!this.roomState || !this.screeningVideo || this.isUsingExportedVideo) return;
+    if (!this.screeningVideo.paused) {
+      this.pendingExportSwap = videoUrl || true;
+      return;
+    }
+    this.applyExportedVideoToTheater(videoUrl, { position: this.screeningVideo.currentTime || 0 });
+    this.updateScreeningControls();
+  }
+
+  swapPendingExport() {
+    if (!this.pendingExportSwap) return;
+    const videoUrl = typeof this.pendingExportSwap === 'string' ? this.pendingExportSwap : null;
+    this.pendingExportSwap = null;
+    this.applyExportedVideoToTheater(videoUrl, { position: this.screeningVideo.currentTime || 0 });
+    this.updateScreeningControls();
+  }
+
+  /**
+   * Points the theater at a video at a position (0:00 by default), and sets its audio.
    * Unmuted means the source carries the finished mix (the exported video).
    */
-  setTheaterSource(url, { muted }) {
+  setTheaterSource(url, { muted, position = 0 }) {
     this.audio.stopAllPlayback();
     this.stopScreeningSyncMonitor();
 
     if (!this.screeningVideo.src.endsWith(url) && this.screeningVideo.getAttribute('src') !== url) {
       this.screeningVideo.src = url;
     }
-    try {
-      if (this.screeningVideo.readyState >= 1) {
-        this.screeningVideo.currentTime = 0;
-      } else {
-        this.screeningVideo.addEventListener('loadedmetadata', () => {
-          try { this.screeningVideo.currentTime = 0; } catch (e) { }
-        }, { once: true });
-      }
-    } catch (e) { }
+    const seek = () => {
+      try { this.screeningVideo.currentTime = position; } catch (e) { }
+    };
+    if (this.screeningVideo.readyState >= 1) seek();
+    else this.screeningVideo.addEventListener('loadedmetadata', seek, { once: true });
 
     this.screeningVideo.muted = muted;
     this.screeningVideo.volume = muted ? 0 : 1.0;
 
-    if (this.screeningMasterBadge) {
-      this.screeningMasterBadge.style.display = muted ? 'none' : 'inline-flex';
-    }
-    if (this.screeningPlayIcon) {
-      this.screeningPlayIcon.innerText = this.screeningVideo.paused ? '▶ Play' : '⏸ Pause';
-    }
+    this.renderSourceLabel();
+    this.renderScreeningPlayState(!this.screeningVideo.paused);
+  }
+
+  /** "Live mix" (amber dot) while the theater plays the stems, "Final video" for the saved MP4. */
+  renderSourceLabel() {
+    if (!this.screeningSourceLabel) return;
+    const live = !this.isUsingExportedVideo;
+    this.screeningSourceLabel.classList.toggle('is-live', live);
+    this.screeningSourceText.textContent = live ? 'Live mix' : 'Final video';
+    if (live) this.screeningSourceLabel.setAttribute('data-tip', 'What everyone hears now. Save makes the video from this mix.');
+    else this.screeningSourceLabel.removeAttribute('data-tip');
+  }
+
+  /** Play or Pause on the one primary button (the SVG icon follows .is-playing). */
+  renderScreeningPlayState(playing) {
+    if (!this.btnScreeningPlayPause) return;
+    this.btnScreeningPlayPause.classList.toggle('is-playing', playing);
+    if (this.screeningPlayLabel) this.screeningPlayLabel.textContent = playing ? 'Pause' : 'Play';
   }
 
   /** Where the premiere keeps a picked take's render: its audio and its resolved chain. */
@@ -265,6 +285,7 @@ export class ScreeningMethods {
       this.sliderScreeningBalance.setAttribute('aria-valuenow', this.screeningBalance);
       this.sliderScreeningBalance.setAttribute('aria-valuetext', `${this.screeningBalance} percent`);
     }
+    this.renderMixSummary();
 
     const { backingGain, vocalGain } = this.getScreeningStemGains();
     if (this.screeningBackingGainNode && this.audio.ctx) {
@@ -283,24 +304,78 @@ export class ScreeningMethods {
     }
   }
 
-  /** The mix changed, so the final video is out of date: play the live mix until a new one is made. */
+  /**
+   * The mix or a take changed, so a saved video is out of date: the theater plays the live
+   * mix (from the same spot, still playing if it was) and Save reads "Mix changed · Save
+   * again" until a new one is made. A render still running keeps its Saving….
+   */
   dropStaleExport() {
-    if (this.roomState) this.roomState.has_export = false;
-    if (this.isUsingExportedVideo) this.applyLiveMixToTheater();
+    if (this.exportState('16:9') === 'ready') this.exportStale = true;
+    if (this.roomState) {
+      this.roomState.has_export = false;
+      const exports = { ...(this.roomState.exports || {}) };
+      for (const aspect of Object.keys(exports)) {
+        if (exports[aspect] === 'ready') exports[aspect] = 'idle';
+      }
+      this.roomState.exports = exports;
+    }
+    this.pendingExportSwap = null;
+    this.editingSaved = { stems: false, project: false };
+    if (this.isUsingExportedVideo && this.screeningVideo) {
+      const playing = !this.screeningVideo.paused;
+      const position = this.screeningVideo.currentTime || 0;
+      this.applyLiveMixToTheater({ position });
+      if (playing) this.startScreeningPlayback(position);
+    }
     this.isUsingExportedVideo = false;
-    if (this.screeningMasterBadge) this.screeningMasterBadge.style.display = 'none';
+    this.updateScreeningControls();
   }
 
-  /** Presence label and preset highlight (and the slider, unless it is the source). */
+  /** The Fine-tune level readout (dB only there) and the slider, unless it is the source. */
   renderPresenceUI(db, { syncSlider = true } = {}) {
     if (syncSlider && this.sliderDialoguePresence) this.sliderDialoguePresence.value = db;
-    if (this.valDialoguePresence) {
-      this.valDialoguePresence.innerText = (db === 0) ? '0.0 dB (default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
+    const readout = (db === 0) ? '0.0 dB (default)' : ((db > 0 ? '+' : '') + db.toFixed(1) + ' dB');
+    if (this.valDialoguePresence) this.valDialoguePresence.textContent = readout;
+    if (this.sliderDialoguePresence) {
+      this.sliderDialoguePresence.setAttribute('aria-valuenow', db);
+      this.sliderDialoguePresence.setAttribute('aria-valuetext', readout);
     }
-    document.querySelectorAll('.btn-presence-preset').forEach((btn) => {
-      const btnVal = parseFloat(btn.dataset.presence || '0');
-      btn.classList.toggle('active', Math.abs(btnVal - db) < 0.1);
+    this.renderMixSummary();
+  }
+
+  /** The preset the room's mix matches, or null (Custom). */
+  currentMixPreset() {
+    const presence = this.masterDialoguePresence || 0;
+    return MIX_PRESETS.find((p) => p.balance === Math.round(this.screeningBalance)
+      && Math.abs(p.presence - presence) < 0.05) || null;
+  }
+
+  /** "Mix · Voices forward" (members: "· set by the host"), and which preset is checked. */
+  renderMixSummary() {
+    const preset = this.currentMixPreset();
+    const name = preset ? preset.name : 'Custom';
+    const host = this.isHost({ allowDummy: true });
+    if (this.screeningMixSummary) this.screeningMixSummary.textContent = host ? `· ${name}` : `· ${name} · set by the host`;
+    if (this.screeningMixMemberPreset) this.screeningMixMemberPreset.textContent = name;
+    const buttons = this.mixPresetButtons || [];
+    buttons.forEach((btn) => {
+      const checked = !!preset && btn.dataset.preset === preset.id;
+      btn.setAttribute('aria-checked', String(checked));
+      btn.classList.toggle('active', checked);
+      btn.tabIndex = -1;
     });
+    // One tab stop: the checked preset, or the first when the mix is Custom.
+    const stop = buttons.find((btn) => btn.getAttribute('aria-checked') === 'true') || buttons[0];
+    if (stop) stop.tabIndex = 0;
+  }
+
+  /** A preset sets both the balance and the dialogue level, for the whole room. */
+  applyMixPreset(id) {
+    const preset = MIX_PRESETS.find((p) => p.id === id);
+    if (!preset || !this.isHost({ allowDummy: true })) return;
+    if (this.sliderDialoguePresence) this.sliderDialoguePresence.value = preset.presence;
+    this.setMasterDialoguePresence(preset.presence);
+    this.setScreeningBalance(preset.balance, { share: true });
   }
 
   setMasterDialoguePresence(val) {
@@ -349,13 +424,29 @@ export class ScreeningMethods {
     }
   }
 
+  /**
+   * The status line, the failure line, the Mix (presets for the host, read-only for
+   * members), the source label and Save, from the room's state.
+   */
   updateScreeningControls() {
     if (!this.roomState) return;
     const isHost = this.isHost({ allowDummy: true });
-    this.screeningHostBadge.style.display = isHost ? 'inline-block' : 'none';
-    this.screeningStatusDesc.innerText = isHost
-      ? "You control playback for everyone."
-      : "The host controls playback. Space or Replay plays it just for you.";
+    const state = this.exportState('16:9');
+    const failure = state === 'failed' ? (this.exportFailures['16:9'] || 'Something went wrong.') : null;
+    let status = 'The host controls playback. Space or Replay plays it just for you.';
+    if (isHost) status = 'You control playback for everyone.';
+    else if (state === 'processing') status = 'The host is saving the video…';
+    else if (failure) status = `The video didn't save: ${failure}`;
+    this.screeningStatusDesc.textContent = status;
+    if (this.screeningSaveError) {
+      this.screeningSaveError.hidden = !(isHost && failure);
+      if (isHost && failure) this.screeningSaveErrorText.textContent = `The video didn't save: ${failure}`;
+    }
+    if (this.screeningMixHost) this.screeningMixHost.hidden = !isHost;
+    if (this.screeningMixMember) this.screeningMixMember.hidden = isHost;
+    this.renderMixSummary();
+    this.renderSourceLabel();
+    this.renderSaveControl();
   }
 
   async handleScreeningPlayPause() {
@@ -417,7 +508,7 @@ export class ScreeningMethods {
     this.stopScreeningSyncMonitor();
     this.audio.stopAllPlayback();
 
-    this.screeningPlayIcon.innerText = '⏸ Pause';
+    this.renderScreeningPlayState(true);
 
     if (this.isUsingExportedVideo) {
       // Using Master Rendered MP4: native embedded audio is 100% in hardware sync
@@ -463,11 +554,13 @@ export class ScreeningMethods {
 
   pauseScreeningPlayback() {
     this.stopScreeningSyncMonitor();
-    this.screeningPlayIcon.innerText = '▶ Play';
+    this.renderScreeningPlayState(false);
     this.screeningVideo.pause();
     if (!this.isUsingExportedVideo) {
       this.audio.stopAllPlayback();
     }
+    // A video saved while the live mix played goes in now, at this spot.
+    this.swapPendingExport();
   }
 
   startScreeningSyncMonitor(startTime, audioCtxStart) {
