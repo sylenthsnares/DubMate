@@ -358,7 +358,7 @@ Every group works in `X:/Projects_X/DubMate-wt/u5b` and commits per step. It kee
 - **The studio can call more commands.** The loopback studio page can now start the install and restart the engine. This matches what `remove_packbuilder` already allows. It is `127.0.0.1` only; a host's tunnel page gets nothing.
 - **OS settings URLs.** `ms-settings:` via `explorer.exe`, and the macOS `x-apple.systempreferences` pane name, which Apple has moved before (hands-on). On failure the button hides and the written steps stay.
 - **The meter turns red above -6 dBFS.** Loud speakers see "Too loud" sooner than before (red was at -3). It now agrees with the loudest-line check.
-- **Fonts.** About 150 KB of woff2 in the desktop bundle, OFL-licensed (licence included).
+- **Fonts.** About 60 KB of woff2 in the desktop bundle (two variable latin subsets), OFL-licensed (licence included).
 - **Test churn.** `test_launcher_ui.js` is rewritten. Five Audio settings suites change IDs or text in the same commits.
 - **A 3-minute engine wait** delays the real "didn't start" card for a hung engine. The neutral splash offers Restart from 25 s.
 
