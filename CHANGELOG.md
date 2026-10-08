@@ -33,6 +33,7 @@
 - **Keyboard Shortcuts**: press ? (or the ? button in the header) for a list of keyboard shortcuts, grouped by where they work.
 - **Share a Scene**: Share on a scene saves it as a file to send to a friend and shows where the file is. Your friend adds it with Import pack.
 - **Get This Scene**: members who joined a room from their own DubMate can download the host's scene and add it to their own scenes with Import pack.
+- **Pack Builder Keeps Your Work**: reloading the page or pressing the browser's Back button returns to your lines. Exit asks before leaving lines that aren't in a pack yet. Ctrl+Z, or Undo in the toast after deleting a line, brings changes back. A save that doesn't go through says so and tries again. A Pack Builder session ends when DubMate restarts or after 2 hours unused.
 
 ### Changed
 - **Plainer Wording**: on-screen text across the studio, Pack Builder, launcher and installer now says what things do, without technical names. The app is called DubMate everywhere.
@@ -57,6 +58,10 @@
 - **Voice Effects on Older Desktop Installs**: a desktop app installed before this release updates without voice effects. Recording still works; the Voice panel and export ask you to download and install the latest DubMate.
 - **Python 3.10 for Source Installs**: running DubMate from source now needs Python 3.10 or newer.
 - **Easier to Read**: outside the Pack Builder timeline, no words in the studio or Pack Builder are smaller than 11px, and sentences and hints are at least 12px. Line details and hints are in a lighter colour that stands out from the cards.
+- **Pack Builder Offers What's Installed**: Step 1 and the editor only offer what your install can do. Without automatic transcription, add a subtitle file or write the lines yourself, and Paste link says how to add the tools. "Fast processing" shows only when your graphics card speeds up processing.
+- **Pack Builder Processing**: each step shows as it runs, and Cancel goes back to your video. A dropped subtitle file is checked at once and shows how many lines and speakers it has. If processing stops, the step that failed says why, with Try again, Write the lines myself or Back to video. Try again doesn't upload the video or separate the voices again.
+- **Pack Builder Lines**: lines are compact rows, so about 10 show at once. Move between them with the arrow keys. Characters are renamed, merged and added in place, and the colours no longer include recording red or take green.
+- **Pack Ready**: Record it now opens a room with your new pack, and Save a copy (.zip) saves it as a file. Changing the pack after building it offers Build again.
 - **See Where You Are With the Keyboard**: buttons, the record button, scene cards, colour swatches and line chips show a clear outline when you reach them with Tab.
 - **Reduced Motion**: if your computer is set to reduce motion, pulsing and spinning animations stop. Recording and connection states still show through colour and text.
 - **Disabled Buttons Look Disabled**: buttons you can't use yet are dimmed. In Pack Builder, "Process video" no longer looks ready before you choose a video. Remove in the Remove Pack Builder confirmation is red.
