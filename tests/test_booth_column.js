@@ -406,6 +406,22 @@ async function show(env, state, index = 0) {
     console.log("PASS: Done marks you ready, asks inline when lines are missing, and the host's premiere question is a dialog");
   }
 
+  // 8. An open tooltip follows the record button's state.
+  {
+    await show(env, room());
+    const tip = $(env, "dm-tip");
+    const Pointer = w.PointerEvent || w.Event;
+    rec.dispatchEvent(new Pointer("pointerover", { bubbles: true }));
+    if (text(tip) !== "Record take 1 (Space)") fail(`open tip: ${text(tip)}`);
+    app.recordState = "countdown";
+    app.updateRecordButtonUI();
+    await tick();
+    if (text(tip) !== "Cancel the count-in (Space)") fail(`open tip after the count-in started: ${text(tip)}`);
+    app.recordState = "idle";
+    app.updateRecordButtonUI();
+    console.log("PASS: the record button's open tooltip follows its state");
+  }
+
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
   console.log("All booth column checks passed");
   process.exit(0);
