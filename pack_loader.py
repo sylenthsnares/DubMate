@@ -16,6 +16,8 @@ import threading
 import urllib.parse
 from typing import Dict, List, Optional, Any, Tuple
 
+from dubmate import data_home
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKS_DIRS = [
     os.path.join(BASE_DIR, "Packs"),
@@ -25,13 +27,9 @@ def get_install_root() -> str:
     Root of the installation -- the directory the user actually chose at install time.
 
     In the packaged desktop app the Python files are staged into a 'resources'
-    subfolder beside the executable, so BASE_DIR is one level too deep. Working
-    data must sit at the real root: installing to another drive should not put
-    gigabytes of cache on the system drive.
+    subfolder beside the executable, so BASE_DIR is one level too deep.
     """
-    if os.path.basename(BASE_DIR).lower() == "resources":
-        return os.path.dirname(BASE_DIR)
-    return BASE_DIR
+    return data_home.install_root(BASE_DIR)
 
 
 def _dir_is_writable(path: str) -> bool:
@@ -54,33 +52,28 @@ def _config_value(key: str) -> Optional[str]:
     get_cache_dir() runs at import time, before load_config() is defined, so this
     deliberately does its own minimal read rather than reordering the module.
     """
-    try:
-        cfg_path = os.path.join(os.path.expanduser("~"), ".dubmate", "config.json")
-        if os.path.isfile(cfg_path):
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                value = data.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-    except Exception:
-        pass
-    return None
+    return data_home.config_value(key)
 
 
 def get_cache_dir() -> str:
     """
     Persistent working directory, in preference order:
-      1. DUBMATE_CACHE_DIR env var (set by the desktop launcher)
+      1. DUBMATE_CACHE_DIR env var (tests, power users)
       2. cache_dir in config.json (user preference)
-      3. <install root>/data  -- keeps working files on the drive the user installed to
-      4. ~/.dubmate/cache     -- fallback when the install dir is not writable
+      3. desktop app: the per-user DubMate data folder (data_home.resolve), or the
+         install folder's data while a failed move leaves it there;
+         source install: <repo>/data
+      4. ~/.dubmate/cache     -- fallback when that folder is not writable
       5. system temp
     """
+    if data_home.is_packaged(BASE_DIR):
+        data_dir = data_home.resolve("data", base_dir=BASE_DIR)
+    else:
+        data_dir = os.path.join(BASE_DIR, "data")
     candidates = [
         (os.environ.get("DUBMATE_CACHE_DIR") or "").strip(),
         _config_value("cache_dir") or "",
-        os.path.join(get_install_root(), "data"),
+        data_dir,
         os.path.join(os.path.expanduser("~"), ".dubmate", "cache"),
         os.path.join(tempfile.gettempdir(), "dubmate_cache"),
     ]
@@ -89,6 +82,15 @@ def get_cache_dir() -> str:
             return candidate
     return tempfile.gettempdir()
 
+
+# A 1.x desktop app that took the 2.0 update in-app has a 1.x launcher, which never runs
+# the launcher's move. Rename (never copy) the old install folder's data here, before
+# anything opens it; Pack Builder stays where the old launcher looks for it.
+if data_home.is_packaged(BASE_DIR):
+    try:
+        data_home.migrate(allow_copy=False, include_packbuilder=False, base_dir=BASE_DIR)
+    except Exception as _ex:  # never stop the engine starting
+        print(f"[pack_loader] Could not check for old data: {_ex}")
 
 CACHE_DIR = get_cache_dir()
 
