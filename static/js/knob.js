@@ -1,5 +1,11 @@
 // knob.js - Vintage Analog Guitar Amp Rotary Dial Controller
-// Provides 270-degree tactile rotation, tick rings, vertical drag, wheel scrolling, and keyboard navigation.
+// Provides 270-degree tactile rotation, tick rings, vertical drag, wheel turning, and keyboard navigation.
+// The wheel turns a dial only while it has focus (click or Tab to it first); otherwise the
+// page scrolls. A dial whose input is disabled is locked: it ignores the wheel, keys and drag.
+
+// Wheel and arrow-key steps send 'input' each and one 'change' after this long without a step,
+// so saves and renders wait the way a drag's do.
+const CHANGE_QUIET_MS = 400;
 
 export class AnalogKnob {
   constructor(inputElement, options = {}) {
@@ -97,6 +103,7 @@ export class AnalogKnob {
   bindEvents() {
     // Mouse / Touch Drag
     const onMouseDown = (e) => {
+      if (this.isLocked()) return;
       e.preventDefault();
       this.isDragging = true;
       this.startY = e.clientY || (e.touches && e.touches[0].clientY);
@@ -155,19 +162,18 @@ export class AnalogKnob {
     this.container.addEventListener('mousedown', onMouseDown);
     this.container.addEventListener('touchstart', onMouseDown, { passive: false });
 
-    // Mouse Wheel
+    // Mouse wheel: only on a focused dial, so scrolling the column never turns one by accident.
     this.container.addEventListener('wheel', (e) => {
+      if (this.isLocked() || this.container.ownerDocument.activeElement !== this.container) return;
       e.preventDefault();
       const direction = e.deltaY < 0 ? 1 : -1;
       const step = this.step || 1;
-      let newVal = parseFloat(this.input.value) + (direction * step);
-      newVal = Math.max(this.min, Math.min(this.max, newVal));
-      this.setValue(newVal, true);
-      this.input.dispatchEvent(new Event('change', { bubbles: true }));
+      if (this.setValue(parseFloat(this.input.value) + (direction * step), true)) this.changeSoon();
     }, { passive: false });
 
     // Keyboard navigation
     this.container.addEventListener('keydown', (e) => {
+      if (this.isLocked()) return;
       let handled = false;
       const step = this.step || 1;
       let current = parseFloat(this.input.value);
@@ -188,13 +194,13 @@ export class AnalogKnob {
 
       if (handled) {
         e.preventDefault();
-        this.setValue(current, true);
-        this.input.dispatchEvent(new Event('change', { bubbles: true }));
+        if (this.setValue(current, true)) this.changeSoon();
       }
     });
 
     // Double click to reset
     this.container.addEventListener('dblclick', (e) => {
+      if (this.isLocked()) return;
       e.preventDefault();
       this.setValue(this.defaultValue, true);
       this.input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -206,6 +212,21 @@ export class AnalogKnob {
     });
   }
 
+  /** Locked while its input is disabled (the line is saving, or effects aren't available). */
+  isLocked() {
+    return !!this.input.disabled;
+  }
+
+  /** One 'change' once the wheel or keys have been still for CHANGE_QUIET_MS. */
+  changeSoon() {
+    clearTimeout(this.changeTimer);
+    this.changeTimer = setTimeout(() => {
+      this.changeTimer = null;
+      this.input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, CHANGE_QUIET_MS);
+  }
+
+  /** Returns true when the value changed. */
   setValue(val, triggerEvents = false) {
     const clamped = Math.max(this.min, Math.min(this.max, val));
     // Fix JS precision issues with step
@@ -220,7 +241,9 @@ export class AnalogKnob {
       if (triggerEvents) {
         this.input.dispatchEvent(new Event('input', { bubbles: true }));
       }
+      return true;
     }
+    return false;
   }
 
   updateVisuals() {
@@ -233,8 +256,12 @@ export class AnalogKnob {
     if (this.knobElement) {
       this.knobElement.style.transform = `rotate(${angle.toFixed(1)}deg)`;
     }
-    // The dial is what screen readers see: keep its value in step with the input's.
+    // The dial is what screen readers see: keep its value and lock in step with the input's.
     this.container.setAttribute('aria-valuenow', this.input.value);
+    const locked = this.isLocked();
+    if (locked) this.container.setAttribute('aria-disabled', 'true');
+    else this.container.removeAttribute('aria-disabled');
+    this.container.tabIndex = locked ? -1 : 0;
 
     // Active state highlighting on tick marks
     const ticks = this.housing.querySelectorAll('.dial-tick');
