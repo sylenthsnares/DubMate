@@ -242,7 +242,7 @@ The "Status" paragraph notes the PR #19 second pass and U5b.
 - When it isn't a first download, the update card offers **"Skip this time"** (ghost) while the download runs.
 - It calls `cancel_update`, disables itself ("Skipping…"), and acts on `apply_update`'s result:
   - `Err("skipped")` → enter the studio;
-  - success → the usual reload.
+  - success → `update-complete`, which opens the studio once the engine answers. Rust has already restarted it on the new files; the launcher no longer reloads itself, which used to wait out the 20 s update cap.
 - It hides once the `update-stage` event ("Installing the update") arrives, because the engine may be stopped by then.
 - The update is offered again on the next launch.
 
