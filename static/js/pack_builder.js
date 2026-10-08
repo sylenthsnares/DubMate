@@ -1048,6 +1048,9 @@ export class PackBuilderApp {
     this.compileFilled = false;
     this.segments = [];
     this.selectedSegmentIndex = null;
+    // A save still waiting belonged to the last session's lines.
+    clearTimeout(this.save.retryTimer);
+    this.save = { wanted: false, inFlight: false, failed: false, retryTimer: null, delay: 0 };
     if (this.sessionEndedNotice) this.sessionEndedNotice.hidden = true;
   }
 

@@ -282,6 +282,19 @@ function typeInto(b, field, value) {
     b.w.close();
   }
 
+  {
+    // A save still failing when the video changes belongs to the old session: it stops.
+    const b = await editor({ fetch: (u, init) => (init.method === "PUT" ? Promise.reject(new Error("offline")) : null) });
+    typeInto(b, b.rows()[0].querySelector(".cue-text-input"), "Changed");
+    await tick(40);
+    b.$("step-nav-upload").click();
+    b.$("btn-change-video").click();
+    b.$("btn-change-confirm").click();
+    await tick(1300);
+    check(b.puts().length === 1 && !b.app.mustAskBeforeLeaving(), "changing the video drops the old session's failed save");
+    b.w.close();
+  }
+
   // 5. Leaving: beforeunload until built, and Exit asks through a dialog.
   {
     const b = await editor();
