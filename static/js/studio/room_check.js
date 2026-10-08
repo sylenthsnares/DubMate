@@ -4,6 +4,7 @@
 // RoomCheckMethods are mixed into DubMateApp via mixin(); no getters, fields or super.
 import { micErrorMessage, safeStorageGet, safeStorageSet, safeStorageRemove } from './audio_setup.js';
 import { chosenDevice, deviceLabel } from './mic_sync.js';
+import { LEVEL_GOOD_MAX_DB, LEVEL_GOOD_MIN_DB, LEVEL_QUIET_PEAK_DB } from './level_target.js';
 
 // localStorage: one entry {profile_id, verdict, device_label, device_id, measured_at}.
 const ROOM_CHECK_KEY = 'dubmate_room_check';
@@ -33,16 +34,13 @@ const ROOM_NEW_MIC = 'New microphone. Check your room so cleanup fits it.';
 const ROOM_SAVE_FAILED = "DubMate couldn't finish the check. Try again.";
 const ROOM_REFRESH_FAILED = "DubMate couldn't refresh your older takes. Try again.";
 
-// The loudest-line check, in dB of peak: a shout should peak around -10 to -6, so Good is
+// The loudest-line check, in dB of peak, on the meter's target (level_target.js): Good is
 // -10 to -6, advice aims at -8 and an "up" never lands the loudest line above -6, so a
 // shout keeps its headroom.
-const LOUD_GOOD_MIN_DB = -10;
-const LOUD_GOOD_MAX_DB = -6;
 const LOUD_TARGET_DB = -8;
-const LOUD_UP_CEILING_DB = -6;
+const LOUD_UP_CEILING_DB = LEVEL_GOOD_MAX_DB;
 const LOUD_CLIP_DB = -0.1;
-// Below this peak, or this close to the room, nobody spoke.
-const LOUD_QUIET_PEAK_DB = -45;
+// Below the quiet peak, or this close to the room, nobody spoke.
 const LOUD_MIN_ABOVE_ROOM_DB = 6;
 const LOUD_UNHEARD = "DubMate couldn't hear you. Try again, a bit louder.";
 
@@ -163,16 +161,16 @@ export function clipLevels(samples, sampleRate) {
 export function loudLineAdvice(peakDb, voiceDb, floorDb) {
   const known = (v) => typeof v === 'number' && Number.isFinite(v);
   const aboveRoom = known(voiceDb) && known(floorDb) ? voiceDb - floorDb : null;
-  if (!known(peakDb) || peakDb < LOUD_QUIET_PEAK_DB || (aboveRoom !== null && aboveRoom < LOUD_MIN_ABOVE_ROOM_DB)) {
+  if (!known(peakDb) || peakDb < LEVEL_QUIET_PEAK_DB || (aboveRoom !== null && aboveRoom < LOUD_MIN_ABOVE_ROOM_DB)) {
     return { text: LOUD_UNHEARD, snrText: '' };
   }
   let text = 'Good level.';
   const down = Math.max(1, Math.round(peakDb - LOUD_TARGET_DB));
   if (peakDb >= LOUD_CLIP_DB) {
     text = `Your loudest line clips. Turn your mic down by about ${down} dB.`;
-  } else if (peakDb > LOUD_GOOD_MAX_DB) {
+  } else if (peakDb > LEVEL_GOOD_MAX_DB) {
     text = `Turn your mic down by about ${down} dB.`;
-  } else if (peakDb < LOUD_GOOD_MIN_DB) {
+  } else if (peakDb < LEVEL_GOOD_MIN_DB) {
     const up = Math.min(Math.round(LOUD_TARGET_DB - peakDb), Math.floor(LOUD_UP_CEILING_DB - peakDb));
     text = `Turn your mic up by about ${up} dB.`;
   }
