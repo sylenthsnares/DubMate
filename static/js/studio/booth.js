@@ -17,6 +17,7 @@ export class BoothMethods {
     if (this.labelFilterLines) {
       this.labelFilterLines.innerText = this.filterMyLinesOnly ? "My lines" : "All lines";
     }
+    this.chipsScrolledLine = null;
     this.renderTimelineChips();
     this.showToast(this.filterMyLinesOnly ? "Showing your lines" : "Showing all lines");
   }
@@ -42,6 +43,7 @@ export class BoothMethods {
       totalDuration: (line.duration || 3.0) + 0.8,
       lineEnd: line.duration || 3.0,
     });
+    this.waveform.emptyTakeText = this.canRecordLine(line) ? 'No takes yet. Press Space to record.' : 'No takes yet.';
   }
 
   /** "✓ Matched" while the take sits at its scene-matched level, and Auto for takes that
@@ -221,7 +223,6 @@ export class BoothMethods {
 
     const activeNoiseRed = take ? (take.noise_reduction !== false) : this.applyNoiseReduction;
     if (this.checkNoiseReduction) this.checkNoiseReduction.checked = activeNoiseRed;
-    if (this.checkRackNoiseReduction) this.checkRackNoiseReduction.checked = activeNoiseRed;
     if (this.checkLobbyNoiseReduction) this.checkLobbyNoiseReduction.checked = this.applyNoiseReduction;
 
     this.startTakeVoice(line, take);
@@ -379,8 +380,9 @@ export class BoothMethods {
     if (!this.canRecordLine(line)) {
       const assignedIds = (this.roomState?.role_assignments?.[line?.character] || []);
       const assignedNames = assignedIds.map(uid => this.roomState?.users?.[uid]?.name).filter(Boolean);
-      const actorText = assignedNames.length > 0 ? assignedNames.join(', ') : 'another actor';
-      const main = `${line?.character} is voiced by ${actorText}`;
+      const main = assignedNames.length > 0
+        ? `${line?.character} is voiced by ${assignedNames.join(', ')}`
+        : `Nobody is cast as ${line?.character} yet`;
       show({ glyph: LOCK_ICON, html: true, cls: ' locked', main, name: main });
       return;
     }
@@ -456,7 +458,7 @@ export class BoothMethods {
       }
 
       const chip = document.createElement('button');
-      const count = takeCount(this.roomState.takes, l);
+      const count = takeCount(this.roomState.takes, l) - (this.pendingDelete?.lineId === l.line_id ? 1 : 0);
       const isActive = idx === this.currentLineIndex;
 
       chip.type = 'button';
@@ -495,7 +497,10 @@ export class BoothMethods {
 
       this.timelineChips.appendChild(chip);
 
-      if (isActive) {
+      // Scrolled into view when the line changes, not on every redraw (a background save,
+      // someone else's take), so a strip you scrolled stays put.
+      if (isActive && this.chipsScrolledLine !== idx) {
+        this.chipsScrolledLine = idx;
         requestAnimationFrame(() => {
           try {
             chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
@@ -852,9 +857,6 @@ export class BoothMethods {
     if (this.checkNoiseReduction && this.checkNoiseReduction.checked !== this.applyNoiseReduction) {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
     }
-    if (this.checkRackNoiseReduction && this.checkRackNoiseReduction.checked !== this.applyNoiseReduction) {
-      this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
-    }
 
     const currentTake = this.takeForLine(this.currentLineIndex);
     const line = this.roomState?.pack?.lines?.[this.currentLineIndex];
@@ -1178,18 +1180,29 @@ export class BoothMethods {
         method: 'POST',
         body: formData,
       });
+      if (res.status >= 400 && res.status < 500) {
+        // The engine refused this take (unreadable audio, a recast line, a room that's gone):
+        // trying again can't help, so say why and drop it.
+        const detail = (await res.json().catch(() => ({}))).detail;
+        this.setLineSaving(f, false);
+        if (this.roomState?.room_id === f.roomId) {
+          this.showToast(this.friendlyError(new Error(String(detail || `HTTP ${res.status}`)),
+            "That take didn't save. Record it again."));
+        }
+        return;
+      }
       if (!res.ok) {
         throw new Error(`Server returned status ${res.status}`);
       }
       data = await res.json();
     } catch (err) {
-      // Never thrown away: the take waits in memory, in its Takes card with Retry, and goes
-      // up again when the room is back.
+      // Offline or a server error: never thrown away. The take waits in memory, in its Takes
+      // card with Retry, and goes up again when the room is back.
       console.warn('[DubMate] Take upload failed:', err);
       (this.pendingUploads[f.lineId] ||= []).push({ fields: f, blob, recordedBuffer });
       this.setLineSaving(f, false);
       if (this.roomState?.room_id === f.roomId) {
-        this.showToast(`Take ${f.number} on line ${lineIndex + 1} is waiting to upload`);
+        this.showToast(`A take on line ${lineIndex + 1} is waiting to upload`);
       }
       return;
     }
@@ -1223,6 +1236,9 @@ export class BoothMethods {
     } else {
       this.renderLineSaveState(f.lineId);
     }
+    // A take that waited while this one saved (retries skip a saving line) goes up next.
+    const waiting = this.waitingTakes(this.roomState.pack.lines[index])[0];
+    if (waiting && this.socket?.connectionState === 'open') this.retryWaitingTake(waiting);
   }
 
   /** This line's takes waiting to upload (in this room). */
@@ -1327,15 +1343,13 @@ export class BoothMethods {
 
   /** Marks you ready. The host is then asked whether to go to the premiere. */
   finishMyLines() {
-    if (!this.isReadyForScreening) {
-      this.toggleMyReadiness();
-    } else {
-      this.showToast("You're marked ready");
-    }
-    if (!this.isHost({ allowDummy: true })) {
-      this.showToast("All your lines are done. The host will start the premiere.");
+    const host = this.isHost({ allowDummy: true });
+    if (!this.isReadyForScreening) this.toggleMyReadiness({ quiet: true });
+    if (!host) {
+      this.showToast("You're marked ready. The host will start the premiere.");
       return;
     }
+    this.showToast("You're marked ready");
     const overlay = document.getElementById('modal-go-premiere');
     if (!overlay) return;
     const users = Object.values(this.roomState?.users || {}).filter(u => u.is_online);

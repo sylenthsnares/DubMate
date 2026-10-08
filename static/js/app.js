@@ -281,7 +281,6 @@ class DubMateApp {
     // Studio Noise Reduction Elements
     this.checkLobbyNoiseReduction = document.getElementById('check-lobby-noise-reduction');
     this.checkNoiseReduction = document.getElementById('check-noise-reduction');
-    this.checkRackNoiseReduction = document.getElementById('check-rack-noise-reduction');
 
     // Audio Device Setup Panel Elements
     this.modalAudioSettings = document.getElementById('modal-audio-settings');
@@ -830,10 +829,6 @@ class DubMateApp {
       this.checkNoiseReduction.checked = this.applyNoiseReduction;
       this.checkNoiseReduction.addEventListener('change', onNoiseToggleChange);
     }
-    if (this.checkRackNoiseReduction) {
-      this.checkRackNoiseReduction.checked = this.applyNoiseReduction;
-      this.checkRackNoiseReduction.addEventListener('change', onNoiseToggleChange);
-    }
 
     this.initAudioSettingsEvents();
     this.initMicSyncEvents();
@@ -860,6 +855,17 @@ class DubMateApp {
         }
         if (this.modalExportRendering && this.modalExportRendering.style.display !== 'none' && !this.isRenderingExport) {
           this.closeExportModal();
+          return;
+        }
+        // The inline questions (For's wider scope, Done with lines left) answer Esc as Cancel.
+        if (this.views.booth.classList.contains('active') && this.voiceScopeAsking) {
+          e.preventDefault();
+          this.cancelVoiceScope();
+          return;
+        }
+        if (this.views.booth.classList.contains('active') && this.boothDoneAsk && !this.boothDoneAsk.hidden) {
+          e.preventDefault();
+          this.hideDoneAsk({ focusNext: true });
           return;
         }
         // All effects closes from anywhere in the booth but an open list or a text field.
@@ -892,18 +898,24 @@ class DubMateApp {
       }
 
       if (this.views.booth.classList.contains('active')) {
+        // A take's timing doesn't change while its line saves (the nudges are locked too).
+        const lineSaving = !!this.savingTake(this.roomState?.pack?.lines?.[this.currentLineIndex]);
+        // Counting in or recording, the single-letter keys would stop the take and lose it.
+        const taking = this.recordState === 'countdown' || this.recordState === 'recording';
         if (e.code === 'Space') {
+          // Space presses a focused Undo, Use or answer button instead of recording.
+          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button')) return;
           e.preventDefault();
           this.toggleRecording();
         } else if (e.key === '[' || e.key === '{') {
           e.preventDefault();
           const delta = e.shiftKey ? -100 : -25;
-          this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+          if (!lineSaving) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
         } else if (e.key === ']' || e.key === '}') {
           e.preventDefault();
           const delta = e.shiftKey ? 100 : 25;
-          this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
-        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('.analog-dial-wrapper')) {
+          if (!lineSaving) this.setNudgeValue(parseInt(this.sliderNudge.value, 10) + delta, true);
+        } else if (!taking && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('.analog-dial-wrapper')) {
           const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
           const action = { t: () => this.focusPickedTake(), a: () => this.switchTransportSide(),
             ',': () => this.stepLine(-1), '.': () => this.stepLine(1), e: () => this.toggleAllEffects() }[key];

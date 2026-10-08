@@ -17,6 +17,8 @@ export class WaveformRenderer {
     this.takeLaneNote = null;
     // The take lane is dimmed while the room is offline.
     this.takeLaneDimmed = false;
+    // What the empty take lane says; the booth drops "Press Space" on lines you can't record.
+    this.emptyTakeText = 'No takes yet. Press Space to record.';
     this._rafId = null;
 
     // Callbacks
@@ -66,7 +68,8 @@ export class WaveformRenderer {
     };
 
     const startDrag = (e) => {
-      if (!this.takePeaks || this.takePeaks.length === 0) return;
+      // A take lane with a note ("Saving…") is locked: its line's take is saving.
+      if (!this.takePeaks || this.takePeaks.length === 0 || this.takeLaneNote) return;
       this.isDragging = true;
       this.dragStartX = getCanvasX(e);
       this.dragStartOffset = this.offsetMs;
@@ -286,7 +289,7 @@ export class WaveformRenderer {
     ctx.strokeStyle = 'rgba(244, 237, 228, 0.05)';
     ctx.lineWidth = 1;
     ctx.fillStyle = 'rgba(168, 159, 149, 0.6)';
-    ctx.font = '600 9px "JetBrains Mono", monospace';
+    ctx.font = '600 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
 
     const tickInterval = this.totalDuration > 6.0 ? 1.0 : (this.totalDuration > 3.0 ? 0.5 : 0.25);
@@ -389,7 +392,7 @@ export class WaveformRenderer {
       ctx.stroke();
     } else {
       ctx.fillStyle = 'rgba(168, 159, 149, 0.4)';
-      ctx.font = '500 10.5px "Plus Jakarta Sans", sans-serif';
+      ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText('Loading original…', 110, lane1MidY + 3);
     }
@@ -477,7 +480,7 @@ export class WaveformRenderer {
       ctx.fillStyle = 'rgba(168, 159, 149, 0.5)';
       ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('No take yet. Press Space to record.', 110, lane2MidY + 3);
+      ctx.fillText(this.emptyTakeText, 110, lane2MidY + 3);
     }
 
     // The line's end, and the tail recorded after it (hatched), on every take.
@@ -548,7 +551,7 @@ export class WaveformRenderer {
       ctx.strokeRect(6, lane1Top + 4, 88, 18);
     }
     ctx.fillStyle = '#cca458';
-    ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('ORIGINAL', 50, lane1Top + 13);
@@ -567,7 +570,7 @@ export class WaveformRenderer {
       ctx.strokeRect(6, lane2Top + 4, 88, 18);
     }
     ctx.fillStyle = hasTake ? '#f59e0b' : 'rgba(168, 159, 149, 0.6)';
-    ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('YOUR TAKE', 50, lane2Top + 13);

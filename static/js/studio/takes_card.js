@@ -60,7 +60,8 @@ export class TakesCardMethods {
 
     // Keyboard focus on a row stays on that take's row through the redraw.
     const active = document.activeElement;
-    const focusedId = active && this.takesList.contains(active) ? active.closest('.take-row')?.dataset.takeId : null;
+    const hadFocus = !!active && this.takesList.contains(active);
+    const focusedId = hadFocus ? active.closest('.take-row')?.dataset.takeId : null;
     this.closeTakeMenu();
     this.takesList.innerHTML = '';
 
@@ -70,7 +71,7 @@ export class TakesCardMethods {
       this.takesEmpty.hidden = takes.length > 0 || !!saving || waiting.length > 0;
       this.takesEmpty.textContent = mine ? 'No takes yet. Press Space to record.' : 'No takes yet.';
     }
-    if (this.takesHint) this.takesHint.hidden = !(mine && live.length === 1);
+    if (this.takesHint) this.takesHint.hidden = !(mine && live.length === 1 && !saving && !waiting.length);
     if (this.takesKeyHint) this.takesKeyHint.hidden = !(mine && live.length > 0);
     if (mine) this.takesList.removeAttribute('aria-readonly');
     else this.takesList.setAttribute('aria-readonly', 'true');
@@ -80,7 +81,10 @@ export class TakesCardMethods {
     for (const t of live) {
       if (Number.isFinite(t.timing_score) && t.timing_score > 0 && (!best || t.timing_score >= best.timing_score)) best = t;
     }
-    if (saving) this.takesList.appendChild(this.savingTakeRow(saving));
+    // Your take's echo can arrive before the upload's reply: then the take's own row shows.
+    if (saving && !takes.some((t) => t.number === saving.number && t.user_id === this.user.id)) {
+      this.takesList.appendChild(this.savingTakeRow(saving));
+    }
     for (const entry of waiting) this.takesList.appendChild(this.waitingTakeRow(entry, { locked: !!saving }));
     for (const take of [...takes].reverse()) {
       this.takesList.appendChild(take.take_id === pending?.takeId
@@ -93,7 +97,8 @@ export class TakesCardMethods {
     const stop = row?.querySelector('[role="radio"]')
       || radios.find((r) => r.getAttribute('aria-checked') === 'true') || radios[0];
     if (stop) stop.tabIndex = 0;
-    if (row) (row.querySelector('[role="radio"], .take-undo') || stop)?.focus();
+    // A focused row that's gone (its delete went out) hands focus to the card's tab stop.
+    if (hadFocus) (row?.querySelector('[role="radio"], .take-undo') || stop)?.focus();
   }
 
   /** "◉ Take 3 · 0.8 s · Mika · Tight sync · In the dub | Use | ⋯" */
@@ -245,14 +250,17 @@ export class TakesCardMethods {
     radio.focus();
   }
 
-  /** T: the take in the dub (or the newest take) takes the keyboard focus. */
+  /** T: the take in the dub (or the newest take) takes the keyboard focus. All effects
+   *  hides the card, so it closes first. */
   focusPickedTake() {
     if (!this.takesList) return;
+    this.toggleAllEffects(false, { focus: false });
     const radios = [...this.takesList.querySelectorAll('[role="radio"]')];
     this.focusTakeRadio(radios.find((r) => r.getAttribute('aria-checked') === 'true') || radios[0]);
   }
 
-  /** Inside the card: ↑/↓ move, P plays, Enter uses, Delete deletes (with Undo). */
+  /** Inside the card: ↑/↓ move, P plays, Enter uses, Delete (Backspace on a Mac) deletes
+   *  (with Undo). */
   onTakesKeydown(e) {
     const radio = e.target.closest?.('[role="radio"]');
     if (!radio || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -270,7 +278,7 @@ export class TakesCardMethods {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (take && mine && radio.getAttribute('aria-checked') !== 'true') this.pickTake(take);
-    } else if (e.key === 'Delete') {
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       if (take && mine) this.deleteTake(take);
     }
@@ -292,6 +300,7 @@ export class TakesCardMethods {
     };
     announce(`Take ${take.number} deleted`);
     this.renderTakesCard();
+    this.renderTimelineChips();
   }
 
   undoDeleteTake() {
@@ -299,6 +308,7 @@ export class TakesCardMethods {
     clearTimeout(this.pendingDelete.timer);
     this.pendingDelete = null;
     this.renderTakesCard();
+    this.renderTimelineChips();
   }
 
   /** Sends the waiting delete now, if there is one. */

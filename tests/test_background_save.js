@@ -346,6 +346,139 @@ function beforeUnloadBlocked(env) {
     console.log("PASS: a saving line's takes are locked, and the menu skips the locked Delete");
   }
 
+  // 7. On a saving line, Level, Auto and the timing are locked too, [ and ] included: they'd
+  //    change the take in the dub while the new one uploads.
+  {
+    const t = { ...mk("t1000", "k1", 1), auto_gain_db: 2 };
+    app.roomState = room({ t1000: { picked: "k1", next_number: 2, takes: [t] } });
+    await app.loadBoothLine(0);
+    if ($(env, "slider-gain").disabled || $(env, "btn-auto-match-gain").disabled) fail("Level is locked on a line that isn't saving");
+    app.savingLines.t1000 = { roomId: "R1", lineId: "t1000", number: 2, noiseReduction: false };
+    app.renderLineSaveState("t1000");
+    const locked = ["slider-gain", "btn-auto-match-gain", "slider-nudge"].filter((id) => !$(env, id).disabled);
+    if (locked.length) fail(`not locked while the line saves: ${locked}`);
+    if ([...w.document.querySelectorAll(".btn-nudge")].some((b) => !b.disabled)) fail("the timing nudges work while the line saves");
+    let sent = 0;
+    app.socket.updateTakeParams = () => { sent++; };
+    const before = $(env, "slider-nudge").value;
+    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "]", bubbles: true, cancelable: true }));
+    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "[", bubbles: true, cancelable: true }));
+    if (sent || $(env, "slider-nudge").value !== before) fail("[ or ] nudged the take while its line saves");
+    app.socket.updateTakeParams = () => {};
+    delete app.savingLines.t1000;
+    app.renderLineSaveState("t1000");
+    if ($(env, "slider-gain").disabled || $(env, "slider-nudge").disabled) fail("Level or timing stayed locked after the save");
+    console.log("PASS: Level, Auto and the timing lock while the line saves");
+  }
+
+  // 8. A, "," and "." do nothing while counting in or recording: the take isn't thrown away.
+  {
+    app.roomState = room();
+    await app.loadBoothLine(0);
+    env.uploads.length = 0;
+    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true, cancelable: true }));
+    await tick();
+    if (app.recordState !== "countdown") fail(`Space didn't count in (${app.recordState})`);
+    for (const key of ["a", ",", "."]) {
+      w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      await tick();
+      if (app.recordState !== "countdown" || app.currentLineIndex !== 0) fail(`"${key}" during the count-in: ${app.recordState}, line ${app.currentLineIndex}`);
+    }
+    for (let i = 0; i < 150 && app.recordState !== "recording"; i++) await tick();
+    if (app.recordState !== "recording") fail("never started recording");
+    for (const key of ["a", "A", ",", "."]) {
+      w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      await tick();
+      if (app.recordState !== "recording" || app.currentLineIndex !== 0 || !app.audio.isRecording) {
+        fail(`"${key}" while recording: ${app.recordState}, line ${app.currentLineIndex}, recorder ${app.audio.isRecording}`);
+      }
+    }
+    const saved = app.finishRecording();
+    await tick();
+    if (env.uploads.length !== 1 || !/\/lines\/t1000\/takes$/.test(env.uploads[0].url)) fail("the take wasn't uploaded after the keys");
+    answerUpload(env, "t1000", 1);
+    await saved;
+    await tick();
+    console.log("PASS: A, ',' and '.' don't throw away a count-in or a recording");
+  }
+
+  // 9. The engine refusing a take (4xx) says why and drops it; it isn't kept to retry forever.
+  {
+    app.roomState = room();
+    await app.loadBoothLine(0);
+    env.toasts.length = 0;
+    app.recordState = "recording";
+    const done = app.finishRecording();
+    await tick();
+    env.uploads.shift().resolve({ ok: false, status: 403,
+      json: () => Promise.resolve({ detail: "Line 1 belongs to Ana. Only their actor can record it." }) });
+    await done;
+    await tick();
+    if ((app.pendingUploads.t1000 || []).length || pendingRows(env).length) fail("a refused take was kept to retry");
+    if (app.savingLines.t1000) fail("still saving after a refusal");
+    if (env.toasts.join() !== "Line 1 belongs to Ana. Only their actor can record it.") fail(`refusal toast: ${JSON.stringify(env.toasts)}`);
+    if (beforeUnloadBlocked(env)) fail("leaving the page is guarded for a refused take");
+    console.log("PASS: a take the engine refuses says why and isn't kept");
+  }
+
+  // 10. Small things: your take's echo before the upload's reply shows one row, not two; a
+  //     background save doesn't scroll the line chips; the empty take lane and the record
+  //     deck tell the truth on lines you can't record.
+  {
+    const mine2 = mk("t1000", "e2", 2);
+    app.roomState = room({ t1000: { picked: "e2", next_number: 3, takes: [mk("t1000", "e1", 1), mine2] } });
+    await app.loadBoothLine(0);
+    await tick();
+    let scrolled = 0;
+    w.Element.prototype.scrollIntoView = () => { scrolled++; };
+    app.savingLines.t1000 = { roomId: "R1", lineId: "t1000", number: 2, noiseReduction: false };
+    app.renderLineSaveState("t1000");
+    await tick();
+    if (pendingRows(env).length) fail("the saving row shows next to the take it already became");
+    if (scrolled) fail("a save-state redraw scrolled the line chips");
+    delete app.savingLines.t1000;
+    app.renderLineSaveState("t1000");
+    await app.loadBoothLine(1);
+    await tick();
+    if (!scrolled) fail("a line change didn't scroll its chip into view");
+    w.Element.prototype.scrollIntoView = () => {};
+
+    await app.loadBoothLine(2);
+    if (app.waveform.emptyTakeText !== "No takes yet.") fail(`empty lane on Ben's line: ${app.waveform.emptyTakeText}`);
+    await app.loadBoothLine(0);
+    if (app.waveform.emptyTakeText !== "No takes yet. Press Space to record.") fail(`empty lane on your line: ${app.waveform.emptyTakeText}`);
+    app.roomState = { ...room(), role_assignments: { Ana: ["u1"] } };
+    await app.loadBoothLine(2);
+    if (text(label) !== "Nobody is cast as Ben yet") fail(`uncast line: ${text(label)}`);
+    console.log("PASS: one row after an early echo, chips stay put on a save, truthful empty lane and deck");
+  }
+
+  // 11. A take waiting on a line that was saving another goes up once that save is done,
+  //     not only at the next reconnect.
+  {
+    app.roomState = room();
+    await app.loadBoothLine(0);
+    env.uploads.length = 0;
+    app.recordState = "recording";
+    const first = app.finishRecording();
+    await tick();
+    env.uploads.shift().reject(new TypeError("Failed to fetch"));
+    await first;
+    await tick();
+    if ((app.pendingUploads.t1000 || []).length !== 1) fail("the failed take wasn't kept");
+    app.recordState = "recording";
+    const second = app.finishRecording();
+    await tick();
+    answerUpload(env, "t1000", 1);
+    await second;
+    await tick();
+    if (env.uploads.length !== 1 || (app.pendingUploads.t1000 || []).length) fail("the waiting take didn't go up after the line's save");
+    answerUpload(env, "t1000", 2);
+    await tick();
+    if (app.savingLines.t1000 || (app.pendingUploads.t1000 || []).length) fail("still saving or waiting after both takes went up");
+    console.log("PASS: a waiting take goes up as soon as its line's other save is done");
+  }
+
   console.log("PASS: test_background_save");
   process.exit(0);
 })();

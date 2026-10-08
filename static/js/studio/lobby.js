@@ -646,9 +646,9 @@ export class LobbyMethods {
     });
   }
 
-  toggleMyReadiness() {
+  toggleMyReadiness({ quiet = false } = {}) {
     this.isReadyForScreening = !this.isReadyForScreening;
-    if (this.isReadyForScreening) this.showToast("You're marked ready");
+    if (this.isReadyForScreening && !quiet) this.showToast("You're marked ready");
     if (this.roomState && this.roomState.users && this.roomState.users[this.user.id]) {
       this.roomState.users[this.user.id].is_ready = this.isReadyForScreening;
       this.renderCastActivityHUD();

@@ -348,11 +348,18 @@ export class VoiceRackMethods {
     if (this.voiceLevelNote) this.voiceLevelNote.hidden = !!take;
 
     // Locked while this line's take saves; other lines stay usable.
-    const enabled = mine && !this.savingTake(line) && !this.voiceUnavailable;
+    const saving = !!this.savingTake(line);
+    const enabled = mine && !saving && !this.voiceUnavailable;
     const controls = this.voicePanel?.querySelectorAll('[data-preset], [data-voice-on], [data-voice-param], #voice-scope, .voice-scope-ask button') || [];
     for (const el of controls) {
       el.disabled = !enabled;
       (el.closest('.dsp-dial-channel') || el).classList.toggle('ui-interaction-locked', !enabled);
+    }
+    // Level and the timing don't need voice effects: they lock only while the line saves.
+    for (const el of [this.sliderGain, this.btnAutoMatchGain, this.sliderNudge, ...document.querySelectorAll('.btn-nudge')]) {
+      if (!el) continue;
+      el.disabled = saving;
+      (el.closest('.analog-dial-wrapper') || el).classList.toggle('ui-interaction-locked', saving);
     }
 
     const state = this.voiceScheduler?.state;

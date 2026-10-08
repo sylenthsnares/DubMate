@@ -382,6 +382,14 @@ async function show(env, state, index = 0) {
     if (visible(next)) fail("Done still shown under the ask");
     $(env, "btn-done-keep-recording").click();
     if (visible(ask) || !visible(next) || app.isReadyForScreening) fail("Keep recording did not put the footer back");
+    // Esc is Keep recording too.
+    const activeViews = Object.entries(app.views).filter(([, el]) => el.classList.contains("active")).map(([k]) => k);
+    for (const [k, el] of Object.entries(app.views)) el.classList.toggle("active", k === "booth");
+    if (app.isAudioSettingsOpen()) app.closeAudioSettings();
+    next.click();
+    $(env, "btn-done-mark-ready").dispatchEvent(new env.w.KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    if (visible(ask) || !visible(next) || app.isReadyForScreening || env.w.document.activeElement !== next) fail(`Esc did not put the footer back: ${visible(ask)} ${visible(next)} ${app.isReadyForScreening} ${env.w.document.activeElement.id}`);
+    for (const [k, el] of Object.entries(app.views)) el.classList.toggle("active", activeViews.includes(k));
 
     const views = [];
     const realShowView = app.showView;
@@ -402,8 +410,10 @@ async function show(env, state, index = 0) {
     app.isReadyForScreening = false;
     const allMine = { ...oneTake(), t2000: { picked: "c1", next_number: 2, takes: [mk("c1", 1)] } };
     await show(env, room(allMine, { host_id: "u9" }), 1);
+    env.toasts.length = 0;
     next.click();
     if (visible(ask) || !app.isReadyForScreening || !dialog.hidden) fail(`guest done: ask ${visible(ask)} ready ${app.isReadyForScreening} dialog ${!dialog.hidden}`);
+    if (env.toasts.join("|") !== "You're marked ready. The host will start the premiere.") fail(`guest done toasts: ${JSON.stringify(env.toasts)}`);
     app.showView = realShowView;
     app.setupScreeningView = realSetup;
     console.log("PASS: Done marks you ready, asks inline when lines are missing, and the host's premiere question is a dialog");

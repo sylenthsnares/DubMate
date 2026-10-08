@@ -521,6 +521,41 @@ const deletes = (env) => env.calls.filter((c) => c.method === "DELETE");
     console.log("PASS: line chips are buttons with aria-current, 'Line 1, Ana, recorded, 3 takes' and a visible count");
   }
 
+  // 10. Backspace deletes too (the Mac's Delete key); Space on Undo doesn't record; the chip
+  //     counts the take as gone while its Undo shows; focus stays on the card afterwards.
+  {
+    await show(env, room(threeTakes()));
+    env.reply = (u, opts) => {
+      if (opts.method !== "DELETE") return null;
+      const t = threeTakes().t1000;
+      return { status: "ok", line: { ...t, takes: t.takes.filter((x) => x.take_id !== "b2") } };
+    };
+    radios(env)[1].focus();
+    press(env, "Backspace");
+    await tick();
+    if (!list.querySelector(".take-row.is-deleted") || env.timers.size !== 1) fail("Backspace did not defer the delete");
+    const undo = list.querySelector(".take-undo");
+    if (doc.activeElement !== undo) fail("focus didn't move to Undo");
+    let recorded = 0;
+    const realToggle = app.toggleRecording;
+    app.toggleRecording = () => { recorded++; };
+    const ev = press(env, " ", undo, { code: "Space" });
+    app.toggleRecording = realToggle;
+    if (recorded || ev.defaultPrevented) fail("Space on Undo started a recording instead of pressing Undo");
+    const chip0 = $(env, "timeline-chips").children[0];
+    if (text(chip0.querySelector(".chip-count")) !== "2 takes") fail(`chip count during Undo: ${text(chip0.querySelector(".chip-count"))}`);
+    const [fire] = [...env.timers.values()];
+    env.timers.clear();
+    fire();
+    await tick();
+    if (!doc.activeElement || doc.activeElement.getAttribute("role") !== "radio" || !list.contains(doc.activeElement)) {
+      fail(`focus after the delete went out: ${doc.activeElement && doc.activeElement.tagName}`);
+    }
+    env.calls.length = 0;
+    env.reply = null;
+    console.log("PASS: Backspace deletes, Space on Undo doesn't record, the chip drops the take, focus stays on the card");
+  }
+
   if (env.errors.length) fail(`console errors: ${env.errors.join("\n")}`);
   console.log("All takes card checks passed.");
   process.exit(0);

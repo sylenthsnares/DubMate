@@ -54,6 +54,8 @@ export class AnalogKnob {
     // Insert wrapper right before input, then move input inside (hidden for screen readers)
     this.input.parentNode.insertBefore(this.container, this.input);
     this.input.classList.add('dial-hidden-input');
+    // The dial is the one tab stop; the input underneath would be an invisible second one.
+    this.input.tabIndex = -1;
     this.container.appendChild(this.input);
 
     // Build Dial Markup: Tick Ring + Bezel + Body + Pointer Cap

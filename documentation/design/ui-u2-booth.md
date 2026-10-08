@@ -75,7 +75,7 @@ Out of scope: the lobby (U3), landing, join and packs (U4), and premiere, export
 **Monitor strip (about 70px, no faceplate, no grille)**
 
 - A Backing slider (a native range on the U1 slider style) with "60%".
-- Two labelled switches (`.switch-checkbox`): "Count-in" (tooltip "Beeps on the count-in") and "Hear original" (tooltip "Hear the original voice while you record").
+- Two labelled switches (`.switch-checkbox`): "Count-in" (tooltip "Beeps on the count-in. The 3-beat count-in on screen always runs.") and "Hear original" (tooltip "Hear the original voice while you record").
 - Each state shows once. The I/O rockers, the ON/OFF tags, the screws and the grille fill go.
 
 ### 3. Footer (pinned)
@@ -136,12 +136,15 @@ Out of scope: the lobby (U3), landing, join and packs (U4), and premiere, export
   - `#booth-processing-overlay` and the global lock in `setBoothProcessing` go.
   - A per-line `savingLines` map drives four things: the SAVING badge and spinner on that line's record button; "Saving… cleaning up noise" ("Saving…" with noise cleanup off) in its take lane and in the Takes card as a pending row; a "saving" mark on its line chip; and the Voice and Takes controls locked on that line only.
   - Every other line works, including recording.
+  - On the saving line, Level, Auto, the timing nudges, `[` `]` and dragging the take lane are locked too, along with the Voice controls.
+  - While counting in or recording, A, `,` and `.` do nothing (they'd stop the take and lose it). Space on a focused button in the Takes card or an inline question presses that button instead of recording.
   - Values the upload needs (the offset, gain, guide voice, noise reduction and pending chain) are captured when recording stops, before any `await`.
   - When the upload returns, the booth reloads only if you are still on that line and not counting in or recording. The same guard applies to the `take_recorded` echo, which otherwise only refreshes the Takes card and the chips.
   - "Take saved" toasts only when the saved line is off screen ("Take 3 saved on line 2"). On screen, the new row is the confirmation.
 - **A failed upload keeps the take** (step 22a):
   - The blob stays in memory, keyed by line, and the Takes card shows "Take · waiting to upload" with "Retry" and, in its ⋯ menu, "Discard".
-  - It retries on its own when the socket goes back to `open`.
+  - It retries on its own when the socket goes back to `open`, and as soon as another take on the same line finishes saving.
+  - Only network errors and 5xx keep a take. A 4xx means the engine refused it (unreadable audio, a recast line, a room that's gone): the toast says why (`friendlyError(detail)`) and the take is dropped.
   - While any take is waiting, a `beforeunload` guard warns before the page closes.
   - While OFFLINE, the waveform's take lane is dimmed.
 

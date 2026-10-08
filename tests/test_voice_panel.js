@@ -217,6 +217,10 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     press("e");
     press("e");
     if (columnPanel.classList.contains("rack-open")) fail("E did not close All effects");
+    // T goes to the Takes card, so it closes All effects (which hides the card).
+    press("e");
+    press("t");
+    if (columnPanel.classList.contains("rack-open")) fail("T left All effects over the Takes card");
     console.log("PASS: All effects is the column's page: plain labels, no Mix on Low cut and Gate; Back, Esc and E close it");
   }
 
@@ -320,6 +324,10 @@ async function showLine(env, { takes = [mkTake()], host = "u1", roles = {}, voic
     if (!ask.hidden || scope.value !== "take" || app.voiceScope !== "take" || w.document.activeElement !== scope) fail("Cancel didn't restore the select");
     await tick();
     if (puts(before, /./).length) fail("Cancel still applied the sound");
+    // Esc is Cancel too.
+    pickScope("character");
+    press("Escape", askYes);
+    if (!ask.hidden || scope.value !== "take" || w.document.activeElement !== scope) fail("Esc didn't cancel the ask");
 
     pickScope("character");
     askYes.click();

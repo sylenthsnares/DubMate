@@ -106,7 +106,9 @@ const EXPOSE = ["const __mods = {};", "const __mods = window.__mods = {};"];
   }
 
   // 5. Locked: aria-disabled, out of the tab order, and every way of turning it is ignored.
+  //    The hidden input is never a tab stop of its own: the dial is the one stop.
   {
+    if (input.tabIndex !== -1) fail(`the hidden input is a second tab stop (tabIndex ${input.tabIndex})`);
     input.disabled = true;
     knob.updateVisuals();
     if (wrap.getAttribute("aria-disabled") !== "true" || wrap.tabIndex !== -1) fail(`locked dial: aria-disabled ${wrap.getAttribute("aria-disabled")} tabIndex ${wrap.tabIndex}`);
