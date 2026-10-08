@@ -1142,8 +1142,6 @@ async def download_room_stems(room_id: str, user_id: str = ""):
         )
     except BaseException as ex:
         release()
-        if isinstance(ex, audio_processor.EffectsUnavailable):
-            raise HTTPException(status_code=503, detail=str(ex))
         if isinstance(ex, Exception):
             print(f"[StemsError] Error generating stems for {room_id}: {ex}")
             raise HTTPException(status_code=500, detail="Couldn't get the stems. Try again.")
@@ -1190,8 +1188,6 @@ async def download_room_project_zip(room_id: str, user_id: str = ""):
                 bitrate="192k",
             )
         )
-    except audio_processor.EffectsUnavailable as ex:
-        raise HTTPException(status_code=503, detail=str(ex))
     except Exception as ex:
         print(f"[ProjectZipError] Error generating project ZIP for {room_id}: {ex}")
         raise HTTPException(status_code=500, detail="Couldn't build the project files. Try again.")

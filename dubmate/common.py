@@ -17,6 +17,10 @@ from fastapi.responses import StreamingResponse
 
 import pack_loader
 
+# Where to get the DubMate installer: what an in-app update can't bring (voice effects,
+# the stronger cleanup) comes only with it (documentation/design/v2-update-path.md).
+DOWNLOAD_PAGE_URL = "https://github.com/sylenthsnares/DubMate/releases/latest"
+
 # Cache-Control for immutable or versioned media (pack assets, fingerprinted takes).
 LONG_CACHE = "public, max-age=86400, stale-while-revalidate=604800"
 

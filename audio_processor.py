@@ -7,6 +7,7 @@ Matching filter chain for time-invariant pitch shifting, room acoustics, dynamic
 
 import os
 import re
+import sys
 import math
 import wave
 import json
@@ -82,17 +83,36 @@ RENDER_CACHE_MAX_BYTES = 500 * 1024 * 1024
 RENDER_KEEP_RECENT_S = 600       # eviction never deletes a render used in the last 10 minutes
 RENDER_TMP_MAX_AGE_S = 3600      # stray temp files older than this are removed on eviction
 
-EFFECTS_MISSING_MESSAGE = "Download and install the latest DubMate to use voice effects."
+EFFECTS_MISSING_MESSAGE = ("Voice effects need the DubMate 2.0 installer. "
+                           "Get it from github.com/sylenthsnares/DubMate/releases.")
 
 
 class EffectsUnavailable(RuntimeError):
-    """The voice effects (pedalboard) aren't installed, so nothing can be rendered or exported.
-    Only an install that predates them gets here (a source checkout not yet updated, or a
-    desktop install updated by a launcher older than the dependency step); the engine
-    never installs packages itself."""
+    """The voice effects (pedalboard) aren't installed, so a take can't be rendered through
+    its chain. Only an install that predates them gets here (a source checkout not yet
+    updated, or a desktop app updated in place from 1.1.3, whose updater installs no
+    packages); the engine never installs packages itself. Exports then save the takes
+    without effects (_render_take); only render_take_cached raises this."""
 
     def __init__(self, message: str = EFFECTS_MISSING_MESSAGE):
         super().__init__(message)
+
+
+# Whether _render_take has said this run that takes are saved without voice effects.
+_dry_takes_logged = False
+
+
+def missing_parts() -> List[str]:
+    """What this engine lacks that only the DubMate 2.0 installer brings, in this order:
+    "voice_effects" without pedalboard, and "strong_cleanup" without the deep-filter
+    sidecar when the engine runs from the desktop app's bundled runtime (source installs
+    never had DeepFilterNet, so they aren't told about it)."""
+    parts = []
+    if not vocal_chain.available():
+        parts.append("voice_effects")
+    if _noise_reduction_engine() == "fallback" and "python-runtime" in re.split(r"[\\/]", sys.executable or ""):
+        parts.append("strong_cleanup")
+    return parts
 
 
 # Only these characters are allowed in filesystem-derived identifiers (room_id, user_id, ...).
@@ -1628,7 +1648,8 @@ def render_take_cached(
     preview and export. Writes <render_dir>/<key>.wav (mono 32-bit float, 44.1 kHz, not
     clipped: Level and the master come later) and <key>.json ({"line_id", "take_id",
     "duration", "peak_db"} plus "lufs" for full renders; line_id and take_id come from meta). until_s renders only the take's start (vocal_chain.render).
-    Returns (wav path, info). Raises EffectsUnavailable when the voice effects aren't installed.
+    Returns (wav path, info). Raises EffectsUnavailable when the voice effects aren't
+    installed (the render route answers 503; exports use the take dry, _render_take).
     """
     if not vocal_chain.available():
         raise EffectsUnavailable()
@@ -1694,24 +1715,33 @@ def _render_take(take_info: Dict[str, Any], sr: int, gain_db: float, log_tag: st
     """
     The take's cached render through its chain (take_chain) times its level, gain_db clamped
     to GAIN_DB_MIN..GAIN_DB_MAX. take_info needs "wav_path" and "render_dir". If the render
-    fails, falls back to the unprocessed take audio. Returns None when the take cannot be
-    read at all; what that means is the caller's failure policy. EffectsUnavailable is
-    raised: an export never goes out without its effects.
+    fails, falls back to the unprocessed take audio. Without the voice effects
+    (EffectsUnavailable) the take is saved dry: its own audio times the same level, which
+    then holds the auto gain measured on that audio (rooms_api._rematch_level); this is
+    logged once per engine run. Returns None when the take cannot be read at all; what
+    that means is the caller's failure policy.
     """
+    global _dry_takes_logged
     wav_path = take_info["wav_path"]
     clamped_gain_db = float(np.clip(gain_db, GAIN_DB_MIN, GAIN_DB_MAX))
     if clamped_gain_db != gain_db:
         print(f"[{log_tag}] WARNING: gain_db={gain_db} out of safe range; clamped to {clamped_gain_db} dB.")
+    take_level = np.float32(10.0 ** (clamped_gain_db / 20.0))
+    dry = False
     try:
         path, _ = render_take_cached(wav_path, take_chain(take_info), take_info["render_dir"],
                                      meta={"line_id": take_info.get("line_id"), "take_id": take_info.get("take_id")})
-        return read_wav_mono(path, sr) * np.float32(10.0 ** (clamped_gain_db / 20.0))
+        return read_wav_mono(path, sr) * take_level
     except EffectsUnavailable:
-        raise
+        dry = True
+        if not _dry_takes_logged:
+            _dry_takes_logged = True
+            print("[Effects] Voice effects aren't installed; videos, stems and projects are saved without them.")
     except Exception as ex:
         print(f"[{log_tag}] WARNING: voice chain render failed ({wav_path!r}): {ex}. Falling back to unprocessed take audio.")
     try:
-        return read_wav_mono(wav_path, sr)
+        audio = read_wav_mono(wav_path, sr)
+        return audio * take_level if dry else audio
     except Exception as ex:
         print(f"[{log_tag}] ERROR: fallback read also failed: {ex}.")
         return None
@@ -1858,7 +1888,8 @@ def export_dub_video(
     on_audio_mixed: Optional[Callable[[], None]] = None,
 ) -> str:
     """Combines final mixed audio with scene video into a high quality MP4 (16:9 or 9:16 letterboxed).
-    on_audio_mixed is called once the audio is mixed, before the video is encoded."""
+    on_audio_mixed is called once the audio is mixed, before the video is encoded. Without the
+    voice effects the takes go in dry (_render_take)."""
     pack.ensure_web_ready()
     fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
@@ -1972,9 +2003,11 @@ def _sound_name(chain: Dict[str, Any]) -> str:
 
 
 def _project_cue_sheet(
-    pack: PackInfo, room_id: str, sr: int, bitrate: str, manifest_lines: List[Dict[str, Any]]
+    pack: PackInfo, room_id: str, sr: int, bitrate: str, manifest_lines: List[Dict[str, Any]],
+    voice_effects: bool = True,
 ) -> str:
-    """Human-readable Timeline_Cues.txt for build_project_zip, formatted from the manifest line entries."""
+    """Human-readable Timeline_Cues.txt for build_project_zip, formatted from the manifest line
+    entries. Without voice_effects (the takes were saved dry) no preset name is claimed."""
     out = [
         "DubMate Studio Pro - Project Timeline & Dialogue Cues",
         f"Project: {pack.name} (Pack ID: {pack.pack_id})",
@@ -1992,7 +2025,8 @@ def _project_cue_sheet(
             out.extend([
                 f"  Actor     : {entry['actor_name']}",
                 f"  Dialogue  : \"{entry['text']}\"",
-                f"  DSP Tuning: Offset: {entry['offset_ms']:+d}ms | Sound: {_sound_name(entry['chain'])}"
+                f"  DSP Tuning: Offset: {entry['offset_ms']:+d}ms | Sound: "
+                f"{_sound_name(entry['chain']) if voice_effects else 'none (voice effects not installed)'}"
                 f" | Gain: {entry['gain_db']:+.1f}dB",
                 f"  File      : {entry['take_file']}",
             ])
@@ -2019,8 +2053,10 @@ def _project_manifest(
     backing_written: bool,
     master_vocal_written: bool,
     master_gain_db: float = 0.0,
+    voice_effects: bool = True,
 ) -> Dict[str, Any]:
-    """project_manifest.json for build_project_zip. Single files are listed only if they were written."""
+    """project_manifest.json for build_project_zip. Single files are listed only if they were
+    written. master.voice_effects is False when the takes were saved without their effects."""
     return {
         "application": "DubMate Studio Pro",
         "version": "2.3",
@@ -2036,7 +2072,8 @@ def _project_manifest(
         "users": users,
         "lines": manifest_lines,
         # Gain applied to the vocal mix and character stems to bring the scene to target_lufs.
-        "master": {"target_lufs": MASTER_TARGET_LUFS, "gain_db": round(master_gain_db, 2)},
+        "master": {"target_lufs": MASTER_TARGET_LUFS, "gain_db": round(master_gain_db, 2),
+                   "voice_effects": voice_effects},
         "files": {
             "clean_video": f"Video/{sanitize_filename(pack.name)}_Clean_Video.mp4" if video_written else None,
             "backing_track": "Audio_Stems/Backing_Music_SFX.mp3" if backing_written else None,
@@ -2069,9 +2106,12 @@ def build_project_zip(
        - Line_01_[Character]_[Actor].mp3
     4. Timeline_Cues.txt -> Human-readable cuesheet
     5. project_manifest.json -> Machine-readable timeline and track metadata
+    Without the voice effects the takes go in dry (_render_take), and the manifest
+    (master.voice_effects false) and the cue sheet say so.
     """
     role_assignments = role_assignments or {}
     users = users or {}
+    voice_effects = vocal_chain.available()   # without them the takes are saved dry (_render_take)
 
     total_samples = _timeline_samples(pack, sr)
 
@@ -2251,7 +2291,7 @@ def build_project_zip(
         # Write Timeline_Cues.txt
         cues_txt_path = os.path.join(proj_root, "Timeline_Cues.txt")
         with open(cues_txt_path, "w", encoding="utf-8") as f:
-            f.write(_project_cue_sheet(pack, room_id, sr, bitrate, manifest_lines))
+            f.write(_project_cue_sheet(pack, room_id, sr, bitrate, manifest_lines, voice_effects=voice_effects))
 
         # Write project_manifest.json
         manifest_data = _project_manifest(
@@ -2260,6 +2300,7 @@ def build_project_zip(
             backing_written=backing_written,
             master_vocal_written=master_vocal_written,
             master_gain_db=master_gain_db,
+            voice_effects=voice_effects,
         )
         manifest_json_path = os.path.join(proj_root, "project_manifest.json")
         with open(manifest_json_path, "w", encoding="utf-8") as f:
@@ -2304,7 +2345,8 @@ def build_stems_zip(
     Mono 32-bit float WAVs, all _timeline_samples long and starting with the scene.
     Every file gets the master stage's start gain (toward -16 LUFS, measured on the
     unlimited mix), nothing after it: Dialogue + Music_and_Effects is the video's mix
-    before its limiter, at -16 LUFS, with its peaks kept. EffectsUnavailable is raised.
+    before its limiter, at -16 LUFS, with its peaks kept. Without the voice effects the
+    takes go in dry (_render_take).
     """
     backing, voices = _mix_buses(pack, takes_dict, sr, presence_db, by_character=True, balance=mix_balance)
     dialogue = np.zeros(len(backing), dtype=np.float32)

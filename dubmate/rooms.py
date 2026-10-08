@@ -387,6 +387,9 @@ class Room:
             "download_url_16_9": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=16:9",
             "download_url_9_16": f"/api/rooms/{self.room_id}/export/download?aspect_ratio=9:16",
             "project_zip_url": f"/api/rooms/{self.room_id}/export/project_zip",
+            # What the host's engine lacks that only the 2.0 installer brings, so the studio
+            # can say so without asking /health.
+            "engine_missing": audio_processor.missing_parts(),
         }
 
     async def broadcast(self, message_type: str, payload: Any = None):

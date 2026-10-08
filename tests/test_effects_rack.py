@@ -550,7 +550,7 @@ class TestRenderRoute(RenderRoutesCase):
             res = self._render()
             self.assertEqual(res.status_code, 503)
             self.assertEqual(res.json(), {"effects_unavailable": True,
-                                          "message": "Download and install the latest DubMate to use voice effects."})
+                                          "message": audio_processor.EFFECTS_MISSING_MESSAGE})
 
 
 class TestSupersede(RenderRoutesCase):

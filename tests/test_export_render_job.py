@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 import audio_processor
 from app import app
-from dubmate import rooms, rooms_api
+from dubmate import rooms, rooms_api, vocal_chain
 from test_take_model import RoomCase
 
 HOST = "hostT"
@@ -146,11 +146,27 @@ class TestRestart(RenderJobCase):
         self.assertEqual(self.room.export_status["16:9"], "failed: ffmpeg broke")
         self.assertEqual(self.room.to_state_dict()["exports"]["16:9"], "failed")
 
-    def test_missing_effects_keep_their_message(self):
-        with mock.patch.object(audio_processor, "export_dub_video", side_effect=audio_processor.EffectsUnavailable()):
+    def test_missing_effects_still_make_the_video(self):
+        """Without the voice effects (a 1.1.3 app updated in place) the video is saved with
+        the takes as recorded: the real mix runs, only the encode is stood in for."""
+        self._add(self.room, "t1000", 300)
+        mixed = []
+
+        def render(pack, takes, out_path, **kwargs):
+            wav = out_path + ".wav"
+            audio_processor.render_dub_mix(pack, takes, wav, master_dialogue_presence_db=kwargs["master_dialogue_presence_db"],
+                                           mix_balance=kwargs["mix_balance"])
+            mixed.append(os.path.getsize(wav))
+            os.remove(wav)
+            write_video(pack, takes, out_path)
+
+        with mock.patch.object(vocal_chain, "available", return_value=False), \
+                mock.patch.object(audio_processor, "export_dub_video", side_effect=render):
             self._finish(self._call(rooms_api.start_export_render, self.room, "16:9"))
-        self.assertEqual(self._types("export_failed"),
-                         [{"aspect_ratio": "16:9", "error": audio_processor.EFFECTS_MISSING_MESSAGE}])
+        self.assertEqual(len(mixed), 1)
+        self.assertEqual(self._types("export_failed"), [])
+        self.assertEqual(len(self._types("export_ready")), 1)
+        self.assertEqual(self.room.export_status["16:9"], "ready")
 
     def test_a_forgotten_room_stops_its_render(self):
         self.gate.clear()
