@@ -48,6 +48,8 @@ The desktop app keeps your work in DubMate's own folder:
 - **macOS:** `~/Library/Application Support/DubMate`
 - **Running from source:** the `data` folder inside your DubMate folder, or `~/.dubmate/cache` if DubMate can't write there.
 
+If you updated from DubMate 1.x inside the app instead of with the 2.0 installer, the Pack Builder add-on, and anything DubMate couldn't move, is still in the folder DubMate is installed in.
+
 Inside it:
 
 | What | Desktop app (in DubMate's folder) | Running from source |
