@@ -1639,7 +1639,15 @@
       <div id="audio-setup-step-denied" class="audio-setup-step" style="display: none;">
         <div class="audio-denied-box">
           <div class="audio-denied-title">
-            <span aria-hidden="true">🚫</span>
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="2" x2="22" y1="2" y2="22" />
+              <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" />
+              <path d="M5 10v2a7 7 0 0 0 12 5" />
+              <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+              <line x1="12" x2="12" y1="19" y2="22" />
+            </svg>
             <span id="audio-denied-heading">Microphone access was blocked</span>
           </div>
           <p id="audio-denied-detail" class="audio-denied-detail">
@@ -1647,27 +1655,15 @@
           </p>
         </div>
 
-        <div class="audio-recovery-grid">
-          <div class="audio-recovery-card">
-            <div class="audio-recovery-head">In the DubMate window</div>
-            <ol class="audio-recovery-list">
-              <li>Click the padlock / sliders icon in the address bar.</li>
-              <li>Set <strong>Microphone</strong> to <strong>Allow</strong>.</li>
-              <li>Reload the page, then press <strong>Try again</strong>.</li>
-            </ol>
-          </div>
-          <div class="audio-recovery-card">
-            <div class="audio-recovery-head">Windows privacy settings</div>
-            <ol class="audio-recovery-list">
-              <li>Open <strong>Settings → Privacy &amp; security → Microphone</strong>.</li>
-              <li>Turn on <strong>Microphone access</strong> and <strong>Let desktop apps access your
-                  microphone</strong>.</li>
-              <li>Restart DubMate.</li>
-            </ol>
-            <p class="audio-recovery-note">
-              On a Mac: <strong>System Settings → Privacy &amp; Security → Microphone</strong>.
-            </p>
-          </div>
+        <!-- Filled by renderMicRecovery(): the steps for this computer, the others folded away.
+             Hidden for errors that aren't about permission. -->
+        <div id="audio-recovery" class="audio-recovery">
+          <ol id="audio-recovery-steps" class="audio-recovery-list"></ol>
+          <p id="audio-recovery-os" class="audio-recovery-note" style="display: none;"></p>
+          <details id="audio-recovery-more" class="audio-recovery-more">
+            <summary>Using something else?</summary>
+            <div id="audio-recovery-others"></div>
+          </details>
         </div>
 
         <div class="modal-actions" style="margin-top: 18px; justify-content: space-between; gap: 10px;">

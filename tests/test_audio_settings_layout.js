@@ -312,7 +312,13 @@ function done(env) {
 
   // 4. The denied step: one list for this computer, the rest behind "Using something else?".
   {
-    const lis = (el) => Array.from(el.querySelectorAll("li")).map(text);
+    // A step's own words, without the button some steps carry.
+    const stepText = (li) => {
+      const copy = li.cloneNode(true);
+      copy.querySelectorAll("button").forEach((b) => b.remove());
+      return text(copy);
+    };
+    const lis = (el) => Array.from(el.querySelectorAll("li")).map(stepText);
     const cases = [
       { name: "desktop app on Windows", url: HOST, platform: "Windows", desktop: true, list: "desktop-windows", button: "Open Windows microphone settings", others: ["desktop-mac", "browser"] },
       { name: "desktop app on a Mac", url: HOST, platform: "macOS", desktop: true, list: "desktop-mac", button: "Open macOS microphone settings", others: ["desktop-windows", "browser"] },
@@ -367,7 +373,7 @@ function done(env) {
       $(env, "btn-open-mic-settings").click();
       await tick();
       check(!shown($(env, "btn-open-mic-settings")), "the settings button stayed after the desktop app refused");
-      check(text($(env, "audio-recovery-steps").querySelector("li")) === STEPS["desktop-windows"][0], "the written step went with the button");
+      check(stepText($(env, "audio-recovery-steps").querySelector("li")) === STEPS["desktop-windows"][0], "the written step went with the button");
       done(env);
     }
 

@@ -4456,18 +4456,44 @@ svg {
   color: var(--foreground-muted);
 }
 
-.audio-recovery-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+.audio-recovery {
   margin-top: 14px;
-}
-
-.audio-recovery-card {
   padding: 14px;
   border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border-wood);
+}
+
+/* The steps for this computer read in full ivory; the folded ones stay muted. */
+.audio-recovery > .audio-recovery-list {
+  color: var(--foreground);
+}
+
+.audio-recovery-open {
+  display: flex;
+  margin-top: 6px;
+}
+
+.audio-recovery-more {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.audio-recovery-more summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+}
+
+.audio-recovery-more summary:focus-visible {
+  outline: 2px solid var(--accent-brass);
+  outline-offset: 2px;
+}
+
+.audio-recovery-other {
+  margin-top: 10px;
 }
 
 .audio-recovery-head {
@@ -4847,10 +4873,6 @@ svg {
 }
 
 @media (max-width: 640px) {
-  .audio-recovery-grid {
-    grid-template-columns: 1fr;
-  }
-
   .audio-settings-btn-text {
     display: none;
   }

@@ -25,6 +25,57 @@ const METER_FALLBACK_HINT = "Your saved microphone isn't connected. Showing the 
 
 const STATUS_STATES = ['pending', 'done', 'attention', 'error'];
 
+// What to do when the microphone is blocked, for each kind of computer. The denied step
+// shows the one that fits and folds the others under "Using something else?".
+const RECOVERY_STEPS = {
+  'desktop-windows': {
+    title: 'DubMate app on Windows',
+    steps: [
+      'Open Windows microphone settings.',
+      'Turn on Microphone access and Let desktop apps access your microphone.',
+      "Come back and press Try again. If it still doesn't work, restart DubMate.",
+    ],
+    settingsButton: 'Open Windows microphone settings',
+  },
+  'desktop-mac': {
+    title: 'DubMate app on a Mac',
+    steps: ['Open macOS microphone settings.', 'Turn on DubMate.', 'Restart DubMate.'],
+    settingsButton: 'Open macOS microphone settings',
+  },
+  browser: {
+    title: 'In a browser',
+    steps: ['Click the icon at the left of the address bar.', 'Set Microphone to Allow.', 'Press Try again.'],
+  },
+};
+// After the browser steps, the computer's own switch.
+const STILL_BLOCKED = {
+  windows: 'Still blocked? In Windows Settings → Privacy & security → Microphone, turn on Let desktop apps access your microphone.',
+  mac: 'Still blocked? In System Settings → Privacy & Security → Microphone, turn on your browser.',
+};
+// Errors these steps can fix; '' is a permission the browser already reports as denied.
+const PERMISSION_ERRORS = ['', 'NotAllowedError', 'SecurityError'];
+
+/** 'windows' | 'mac' | 'other', from what the browser says about this computer. */
+export function detectOs(nav) {
+  const platform = (nav && ((nav.userAgentData && nav.userAgentData.platform) || nav.platform || nav.userAgent)) || '';
+  if (/\bwin/i.test(platform)) return 'windows';
+  if (/mac/i.test(platform)) return 'mac';
+  return 'other';
+}
+
+/** The RECOVERY_STEPS entry for this computer: the desktop app on Windows or a Mac, else a browser. */
+export function recoveryCase(isDesktopApp, os) {
+  return isDesktopApp && (os === 'windows' || os === 'mac') ? `desktop-${os}` : 'browser';
+}
+
+function recoveryItems(steps) {
+  return steps.map((step) => {
+    const li = document.createElement('li');
+    li.textContent = step;
+    return li;
+  });
+}
+
 /** Puts a .status-text line in one state: 'pending' | 'done' | 'attention' | 'error'. */
 export function setStatusState(el, state) {
   if (!el) return;
@@ -430,8 +481,61 @@ export class AudioSetupMethods {
       detail = 'Recording is off until the microphone works. Check that it is plugged in and allowed, then press Try again.';
     }
 
-    if (this.audioDeniedHeading) this.audioDeniedHeading.innerText = heading;
-    if (this.audioDeniedDetail) this.audioDeniedDetail.innerText = detail;
+    if (this.audioDeniedHeading) this.audioDeniedHeading.textContent = heading;
+    if (this.audioDeniedDetail) this.audioDeniedDetail.textContent = detail;
+    this.renderMicRecovery(name);
+  }
+
+  // The steps for this computer, the others behind "Using something else?". Nothing for
+  // errors that aren't about permission: no padlock helps when there is no microphone.
+  renderMicRecovery(errorName) {
+    if (!this.audioRecovery) return;
+    const show = PERMISSION_ERRORS.includes(errorName);
+    this.audioRecovery.style.display = show ? '' : 'none';
+    if (!show) return;
+
+    const os = detectOs(typeof navigator !== 'undefined' ? navigator : null);
+    const key = recoveryCase(!!window.__TAURI__, os);
+    const entry = RECOVERY_STEPS[key];
+    const items = recoveryItems(entry.steps);
+    // In the desktop app on this computer, step 1 opens the settings page itself.
+    const invoke = entry.settingsButton ? this.desktopInvoke() : null;
+    if (invoke) {
+      const btn = document.createElement('button');
+      btn.id = 'btn-open-mic-settings';
+      btn.type = 'button';
+      btn.className = 'btn btn-secondary btn-sm audio-recovery-open';
+      btn.textContent = entry.settingsButton;
+      btn.addEventListener('click', () => {
+        Promise.resolve().then(() => invoke('open_mic_settings')).catch((err) => {
+          // An older desktop app, or the page didn't open: the written step stays.
+          console.warn('[DubMate] Could not open the microphone settings:', err);
+          btn.style.display = 'none';
+        });
+      });
+      items[0].appendChild(btn);
+    }
+    if (this.audioRecoverySteps) this.audioRecoverySteps.replaceChildren(...items);
+    if (this.audioRecoveryOs) {
+      const line = (key === 'browser' && STILL_BLOCKED[os]) || '';
+      this.audioRecoveryOs.textContent = line;
+      this.audioRecoveryOs.style.display = line ? '' : 'none';
+    }
+    if (this.audioRecoveryOthers) {
+      this.audioRecoveryOthers.replaceChildren(...Object.keys(RECOVERY_STEPS).filter((k) => k !== key).map((k) => {
+        const block = document.createElement('div');
+        block.className = 'audio-recovery-other';
+        const head = document.createElement('p');
+        head.className = 'audio-recovery-head';
+        head.textContent = RECOVERY_STEPS[k].title;
+        const list = document.createElement('ol');
+        list.className = 'audio-recovery-list';
+        list.replaceChildren(...recoveryItems(RECOVERY_STEPS[k].steps));
+        block.append(head, list);
+        return block;
+      }));
+    }
+    if (this.audioRecoveryMore) this.audioRecoveryMore.open = false;
   }
 
   async rescanAudioDevices() {

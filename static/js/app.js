@@ -300,6 +300,11 @@ class DubMateApp {
     this.btnDismissAudioDenied = document.getElementById('btn-dismiss-audio-denied');
     this.audioDeniedHeading = document.getElementById('audio-denied-heading');
     this.audioDeniedDetail = document.getElementById('audio-denied-detail');
+    this.audioRecovery = document.getElementById('audio-recovery');
+    this.audioRecoverySteps = document.getElementById('audio-recovery-steps');
+    this.audioRecoveryOs = document.getElementById('audio-recovery-os');
+    this.audioRecoveryMore = document.getElementById('audio-recovery-more');
+    this.audioRecoveryOthers = document.getElementById('audio-recovery-others');
     this.selectAudioInput = document.getElementById('select-audio-input');
     this.selectAudioOutput = document.getElementById('select-audio-output');
     this.audioInputNote = document.getElementById('audio-input-note');
