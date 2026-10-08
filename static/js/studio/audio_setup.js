@@ -57,6 +57,10 @@ const STILL_BLOCKED = {
 // Errors these steps can fix; '' is a permission the browser already reports as denied.
 const PERMISSION_ERRORS = ['', 'NotAllowedError', 'SecurityError'];
 
+// Where the takes go, in Audio settings and the lobby's mic card (documentation/design/v2-notices.md, section 5).
+export const TAKES_OWN_PRIVACY = 'Your takes are saved on this computer.';
+export const TAKES_GUEST_PRIVACY = "Your takes are sent to the host's computer, and the host can export and share them.";
+
 /** 'windows' | 'mac' | 'other', from what the browser says about this computer. */
 export function detectOs(nav) {
   const platform = (nav && ((nav.userAgentData && nav.userAgentData.platform) || nav.platform || nav.userAgent)) || '';
@@ -339,15 +343,15 @@ export class AudioSetupMethods {
     }
     // The denied and first-run steps say it in their own words.
     if (this.audioSetupSubtitle) this.audioSetupSubtitle.style.display = step === 'devices' ? '' : 'none';
+    // Someone else's engine: the devices step says where the takes go (a desktop member never sees the intro).
+    if (this.audioGuestPrivacy) this.audioGuestPrivacy.hidden = step !== 'devices' || this.isEngineLocal();
     if (step === 'intro') this.renderAudioIntro();
   }
 
   // First run: the privacy line only where it is true, and who asks for permission.
   renderAudioIntro() {
     if (this.audioIntroPrivacy) {
-      this.audioIntroPrivacy.textContent = this.isEngineLocal()
-        ? 'Audio stays on this computer.'
-        : "Your takes are saved on the host's computer.";
+      this.audioIntroPrivacy.textContent = this.isEngineLocal() ? TAKES_OWN_PRIVACY : TAKES_GUEST_PRIVACY;
     }
     if (this.audioIntroAsker) {
       this.audioIntroAsker.textContent = window.__TAURI__ ? 'Your computer may ask' : 'Your browser will ask';

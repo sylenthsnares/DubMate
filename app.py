@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import pack_loader
 import audio_processor
-from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api
+from dubmate import common, packs_cache, rooms, room_registry, builder_api, packs_api, rooms_api, room_ws, noise_profiles_api, sessions_api, data_folders
 
 STATIC_DIR = common.find_static_dir()
 
@@ -291,6 +291,9 @@ app.include_router(room_ws.router)
 
 # Room check (noise profile) routes live in dubmate/noise_profiles_api.py.
 app.include_router(noise_profiles_api.router)
+
+# About's "Where your data lives" (own computer only) lives in dubmate/data_folders.py.
+app.include_router(data_folders.router)
 
 
 # Pack Builder routes live in dubmate/builder_api.py; registered here to keep

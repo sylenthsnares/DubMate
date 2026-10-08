@@ -1,13 +1,54 @@
-//! Opening the only three places outside DubMate it sends someone: the system's
-//! microphone privacy page, the studio in the default browser and the download page
-//! for the DubMate installer. The targets are fixed, so no page can make the app open
-//! an arbitrary address or program.
+//! Opening the only places outside DubMate it sends someone: the system's microphone
+//! privacy page, the studio in the default browser, the download page for the DubMate
+//! installer, and About's fixed DubMate pages (source code, licence, third-party notices,
+//! privacy, security). The targets are fixed, so no page can make the app open an
+//! arbitrary address or program: the studio sends a page's name, never a URL.
 
 use crate::sidecars::DEFAULT_ENGINE_PORT;
 use crate::state::SharedState;
 
 /// Where the DubMate installers are published.
 const DOWNLOAD_PAGE_URL: &str = "https://github.com/sylenthsnares/DubMate/releases/latest";
+
+const SOURCE_URL: &str = "https://github.com/sylenthsnares/DubMate";
+const LICENCE_URL: &str = "https://github.com/sylenthsnares/DubMate/blob/main/LICENSE";
+const NOTICES_URL: &str = "https://github.com/sylenthsnares/DubMate/blob/main/THIRD_PARTY_NOTICES.md";
+const PRIVACY_URL: &str = "https://github.com/sylenthsnares/DubMate/blob/main/PRIVACY.md";
+const SECURITY_URL: &str = "https://github.com/sylenthsnares/DubMate/blob/main/SECURITY.md";
+
+/// The DubMate pages About links to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum DubMatePage {
+    Source,
+    Licence,
+    Notices,
+    Privacy,
+    Security,
+}
+
+impl DubMatePage {
+    /// The page the studio names, or None for any other name.
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "source" => Some(Self::Source),
+            "licence" => Some(Self::Licence),
+            "notices" => Some(Self::Notices),
+            "privacy" => Some(Self::Privacy),
+            "security" => Some(Self::Security),
+            _ => None,
+        }
+    }
+
+    fn url(self) -> &'static str {
+        match self {
+            Self::Source => SOURCE_URL,
+            Self::Licence => LICENCE_URL,
+            Self::Notices => NOTICES_URL,
+            Self::Privacy => PRIVACY_URL,
+            Self::Security => SECURITY_URL,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ExternalTarget {
@@ -17,6 +58,8 @@ pub(crate) enum ExternalTarget {
     Studio(u16),
     /// The releases page with the DubMate installers.
     DownloadPage,
+    /// One of About's DubMate pages.
+    Page(DubMatePage),
 }
 
 /// The program and arguments that open `target` on `os` (`std::env::consts::OS`).
@@ -42,6 +85,11 @@ pub(crate) fn external_command(
             vec!["url.dll,FileProtocolHandler".to_string(), DOWNLOAD_PAGE_URL.to_string()],
         )),
         (ExternalTarget::DownloadPage, "macos") => Ok(("open", vec![DOWNLOAD_PAGE_URL.to_string()])),
+        (ExternalTarget::Page(page), "windows") => Ok((
+            "rundll32",
+            vec!["url.dll,FileProtocolHandler".to_string(), page.url().to_string()],
+        )),
+        (ExternalTarget::Page(page), "macos") => Ok(("open", vec![page.url().to_string()])),
         _ => Err(format!("Opening this isn't supported on {}.", os)),
     }
 }
@@ -80,6 +128,20 @@ pub fn open_studio_in_browser(state: tauri::State<'_, SharedState>) -> Result<()
 #[tauri::command]
 pub fn open_download_page() -> Result<(), String> {
     open(ExternalTarget::DownloadPage)
+}
+
+/// The target for a page name from the studio; anything but the five names is refused.
+fn page_target(page: &str) -> Result<ExternalTarget, String> {
+    DubMatePage::from_name(page)
+        .map(ExternalTarget::Page)
+        .ok_or_else(|| "That isn't a DubMate page.".to_string())
+}
+
+/// Opens one of About's DubMate pages ("source", "licence", "notices", "privacy" or
+/// "security") in the default browser.
+#[tauri::command]
+pub fn open_dubmate_page(page: String) -> Result<(), String> {
+    open(page_target(&page)?)
 }
 
 #[cfg(test)]
@@ -130,5 +192,40 @@ mod tests {
             ("open", vec![url])
         );
         assert!(external_command(ExternalTarget::DownloadPage, "linux").is_err());
+    }
+
+    #[test]
+    fn each_dubmate_page_in_the_default_browser() {
+        let pages = [
+            ("source", "https://github.com/sylenthsnares/DubMate"),
+            ("licence", "https://github.com/sylenthsnares/DubMate/blob/main/LICENSE"),
+            ("notices", "https://github.com/sylenthsnares/DubMate/blob/main/THIRD_PARTY_NOTICES.md"),
+            ("privacy", "https://github.com/sylenthsnares/DubMate/blob/main/PRIVACY.md"),
+            ("security", "https://github.com/sylenthsnares/DubMate/blob/main/SECURITY.md"),
+        ];
+        for (name, url) in pages {
+            let target = page_target(name).unwrap();
+            assert_eq!(
+                external_command(target, "windows").unwrap(),
+                ("rundll32", vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()]),
+                "{}",
+                name
+            );
+            assert_eq!(
+                external_command(target, "macos").unwrap(),
+                ("open", vec![url.to_string()]),
+                "{}",
+                name
+            );
+            assert!(external_command(target, "linux").is_err(), "{}", name);
+        }
+    }
+
+    #[test]
+    fn any_other_page_name_is_refused() {
+        for name in ["", "Source", "https://example.com", "download", "../LICENSE", "licence "] {
+            assert!(page_target(name).is_err(), "{:?}", name);
+        }
+        assert!(open_dubmate_page("https://example.com".to_string()).is_err());
     }
 }

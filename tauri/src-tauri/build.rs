@@ -23,6 +23,7 @@ fn main() {
         "open_mic_settings",
         "open_studio_in_browser",
         "open_download_page",
+        "open_dubmate_page",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to run tauri-build");

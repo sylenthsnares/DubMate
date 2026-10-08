@@ -5,7 +5,8 @@
  *  - the header pill has one signal, whether the graphics card speeds up the AI
  *    steps, and hides until that is known or when no AI tools are installed;
  *  - the hero line names only what will happen;
- *  - Paste link without link import explains how to add it (desktop or source);
+ *  - Paste link without link import explains how to add it (desktop or source); with it,
+ *    a line under the field says to import only videos you have the right to use;
  *  - without transcription, subtitles are "needed for lines" and the button reads
  *    "Process video without lines", sending transcribe:false;
  *  - chosen subtitles and cover images become chips with a remove button; a dropped
@@ -26,6 +27,7 @@ const bundle = buildStudioBundle("static/js/pack_builder.js").replace(BOOT, "win
 const { JSDOM, VirtualConsole } = jsdom;
 
 const ALL = { separation: true, transcription: true, link_import: true, speakers: true, romaji: true, gpu: false };
+const RIGHTS_LINE = "Only import videos you have the right to use. Downloading from YouTube and similar sites can be against their terms.";
 const NO_LINES_HINT = "Automatic transcription isn't installed. Add a subtitle file, or write the lines yourself after processing.";
 
 function fail(msg) {
@@ -171,6 +173,7 @@ async function boot(caps = ALL, opts = {}) {
     const b = await boot({ ...ALL, link_import: false }, { desktop: true });
     b.$("tab-btn-url").click();
     check(!shown(b.$("input-youtube-url")) && !shown(b.$("btn-fetch-url")), "without link import the link field and Import are gone");
+    check(!!b.$("url-import-rights") && !shown(b.$("url-import-rights")), "without link import the rights line is gone too");
     check(shown(b.$("url-import-missing")) && text(b.$("url-import-missing")).startsWith("Importing from a link needs the Pack Builder tools."), "Paste link says it needs the Pack Builder tools");
     check(shown(b.$("url-import-missing-desktop")) && text(b.$("url-import-missing-desktop")) === "Run the DubMate installer again and tick Pack Builder.", "the desktop app says to run the installer again");
     check(!shown(b.$("url-import-missing-source")), "the desktop app doesn't show the pip command");
@@ -190,6 +193,9 @@ async function boot(caps = ALL, opts = {}) {
     const b = await boot(ALL);
     b.$("tab-btn-url").click();
     check(shown(b.$("input-youtube-url")) && !shown(b.$("url-import-missing")), "with link import the link field shows as before");
+    const rights = b.$("url-import-rights");
+    check(!!rights && rights.classList.contains("field-hint") && rights.previousElementSibling === b.$("url-input-group"), "the rights line sits under the link field");
+    check(shown(rights) && text(rights) === RIGHTS_LINE, `the rights line says ${text(rights)}`);
     b.w.close();
   }
 
