@@ -119,7 +119,7 @@ if (Test-Path $LocalCf) {
 $ResourceDir = Join-Path $ScriptDir "..\src-tauri\resources"
 New-Item -ItemType Directory -Force $ResourceDir | Out-Null
 Write-Host "[6/6] Staging application Python files and static assets into resources..."
-$FilesToCopy = @("app.py", "audio_processor.py", "pack_loader.py", "pack_builder.py", "VERSION", "requirements.txt", "requirements_builder.txt")
+$FilesToCopy = @("app.py", "audio_processor.py", "pack_loader.py", "pack_builder.py", "VERSION", "requirements.txt", "requirements_builder.txt", "LICENSE", "THIRD_PARTY_NOTICES.md")
 foreach ($file in $FilesToCopy) {
     $src = Join-Path $ProjectRoot $file
     if (Test-Path $src) {

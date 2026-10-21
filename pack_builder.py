@@ -25,6 +25,7 @@ import numpy as np
 
 import pack_loader
 import audio_processor
+from dubmate import data_home
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -65,20 +66,22 @@ def ensure_ai_packages_on_path():
     """
     Adds the optional Pack Builder AI pipeline directory to sys.path.
 
-    The desktop build installs torch/demucs/whisper/yt-dlp into '<app dir>/ai-packages'
+    The desktop build installs torch/demucs/whisper/yt-dlp into '<DubMate data folder>/ai-packages'
     via 'pip install --target'. The launcher also passes that directory through
     PYTHONPATH, but the Windows embeddable Python distribution ignores PYTHONPATH
     whenever a '._pth' file is present, so relying on the environment variable alone
     would leave the pipeline installed-but-unimportable. Adding it here works in both
     the embedded desktop runtime and a normal virtualenv.
     """
-    # The desktop installer puts these at the install root, which is one level above
-    # BASE_DIR in a packaged build (Python files are staged into 'resources').
+    # 2.0 keeps the add-on in the per-user DubMate folder (dubmate/data_home.py). 1.x put
+    # it at the install root, one level above BASE_DIR in a packaged build (Python files
+    # are staged into 'resources'). Highest priority first; each lands at sys.path[0].
     candidates = [
+        data_home.resolve("ai-packages"),
         os.path.join(pack_loader.get_install_root(), "ai-packages"),
         os.path.join(BASE_DIR, "ai-packages"),
     ]
-    for ai_dir in candidates:
+    for ai_dir in reversed(candidates):
         if os.path.isdir(ai_dir) and ai_dir not in sys.path:
             sys.path.insert(0, ai_dir)
 

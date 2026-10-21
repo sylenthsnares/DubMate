@@ -140,10 +140,11 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         self.assertNotIn("maxAttempts", js)
         self.assertIn("NO_ANSWER_AFTER_MS = 3 * 60 * 1000", js)
         # The launcher's half of the Rust contract (U5b 39a, 39b).
-        for name in ("update-status", "update-progress", "update-stage", "update-complete"):
+        for name in ("update-status", "update-progress", "update-stage", "update-complete", "moving-files",
+                     "files-not-moved"):
             self.assertIn(f'"{name}"', js, name)
         for cmd in ("cancel_update", "start_packbuilder_install", "get_packbuilder_status",
-                    "open_studio_in_browser", "trigger_start_sidecars", "apply_update"):
+                    "open_studio_in_browser", "trigger_start_sidecars", "apply_update", "get_file_move"):
             self.assertIn(f'"{cmd}"', js, cmd)
         self.assertIn("eta_secs", js)
         self.assertIn("first_download", js)
@@ -169,6 +170,17 @@ class TestLoadingScreensAndLockouts(unittest.TestCase):
         rs = _rust_source()
         self.assertIn('emit("server-error"', rs)
         self.assertIn('emit("startup-progress"', rs)
+        # The one-time move out of a 1.x install folder isn't counted as a slow start.
+        self.assertIn('emit("moving-files"', rs)
+        self.assertIn('emit("files-not-moved"', rs)
+        # The move starts before the launcher listens, so the launcher can ask for it.
+        self.assertIn("fn get_file_move(", rs)
+        build_rs = os.path.join(os.path.dirname(tauri_conf_path), "build.rs")
+        capability = os.path.join(os.path.dirname(tauri_conf_path), "capabilities", "default.json")
+        with open(build_rs, "r", encoding="utf-8") as f:
+            self.assertIn('"get_file_move"', f.read())
+        with open(capability, "r", encoding="utf-8") as f:
+            self.assertIn("allow-get-file-move", json.load(f)["permissions"])
         self.assertIn('emit("server-ready"', rs)
         self.assertIn('"-u"', rs)
 

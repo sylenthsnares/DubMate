@@ -132,6 +132,42 @@ class TestListFolders(DataFoldersCase):
         self.assertEqual(folders[-2]["path"], os.path.normpath(addon))
         self.assertEqual(folders[-2]["label"], "Pack Builder add-on")
 
+    def test_the_addon_row_follows_the_data_folder_in_the_desktop_app(self):
+        """Pack Builder moved to the per-user folder: About shows it there, even before the
+        engine has loaded it (an install that finished after the engine started)."""
+        root = os.path.join(self.tmp, "LocalAppData", "DubMate")
+        addon = os.path.join(root, "ai-packages")
+        os.makedirs(addon)
+        with mock.patch.object(data_folders.data_home, "is_packaged", return_value=True),                 mock.patch.object(data_folders.data_home, "resolve",
+                                  side_effect=lambda item, **kw: os.path.join(root, item)),                 mock.patch.object(data_folders.data_home, "left_behind", return_value=[]):
+            folders = {f["key"]: f for f in self.local.get("/api/data-folders").json()["folders"]}
+        self.assertEqual(folders["addon"]["path"], os.path.normpath(addon))
+        with mock.patch.object(data_folders.data_home, "is_packaged", return_value=True),                 mock.patch.object(data_folders.data_home, "resolve",
+                                  side_effect=lambda item, **kw: os.path.join(self.tmp, "nowhere", item)),                 mock.patch.object(data_folders.data_home, "left_behind", return_value=[]):
+            keys = [f["key"] for f in self.local.get("/api/data-folders").json()["folders"]]
+        self.assertNotIn("addon", keys)
+
+    def test_old_folders_an_earlier_version_left_are_listed_last(self):
+        """2.0 moved the data out of the install folder; a copy it couldn't remove stays on disk."""
+        old = os.path.join(self.tmp, "DubMate Studio", "data")
+        os.makedirs(old)
+        gone = os.path.join(self.tmp, "DubMate Studio", "packbuilder.optin")  # a file: nothing to open
+        with open(gone, "w") as f:
+            f.write("1")
+        with mock.patch.object(data_folders.data_home, "left_behind", return_value=[old, gone]) as left:
+            folders = self.local.get("/api/data-folders").json()["folders"]
+        self.assertIn(self.data, left.call_args.args[0])
+        self.assertEqual(folders[-1], {"key": "old-1", "label": "Old copy, no longer used",
+                                       "path": os.path.normpath(old), "exists": True, "own": True})
+        self.assertEqual([f["key"] for f in folders][-2:], ["data", "old-1"])
+        with mock.patch.object(data_folders.data_home, "left_behind", return_value=[old]):
+            self.assertEqual(self._open(self.local, 200, key="old-1").json(), {"status": "ok"})
+        self.assertEqual(self._opened_dir(), os.path.normpath(old))
+
+    def test_a_source_install_has_no_old_folders(self):
+        keys = [f["key"] for f in self.local.get("/api/data-folders").json()["folders"]]
+        self.assertFalse([k for k in keys if k.startswith("old")])
+
     def test_a_missing_folder_is_listed_as_not_existing(self):
         shutil.rmtree(self.packs_b)
         folders = {f["key"]: f for f in self.local.get("/api/data-folders").json()["folders"]}

@@ -6,8 +6,8 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::Emitter;
 
 use crate::paths::{
-    find_python_exe, get_app_install_dir, install_root_dir, AI_COMPLETE_MARKER, AI_PACKAGES_DIR,
-    PACKBUILDER_OPTIN_MARKER,
+    find_python_exe, get_app_install_dir, resolve_user_item, user_item_places, AI_COMPLETE_MARKER,
+    AI_PACKAGES_DIR, PACKBUILDER_OPTIN_MARKER,
 };
 use crate::sidecars::{hide_console, kill_process, kill_sidecars, start_sidecars};
 use crate::updater::EtaEstimator;
@@ -639,8 +639,7 @@ pub async fn get_packbuilder_status(
     app: tauri::AppHandle,
     with_size: Option<bool>,
 ) -> PackBuilderStatus {
-    let root = install_root_dir(&app);
-    let target = root.join(AI_PACKAGES_DIR);
+    let target = resolve_user_item(&app, AI_PACKAGES_DIR);
     let installed = target.join(AI_COMPLETE_MARKER).is_file();
     let size_bytes = if installed && with_size.unwrap_or(false) {
         let dir = target.clone();
@@ -651,7 +650,7 @@ pub async fn get_packbuilder_status(
         None
     };
     PackBuilderStatus {
-        opted_in: root.join(PACKBUILDER_OPTIN_MARKER).is_file(),
+        opted_in: resolve_user_item(&app, PACKBUILDER_OPTIN_MARKER).is_file(),
         installed,
         target_dir: target.to_string_lossy().to_string(),
         size_bytes,
@@ -772,14 +771,27 @@ fn publish(app: &tauri::AppHandle, progress: PackBuilderProgress) {
     let _ = app.emit("packbuilder-progress", progress);
 }
 
-/// What the install needs, checked before anything is downloaded: a writable install
-/// folder, the requirements file and the bundled Python.
+/// What the install needs, checked before anything is downloaded: a writable folder for
+/// it, the requirements file and the bundled Python.
 fn prepare_install(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    // Requirements ship beside app.py (resources), but the packages install at the
-    // install root so they land on the drive the user chose.
+    // Requirements ship beside app.py (resources). The packages go to the DubMate data
+    // folder, so no reinstall deletes them, or over 1.x's copy while it hasn't moved yet.
     let app_dir = get_app_install_dir(app);
-    let root = install_root_dir(app);
-    crate::updater::ensure_writable(&root)?;
+    let target = resolve_user_item(app, AI_PACKAGES_DIR);
+    // Creates the data folder on a first install.
+    let folder = target.parent().unwrap_or(&target);
+    crate::updater::probe_writable(folder).map_err(|e| {
+        format!(
+            "DubMate can't write to its data folder:
+{}
+
+{}
+
+Check that your account can write to it and that the drive has free space.",
+            folder.display(),
+            e
+        )
+    })?;
 
     let requirements = app_dir.join("requirements_builder.txt");
     if !requirements.is_file() {
@@ -791,7 +803,7 @@ fn prepare_install(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf)
 
     let py = find_python_exe(app)
         .ok_or_else(|| "Bundled Python runtime not found; cannot install the AI pipeline.".to_string())?;
-    Ok((py, requirements, root.join(AI_PACKAGES_DIR)))
+    Ok((py, requirements, target))
 }
 
 /// Starts the Pack Builder download in the background and returns at once, so the
@@ -829,7 +841,7 @@ pub fn get_packbuilder_install() -> PackBuilderInstall {
 }
 
 /// The folder removal is allowed to delete: the real `ai-packages` folder directly
-/// inside the install folder, or `None` when there is none. Anything else in its
+/// inside `root` (the folder Pack Builder was found in), or `None` when there is none. Anything else in its
 /// place is refused, because a link or junction there would point the delete at
 /// files that are not Pack Builder's.
 fn removal_target(root: &Path) -> Result<Option<PathBuf>, String> {
@@ -868,10 +880,10 @@ fn removal_target(root: &Path) -> Result<Option<PathBuf>, String> {
     Ok(Some(real_target))
 }
 
-/// Deletes the checked folder, then the installer's opt-in marker so the launcher
-/// does not download Pack Builder again. The marker goes last: if the folder can't
-/// be deleted, the user's choice is kept and nothing claims it was removed.
-fn delete_packbuilder_files(root: &Path, target: Option<PathBuf>) -> Result<(), String> {
+/// Deletes the checked folder, then the installer's opt-in marker wherever it is, so the
+/// launcher does not download Pack Builder again. The markers go last: if the folder
+/// can't be deleted, the user's choice is kept and nothing claims it was removed.
+fn delete_packbuilder_files(target: Option<PathBuf>, markers: &[PathBuf]) -> Result<(), String> {
     if let Some(dir) = target {
         // An engine that was just stopped can hold its files open for a moment.
         let mut attempt = 0;
@@ -887,27 +899,31 @@ fn delete_packbuilder_files(root: &Path, target: Option<PathBuf>) -> Result<(), 
             }
         }
     }
-    match std::fs::remove_file(root.join(PACKBUILDER_OPTIN_MARKER)) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("Could not remove {}: {}", PACKBUILDER_OPTIN_MARKER, e)),
+    for marker in markers {
+        match std::fs::remove_file(marker) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("Could not remove {}: {}", marker.display(), e)),
+        }
     }
+    Ok(())
 }
 
 /// Removes the Pack Builder add-on and restarts the engine without it. Resolves once
 /// the engine answers again, so the caller can reload the studio straight away.
 #[tauri::command]
 pub async fn remove_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
-    let root = install_root_dir(&app);
+    let add_on = resolve_user_item(&app, AI_PACKAGES_DIR);
     // Checked before anything stops, so a refusal leaves DubMate running.
-    let target = removal_target(&root)?;
+    let target = removal_target(add_on.parent().unwrap_or(&add_on))?;
+    let markers = user_item_places(&app, PACKBUILDER_OPTIN_MARKER);
 
     // Windows won't delete a library the engine still has loaded, so stop it first.
     // The restart afterwards is also what makes Pack Builder show as not installed:
     // the engine only looks for the add-on when it starts.
     kill_sidecars(&app);
     let removed = tauri::async_runtime::spawn_blocking(move || {
-        delete_packbuilder_files(&root, target)
+        delete_packbuilder_files(target, &markers)
     })
     .await
     .map_err(|e| format!("Removal task failed: {}", e))
@@ -925,7 +941,8 @@ pub async fn remove_packbuilder(app: tauri::AppHandle) -> Result<(), String> {
 mod packbuilder_removal_tests {
     use super::*;
 
-    /// A fresh, empty folder standing in for the install folder.
+    /// A fresh, empty folder standing in for the DubMate data folder (or a 1.x install
+    /// folder Pack Builder hasn't moved out of yet).
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "dubmate-p40-{}-{}",
@@ -962,7 +979,7 @@ mod packbuilder_removal_tests {
     }
 
     #[test]
-    fn accepts_the_add_on_folder_inside_the_install_folder() {
+    fn accepts_the_add_on_folder_inside_the_data_folder() {
         let root = scratch("plain");
         std::fs::create_dir_all(root.join(AI_PACKAGES_DIR).join("torch")).unwrap();
 
@@ -989,7 +1006,7 @@ mod packbuilder_removal_tests {
     }
 
     #[test]
-    fn refuses_a_link_that_leads_out_of_the_install_folder() {
+    fn refuses_a_link_that_leads_out_of_the_data_folder() {
         let root = scratch("link");
         let outside = scratch("link-outside");
         std::fs::write(outside.join("keep.txt"), b"keep me").unwrap();
@@ -1010,39 +1027,54 @@ mod packbuilder_removal_tests {
     }
 
     #[test]
-    fn removal_deletes_only_the_add_on_and_its_opt_in() {
+    fn removal_deletes_only_the_add_on_and_its_opt_ins() {
         let root = scratch("delete");
+        let install = scratch("delete-install");
         let outside = scratch("delete-outside");
         std::fs::write(outside.join("keep.txt"), b"keep me").unwrap();
         let add_on = root.join(AI_PACKAGES_DIR);
         std::fs::create_dir_all(add_on.join("torch")).unwrap();
-        std::fs::write(add_on.join(AI_COMPLETE_MARKER), b"1.1.3").unwrap();
-        std::fs::write(root.join(PACKBUILDER_OPTIN_MARKER), b"").unwrap();
-        std::fs::write(root.join("DubMate.exe"), b"app").unwrap();
+        std::fs::write(add_on.join(AI_COMPLETE_MARKER), b"2.0.0").unwrap();
+        std::fs::create_dir_all(root.join("data").join("rooms")).unwrap();
+        std::fs::write(root.join("data").join("rooms").join("take.wav"), b"take").unwrap();
+        // The opt-in in the data folder and a stale one left in the 1.x install folder.
+        let markers = [root.join(PACKBUILDER_OPTIN_MARKER), install.join(PACKBUILDER_OPTIN_MARKER)];
+        for marker in &markers {
+            std::fs::write(marker, b"").unwrap();
+        }
+        std::fs::write(install.join("DubMate.exe"), b"app").unwrap();
         // A link inside the add-on must be removed as a link, not followed.
         let inner_link = add_on.join("linked");
         let linked = link_folder(&outside, &inner_link);
 
         let target = removal_target(&root).unwrap();
-        delete_packbuilder_files(&root, target).unwrap();
+        delete_packbuilder_files(target, &markers).unwrap();
 
         assert!(!add_on.exists(), "the add-on folder should be gone");
-        assert!(!root.join(PACKBUILDER_OPTIN_MARKER).exists(), "the opt-in should be gone");
-        assert!(root.join("DubMate.exe").is_file(), "files beside it must stay");
+        for marker in &markers {
+            assert!(!marker.exists(), "{} should be gone", marker.display());
+        }
+        assert!(
+            root.join("data").join("rooms").join("take.wav").is_file(),
+            "the user's rooms beside it must stay"
+        );
+        assert!(install.join("DubMate.exe").is_file(), "the install folder must stay");
         if linked {
             assert!(outside.join("keep.txt").is_file(), "a link's target must stay");
         }
 
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&outside);
+        for dir in [&root, &install, &outside] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     #[test]
     fn removal_with_nothing_installed_is_a_no_op() {
         let root = scratch("noop");
-        std::fs::write(root.join("DubMate.exe"), b"app").unwrap();
-        delete_packbuilder_files(&root, removal_target(&root).unwrap()).unwrap();
-        assert!(root.join("DubMate.exe").is_file());
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        let markers = [root.join(PACKBUILDER_OPTIN_MARKER)];
+        delete_packbuilder_files(removal_target(&root).unwrap(), &markers).unwrap();
+        assert!(root.join("data").is_dir());
         let _ = std::fs::remove_dir_all(&root);
     }
 

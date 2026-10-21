@@ -96,7 +96,7 @@ done
 RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"
 mkdir -p "$RESOURCE_DIR"
 echo "[5/5] Staging application Python files and static assets into resources..."
-for file in app.py audio_processor.py pack_loader.py pack_builder.py VERSION requirements.txt requirements_builder.txt; do
+for file in app.py audio_processor.py pack_loader.py pack_builder.py VERSION requirements.txt requirements_builder.txt LICENSE THIRD_PARTY_NOTICES.md; do
   if [ -f "$PROJECT_ROOT/$file" ]; then
     cp "$PROJECT_ROOT/$file" "$RESOURCE_DIR/$file"
   fi

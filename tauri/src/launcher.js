@@ -41,6 +41,14 @@ const HEALTH_POLL_MS = 500;
 let enginePort = 8000;
 let startedAt = Date.now();
 let engineHealthy = false;
+// True while Rust moves a 1.x install's files to the DubMate data folder. A copy across
+// drives can take minutes; that isn't a slow engine.
+let movingFiles = false;
+// True once a `moving-files` event came; until then the launcher asks Rust (get_file_move).
+let moveEventSeen = false;
+// Something stayed in the old folder. It still works there; the splash says so once.
+let filesNotMoved = false;
+const MOVING_TEXT = "Moving your DubMate files to their new folder";
 // Inside the desktop app, entry waits for `update-status` so a pending update is never
 // skipped by accident.
 let updateCheckPending = false;
@@ -92,7 +100,7 @@ async function engineAnswers() {
 function renderElapsed() {
   if (isEntering || isUpdating || failureShown) return;
   const elapsed = Date.now() - startedAt;
-  const waiting = !engineHealthy;
+  const waiting = !engineHealthy && !movingFiles;
   if (waiting && elapsed >= NO_ANSWER_AFTER_MS) {
     showEngineFailure({
       title: "DubMate didn't start",
@@ -104,14 +112,16 @@ function renderElapsed() {
   let words = "";
   if (waiting && elapsed >= VERY_SLOW_AFTER_MS) words = "Taking longer than usual";
   else if (waiting && elapsed >= SLOW_AFTER_MS) words = "Still starting";
-  if (words) {
+  else if (movingFiles) words = "This happens once and can take a few minutes";
+  else if (filesNotMoved) words = "Your files stayed in their old folder and still work";
+  if (words && elapsed >= SLOW_AFTER_MS) {
     // Only the count is mono.
     const count = document.createElement("span");
     count.className = "mono";
     count.textContent = String(Math.floor(elapsed / 1000));
     detailText.replaceChildren(`${words} · `, count, " s");
   } else {
-    detailText.textContent = "";
+    detailText.textContent = words;
   }
   btnRestartSlow.hidden = !(waiting && elapsed >= VERY_SLOW_AFTER_MS);
 }
@@ -400,6 +410,19 @@ async function listenToRust() {
     if (!isEntering && typeof event.payload === "string") statusText.textContent = event.payload;
   });
 
+  // The engine's start is counted from the end of the move.
+  listen("moving-files", (event) => {
+    moveEventSeen = true;
+    movingFiles = event.payload === true;
+    startedAt = Date.now();
+    renderElapsed();
+  });
+
+  listen("files-not-moved", () => {
+    filesNotMoved = true;
+    renderElapsed();
+  });
+
   listen("server-ready", (event) => {
     // Rust sends the port it actually bound to.
     if (Number.isInteger(event?.payload) && event.payload > 0) enginePort = event.payload;
@@ -434,6 +457,21 @@ async function listenToRust() {
     setProgressText("Restarting");
     openStudioWithoutUpdate();
   });
+
+  // Rust starts moving files from setup, often before this page listens.
+  try {
+    const move = await invoke("get_file_move");
+    if (!moveEventSeen && move?.moving) {
+      movingFiles = true;
+      if (!isEntering) statusText.textContent = MOVING_TEXT;
+      startedAt = Date.now();
+    }
+    if (move?.failed) filesNotMoved = true;
+    renderElapsed();
+  } catch (e) {
+    // An older desktop app doesn't have this command.
+    console.warn("[Launcher] Could not ask whether files are moving:", e);
+  }
 
   // A failure in the first moments can come before the listener above existed.
   try {

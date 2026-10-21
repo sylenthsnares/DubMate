@@ -182,20 +182,22 @@ pub fn is_trusted_update_url(url: &str) -> bool {
     path_lower.starts_with(&RELEASE_ASSET_PREFIX.to_ascii_lowercase())
 }
 
+/// Creates `dir` if needed and checks a file can be written in it; the error is the
+/// system's reason.
+pub fn probe_writable(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let probe = dir.join(".dubmate-write-test");
+    std::fs::File::create(&probe).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
 /// Verifies the directory is actually writable before any file is replaced.
 /// A per-machine install under Program Files fails here with an actionable message
 /// instead of blowing up midway through extraction.
 pub fn ensure_writable(dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("Cannot create application directory {}: {}", dir.display(), e))?;
-
-    let probe = dir.join(".dubmate-write-test");
-    match std::fs::File::create(&probe) {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            Ok(())
-        }
-        Err(e) => Err(format!(
+    probe_writable(dir).map_err(|e| {
+        format!(
             "DubMate cannot write to its installation folder:
 {}
 
@@ -204,8 +206,8 @@ pub fn ensure_writable(dir: &Path) -> Result<(), String> {
 Reinstall DubMate somewhere your account can write to, or run it as administrator.",
             dir.display(),
             e
-        )),
-    }
+        )
+    })
 }
 
 pub async fn check_for_update(current_version: &str, app: &tauri::AppHandle) -> UpdateCheckResult {

@@ -7,6 +7,7 @@
     "core:default",
     "allow-get-engine-port",
     "allow-get-last-failure",
+    "allow-get-file-move",
     "allow-trigger-start-sidecars",
     "allow-apply-update",
     "allow-cancel-update",

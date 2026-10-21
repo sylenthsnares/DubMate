@@ -121,6 +121,28 @@ class TestRoomStateCompat(SessionCase):
         self.assertIs(saved["created_here"], True)
         self.assertEqual(saved["master_dialogue_presence_db"], 0.0)
 
+    def test_finished_dub_is_found_after_the_data_folder_moved(self):
+        # 2.0 moves <install>/data to the per-user folder; the saved path still names the old one.
+        exports = os.path.join(self.cache, "exports")
+        os.makedirs(exports)
+        name = f"Dub_{self.PACK_ID}_{self.ROOM}.mp4"
+        with open(os.path.join(exports, name), "wb") as f:
+            f.write(b"\0" * 2000)
+        old = os.path.join(self.cache, "old install", "data", "exports", name)
+        self._write_state({**PR16_STATE, "status": "finished", "exported_video_path": old})
+        with mock.patch.object(common, "_exports_dir", exports):
+            room = rooms.load_room_folder(self.ROOM)
+            self.assertEqual(room.exported_video_path, os.path.join(exports, name))
+            self.assertEqual(room.ready_export_path("16:9"), os.path.join(exports, name))
+
+    def test_a_missing_dub_stays_missing(self):
+        old = os.path.join(self.cache, "old install", "data", "exports", "Dub_x.mp4")
+        self._write_state({**PR16_STATE, "exported_video_path": old})
+        with mock.patch.object(common, "_exports_dir", os.path.join(self.cache, "exports")):
+            room = rooms.load_room_folder(self.ROOM)
+        self.assertEqual(room.exported_video_path, old)
+        self.assertIsNone(room.ready_export_path("16:9"))
+
     def test_load_persisted_rooms_uses_load_room_folder(self):
         self._write_state(PR16_STATE)
         rooms.load_persisted_rooms()
