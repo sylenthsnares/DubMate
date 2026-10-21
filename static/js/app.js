@@ -331,7 +331,6 @@ class DubMateApp {
     this.labelReadyState = document.getElementById('label-ready-state');
     this.btnLaunchPremiere = document.getElementById('btn-launch-premiere');
     this.btnToggleFilterLines = document.getElementById('btn-toggle-filter-lines');
-    this.labelFilterLines = document.getElementById('label-filter-lines');
 
     // Monitoring & A/B Controls
     this.sliderBackingVol = document.getElementById('slider-backing-vol');
@@ -1008,8 +1007,9 @@ class DubMateApp {
         // and the timing row is inert.
         const taking = this.recordState === 'countdown' || this.recordState === 'recording';
         if (e.code === 'Space') {
-          // Space presses a focused ▶, ⋯, Undo, answer or who's-here button instead of recording.
-          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button, .presence-stack')) return;
+          // Space presses a focused ▶, ⋯, Undo, answer, who's-here button or line chip
+          // (which picks that line) instead of recording.
+          if (e.target.closest?.('#takes-list button, #booth-done-ask button, .voice-scope-ask button, .presence-stack, #timeline-chips .chip-item')) return;
           e.preventDefault();
           this.toggleRecording();
         } else if (e.key === '[' || e.key === '{') {

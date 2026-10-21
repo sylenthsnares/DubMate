@@ -292,8 +292,13 @@ for (const b of cssBlocks(firefoxOnly.outside)) {
     fail(`style.css:${b.line} ${b.selector}: a scroller sets scrollbar-width/color outside the Firefox-only block; Chromium then draws the default bar`);
   }
 }
-for (const sel of [".timeline-chips-box", ".cast-activity-list", ".panel-casting"]) {
+for (const sel of [".cast-activity-list", ".panel-casting"]) {
   if (!firefoxOnly.out.has(sel)) fail(`${sel} needs the studio scrollbar colours in the Firefox-only @supports block`);
+}
+// The booth's line strip draws no bar in either engine (its edge fades show it scrolls),
+// so a bar never eats the 44 px booth bar.
+if (!/\.timeline-chips-box::-webkit-scrollbar\s*\{[^}]*display\s*:\s*none/.test(stripComments(styleCss))) {
+  fail(".timeline-chips-box draws a WebKit scrollbar inside the booth bar");
 }
 
 // The parser must actually be reading the files, and exemptions must not go stale.

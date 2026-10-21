@@ -186,7 +186,7 @@ function beforeUnloadBlocked(env) {
     if (rows.length !== 1 || text(rows[0]) !== "Take 1 · Saving… cleaning up noise") fail(`pending row: ${rows.map(text)}`);
     if (visible($(env, "takes-empty"))) fail("the empty line shows next to a saving take");
     if (app.waveform.takeLaneNote !== "Saving… cleaning up noise") fail(`take lane: ${app.waveform.takeLaneNote}`);
-    if (!chip(env, 0).classList.contains("is-saving") || !/saving/.test(text(chip(env, 0)))) fail(`chip 1: ${chip(env, 0).className} ${text(chip(env, 0))}`);
+    if (!chip(env, 0).classList.contains("is-saving") || text(chip(env, 0).querySelector(".chip-saving")) !== "↑") fail(`chip 1: ${chip(env, 0).className} ${text(chip(env, 0))}`);
     if (!/saving a take/.test(chip(env, 0).getAttribute("aria-label"))) fail(`chip 1 name: ${chip(env, 0).getAttribute("aria-label")}`);
     if (!presets(env).length || presets(env).some((b) => !b.disabled)) fail("line 1's Voice controls aren't locked while it saves");
     if (!beforeUnloadBlocked(env)) fail("leaving the page isn't guarded while a take saves");
@@ -221,7 +221,8 @@ function beforeUnloadBlocked(env) {
     if (app.currentLineIndex !== 1 || app.recordState !== "countdown") fail(`the upload reply moved the booth: line ${app.currentLineIndex}, ${app.recordState}`);
     if (app.savingLines.t1000) fail("line 1 still saving after its reply");
     if (env.toasts.join() !== "Take 1 saved on line 1") fail(`off-screen toast: ${JSON.stringify(env.toasts)}`);
-    if (chip(env, 0).classList.contains("is-saving") || !/1 take/.test(text(chip(env, 0)))) fail(`chip 1 after the save: ${text(chip(env, 0))}`);
+    if (chip(env, 0).classList.contains("is-saving") || text(chip(env, 0).querySelector(".chip-count")) !== "1"
+      || !/1 take$/.test(chip(env, 0).getAttribute("aria-label"))) fail(`chip 1 after the save: ${text(chip(env, 0))}`);
 
     // The take_recorded echo for the line you're counting in on doesn't cancel it either.
     const echoTake = mk("t2000", "m1", 1);
@@ -433,8 +434,14 @@ function beforeUnloadBlocked(env) {
     app.roomState = room({ t1000: { picked: "e2", next_number: 3, takes: [mk("t1000", "e1", 1), mine2] } });
     await app.loadBoothLine(0);
     await tick();
+    // The strip centres its chip with its own scrollTo (JSDOM has no layout: give it a
+    // width, a scroll range and a position away from the chip, so the move isn't a no-op).
     let scrolled = 0;
-    w.Element.prototype.scrollIntoView = () => { scrolled++; };
+    const strip = $(env, "timeline-chips");
+    Object.defineProperty(strip, "clientWidth", { configurable: true, get: () => 300 });
+    Object.defineProperty(strip, "scrollWidth", { configurable: true, get: () => 2000 });
+    Object.defineProperty(strip, "scrollLeft", { configurable: true, get: () => 500, set: () => {} });
+    strip.scrollTo = () => { scrolled++; };
     app.savingLines.t1000 = { roomId: "R1", lineId: "t1000", number: 2, noiseReduction: false };
     app.renderLineSaveState("t1000");
     await tick();
@@ -445,7 +452,7 @@ function beforeUnloadBlocked(env) {
     await app.loadBoothLine(1);
     await tick();
     if (!scrolled) fail("a line change didn't scroll its chip into view");
-    w.Element.prototype.scrollIntoView = () => {};
+    for (const prop of ["scrollTo", "clientWidth", "scrollWidth", "scrollLeft"]) delete strip[prop];
 
     await app.loadBoothLine(2);
     if (app.waveform.emptyTakeText !== "No takes yet.") fail(`empty lane on Ben's line: ${app.waveform.emptyTakeText}`);
