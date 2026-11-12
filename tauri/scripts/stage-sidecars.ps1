@@ -1,4 +1,4 @@
-# stage-sidecars.ps1 - Stages Python, FFmpeg, DeepFilterNet and cloudflared sidecars for Windows x64 build
+# stage-sidecars.ps1 - Stages Python, FFmpeg/FFprobe, DeepFilterNet and cloudflared for Windows x64
 param(
     [string]$Triple = "x86_64-pc-windows-msvc"
 )
@@ -7,8 +7,11 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = $PSScriptRoot
 $ProjectRoot = Split-Path (Split-Path $ScriptDir -Parent) -Parent
 $SidecarDir = Join-Path $ScriptDir "..\src-tauri\sidecar"
+$ResourceDir = Join-Path $ScriptDir "..\src-tauri\resources"
+$MediaResourceDir = Join-Path $ResourceDir "tools"
 
 New-Item -ItemType Directory -Force $SidecarDir | Out-Null
+New-Item -ItemType Directory -Force $MediaResourceDir | Out-Null
 $PyRuntimeDir = Join-Path $SidecarDir "python-runtime"
 New-Item -ItemType Directory -Force $PyRuntimeDir | Out-Null
 
@@ -55,12 +58,15 @@ if (Test-Path $ReqFile) {
     & $PyExe -m pip install -r $ReqFile --target (Join-Path $PyRuntimeDir "Lib\site-packages") --no-warn-script-location --quiet
 }
 
-# 3. FFmpeg Static Windows Binary
+# 3. FFmpeg sidecar and FFprobe resource from the same media build.
 $FfmpegTarget = Join-Path $SidecarDir "ffmpeg-$Triple.exe"
+$FfprobeTarget = Join-Path $MediaResourceDir "ffprobe.exe"
 $LocalFfmpeg = Join-Path $ProjectRoot "tools\ffmpeg.exe"
-if (Test-Path $LocalFfmpeg) {
-    Write-Host "[3/6] Copying local FFmpeg from tools\..."
+$LocalFfprobe = Join-Path $ProjectRoot "tools\ffprobe.exe"
+if ((Test-Path $LocalFfmpeg) -and (Test-Path $LocalFfprobe)) {
+    Write-Host "[3/6] Copying local FFmpeg and FFprobe from tools\..."
     Copy-Item $LocalFfmpeg $FfmpegTarget -Force
+    Copy-Item $LocalFfprobe $FfprobeTarget -Force
 } else {
     # Same pin and SHA-256 as scripts/download_tools.ps1; move both together.
     $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip"
@@ -79,7 +85,12 @@ if (Test-Path $LocalFfmpeg) {
     }
     Expand-Archive $FfmpegZip $FfmpegExtract -Force
     $FoundFfmpeg = Get-ChildItem $FfmpegExtract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+    $FoundFfprobe = Get-ChildItem $FfmpegExtract -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
+    if (-not $FoundFfmpeg -or -not $FoundFfprobe) {
+        throw "The media archive must contain both FFmpeg and FFprobe."
+    }
     Copy-Item $FoundFfmpeg.FullName $FfmpegTarget -Force
+    Copy-Item $FoundFfprobe.FullName $FfprobeTarget -Force
 }
 
 # 4. DeepFilterNet (noise cleanup). The official standalone binary; its model is built in.
@@ -116,7 +127,6 @@ if (Test-Path $LocalCf) {
 }
 
 # 6. Application Resources (app.py, audio_processor, pack_loader, static, VERSION, python-runtime)
-$ResourceDir = Join-Path $ScriptDir "..\src-tauri\resources"
 New-Item -ItemType Directory -Force $ResourceDir | Out-Null
 Write-Host "[6/6] Staging application Python files and static assets into resources..."
 $FilesToCopy = @("app.py", "audio_processor.py", "pack_loader.py", "pack_builder.py", "VERSION", "requirements.txt", "requirements_builder.txt", "LICENSE", "THIRD_PARTY_NOTICES.md")

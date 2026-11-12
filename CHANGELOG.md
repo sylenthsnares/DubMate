@@ -4,6 +4,8 @@
 
 Using the DubMate desktop app 1.1.3? Run the DubMate 2.0.0 installer from https://github.com/sylenthsnares/DubMate/releases/latest to get voice effects and the stronger noise cleanup. The in-app update alone brings everything else. Install 2.0 over 1.1.3 and keep "Do not uninstall": uninstalling 1.1.3 first deletes the Pack Builder add-on, which then has to download again.
 
+On macOS, take the in-app update and reopen DubMate before replacing the app with the 2.0 DMG, so rooms kept inside the old app can move to their new folder first. Back up any scene packs kept inside the app bundle before replacing it. Pack Builder may need installing again after replacing the app.
+
 Running DubMate from source? Run update.bat (Windows) or update.sh (macOS or Linux) again after updating.
 
 What's new in 2.0:
@@ -132,6 +134,7 @@ Your rooms come with you. The first time 2.0 opens a room from 1.1.3, it keeps a
 - **16:9/9:16 Switch**: the premiere's switch is gone. Save video saves the scene's own 16:9, and the 9:16 version is in Save's menu.
 
 ### Fixed
+- **Video Duration in Desktop Installs**: installers now include FFprobe, so video length is measured correctly without a system-wide media-tool installation. Both installer builds check a real video through the staged engine before packaging.
 - **"Back Online" When Joining**: joining a room no longer flashes "Back online" when nothing was lost.
 - **Casting Scrollbar**: the casting card's scrollbar now matches the rest of the studio in the desktop app and Chrome.
 - **Opening a New Pack**: after building a pack, the studio opens with that pack selected instead of failing.

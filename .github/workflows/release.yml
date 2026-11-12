@@ -222,6 +222,7 @@ jobs:
         run: |
           cd tauri/src-tauri/resources
           ./python-runtime/python.exe -c "import app, dubmate.common, pedalboard"
+          ./python-runtime/python.exe ../../../scripts/verify_staged_media.py --ffmpeg ../sidecar/ffmpeg-x86_64-pc-windows-msvc.exe
 
       - name: Import smoke on staged engine (macOS)
         if: matrix.platform == 'macos-latest'
@@ -229,6 +230,8 @@ jobs:
         run: |
           cd tauri/src-tauri/resources
           PYTHONPATH="$PWD" ./python-runtime/bin/python3 -c "import app, dubmate.common, pedalboard"
+          TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          PYTHONPATH="$PWD" ./python-runtime/bin/python3 ../../../scripts/verify_staged_media.py --ffmpeg "../sidecar/ffmpeg-$TRIPLE"
 
       - name: Download release notes
         uses: actions/download-artifact@v4

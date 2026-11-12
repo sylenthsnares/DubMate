@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stage-sidecars.sh - Stages Python, FFmpeg, DeepFilterNet and cloudflared sidecars for macOS Universal build
+# stage-sidecars.sh - Stages Python, FFmpeg/FFprobe, DeepFilterNet and cloudflared for macOS
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,6 +9,7 @@ RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"
 
 mkdir -p "$SIDECAR_DIR"
 mkdir -p "$RESOURCE_DIR"
+mkdir -p "$RESOURCE_DIR/tools"
 
 echo "========================================================="
 echo "  🎙️ Staging DubMate Desktop Sidecars (macOS Universal)"
@@ -48,6 +49,11 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     cp "$(command -v ffmpeg)" "$FFMPEG_TARGET"
     chmod +x "$FFMPEG_TARGET"
   fi
+  if ! command -v ffprobe &> /dev/null; then
+    brew install ffmpeg
+  fi
+  cp "$(command -v ffprobe)" "$RESOURCE_DIR/tools/ffprobe"
+  chmod +x "$RESOURCE_DIR/tools/ffprobe"
 
   # 3. DeepFilterNet (noise cleanup). The official standalone binary; its model is built in.
   # Pinned by SHA-256 per architecture and checked before use, including a copy
