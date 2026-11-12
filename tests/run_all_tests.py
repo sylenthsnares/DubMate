@@ -172,6 +172,7 @@ def test_python_suites(env, home, packs_dir):
         # Every suite starts from the same config: some suites rewrite packs_dir.
         write_test_config(home, packs_dir)
         t0 = time.time()
+        print(f"  [RUN] {script}", flush=True)
         res = subprocess.run([PYTHON_EXE, script_path], capture_output=True, text=True, env=env)
         dur = time.time() - t0
         passed = (res.returncode == 0)

@@ -100,7 +100,7 @@ jobs:
           npm ci --prefix tests
           pip install -r requirements.txt -q
           pip install httpx fastapi pytest -q
-          python tests/run_all_tests.py
+          python -u tests/run_all_tests.py
 
       - name: Create app bundle zip
         run: |
