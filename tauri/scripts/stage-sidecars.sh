@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stage-sidecars.sh - Stages Python, FFmpeg, DeepFilterNet and cloudflared sidecars for macOS Universal build
+# stage-sidecars.sh - Stages Python, FFmpeg/FFprobe, DeepFilterNet and cloudflared for macOS
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,6 +9,7 @@ RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"
 
 mkdir -p "$SIDECAR_DIR"
 mkdir -p "$RESOURCE_DIR"
+mkdir -p "$RESOURCE_DIR/tools"
 
 echo "========================================================="
 echo "  🎙️ Staging DubMate Desktop Sidecars (macOS Universal)"
@@ -91,6 +92,14 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     chmod +x "$CF_TARGET"
   fi
 done
+
+# FFprobe is a shared resource. Homebrew binaries can be read-only, so replacing a
+# previous staged copy must also work when this script is run again.
+if ! command -v ffprobe &> /dev/null; then
+  brew install ffmpeg
+fi
+cp -f "$(command -v ffprobe)" "$RESOURCE_DIR/tools/ffprobe"
+chmod +x "$RESOURCE_DIR/tools/ffprobe"
 
 # 5. Application Resources (app.py, audio_processor, pack_loader, static, VERSION)
 RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"

@@ -398,7 +398,9 @@ class TestStemsRoute(StemsRouteCase):
         scope = {"type": "http", "method": "GET", "headers": []}
 
         async def receive():
-            return {"type": "http.request"}
+            # Stay connected while the response streams. Repeated immediate request
+            # messages starve Starlette's disconnect listener and the file sender.
+            await asyncio.Future()
 
         with self._identity():
             response = asyncio.run(rooms_api.download_room_stems(self.ROOM, user_id="hostT"))
