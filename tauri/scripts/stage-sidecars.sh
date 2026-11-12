@@ -49,11 +49,6 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     cp "$(command -v ffmpeg)" "$FFMPEG_TARGET"
     chmod +x "$FFMPEG_TARGET"
   fi
-  if ! command -v ffprobe &> /dev/null; then
-    brew install ffmpeg
-  fi
-  cp "$(command -v ffprobe)" "$RESOURCE_DIR/tools/ffprobe"
-  chmod +x "$RESOURCE_DIR/tools/ffprobe"
 
   # 3. DeepFilterNet (noise cleanup). The official standalone binary; its model is built in.
   # Pinned by SHA-256 per architecture and checked before use, including a copy
@@ -97,6 +92,14 @@ for TRIPLE in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
     chmod +x "$CF_TARGET"
   fi
 done
+
+# FFprobe is a shared resource. Homebrew binaries can be read-only, so replacing a
+# previous staged copy must also work when this script is run again.
+if ! command -v ffprobe &> /dev/null; then
+  brew install ffmpeg
+fi
+cp -f "$(command -v ffprobe)" "$RESOURCE_DIR/tools/ffprobe"
+chmod +x "$RESOURCE_DIR/tools/ffprobe"
 
 # 5. Application Resources (app.py, audio_processor, pack_loader, static, VERSION)
 RESOURCE_DIR="$SCRIPT_DIR/../src-tauri/resources"

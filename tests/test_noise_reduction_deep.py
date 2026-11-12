@@ -103,10 +103,11 @@ class TestDeepNoiseReduction(unittest.TestCase):
         self.assertIsNotNone(profile_id)
         return dict(audio_processor.noise_cleanup_settings(profile_id), **overrides)
 
-    def test_01_noise_attenuation_across_different_noise_types(self):
+    def test_01_spectral_noise_attenuation_across_different_noise_types(self):
         """
-        Tests that spectral/neural noise reduction tuned by a room check (at the strongest
-        attenuation) effectively attenuates:
+        Tests the spectral fallback with deterministic synthetic harmonics, rather than
+        treating them as a neural speech-quality benchmark. At the strongest attenuation,
+        cleanup tuned by a room check effectively attenuates:
         - 60Hz Electrical AC Hum
         - Computer Fan Whine (1.2kHz + hiss)
         - Room AC Sub-bass Rumble (45Hz-85Hz)
@@ -117,7 +118,8 @@ class TestDeepNoiseReduction(unittest.TestCase):
         self._profile_cache()
 
         for ntype in noise_types:
-            with self.subTest(noise_type=ntype):
+            with self.subTest(noise_type=ntype), \
+                    mock.patch.object(audio_processor, "get_deep_filter_path", return_value=None):
                 mixed, speech, noise = generate_audio_signal(2.0, sr=sr, noise_type=ntype, noise_level=0.035, speech_level=0.45)
                 _, _, room_tone = generate_audio_signal(1.0, sr=sr, noise_type=ntype, noise_level=0.035, speech_level=0.0)
                 settings = self._stored_settings(room_tone, sr, attenuation_db=100)
