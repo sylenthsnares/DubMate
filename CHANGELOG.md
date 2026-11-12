@@ -1,6 +1,6 @@
 # DubMate Changelog
 
-## [Unreleased]
+## [2.0.0] - 2026-11-12
 
 Using the DubMate desktop app 1.1.3? Run the DubMate 2.0.0 installer from https://github.com/sylenthsnares/DubMate/releases/latest to get voice effects and the stronger noise cleanup. The in-app update alone brings everything else. Install 2.0 over 1.1.3 and keep "Do not uninstall": uninstalling 1.1.3 first deletes the Pack Builder add-on, which then has to download again.
 
